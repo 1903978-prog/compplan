@@ -127,9 +127,39 @@ export default function Dashboard() {
     });
   }, [employees, roleGrid, settings]);
 
-  const exportCSV = () => {
-    // Basic CSV export logic would go here
-    alert("Export feature would generate a CSV here.");
+  const exportXLS = () => {
+    const rows = [
+      ["Name", "Role", "Age", "Tenure EEN (y)", "Tenure Total (y)", "Months since Promo", "Rate", "Track", "Next Promo", "Yearly Gross (€)", "Future Yearly Gross (€)", "Increase %", "Band Status"],
+      ...metrics.map(emp => [
+        emp.name,
+        emp.current_role_code,
+        emp.age,
+        emp.hireTenure.toFixed(1),
+        emp.totalTenure.toFixed(1),
+        emp.last_promo_date ? differenceInMonths(new Date(), parseISO(emp.last_promo_date)) : "",
+        emp.performance_score !== null ? emp.performance_score.toFixed(1) : "N/A",
+        emp.recommended_track,
+        emp.next_promo_date,
+        emp.current_gross_fixed_year,
+        emp.future_gross_month > 0 ? Math.round(emp.future_gross_month * emp.months_paid) : "",
+        emp.increase_pct > 0 ? emp.increase_pct.toFixed(1) + "%" : "",
+        emp.band_status,
+      ])
+    ];
+
+    const xmlRows = rows.map(row =>
+      `<Row>${row.map(cell => `<Cell><Data ss:Type="${typeof cell === "number" ? "Number" : "String"}">${String(cell).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</Data></Cell>`).join("")}</Row>`
+    ).join("\n");
+
+    const xml = `<?xml version="1.0"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="CompPlan"><Table>${xmlRows}</Table></Worksheet></Workbook>`;
+
+    const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `compplan-${new Date().toISOString().slice(0, 10)}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const nextOpening = useMemo(() => {
@@ -186,9 +216,9 @@ export default function Dashboard() {
       <PageHeader 
         title="Compensation Dashboard" 
         actions={
-          <Button variant="outline" onClick={exportCSV}>
+          <Button variant="outline" onClick={exportXLS}>
             <Download className="w-4 h-4 mr-2" />
-            Export CSV
+            Export XLS
           </Button>
         }
       />
