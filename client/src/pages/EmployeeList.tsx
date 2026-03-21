@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Calendar, Star } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Calendar, Star, Upload } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { employeeInputSchema, type EmployeeInput } from "@shared/schema";
@@ -138,6 +138,58 @@ export default function EmployeeList() {
       });
   }, [employees, search]);
 
+  const MONTHS_PAID_BY_ROLE: Record<string, number> = { INT: 12, BA: 12, A1: 12, A2: 13, S1: 13, S2: 13, C1: 13, C2: 13, EM1: 13, EM2: 13 };
+  const MIN_GROSS_BY_ROLE: Record<string, number> = { INT: 16000, BA: 24600, A1: 28788, A2: 31187, S1: 33358, S2: 35035, C1: 36777, C2: 41197, EM1: 48204, EM2: 50609 };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) return;
+    const today = new Date();
+    let imported = 0;
+    for (const line of lines.slice(1)) {
+      const cols = line.split(",");
+      const name = cols[0]?.trim();
+      const role = cols[1]?.trim();
+      const age = parseInt(cols[2]) || 25;
+      const hireDate = cols[3]?.trim();
+      const tenureEEN = parseFloat(cols[4]) || 0;
+      const tenureTotal = parseFloat(cols[5]) || tenureEEN;
+      const monthsSincePromo = parseInt(cols[6]) || 0;
+      const rateStr = cols[7]?.trim();
+      const currentGross = parseFloat(cols[10]) || 0;
+      if (!name || !role || !hireDate) continue;
+      const birthYear = today.getFullYear() - age;
+      const lastPromoDate = monthsSincePromo > 0
+        ? new Date(today.getFullYear(), today.getMonth() - monthsSincePromo, 21).toISOString().slice(0, 10)
+        : "";
+      const performanceScore = rateStr && rateStr !== "Na" && rateStr !== "N/A" && rateStr !== "" ? parseFloat(rateStr) : 7;
+      const monthsPaid = MONTHS_PAID_BY_ROLE[role] ?? 13;
+      const grossAnnual = currentGross > 0 ? currentGross : (MIN_GROSS_BY_ROLE[role] ?? 30000);
+      await addEmployee({
+        id: uuidv4(),
+        name,
+        date_of_birth: `${birthYear}-01-01`,
+        current_role_code: role,
+        hire_date: hireDate,
+        last_promo_date: lastPromoDate || undefined,
+        tenure_before_years: Math.max(0, tenureTotal - tenureEEN),
+        current_gross_fixed_year: grossAnnual,
+        meal_voucher_daily: 8,
+        months_paid: monthsPaid as 12 | 13,
+        current_bonus_pct: 0,
+        performance_score: performanceScore,
+        monthly_ratings: [],
+        completed_tests: [],
+      });
+      imported++;
+    }
+    toast({ title: `Imported ${imported} employee${imported !== 1 ? "s" : ""}` });
+    e.target.value = "";
+  };
+
   const handleDelete = async (id: string) => {
     if (confirm("Are you sure you want to delete this employee?")) {
       await deleteEmployee(id);
@@ -161,10 +213,21 @@ export default function EmployeeList() {
         title="Employees"
         description="Manage your team members and their current compensation details."
         actions={
-          <Button onClick={openCreate} className="shadow-lg shadow-primary/20">
-            <Plus className="w-4 h-4 mr-2" />
-            Add Employee
-          </Button>
+          <div className="flex items-center gap-2">
+            <label>
+              <Button variant="outline" size="sm" asChild>
+                <span className="cursor-pointer">
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import CSV
+                </span>
+              </Button>
+              <input type="file" accept=".csv" className="hidden" onChange={handleImport} />
+            </label>
+            <Button onClick={openCreate} className="shadow-lg shadow-primary/20">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Employee
+            </Button>
+          </div>
         }
       />
 
@@ -347,7 +410,7 @@ export default function EmployeeList() {
 }
 
 function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOpenChange: (open: boolean) => void, editingId: string | null }) {
-  const { employees, addEmployee, updateEmployee, roleGrid } = useStore();
+  const { employees, addEmployee, updateEmployee, roleGrid, settings } = useStore();
   const { toast } = useToast();
   
   const defaultValues: Partial<EmployeeInput> = {
