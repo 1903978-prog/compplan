@@ -4,6 +4,9 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ["@tanstack/react-query"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client/src"),
