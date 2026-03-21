@@ -1,0 +1,657 @@
+import React, { useState, useEffect, useMemo } from "react";
+import { useStore } from "@/hooks/use-store";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Calendar, Star } from "lucide-react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { employeeInputSchema, type EmployeeInput } from "@shared/schema";
+import { v4 as uuidv4 } from "uuid";
+import { useToast } from "@/hooks/use-toast";
+import { calculateEmployeeMetrics } from "@/lib/calculations";
+import { format, parseISO, addMonths, subMonths } from "date-fns";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
+import { ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
+
+function BandPosition({ metrics }: { metrics: any }) {
+  const renderLine = (label: string, min: number, max: number, val: number, isNA: boolean, tooltip: React.ReactNode) => {
+    const pos = max === min ? 50 : Math.min(Math.max(((val - min) / (max - min)) * 100, 0), 100);
+    const isOutOfBand = val < min || val > max;
+
+    return (
+      <div className="space-y-0.5">
+        <div className="flex justify-between text-[8px] text-muted-foreground uppercase font-bold tracking-tighter">
+          <span>{label}</span>
+          {isNA && <span className="text-destructive/50">N/A</span>}
+        </div>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="relative h-2 w-full bg-muted rounded-full overflow-visible group cursor-help">
+                {!isNA && (
+                  <>
+                    <div className="absolute top-0 bottom-0 left-0 right-0 flex justify-between px-0.5 pointer-events-none">
+                      <span className="text-[9px] font-bold self-center">€{Math.round(min/1000)}k</span>
+                      <span className="text-[9px] font-bold self-center">€{Math.round(max/1000)}k</span>
+                    </div>
+                    <div 
+                      className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border border-background shadow-sm transition-all ${isOutOfBand ? 'bg-destructive' : 'bg-primary'}`}
+                      style={{ left: `${pos}%` }}
+                    />
+                    {val < min && <span className="absolute -left-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&lt;</span>}
+                    {val > max && <span className="absolute -right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&gt;</span>}
+                  </>
+                )}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent className="text-[10px] p-2 max-w-[200px]">
+              {tooltip}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+    );
+  };
+
+    const isNA = metrics.performance_score <= 5 || !metrics.next_role_code;
+    const annualNow = metrics.annual_now;
+    const annualFuture = metrics.annual_future;
+    
+    if (!annualNow) {
+      return <div className="text-[10px] text-muted-foreground italic">Missing salary</div>;
+    }
+
+  return (
+    <div className="flex flex-col gap-1 py-1 w-[160px]">
+      {renderLine(
+        "Now", 
+        metrics.current_min, 
+        metrics.current_max, 
+        annualNow, 
+        false,
+        <div className="space-y-1">
+          <div className="font-bold">Current Annual Gross: €{Math.round(annualNow).toLocaleString()}</div>
+          <div className="text-muted-foreground">Band: €{Math.round(metrics.current_min).toLocaleString()} – €{Math.round(metrics.current_max).toLocaleString()}</div>
+          <div className={`font-bold uppercase text-[8px] ${metrics.band_status === 'In band' ? 'text-emerald-500' : 'text-destructive'}`}>Status: {metrics.band_status}</div>
+        </div>
+      )}
+      {renderLine(
+        "Next", 
+        metrics.next_min, 
+        metrics.next_max, 
+        annualFuture, 
+        isNA,
+        <div className="space-y-1">
+          {metrics.performance_score <= 5 ? (
+            <div className="font-bold text-destructive">N/A - No promotion (Rate ≤ 5)</div>
+          ) : !metrics.next_role_code ? (
+            <div className="font-bold text-primary">N/A - Top role reached</div>
+          ) : (
+            <>
+              <div className="font-bold text-emerald-500">Future Promotion: €{Math.round(annualFuture).toLocaleString()}</div>
+              <div className="text-muted-foreground">Next Band: €{Math.round(metrics.next_min).toLocaleString()} – €{Math.round(metrics.next_max).toLocaleString()}</div>
+              <div className="italic text-primary-foreground/70">{metrics.policy_applied}</div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ROLE_RANK: Record<string, number> = {
+  "EM2": 10,
+  "EM1": 9,
+  "C2": 8,
+  "C1": 7,
+  "S2": 6,
+  "S1": 5,
+  "A2": 4,
+  "A1": 3,
+  "BA": 2,
+  "INT": 1
+};
+
+export default function EmployeeList() {
+  const { employees, addEmployee, updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
+  const [search, setSearch] = useState("");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const filteredEmployees = useMemo(() => {
+    return employees
+      .filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
+      .sort((a, b) => {
+        const rankA = ROLE_RANK[a.current_role_code] || 0;
+        const rankB = ROLE_RANK[b.current_role_code] || 0;
+        if (rankA !== rankB) return rankB - rankA;
+        return a.name.localeCompare(b.name);
+      });
+  }, [employees, search]);
+
+  const handleDelete = async (id: string) => {
+    if (confirm("Are you sure you want to delete this employee?")) {
+      await deleteEmployee(id);
+      toast({ title: "Employee deleted" });
+    }
+  };
+
+  const openEdit = (employee: EmployeeInput) => {
+    setEditingId(employee.id);
+    setIsDialogOpen(true);
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setIsDialogOpen(true);
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Employees"
+        description="Manage your team members and their current compensation details."
+        actions={
+          <Button onClick={openCreate} className="shadow-lg shadow-primary/20">
+            <Plus className="w-4 h-4 mr-2" />
+            Add Employee
+          </Button>
+        }
+      />
+
+      <Card className="border-border">
+        <div className="p-4 border-b flex items-center gap-4">
+             <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input 
+                    placeholder="Filter by name..." 
+                    className="pl-9"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                />
+            </div>
+        </div>
+
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10"></TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Hire Date</TableHead>
+              <TableHead>Last Promo</TableHead>
+              <TableHead className="text-right">Age</TableHead>
+              <TableHead className="text-right">Tenure EEN</TableHead>
+              <TableHead className="text-right">Tenure (Total)</TableHead>
+              <TableHead className="text-right">Rate</TableHead>
+              <TableHead className="text-right">Yearly Gross</TableHead>
+              <TableHead className="w-[180px]">Band Position</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredEmployees.map((emp) => {
+              const metrics = calculateEmployeeMetrics(emp, roleGrid, settings);
+              const isExpanded = expandedId === emp.id;
+              return (
+                <React.Fragment key={emp.id}>
+                  <TableRow 
+                    key={`${emp.id}-row`}
+                    className="group cursor-pointer hover:bg-muted/50"
+                    onClick={() => setExpandedId(isExpanded ? null : emp.id)}
+                  >
+                    <TableCell>
+                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </TableCell>
+                    <TableCell className="font-medium">{emp.name}</TableCell>
+                    <TableCell>
+                        <span className="bg-secondary px-2 py-1 rounded text-xs font-mono">{emp.current_role_code}</span>
+                    </TableCell>
+                    <TableCell>{emp.hire_date}</TableCell>
+                    <TableCell>{emp.last_promo_date ? format(parseISO(emp.last_promo_date), "MM/yy") : "-"}</TableCell>
+                    <TableCell className="text-right">{metrics.age}</TableCell>
+                    <TableCell className="text-right text-xs">{metrics.hireTenure.toFixed(1)}y</TableCell>
+                    <TableCell className="text-right text-xs">{metrics.totalTenure.toFixed(1)}y</TableCell>
+                    <TableCell className="text-right text-xs">
+                        <div className="flex justify-end items-center gap-2">
+                            {metrics.performance_score !== null ? (
+                                <span className={metrics.performance_score >= 8.5 ? "text-purple-600 font-bold" : ""}>
+                                    {metrics.performance_score.toFixed(1)}
+                                </span>
+                            ) : (
+                                <span className="text-muted-foreground italic">Na</span>
+                            )}
+                        </div>
+                    </TableCell>
+                    <TableCell className="text-right">€{emp.current_gross_fixed_year.toLocaleString()}</TableCell>
+                    <TableCell>
+                      <BandPosition metrics={metrics} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); openEdit(emp); }}>
+                          <Pencil className="w-4 h-4 text-muted-foreground hover:text-primary" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleDelete(emp.id); }}>
+                          <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {isExpanded && (
+                    <TableRow className="bg-muted/30 hover:bg-muted/30">
+                      <TableCell colSpan={11}>
+                        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <Card className="p-4 bg-background">
+                            <h4 className="font-bold text-sm mb-4">Promotion Tracks</h4>
+                            <div className="space-y-3">
+                              {metrics.tracks.map(t => (
+                                <div key={t.label} className={`p-3 rounded-lg border ${t.isRecommended ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border'}`}>
+                                  <div className="flex justify-between items-center mb-2">
+                                    <span className="font-bold">{t.label} Track</span>
+                                    {t.isRecommended && <span className="text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded font-bold uppercase">Recommended</span>}
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-y-1 text-xs text-muted-foreground">
+                                    <span>Promo Duration:</span> <span className="text-foreground text-right">{t.months} months</span>
+                                    <span>Eligibility Date:</span> <span className="text-foreground text-right">{format(t.eligibilityDate, "dd/MM/yy")}</span>
+                                    <span>Effective Date:</span> <span className="text-primary font-bold text-right">{format(t.effectiveDate, "MM/yy")}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </Card>
+
+                          <div className="space-y-6">
+                            <Card className="p-4 bg-background">
+                              <h4 className="font-bold text-sm mb-4">Promotion Salary Projection</h4>
+                              {metrics.performance_score === null ? (
+                                <p className="text-xs text-muted-foreground italic">N/A (Enter monthly ratings to see projection)</p>
+                              ) : metrics.performance_score <= 5 ? (
+                                <p className="text-xs text-muted-foreground italic">N/A (No promotion recommended for rate ≤ 5)</p>
+                              ) : !metrics.next_role_code ? (
+                                <p className="text-xs text-muted-foreground italic">N/A (Top role reached)</p>
+                              ) : (
+                                <div className="space-y-3 text-sm">
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Policy:</span>
+                                    <span className="text-right text-xs italic">{metrics.policy_applied}</span>
+                                  </div>
+                                  <div className="flex justify-between pt-2 border-t">
+                                    <span className="text-muted-foreground">Future Monthly Gross:</span>
+                                    <span className="font-bold text-emerald-600">€{Math.round(metrics.future_gross_month).toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Increase vs Today:</span>
+                                    <div className="text-right">
+                                      <div className="font-bold text-emerald-600">+{metrics.increase_pct.toFixed(1)}%</div>
+                                      <div className="text-[10px] text-muted-foreground">+€{Math.round(metrics.increase_amount_monthly).toLocaleString()}/mo</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </Card>
+
+                            <Collapsible className="border rounded-lg p-3 bg-background">
+                              <CollapsibleTrigger className="flex items-center gap-2 w-full text-xs font-bold hover:text-primary transition-colors">
+                                <Info className="w-3 h-3" />
+                                Promotion calc debug
+                              </CollapsibleTrigger>
+                              <CollapsibleContent className="pt-3 text-[10px] space-y-2 text-muted-foreground leading-relaxed">
+                                <div className="grid grid-cols-[80px_1fr] gap-2">
+                                  <span className="font-medium text-foreground">Base Date:</span>
+                                  <span>{emp.last_promo_date ? `${format(parseISO(emp.last_promo_date), "dd/MM/yy")} (Last Promo)` : `${emp.hire_date} (Hire)`}</span>
+                                  
+                                  <span className="font-medium text-foreground">Logic:</span>
+                                  <span>Eligibility = BaseDate + (promo_years * 365.25) days</span>
+                                  
+                                  <span className="font-medium text-foreground">Rule:</span>
+                                  <span>If Eligibility within [Window, Window + 21 days], snap to Window. Else use next Window.</span>
+                                </div>
+                              </CollapsibleContent>
+                            </Collapsible>
+                          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
+              );
+            })}
+            {filteredEmployees.length === 0 && (
+                <TableRow>
+                    <TableCell colSpan={11} className="text-center py-12 text-muted-foreground">
+                        No employees found.
+                    </TableCell>
+                </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <EmployeeDialog 
+        open={isDialogOpen} 
+        onOpenChange={setIsDialogOpen} 
+        editingId={editingId} 
+      />
+    </div>
+  );
+}
+
+function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOpenChange: (open: boolean) => void, editingId: string | null }) {
+  const { employees, addEmployee, updateEmployee, roleGrid } = useStore();
+  const { toast } = useToast();
+  
+  const defaultValues: Partial<EmployeeInput> = {
+    name: "",
+    date_of_birth: "1990-01-01",
+    current_role_code: roleGrid[0]?.role_code || "",
+    hire_date: new Date().toISOString().slice(0, 7), // YYYY-MM
+    tenure_before_years: 0,
+    last_promo_date: "", // Default to empty
+    current_gross_fixed_year: 30000,
+    meal_voucher_daily: 8,
+    months_paid: 13,
+    current_bonus_pct: 0,
+    performance_score: 7,
+    monthly_ratings: [],
+  };
+
+  const editingEmployee = editingId ? employees.find(e => e.id === editingId) : null;
+
+  const form = useForm<EmployeeInput>({
+    resolver: zodResolver(employeeInputSchema),
+    defaultValues: editingEmployee || { ...defaultValues, id: uuidv4() },
+  });
+
+  // Use useEffect to reset form when dialog opens/closes or editingId changes
+  useEffect(() => {
+    if (open) {
+      if (editingId && editingEmployee) {
+        form.reset(editingEmployee);
+      } else {
+        form.reset({ ...defaultValues, id: uuidv4() });
+      }
+    }
+  }, [open, editingId, editingEmployee, form]);
+
+  const onSubmit = async (data: EmployeeInput) => {
+    if (editingId) {
+      await updateEmployee(editingId, data);
+      toast({ title: "Employee updated successfully" });
+    } else {
+      await addEmployee({ ...data, id: uuidv4() });
+      toast({ title: "Employee created successfully" });
+    }
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{editingId ? "Edit Employee" : "Add New Employee"}</DialogTitle>
+        </DialogHeader>
+
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Full Name</Label>
+              <Input {...form.register("name")} placeholder="John Doe" />
+              {form.formState.errors.name && <span className="text-destructive text-xs">{form.formState.errors.name.message}</span>}
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Date of Birth</Label>
+              <Input type="date" {...form.register("date_of_birth")} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Controller
+                control={form.control}
+                name="current_role_code"
+                render={({ field }) => (
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {roleGrid.map(role => (
+                        <SelectItem key={role.role_code} value={role.role_code}>
+                          {role.role_name} ({role.role_code})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Hire Date (YYYY-MM)</Label>
+              <Input type="month" {...form.register("hire_date")} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Last Promotion Date</Label>
+              <Input type="date" {...form.register("last_promo_date")} />
+              <p className="text-[10px] text-muted-foreground italic">Leave blank if this is the employee's first role</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Yearly Gross Salary</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">€</span>
+                <Input 
+                    type="number" 
+                    className="pl-7" 
+                    {...form.register("current_gross_fixed_year", { valueAsNumber: true })} 
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Months Paid</Label>
+              <Controller
+                control={form.control}
+                name="months_paid"
+                render={({ field }) => (
+                  <Select onValueChange={(v) => field.onChange(Number(v))} value={String(field.value)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="12">12 Months</SelectItem>
+                      <SelectItem value="13">13 Months</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+
+            <div className="space-y-4 col-span-2 border-t pt-4">
+              <div className="flex justify-between items-center">
+                <Label className="text-base font-bold">Monthly Ratings (Last 12 months used for Rate)</Label>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => {
+                    const current = form.getValues("monthly_ratings") || [];
+                    form.setValue("monthly_ratings", [...current, { month: new Date().toISOString().slice(0, 7), score: 7 }]);
+                  }}
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Month
+                </Button>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Controller
+                  control={form.control}
+                  name="monthly_ratings"
+                  render={({ field }) => (
+                    <>
+                      {(field.value || []).map((rating, index) => (
+                        <div key={index} className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border">
+                          <Calendar className="w-4 h-4 text-muted-foreground" />
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => {
+                                const newVal = [...field.value];
+                                const [year, month] = newVal[index].month.split('-').map(Number);
+                                const date = new Date(year, month - 1, 1);
+                                date.setMonth(date.getMonth() - 1);
+                                newVal[index].month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                                field.onChange(newVal);
+                              }}
+                            >
+                              <ChevronLeft className="h-3 w-3" />
+                            </Button>
+                            <Input 
+                              type="month" 
+                              className="h-8 w-32"
+                              value={rating.month}
+                              onChange={(e) => {
+                                const newVal = [...field.value];
+                                newVal[index].month = e.target.value;
+                                field.onChange(newVal);
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => {
+                                const newVal = [...field.value];
+                                const [year, month] = newVal[index].month.split('-').map(Number);
+                                const date = new Date(year, month - 1, 1);
+                                date.setMonth(date.getMonth() + 1);
+                                newVal[index].month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                                field.onChange(newVal);
+                              }}
+                            >
+                              <ChevronRightIcon className="h-3 w-3" />
+                            </Button>
+                          </div>
+                          <Star className="w-4 h-4 text-yellow-500 ml-2" />
+                          <Input 
+                            type="number" 
+                            step="0.1"
+                            min="1"
+                            max="10"
+                            className="h-8 w-20"
+                            value={rating.score}
+                            onChange={(e) => {
+                              const newVal = [...field.value];
+                              newVal[index].score = parseFloat(e.target.value);
+                              field.onChange(newVal);
+                            }}
+                          />
+                          <Button 
+                            type="button" 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-destructive ml-auto"
+                            onClick={() => {
+                              const newVal = field.value.filter((_, i) => i !== index);
+                              field.onChange(newVal);
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                />
+              </div>
+              
+              <p className="text-xs text-muted-foreground italic">
+                If no monthly ratings are provided, the manual "Rate" value below will be used.
+              </p>
+            </div>
+
+             <div className="space-y-2">
+              <Label>Default Rate (Fallback)</Label>
+              <Input 
+                type="number" 
+                step="0.1"
+                min="1" 
+                max="10"
+                {...form.register("performance_score", { valueAsNumber: true })} 
+              />
+              <p className="text-xs text-muted-foreground">
+                &gt;8.5: Fast, 7-8.5: Normal, 5-7: Slow
+              </p>
+            </div>
+
+             <div className="space-y-2">
+              <Label>Meal Voucher (Daily €)</Label>
+              <Input 
+                type="number" 
+                step="0.5"
+                {...form.register("meal_voucher_daily", { valueAsNumber: true })} 
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Years Tenure Before Eendigo</Label>
+              <Input 
+                type="number" 
+                step="0.1"
+                {...form.register("tenure_before_years", { valueAsNumber: true })} 
+              />
+            </div>
+          </div>
+
+            <div className="space-y-4 col-span-2 border-t pt-4">
+              <Label className="text-base font-bold">Completed Tests</Label>
+              <div className="grid grid-cols-2 gap-4">
+                {settings.tests.map(test => (
+                  <div key={test.id} className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id={`test-${test.id}`}
+                      checked={form.watch("completed_tests")?.includes(test.id)}
+                      onChange={(e) => {
+                        const current = form.getValues("completed_tests") || [];
+                        if (e.target.checked) {
+                          form.setValue("completed_tests", [...current, test.id]);
+                        } else {
+                          form.setValue("completed_tests", current.filter(id => id !== test.id));
+                        }
+                      }}
+                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <Label htmlFor={`test-${test.id}`} className="text-sm font-normal cursor-pointer">
+                      {test.name}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit">Save Employee</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}

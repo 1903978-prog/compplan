@@ -1,0 +1,145 @@
+import { pgTable, text, serial, integer, real, jsonb } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
+
+// ─── Zod schemas (used by both client and server) ───────────────────────────
+
+export const monthlyRatingSchema = z.object({
+  month: z.string(), // YYYY-MM
+  score: z.number().min(1).max(10),
+});
+export type MonthlyRating = z.infer<typeof monthlyRatingSchema>;
+
+export const testSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  due_from_hire_months: z.number(),
+});
+export type Test = z.infer<typeof testSchema>;
+
+export const roleGridSchema = z.object({
+  role_code: z.string(),
+  role_name: z.string(),
+  next_role_code: z.string().nullable(),
+  promo_years_fast: z.number(),
+  promo_years_normal: z.number(),
+  promo_years_slow: z.number(),
+  ral_min_k: z.number(),
+  ral_max_k: z.number(),
+  gross_fixed_min_month: z.number(),
+  gross_fixed_max_month: z.number(),
+  bonus_pct: z.number(),
+  meal_voucher_eur_per_day: z.number(),
+  months_paid: z.number(),
+});
+export type RoleGridRow = z.infer<typeof roleGridSchema>;
+
+export const adminSettingsSchema = z.object({
+  net_factor: z.number().default(0.75),
+  meal_voucher_days_per_month: z.number().default(20),
+  min_promo_increase_pct: z.number().default(10),
+  promotion_windows: z.array(z.string()).default(["01-01", "05-01", "09-01"]),
+  window_tolerance_days: z.number().default(21),
+  tests: z.array(testSchema).default([
+    { id: "1", name: "Onboarding", due_from_hire_months: 2 },
+    { id: "2", name: "Project zero", due_from_hire_months: 2 },
+    { id: "3", name: "Policies", due_from_hire_months: 1 },
+    { id: "4", name: "Cybersecurity", due_from_hire_months: 1 },
+    { id: "5", name: "White belt", due_from_hire_months: 12 },
+    { id: "6", name: "Consulting foundations", due_from_hire_months: 12 },
+    { id: "7", name: "Green belt", due_from_hire_months: 24 },
+  ]),
+});
+export type AdminSettings = z.infer<typeof adminSettingsSchema>;
+
+export const employeeInputSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1, "Name is required"),
+  date_of_birth: z.string(),
+  current_role_code: z.string(),
+  hire_date: z.string(),
+  last_promo_date: z.string().optional(),
+  tenure_before_years: z.number().default(0),
+  current_gross_fixed_year: z.number(),
+  meal_voucher_daily: z.number().min(0),
+  months_paid: z.number().refine((v) => v === 12 || v === 13),
+  current_bonus_pct: z.number().min(0).max(30),
+  performance_score: z.number().min(1).max(10),
+  monthly_ratings: z.array(monthlyRatingSchema).default([]),
+  completed_tests: z.array(z.string()).default([]),
+});
+export type EmployeeInput = z.infer<typeof employeeInputSchema>;
+
+export interface EmployeeCalculationResult {
+  employeeId: string;
+  normalized_tenure: number;
+  gross_month: number;
+  net_month: number;
+  recommended_track: "Fast" | "Normal" | "Slow" | "No promotion";
+  next_promo_date: string | "No promotion";
+  next_role_code: string | null;
+  target_ral_min: number;
+  target_ral_max: number;
+  future_gross_month: number;
+  increase_amount_monthly: number;
+  increase_pct: number;
+  band_status: "Under" | "In band" | "Over";
+  policy_applied: string;
+}
+
+// ─── PostgreSQL tables ───────────────────────────────────────────────────────
+
+export const employees = pgTable("employees", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  date_of_birth: text("date_of_birth").notNull(),
+  current_role_code: text("current_role_code").notNull(),
+  hire_date: text("hire_date").notNull(),
+  last_promo_date: text("last_promo_date"),
+  tenure_before_years: real("tenure_before_years").notNull().default(0),
+  current_gross_fixed_year: real("current_gross_fixed_year").notNull(),
+  meal_voucher_daily: real("meal_voucher_daily").notNull().default(8),
+  months_paid: integer("months_paid").notNull().default(13),
+  current_bonus_pct: real("current_bonus_pct").notNull().default(0),
+  performance_score: real("performance_score").notNull().default(7),
+  monthly_ratings: jsonb("monthly_ratings").$type<MonthlyRating[]>().notNull().default([]),
+  completed_tests: jsonb("completed_tests").$type<string[]>().notNull().default([]),
+});
+
+export const insertEmployeeSchema = createInsertSchema(employees);
+export type Employee = typeof employees.$inferSelect;
+export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
+
+export const roleGridEntries = pgTable("role_grid", {
+  role_code: text("role_code").primaryKey(),
+  role_name: text("role_name").notNull(),
+  next_role_code: text("next_role_code"),
+  promo_years_fast: real("promo_years_fast").notNull(),
+  promo_years_normal: real("promo_years_normal").notNull(),
+  promo_years_slow: real("promo_years_slow").notNull(),
+  ral_min_k: real("ral_min_k").notNull(),
+  ral_max_k: real("ral_max_k").notNull(),
+  gross_fixed_min_month: real("gross_fixed_min_month").notNull(),
+  gross_fixed_max_month: real("gross_fixed_max_month").notNull(),
+  bonus_pct: real("bonus_pct").notNull(),
+  meal_voucher_eur_per_day: real("meal_voucher_eur_per_day").notNull(),
+  months_paid: integer("months_paid").notNull(),
+  sort_order: integer("sort_order").notNull().default(0),
+});
+
+export const appSettings = pgTable("app_settings", {
+  id: serial("id").primaryKey(),
+  net_factor: real("net_factor").notNull().default(0.75),
+  meal_voucher_days_per_month: real("meal_voucher_days_per_month").notNull().default(20),
+  min_promo_increase_pct: real("min_promo_increase_pct").notNull().default(10),
+  promotion_windows: jsonb("promotion_windows").$type<string[]>().notNull().default(["01-01", "05-01", "09-01"]),
+  window_tolerance_days: integer("window_tolerance_days").notNull().default(21),
+  tests: jsonb("tests").$type<Test[]>().notNull().default([]),
+});
+
+// Minimal users table for auth
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+});
