@@ -1,5 +1,88 @@
 import { db } from "./db";
-import { roleGridEntries, appSettings } from "@shared/schema";
+import { roleGridEntries, appSettings, employees } from "@shared/schema";
+
+const SEED_EMPLOYEES = [
+  {
+    id: "emp-defne",
+    name: "Defne",
+    date_of_birth: "2001-01-01",
+    current_role_code: "S1",
+    hire_date: "2023-06",
+    last_promo_date: "2025-09-21",
+    tenure_before_years: 0.5,
+    current_gross_fixed_year: 33358,
+    meal_voucher_daily: 8,
+    months_paid: 13,
+    current_bonus_pct: 15,
+    performance_score: 7,
+    monthly_ratings: [],
+    completed_tests: [],
+  },
+  {
+    id: "emp-malika",
+    name: "Malika",
+    date_of_birth: "2000-01-01",
+    current_role_code: "A1",
+    hire_date: "2024-09",
+    last_promo_date: "2025-10-21",
+    tenure_before_years: 2.0,
+    current_gross_fixed_year: 28788,
+    meal_voucher_daily: 8,
+    months_paid: 12,
+    current_bonus_pct: 10,
+    performance_score: 7,
+    monthly_ratings: [],
+    completed_tests: [],
+  },
+  {
+    id: "emp-edoardo",
+    name: "Edoardo",
+    date_of_birth: "1995-01-01",
+    current_role_code: "EM1",
+    hire_date: "2026-01",
+    last_promo_date: "2026-02-21",
+    tenure_before_years: 5.0,
+    current_gross_fixed_year: 60000,
+    meal_voucher_daily: 8,
+    months_paid: 13,
+    current_bonus_pct: 20,
+    performance_score: 8.1,
+    monthly_ratings: [],
+    completed_tests: [],
+  },
+  {
+    id: "emp-nicolas",
+    name: "Nicolas",
+    date_of_birth: "1998-01-01",
+    current_role_code: "BA",
+    hire_date: "2026-02",
+    last_promo_date: "2026-02-21",
+    tenure_before_years: 2.5,
+    current_gross_fixed_year: 24600,
+    meal_voucher_daily: 8,
+    months_paid: 12,
+    current_bonus_pct: 0,
+    performance_score: 7,
+    monthly_ratings: [],
+    completed_tests: [],
+  },
+  {
+    id: "emp-dior",
+    name: "Dior",
+    date_of_birth: "1982-01-01",
+    current_role_code: "A1",
+    hire_date: "2026-02",
+    last_promo_date: "2025-07-21",
+    tenure_before_years: 0.0,
+    current_gross_fixed_year: 28788,
+    meal_voucher_daily: 8,
+    months_paid: 12,
+    current_bonus_pct: 10,
+    performance_score: 7,
+    monthly_ratings: [],
+    completed_tests: [],
+  },
+];
 
 const DEFAULT_ROLE_GRID = [
   { role_code: "INT", role_name: "Intern", next_role_code: "BA", promo_years_fast: 0.25, promo_years_normal: 0.5, promo_years_slow: 0.75, ral_min_k: 12, ral_max_k: 12, gross_fixed_min_month: 1333, gross_fixed_max_month: 1867, bonus_pct: 0, meal_voucher_eur_per_day: 0, months_paid: 12, sort_order: 0 },
@@ -31,6 +114,14 @@ export async function seedDatabase() {
     console.log("Seeding role grid...");
     await db.insert(roleGridEntries).values(DEFAULT_ROLE_GRID);
     console.log(`Seeded ${DEFAULT_ROLE_GRID.length} roles`);
+  }
+
+  // Seed employees if empty
+  const existingEmployees = await db.select().from(employees);
+  if (existingEmployees.length === 0) {
+    console.log("Seeding employees...");
+    await db.insert(employees).values(SEED_EMPLOYEES);
+    console.log(`Seeded ${SEED_EMPLOYEES.length} employees`);
   }
 
   // Seed settings if empty
