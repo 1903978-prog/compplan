@@ -135,6 +135,8 @@ export async function seedDatabase() {
       min_promo_increase_pct: 10,
       promotion_windows: ["01-01", "05-01", "09-01"],
       window_tolerance_days: 21,
+      track_fast_threshold: 8.5,
+      track_slow_threshold: 7.0,
       tests: DEFAULT_TESTS,
     });
     console.log("Settings seeded");

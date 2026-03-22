@@ -12,7 +12,7 @@ import { format, parseISO, addDays, isBefore, isAfter, startOfMonth, endOfMonth,
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 
 function BandPosition({ metrics }: { metrics: any }) {
-  const renderLine = (label: string, min: number, max: number, val: number, isNA: boolean, tooltip: React.ReactNode) => {
+  const renderLine = (label: string, min: number, max: number, val: number, noNextRole: boolean, showMarker: boolean, tooltip: React.ReactNode) => {
     const pos = max === min ? 50 : Math.min(Math.max(((val - min) / (max - min)) * 100, 0), 100);
     const isOutOfBand = val < min || val > max;
 
@@ -20,24 +20,28 @@ function BandPosition({ metrics }: { metrics: any }) {
       <div className="space-y-0.5">
         <div className="flex justify-between text-[8px] text-muted-foreground uppercase font-bold tracking-tighter">
           <span>{label}</span>
-          {isNA && <span className="text-destructive/50">N/A</span>}
+          {noNextRole && <span className="text-destructive/50">N/A</span>}
         </div>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="relative h-2 w-full bg-muted rounded-full overflow-visible group cursor-help">
-                {!isNA && (
+                {!noNextRole && (
                   <>
                     <div className="absolute top-0 bottom-0 left-0 right-0 flex justify-between px-0.5 pointer-events-none">
                       <span className="text-[9px] font-bold self-center">€{Math.round(min/1000)}k</span>
                       <span className="text-[9px] font-bold self-center">€{Math.round(max/1000)}k</span>
                     </div>
-                    <div 
-                      className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border border-background shadow-sm transition-all ${isOutOfBand ? 'bg-destructive' : 'bg-primary'}`}
-                      style={{ left: `${pos}%` }}
-                    />
-                    {val < min && <span className="absolute -left-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&lt;</span>}
-                    {val > max && <span className="absolute -right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&gt;</span>}
+                    {showMarker && (
+                      <>
+                        <div
+                          className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border border-background shadow-sm transition-all ${isOutOfBand ? 'bg-destructive' : 'bg-primary'}`}
+                          style={{ left: `${pos}%` }}
+                        />
+                        {val < min && <span className="absolute -left-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&lt;</span>}
+                        {val > max && <span className="absolute -right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&gt;</span>}
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -51,22 +55,24 @@ function BandPosition({ metrics }: { metrics: any }) {
     );
   };
 
-    const isNA = metrics.performance_score <= 5 || !metrics.next_role_code;
-    const annualNow = metrics.annual_now;
-    const annualFuture = metrics.annual_future;
-    
-    if (!annualNow) {
-      return <div className="text-[10px] text-muted-foreground italic">Missing salary</div>;
-    }
+  const perfScore: number | null = metrics.performance_score;
+  const hasPromotion = perfScore !== null && perfScore > 5 && !!metrics.next_role_code;
+  const annualNow = metrics.annual_now;
+  const annualFuture = metrics.annual_future;
+
+  if (!annualNow) {
+    return <div className="text-[10px] text-muted-foreground italic">Missing salary</div>;
+  }
 
   return (
     <div className="flex flex-col gap-1 py-1 w-[160px]">
       {renderLine(
-        "Now", 
-        metrics.current_min, 
-        metrics.current_max, 
-        annualNow, 
+        "Now",
+        metrics.current_min,
+        metrics.current_max,
+        annualNow,
         false,
+        true,
         <div className="space-y-1">
           <div className="font-bold">Current Annual Gross: €{Math.round(annualNow).toLocaleString()}</div>
           <div className="text-muted-foreground">Band: €{Math.round(metrics.current_min).toLocaleString()} – €{Math.round(metrics.current_max).toLocaleString()}</div>
@@ -74,22 +80,23 @@ function BandPosition({ metrics }: { metrics: any }) {
         </div>
       )}
       {renderLine(
-        "Next", 
-        metrics.next_min, 
-        metrics.next_max, 
-        annualFuture, 
-        isNA,
+        "Next",
+        metrics.next_min,
+        metrics.next_max,
+        annualFuture,
+        !metrics.next_role_code,
+        hasPromotion,
         <div className="space-y-1">
-          {metrics.performance_score === null ? (
-            <div className="font-bold text-destructive">N/A - No ratings entered</div>
-          ) : metrics.performance_score <= 5 ? (
+          {perfScore === null ? (
+            <div className="text-muted-foreground italic">Add monthly ratings to see projection</div>
+          ) : perfScore <= 5 ? (
             <div className="font-bold text-destructive">N/A - No promotion (Rate ≤ 5)</div>
           ) : !metrics.next_role_code ? (
             <div className="font-bold text-primary">N/A - Top role reached</div>
           ) : (
             <>
-              <div className="font-bold text-emerald-500">Future Promotion: €{Math.round(annualFuture).toLocaleString()}</div>
-              <div className="text-muted-foreground">Next Band: €{Math.round(metrics.next_min).toLocaleString()} – €{Math.round(metrics.next_max).toLocaleString()}</div>
+              <div className="font-bold text-emerald-500">Future: €{Math.round(annualFuture).toLocaleString()}</div>
+              <div className="text-muted-foreground">Band: €{Math.round(metrics.next_min).toLocaleString()} – €{Math.round(metrics.next_max).toLocaleString()}</div>
               <div className="italic text-primary-foreground/70">{metrics.policy_applied}</div>
             </>
           )}
@@ -276,24 +283,24 @@ export default function Dashboard() {
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <TableHead>Employee</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead className="text-right">Age</TableHead>
-                <TableHead className="text-right">Tenure EEN</TableHead>
-                <TableHead className="text-right">Tenure (Total)</TableHead>
-                <TableHead className="text-right">Months since Promo</TableHead>
-                <TableHead>Rate</TableHead>
-                <TableHead>Track</TableHead>
-                <TableHead>Next Promo</TableHead>
-                <TableHead className="text-center" colSpan={2}>Gross (€)</TableHead>
-                <TableHead className="text-right">Increase</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-[180px]">Band position (Now vs Next)</TableHead>
+                <TableHead className="text-center">Role</TableHead>
+                <TableHead className="text-center">Age</TableHead>
+                <TableHead className="text-center">Tenure EEN</TableHead>
+                <TableHead className="text-center">Tenure (Total)</TableHead>
+                <TableHead className="text-center">Months since Promo</TableHead>
+                <TableHead className="text-center">Rate</TableHead>
+                <TableHead className="text-center">Track</TableHead>
+                <TableHead className="text-center">Next Promo</TableHead>
+                <TableHead className="text-center">Gross (€)</TableHead>
+                <TableHead className="text-center">After Promo</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-center w-[180px]">Band (Now vs Next)</TableHead>
               </TableRow>
               <TableRow className="bg-muted/10 text-[10px] uppercase tracking-wider">
-                <TableHead colSpan={8}></TableHead>
-                <TableHead className="text-right">Current</TableHead>
-                <TableHead className="text-right">Future</TableHead>
-                <TableHead colSpan={3}></TableHead>
+                <TableHead colSpan={9}></TableHead>
+                <TableHead className="text-center text-muted-foreground">Current</TableHead>
+                <TableHead className="text-center text-muted-foreground">Future</TableHead>
+                <TableHead colSpan={2}></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -304,7 +311,10 @@ export default function Dashboard() {
                   </TableCell>
                 </TableRow>
               ) : (
-                metrics.map((emp) => (
+                metrics.map((emp) => {
+                  const trackLabel = emp.recommended_track === "Normal" ? "On Track" : emp.recommended_track;
+                  const hasTrack = emp.recommended_track !== "No promotion";
+                  return (
                   <TableRow key={emp.id} className="table-row-hover">
                     <TableCell className="font-medium">
                         <div>{emp.name}</div>
@@ -315,60 +325,61 @@ export default function Dashboard() {
                           </div>
                         )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-center">
                         <span className="font-mono text-xs bg-secondary px-2 py-1 rounded">{emp.current_role_code}</span>
                     </TableCell>
-                    <TableCell className="text-right text-xs">{emp.age}</TableCell>
-                    <TableCell className="text-right text-xs">{emp.hireTenure.toFixed(1)}y</TableCell>
-                    <TableCell className="text-right text-xs">{emp.totalTenure.toFixed(1)}y</TableCell>
-                    <TableCell className="text-right text-xs">
+                    <TableCell className="text-center text-xs">{emp.age}</TableCell>
+                    <TableCell className="text-center text-xs">{emp.hireTenure.toFixed(1)}y</TableCell>
+                    <TableCell className="text-center text-xs">{emp.totalTenure.toFixed(1)}y</TableCell>
+                    <TableCell className="text-center text-xs">
                       {emp.last_promo_date ? (
                         <span className="font-medium text-primary">
                           {differenceInMonths(new Date(), parseISO(emp.last_promo_date))}m
                         </span>
                       ) : "-"}
                     </TableCell>
-                    <TableCell>
-                        <div className="flex items-center gap-2">
-                            {emp.performance_score !== null ? (
-                                <span className={emp.performance_score >= 8.5 ? "text-purple-600 font-bold" : ""}>
-                                    {emp.performance_score.toFixed(1)}
-                                </span>
-                            ) : (
-                                <span className="text-muted-foreground italic text-[10px]">Na</span>
-                            )}
-                        </div>
-                    </TableCell>
-                    <TableCell>
-                        <StatusBadge status={emp.recommended_track} variant="track" />
-                    </TableCell>
-                    <TableCell className="text-sm font-semibold text-primary">
-                        {emp.next_promo_date}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs whitespace-nowrap px-1">
-                        €{emp.current_gross_fixed_year.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs whitespace-nowrap px-1">
-                         {emp.future_gross_month > 0 ? (
-                            `€${(emp.future_gross_month * emp.months_paid).toLocaleString()}`
-                         ) : "-"}
-                    </TableCell>
-                    <TableCell className="text-right text-sm">
-                        {emp.increase_pct > 0 && (
-                            <div className="flex flex-col items-end">
-                                <span className="text-emerald-600 font-medium">+{emp.increase_pct.toFixed(1)}%</span>
-                                <span className="text-[10px] text-muted-foreground">+€{(emp.increase_amount_monthly * emp.months_paid).toLocaleString()}</span>
-                            </div>
+                    <TableCell className="text-center">
+                        {emp.performance_score !== null ? (
+                            <span className={emp.performance_score >= (emp.track_fast_threshold ?? 8.5) ? "text-purple-600 font-bold" : ""}>
+                                {emp.performance_score.toFixed(1)}
+                            </span>
+                        ) : (
+                            <span className="text-muted-foreground italic text-[10px]">Na</span>
                         )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-center">
+                        {hasTrack ? (
+                          <StatusBadge status={trackLabel} variant="track" />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                    </TableCell>
+                    <TableCell className="text-center text-sm font-semibold text-primary">
+                        {hasTrack ? emp.next_promo_date : <span className="text-muted-foreground font-normal text-xs">—</span>}
+                    </TableCell>
+                    <TableCell className="text-center font-mono text-xs whitespace-nowrap">
+                        €{emp.current_gross_fixed_year.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-center text-xs">
+                        {emp.future_gross_month > 0 ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="font-mono">€{Math.round(emp.future_gross_month * emp.months_paid).toLocaleString()}</span>
+                            <span className="text-emerald-600 font-medium">+{emp.increase_pct.toFixed(1)}%</span>
+                            <span className="text-[10px] text-muted-foreground">+€{Math.round(emp.increase_amount_monthly * emp.months_paid).toLocaleString()}/yr</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                    </TableCell>
+                    <TableCell className="text-center">
                         <StatusBadge status={emp.band_status} variant="band" />
                     </TableCell>
                     <TableCell>
                         <BandPosition metrics={emp} />
                     </TableCell>
                   </TableRow>
-                ))
+                  );
+                })
               )}
             </TableBody>
           </Table>

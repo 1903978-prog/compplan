@@ -84,8 +84,8 @@ export const calculateEmployeeMetrics = (
   let recommended_track: "Fast" | "Normal" | "Slow" | "No promotion" = "No promotion";
 
   // Check Promotion Gates (must be PASSED)
-  const isTestPassed = (name: string) => employee.completed_tests?.some(id => {
-    const test = settings.tests.find(t => t.id === id);
+  const isTestPassed = (name: string) => employee.completed_tests?.some(ct => {
+    const test = settings.tests.find(t => t.id === ct.id);
     return test?.name.toLowerCase() === name.toLowerCase();
   });
 
@@ -100,10 +100,13 @@ export const calculateEmployeeMetrics = (
   if (nextRoleCode === "C1" && !canPromoteToC1) gatePassed = false;
   if (nextRoleCode === "A1" && !canPromoteToA1) gatePassed = false;
 
+  const fastThreshold = settings.track_fast_threshold ?? 8.5;
+  const slowThreshold = settings.track_slow_threshold ?? 7.0;
+
   if (performance_score !== null && gatePassed) {
-    if (performance_score > 8.5) {
+    if (performance_score > fastThreshold) {
       recommended_track = "Fast";
-    } else if (performance_score > 7.0) {
+    } else if (performance_score > slowThreshold) {
       recommended_track = "Normal";
     } else if (performance_score > 5.0) {
       recommended_track = "Slow";
@@ -308,6 +311,8 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
     min_promo_increase_pct: 10,
     promotion_windows: ["01-01", "05-01", "09-01"],
     window_tolerance_days: 21,
+    track_fast_threshold: 8.5,
+    track_slow_threshold: 7.0,
     tests: [
       { id: "1", name: "Onboarding", due_from_hire_months: 2 },
       { id: "2", name: "Project zero", due_from_hire_months: 2 },

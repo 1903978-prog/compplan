@@ -17,6 +17,12 @@ export const testSchema = z.object({
 });
 export type Test = z.infer<typeof testSchema>;
 
+export const completedTestSchema = z.object({
+  id: z.string(),
+  score: z.number().min(0).max(100).nullable().optional(),
+});
+export type CompletedTest = z.infer<typeof completedTestSchema>;
+
 export const roleGridSchema = z.object({
   role_code: z.string(),
   role_name: z.string(),
@@ -40,6 +46,8 @@ export const adminSettingsSchema = z.object({
   min_promo_increase_pct: z.number().default(10),
   promotion_windows: z.array(z.string()).default(["01-01", "05-01", "09-01"]),
   window_tolerance_days: z.number().default(21),
+  track_fast_threshold: z.number().default(8.5),
+  track_slow_threshold: z.number().default(7.0),
   tests: z.array(testSchema).default([
     { id: "1", name: "Onboarding", due_from_hire_months: 2 },
     { id: "2", name: "Project zero", due_from_hire_months: 2 },
@@ -66,7 +74,7 @@ export const employeeInputSchema = z.object({
   current_bonus_pct: z.number().min(0).max(30),
   performance_score: z.number().min(1).max(10),
   monthly_ratings: z.array(monthlyRatingSchema).default([]),
-  completed_tests: z.array(z.string()).default([]),
+  completed_tests: z.array(completedTestSchema).default([]),
 });
 export type EmployeeInput = z.infer<typeof employeeInputSchema>;
 
@@ -103,7 +111,7 @@ export const employees = pgTable("employees", {
   current_bonus_pct: real("current_bonus_pct").notNull().default(0),
   performance_score: real("performance_score").notNull().default(7),
   monthly_ratings: jsonb("monthly_ratings").$type<MonthlyRating[]>().notNull().default([]),
-  completed_tests: jsonb("completed_tests").$type<string[]>().notNull().default([]),
+  completed_tests: jsonb("completed_tests").$type<CompletedTest[]>().notNull().default([]),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
@@ -134,6 +142,8 @@ export const appSettings = pgTable("app_settings", {
   min_promo_increase_pct: real("min_promo_increase_pct").notNull().default(10),
   promotion_windows: jsonb("promotion_windows").$type<string[]>().notNull().default(["01-01", "05-01", "09-01"]),
   window_tolerance_days: integer("window_tolerance_days").notNull().default(21),
+  track_fast_threshold: real("track_fast_threshold").notNull().default(8.5),
+  track_slow_threshold: real("track_slow_threshold").notNull().default(7.0),
   tests: jsonb("tests").$type<Test[]>().notNull().default([]),
 });
 

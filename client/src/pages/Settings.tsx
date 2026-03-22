@@ -73,11 +73,35 @@ export default function Settings() {
 
                 <div className="space-y-2">
                     <Label>Window Tolerance (Days)</Label>
-                    <Input 
-                        type="number" 
-                        {...form.register("window_tolerance_days", { valueAsNumber: true })} 
+                    <Input
+                        type="number"
+                        {...form.register("window_tolerance_days", { valueAsNumber: true })}
                     />
                     <p className="text-xs text-muted-foreground">Days to "snap" to a promo window if close</p>
+                </div>
+
+                <div className="space-y-2">
+                    <Label>Fast Track Threshold (Rate &gt;)</Label>
+                    <Input
+                        type="number"
+                        step="0.1"
+                        min="5"
+                        max="10"
+                        {...form.register("track_fast_threshold", { valueAsNumber: true })}
+                    />
+                    <p className="text-xs text-muted-foreground">Rate above this → Fast track (e.g. 8.5)</p>
+                </div>
+
+                <div className="space-y-2">
+                    <Label>Slow Track Threshold (Rate &gt;)</Label>
+                    <Input
+                        type="number"
+                        step="0.1"
+                        min="5"
+                        max="10"
+                        {...form.register("track_slow_threshold", { valueAsNumber: true })}
+                    />
+                    <p className="text-xs text-muted-foreground">Rate above this → On Track; below → Slow (e.g. 7.0)</p>
                 </div>
             </div>
 

@@ -16,6 +16,7 @@ export function StatusBadge({ status, variant = "default" }: StatusBadgeProps) {
         colors = "bg-purple-100 text-purple-700 border-purple-200";
         break;
       case "Normal":
+      case "On Track":
         colors = "bg-green-100 text-green-700 border-green-200";
         break;
       case "Slow":

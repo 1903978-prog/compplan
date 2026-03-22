@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Calendar, Star, Upload } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { employeeInputSchema, type EmployeeInput } from "@shared/schema";
+import { employeeInputSchema, type EmployeeInput, type CompletedTest } from "@shared/schema";
 import { v4 as uuidv4 } from "uuid";
 import { useToast } from "@/hooks/use-toast";
 import { calculateEmployeeMetrics } from "@/lib/calculations";
@@ -21,7 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
 
 function BandPosition({ metrics }: { metrics: any }) {
-  const renderLine = (label: string, min: number, max: number, val: number, isNA: boolean, tooltip: React.ReactNode) => {
+  const renderLine = (label: string, min: number, max: number, val: number, noNextRole: boolean, showMarker: boolean, tooltip: React.ReactNode) => {
     const pos = max === min ? 50 : Math.min(Math.max(((val - min) / (max - min)) * 100, 0), 100);
     const isOutOfBand = val < min || val > max;
 
@@ -29,24 +29,28 @@ function BandPosition({ metrics }: { metrics: any }) {
       <div className="space-y-0.5">
         <div className="flex justify-between text-[8px] text-muted-foreground uppercase font-bold tracking-tighter">
           <span>{label}</span>
-          {isNA && <span className="text-destructive/50">N/A</span>}
+          {noNextRole && <span className="text-destructive/50">N/A</span>}
         </div>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="relative h-2 w-full bg-muted rounded-full overflow-visible group cursor-help">
-                {!isNA && (
+                {!noNextRole && (
                   <>
                     <div className="absolute top-0 bottom-0 left-0 right-0 flex justify-between px-0.5 pointer-events-none">
                       <span className="text-[9px] font-bold self-center">€{Math.round(min/1000)}k</span>
                       <span className="text-[9px] font-bold self-center">€{Math.round(max/1000)}k</span>
                     </div>
-                    <div 
-                      className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border border-background shadow-sm transition-all ${isOutOfBand ? 'bg-destructive' : 'bg-primary'}`}
-                      style={{ left: `${pos}%` }}
-                    />
-                    {val < min && <span className="absolute -left-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&lt;</span>}
-                    {val > max && <span className="absolute -right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&gt;</span>}
+                    {showMarker && (
+                      <>
+                        <div
+                          className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border border-background shadow-sm transition-all ${isOutOfBand ? 'bg-destructive' : 'bg-primary'}`}
+                          style={{ left: `${pos}%` }}
+                        />
+                        {val < min && <span className="absolute -left-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&lt;</span>}
+                        {val > max && <span className="absolute -right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-destructive">&gt;</span>}
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -60,22 +64,24 @@ function BandPosition({ metrics }: { metrics: any }) {
     );
   };
 
-    const isNA = metrics.performance_score <= 5 || !metrics.next_role_code;
-    const annualNow = metrics.annual_now;
-    const annualFuture = metrics.annual_future;
-    
-    if (!annualNow) {
-      return <div className="text-[10px] text-muted-foreground italic">Missing salary</div>;
-    }
+  const perfScore: number | null = metrics.performance_score;
+  const hasPromotion = perfScore !== null && perfScore > 5 && !!metrics.next_role_code;
+  const annualNow = metrics.annual_now;
+  const annualFuture = metrics.annual_future;
+
+  if (!annualNow) {
+    return <div className="text-[10px] text-muted-foreground italic">Missing salary</div>;
+  }
 
   return (
     <div className="flex flex-col gap-1 py-1 w-[160px]">
       {renderLine(
-        "Now", 
-        metrics.current_min, 
-        metrics.current_max, 
-        annualNow, 
+        "Now",
+        metrics.current_min,
+        metrics.current_max,
+        annualNow,
         false,
+        true,
         <div className="space-y-1">
           <div className="font-bold">Current Annual Gross: €{Math.round(annualNow).toLocaleString()}</div>
           <div className="text-muted-foreground">Band: €{Math.round(metrics.current_min).toLocaleString()} – €{Math.round(metrics.current_max).toLocaleString()}</div>
@@ -83,13 +89,16 @@ function BandPosition({ metrics }: { metrics: any }) {
         </div>
       )}
       {renderLine(
-        "Next", 
-        metrics.next_min, 
-        metrics.next_max, 
-        annualFuture, 
-        isNA,
+        "Next",
+        metrics.next_min,
+        metrics.next_max,
+        annualFuture,
+        !metrics.next_role_code,
+        hasPromotion,
         <div className="space-y-1">
-          {metrics.performance_score <= 5 ? (
+          {perfScore === null ? (
+            <div className="text-muted-foreground italic">Add monthly ratings to see projection</div>
+          ) : perfScore <= 5 ? (
             <div className="font-bold text-destructive">N/A - No promotion (Rate ≤ 5)</div>
           ) : !metrics.next_role_code ? (
             <div className="font-bold text-primary">N/A - Top role reached</div>
@@ -426,6 +435,7 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
     current_bonus_pct: 0,
     performance_score: 7,
     monthly_ratings: [],
+    completed_tests: [],
   };
 
   const editingEmployee = editingId ? employees.find(e => e.id === editingId) : null;
@@ -447,14 +457,18 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
   }, [open, editingId, editingEmployee, form]);
 
   const onSubmit = async (data: EmployeeInput) => {
-    if (editingId) {
-      await updateEmployee(editingId, data);
-      toast({ title: "Employee updated successfully" });
-    } else {
-      await addEmployee({ ...data, id: uuidv4() });
-      toast({ title: "Employee created successfully" });
+    try {
+      if (editingId) {
+        await updateEmployee(editingId, data);
+        toast({ title: "Employee updated successfully" });
+      } else {
+        await addEmployee({ ...data, id: uuidv4() });
+        toast({ title: "Employee created successfully" });
+      }
+      onOpenChange(false);
+    } catch (err) {
+      toast({ title: "Error saving employee", description: String(err), variant: "destructive" });
     }
-    onOpenChange(false);
   };
 
   return (
@@ -684,28 +698,51 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
 
             <div className="space-y-4 col-span-2 border-t pt-4">
               <Label className="text-base font-bold">Completed Tests</Label>
-              <div className="grid grid-cols-2 gap-4">
-                {settings.tests.map(test => (
-                  <div key={test.id} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      id={`test-${test.id}`}
-                      checked={form.watch("completed_tests")?.includes(test.id)}
-                      onChange={(e) => {
-                        const current = form.getValues("completed_tests") || [];
-                        if (e.target.checked) {
-                          form.setValue("completed_tests", [...current, test.id]);
-                        } else {
-                          form.setValue("completed_tests", current.filter(id => id !== test.id));
-                        }
-                      }}
-                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                    />
-                    <Label htmlFor={`test-${test.id}`} className="text-sm font-normal cursor-pointer">
-                      {test.name}
-                    </Label>
-                  </div>
-                ))}
+              <div className="grid grid-cols-2 gap-3">
+                {settings.tests.map(test => {
+                  const completedTests: CompletedTest[] = form.watch("completed_tests") || [];
+                  const entry = completedTests.find(ct => ct.id === test.id);
+                  const isChecked = !!entry;
+                  return (
+                    <div key={test.id} className={`flex items-center gap-2 p-2 rounded-lg border ${isChecked ? 'bg-primary/5 border-primary/20' : 'bg-muted/10'}`}>
+                      <input
+                        type="checkbox"
+                        id={`test-${test.id}`}
+                        checked={isChecked}
+                        onChange={(e) => {
+                          const current: CompletedTest[] = form.getValues("completed_tests") || [];
+                          if (e.target.checked) {
+                            form.setValue("completed_tests", [...current, { id: test.id, score: null }]);
+                          } else {
+                            form.setValue("completed_tests", current.filter(ct => ct.id !== test.id));
+                          }
+                        }}
+                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      />
+                      <Label htmlFor={`test-${test.id}`} className="text-sm font-normal cursor-pointer flex-1">
+                        {test.name}
+                      </Label>
+                      {isChecked && (
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          placeholder="Score"
+                          className="h-7 w-20 text-xs"
+                          value={entry?.score ?? ""}
+                          onChange={(e) => {
+                            const current: CompletedTest[] = [...(form.getValues("completed_tests") || [])];
+                            const idx = current.findIndex(ct => ct.id === test.id);
+                            if (idx !== -1) {
+                              current[idx] = { ...current[idx], score: e.target.value === "" ? null : Number(e.target.value) };
+                              form.setValue("completed_tests", current);
+                            }
+                          }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
