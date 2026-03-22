@@ -9,7 +9,7 @@ import { RoleGridRow } from "@shared/schema";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
-// Lookup table: [ral_k, gross_piva_eur] - sorted by gross ascending
+// Lookup table: [ral_k, gross_piva_eur] - sorted by gross ascending for interpolation
 const RAL_TABLE: [number, number][] = [
   [10, 11200], [12, 15200], [20, 22724], [21, 23503], [22, 24288],
   [23, 25312], [24, 26336], [25, 26964], [26, 27807], [27, 28559],
@@ -19,7 +19,11 @@ const RAL_TABLE: [number, number][] = [
   [44, 39404], [45, 40469], [46, 40777], [47, 41463], [48, 42238],
   [49, 43253], [50, 43557], [51, 44765], [52, 44921], [53, 46157],
   [54, 46324], [55, 47549], [56, 48245], [57, 48941], [58, 49092],
-  [59, 50333], [60, 50486],
+  [59, 50333], [60, 50486], [62, 52312], [61, 52848], [65, 54296],
+  [63, 54320], [64, 55056], [70, 56000], [73, 57776], [80, 63280],
+  [90, 69952], [100, 76608], [110, 83200], [120, 89952], [130, 96624],
+  [140, 103280], [150, 109952], [160, 116624], [170, 123200], [180, 129920],
+  [190, 136480], [200, 143200], [215, 152000],
 ];
 
 function grossToRal(grossAnnual: number): number {
