@@ -9,10 +9,37 @@ import { RoleGridRow } from "@shared/schema";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
+// Lookup table: [ral_k, gross_piva_eur] - sorted by gross ascending
+const RAL_TABLE: [number, number][] = [
+  [10, 11200], [12, 15200], [20, 22724], [21, 23503], [22, 24288],
+  [23, 25312], [24, 26336], [25, 26964], [26, 27807], [27, 28559],
+  [28, 29354], [29, 29619], [30, 30423], [31, 31246], [32, 31998],
+  [33, 32654], [34, 33305], [35, 33808], [36, 34336], [37, 34992],
+  [38, 35456], [40, 36660], [41, 37685], [42, 38041], [43, 39077],
+  [44, 39404], [45, 40469], [46, 40777], [47, 41463], [48, 42238],
+  [49, 43253], [50, 43557], [51, 44765], [52, 44921], [53, 46157],
+  [54, 46324], [55, 47549], [56, 48245], [57, 48941], [58, 49092],
+  [59, 50333], [60, 50486],
+];
+
+function grossToRal(grossAnnual: number): number {
+  if (grossAnnual <= RAL_TABLE[0][1]) return RAL_TABLE[0][0];
+  if (grossAnnual >= RAL_TABLE[RAL_TABLE.length - 1][1]) return RAL_TABLE[RAL_TABLE.length - 1][0];
+  for (let i = 0; i < RAL_TABLE.length - 1; i++) {
+    const [ral1, gross1] = RAL_TABLE[i];
+    const [ral2, gross2] = RAL_TABLE[i + 1];
+    if (grossAnnual >= gross1 && grossAnnual <= gross2) {
+      const t = (grossAnnual - gross1) / (gross2 - gross1);
+      return Math.round((ral1 + t * (ral2 - ral1)) * 10) / 10;
+    }
+  }
+  return RAL_TABLE[RAL_TABLE.length - 1][0];
+}
+
 export default function RoleGridPage() {
   const { roleGrid, updateRoleGrid, resetDefaults } = useStore();
   const { toast } = useToast();
-  
+
   // Local state for editing to avoid constant store updates on every keystroke
   const [gridState, setGridState] = useState(roleGrid);
   const [hasChanges, setHasChanges] = useState(false);
@@ -21,6 +48,21 @@ export default function RoleGridPage() {
     const newGrid = [...gridState];
     // @ts-ignore - dynamic key assignment
     newGrid[index][field] = value;
+    setGridState(newGrid);
+    setHasChanges(true);
+  };
+
+  const handleGrossChange = (index: number, isMin: boolean, annualK: number) => {
+    if (isNaN(annualK)) return;
+    const row = gridState[index];
+    const monthlyGross = Math.round(annualK * 1000 / row.months_paid);
+    const ral = grossToRal(annualK * 1000);
+    const newGrid = [...gridState];
+    if (isMin) {
+      newGrid[index] = { ...newGrid[index], gross_fixed_min_month: monthlyGross, ral_min_k: ral };
+    } else {
+      newGrid[index] = { ...newGrid[index], gross_fixed_max_month: monthlyGross, ral_max_k: ral };
+    }
     setGridState(newGrid);
     setHasChanges(true);
   };
@@ -113,23 +155,17 @@ export default function RoleGridPage() {
                   </TableCell>
                   <TableCell className="border-l">
                      <Input
-                        type="number" step="100"
+                        type="number" step="0.1"
                         value={Math.round(row.gross_fixed_min_month * row.months_paid / 1000 * 10) / 10}
-                        onChange={(e) => {
-                          const annualK = parseFloat(e.target.value);
-                          if (!isNaN(annualK)) handleCellChange(index, "gross_fixed_min_month", Math.round(annualK * 1000 / row.months_paid));
-                        }}
+                        onChange={(e) => handleGrossChange(index, true, parseFloat(e.target.value))}
                         className="h-8 w-20 mx-auto text-right font-mono"
                       />
                   </TableCell>
                   <TableCell>
                      <Input
-                        type="number" step="100"
+                        type="number" step="0.1"
                         value={Math.round(row.gross_fixed_max_month * row.months_paid / 1000 * 10) / 10}
-                        onChange={(e) => {
-                          const annualK = parseFloat(e.target.value);
-                          if (!isNaN(annualK)) handleCellChange(index, "gross_fixed_max_month", Math.round(annualK * 1000 / row.months_paid));
-                        }}
+                        onChange={(e) => handleGrossChange(index, false, parseFloat(e.target.value))}
                         className="h-8 w-20 mx-auto text-right font-mono"
                       />
                   </TableCell>
