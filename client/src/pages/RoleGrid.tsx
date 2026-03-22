@@ -56,17 +56,47 @@ export default function RoleGridPage() {
     setHasChanges(true);
   };
 
+  const applyGrossMin = (grid: typeof gridState, index: number, annualEur: number) => {
+    const row = grid[index];
+    const monthlyGross = Math.round(annualEur / row.months_paid);
+    const ral = grossToRal(annualEur);
+    grid[index] = { ...grid[index], gross_fixed_min_month: monthlyGross, ral_min_k: ral };
+  };
+
+  const applyGrossMax = (grid: typeof gridState, index: number, annualEur: number) => {
+    const row = grid[index];
+    const monthlyGross = Math.round(annualEur / row.months_paid);
+    const ral = grossToRal(annualEur);
+    grid[index] = { ...grid[index], gross_fixed_max_month: monthlyGross, ral_max_k: ral };
+  };
+
   const handleGrossChange = (index: number, isMin: boolean, annualK: number) => {
     if (isNaN(annualK)) return;
-    const row = gridState[index];
-    const monthlyGross = Math.round(annualK * 1000 / row.months_paid);
-    const ral = grossToRal(annualK * 1000);
     const newGrid = [...gridState];
-    if (isMin) {
-      newGrid[index] = { ...newGrid[index], gross_fixed_min_month: monthlyGross, ral_min_k: ral };
-    } else {
-      newGrid[index] = { ...newGrid[index], gross_fixed_max_month: monthlyGross, ral_max_k: ral };
-    }
+    if (isMin) applyGrossMin(newGrid, index, annualK * 1000);
+    else applyGrossMax(newGrid, index, annualK * 1000);
+    setGridState(newGrid);
+    setHasChanges(true);
+  };
+
+  const handleMinIncreaseChange = (index: number, pct: number) => {
+    if (isNaN(pct) || index === 0) return;
+    const prev = gridState[index - 1];
+    const prevMinAnnual = prev.gross_fixed_min_month * prev.months_paid;
+    const newMinAnnual = Math.round(prevMinAnnual * (1 + pct / 100));
+    const newGrid = [...gridState];
+    applyGrossMin(newGrid, index, newMinAnnual);
+    setGridState(newGrid);
+    setHasChanges(true);
+  };
+
+  const handleMaxVsMinChange = (index: number, pct: number) => {
+    if (isNaN(pct)) return;
+    const row = gridState[index];
+    const curMinAnnual = row.gross_fixed_min_month * row.months_paid;
+    const newMaxAnnual = Math.round(curMinAnnual * (1 + pct / 100));
+    const newGrid = [...gridState];
+    applyGrossMax(newGrid, index, newMaxAnnual);
     setGridState(newGrid);
     setHasChanges(true);
   };
@@ -118,6 +148,8 @@ export default function RoleGridPage() {
                 <TableHead className="text-center border-l text-muted-foreground font-normal">RAL min (k€)</TableHead>
                 <TableHead className="text-center text-muted-foreground font-normal">RAL max (k€)</TableHead>
                 <TableHead className="text-center border-l">Bonus %</TableHead>
+                <TableHead className="text-center border-l">% Min Inc.</TableHead>
+                <TableHead className="text-center">% Max/Min</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -199,6 +231,39 @@ export default function RoleGridPage() {
                         />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
                      </div>
+                  </TableCell>
+                  <TableCell className="border-l">
+                     {index === 0 ? (
+                       <span className="block w-20 mx-auto text-center text-muted-foreground text-sm">—</span>
+                     ) : (() => {
+                       const prev = gridState[index - 1];
+                       const prevMin = prev.gross_fixed_min_month * prev.months_paid;
+                       const curMin = row.gross_fixed_min_month * row.months_paid;
+                       const pct = prevMin > 0 ? Math.round((curMin / prevMin - 1) * 1000) / 10 : 0;
+                       return (
+                         <div className="relative w-20 mx-auto">
+                           <Input type="number" step="0.5" value={pct}
+                             onChange={(e) => handleMinIncreaseChange(index, parseFloat(e.target.value))}
+                             className="h-8 w-full pr-5 text-right font-mono" />
+                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
+                         </div>
+                       );
+                     })()}
+                  </TableCell>
+                  <TableCell>
+                     {(() => {
+                       const curMin = row.gross_fixed_min_month * row.months_paid;
+                       const curMax = row.gross_fixed_max_month * row.months_paid;
+                       const pct = curMin > 0 ? Math.round((curMax / curMin - 1) * 1000) / 10 : 0;
+                       return (
+                         <div className="relative w-20 mx-auto">
+                           <Input type="number" step="0.5" value={pct}
+                             onChange={(e) => handleMaxVsMinChange(index, parseFloat(e.target.value))}
+                             className="h-8 w-full pr-5 text-right font-mono" />
+                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
+                         </div>
+                       );
+                     })()}
                   </TableCell>
                 </TableRow>
               ))}
