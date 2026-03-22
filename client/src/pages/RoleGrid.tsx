@@ -170,25 +170,25 @@ export default function RoleGridPage() {
                   </TableCell>
                   <TableCell className="bg-purple-50/30">
                      <Input
-                        type="number" step="1"
-                        value={row.promo_years_fast}
-                        onChange={(e) => handleCellChange(index, "promo_years_fast", parseFloat(e.target.value))}
+                        type="number" step="1" min="1"
+                        value={Math.round(row.promo_years_fast * 12)}
+                        onChange={(e) => handleCellChange(index, "promo_years_fast", parseInt(e.target.value) / 12)}
                         className="h-8 w-14 mx-auto text-center"
                       />
                   </TableCell>
                   <TableCell className="bg-blue-50/30">
                      <Input
-                        type="number" step="1"
-                        value={row.promo_years_normal}
-                        onChange={(e) => handleCellChange(index, "promo_years_normal", parseFloat(e.target.value))}
+                        type="number" step="1" min="1"
+                        value={Math.round(row.promo_years_normal * 12)}
+                        onChange={(e) => handleCellChange(index, "promo_years_normal", parseInt(e.target.value) / 12)}
                         className="h-8 w-14 mx-auto text-center"
                       />
                   </TableCell>
                   <TableCell className="bg-orange-50/30">
                      <Input
-                        type="number" step="1"
-                        value={row.promo_years_slow}
-                        onChange={(e) => handleCellChange(index, "promo_years_slow", parseFloat(e.target.value))}
+                        type="number" step="1" min="1"
+                        value={Math.round(row.promo_years_slow * 12)}
+                        onChange={(e) => handleCellChange(index, "promo_years_slow", parseInt(e.target.value) / 12)}
                         className="h-8 w-14 mx-auto text-center"
                       />
                   </TableCell>
