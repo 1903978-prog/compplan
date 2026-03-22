@@ -133,16 +133,16 @@ export default function RoleGridPage() {
       />
 
       <Card className="overflow-hidden border-border shadow-md">
-        <div className="overflow-x-auto">
+        <div className="w-full">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
                 <TableHead className="w-[80px]">Code</TableHead>
                 <TableHead className="min-w-[150px]">Role Name</TableHead>
                 <TableHead>Next Role</TableHead>
-                <TableHead className="text-center bg-purple-50/50">Fast (Yrs)</TableHead>
-                <TableHead className="text-center bg-blue-50/50">Norm (Yrs)</TableHead>
-                <TableHead className="text-center bg-orange-50/50">Slow (Yrs)</TableHead>
+                <TableHead className="text-center bg-purple-50/50">Fast (Mo)</TableHead>
+                <TableHead className="text-center bg-blue-50/50">Norm (Mo)</TableHead>
+                <TableHead className="text-center bg-orange-50/50">Slow (Mo)</TableHead>
                 <TableHead className="text-center border-l">Months</TableHead>
                 <TableHead className="text-center border-l">Gross yr min (k€)</TableHead>
                 <TableHead className="text-center">Gross yr max (k€)</TableHead>
@@ -170,26 +170,26 @@ export default function RoleGridPage() {
                   </TableCell>
                   <TableCell className="bg-purple-50/30">
                      <Input
-                        type="number" step="0.5"
+                        type="number" step="1"
                         value={row.promo_years_fast}
                         onChange={(e) => handleCellChange(index, "promo_years_fast", parseFloat(e.target.value))}
-                        className="h-8 w-16 mx-auto text-center"
+                        className="h-8 w-14 mx-auto text-center"
                       />
                   </TableCell>
                   <TableCell className="bg-blue-50/30">
                      <Input
-                        type="number" step="0.5"
+                        type="number" step="1"
                         value={row.promo_years_normal}
                         onChange={(e) => handleCellChange(index, "promo_years_normal", parseFloat(e.target.value))}
-                        className="h-8 w-16 mx-auto text-center"
+                        className="h-8 w-14 mx-auto text-center"
                       />
                   </TableCell>
                   <TableCell className="bg-orange-50/30">
                      <Input
-                        type="number" step="0.5"
+                        type="number" step="1"
                         value={row.promo_years_slow}
                         onChange={(e) => handleCellChange(index, "promo_years_slow", parseFloat(e.target.value))}
-                        className="h-8 w-16 mx-auto text-center"
+                        className="h-8 w-14 mx-auto text-center"
                       />
                   </TableCell>
                   <TableCell className="border-l text-center">

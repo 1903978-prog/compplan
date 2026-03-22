@@ -153,3 +153,28 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
 });
+
+// ─── Days Off ────────────────────────────────────────────────────────────────
+
+export const daysOffEntrySchema = z.object({
+  id: z.number().optional(),
+  employee_id: z.string(),
+  type: z.enum(["taken", "carryover"]),
+  year: z.number(),
+  start_date: z.string().optional().nullable(),
+  end_date: z.string().optional().nullable(),
+  days: z.number(),
+  note: z.string().optional().nullable(),
+});
+export type DaysOffEntry = z.infer<typeof daysOffEntrySchema>;
+
+export const daysOffEntries = pgTable("days_off_entries", {
+  id: serial("id").primaryKey(),
+  employee_id: text("employee_id").notNull(),
+  type: text("type").notNull().default("taken"),
+  year: integer("year").notNull(),
+  start_date: text("start_date"),
+  end_date: text("end_date"),
+  days: real("days").notNull(),
+  note: text("note"),
+});

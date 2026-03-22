@@ -75,5 +75,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(s);
   });
 
+  // ── Days Off ───────────────────────────────────────────────────────────────
+  app.get("/api/days-off", requireAuth, async (req, res) => {
+    const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+    const entries = await storage.getDaysOff(year);
+    res.json(entries);
+  });
+
+  app.post("/api/days-off", requireAuth, async (req, res) => {
+    const entry = await storage.createDaysOff(req.body);
+    res.status(201).json(entry);
+  });
+
+  app.delete("/api/days-off/:id", requireAuth, async (req, res) => {
+    await storage.deleteDaysOff(parseInt(req.params.id));
+    res.status(204).end();
+  });
+
   return httpServer;
 }

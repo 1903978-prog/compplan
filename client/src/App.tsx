@@ -10,8 +10,9 @@ import Dashboard from "@/pages/Dashboard";
 import EmployeeList from "@/pages/EmployeeList";
 import RoleGridPage from "@/pages/RoleGrid";
 import Settings from "@/pages/Settings";
+import DaysOff from "@/pages/DaysOff";
 import Login from "@/pages/login";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function Navigation() {
@@ -21,6 +22,7 @@ function Navigation() {
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/employees", label: "Employees", icon: Users },
     { href: "/roles", label: "Role Grid", icon: Grid3X3 },
+    { href: "/days-off", label: "Days Off", icon: CalendarDays },
     { href: "/settings", label: "Settings", icon: SettingsIcon },
   ];
 
@@ -66,6 +68,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/employees" component={EmployeeList} />
       <Route path="/roles" component={RoleGridPage} />
+      <Route path="/days-off" component={DaysOff} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
@@ -91,7 +94,7 @@ function AppContent() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <Navigation />
       <main className="flex-1 p-6 md:p-10 overflow-x-hidden">
-        <div className="max-w-7xl mx-auto animate-in fade-in duration-500">
+        <div className="max-w-full mx-auto animate-in fade-in duration-500">
           <Router />
         </div>
       </main>

@@ -1,9 +1,9 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import {
-  employees, roleGridEntries, appSettings,
+  employees, roleGridEntries, appSettings, daysOffEntries,
   type Employee, type InsertEmployee,
-  type AdminSettings, type RoleGridRow,
+  type AdminSettings, type RoleGridRow, type DaysOffEntry,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -21,6 +21,11 @@ export interface IStorage {
   // Settings
   getSettings(): Promise<AdminSettings>;
   updateSettings(data: Partial<AdminSettings>): Promise<AdminSettings>;
+
+  // Days off
+  getDaysOff(year?: number): Promise<DaysOffEntry[]>;
+  createDaysOff(entry: Omit<DaysOffEntry, "id">): Promise<DaysOffEntry>;
+  deleteDaysOff(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -100,8 +105,36 @@ export class DatabaseStorage implements IStorage {
       min_promo_increase_pct: row.min_promo_increase_pct,
       promotion_windows: row.promotion_windows as string[],
       window_tolerance_days: row.window_tolerance_days,
+      track_fast_threshold: row.track_fast_threshold,
+      track_slow_threshold: row.track_slow_threshold,
       tests: row.tests as import("@shared/schema").Test[],
     };
+  }
+
+  async getDaysOff(year?: number): Promise<DaysOffEntry[]> {
+    const rows = year
+      ? await db.select().from(daysOffEntries).where(eq(daysOffEntries.year, year))
+      : await db.select().from(daysOffEntries);
+    return rows.map((r) => ({
+      id: r.id,
+      employee_id: r.employee_id,
+      type: r.type as "taken" | "carryover",
+      year: r.year,
+      start_date: r.start_date ?? undefined,
+      end_date: r.end_date ?? undefined,
+      days: r.days,
+      note: r.note ?? undefined,
+    }));
+  }
+
+  async createDaysOff(entry: Omit<DaysOffEntry, "id">): Promise<DaysOffEntry> {
+    const rows = await db.insert(daysOffEntries).values(entry).returning();
+    const r = rows[0];
+    return { id: r.id, employee_id: r.employee_id, type: r.type as "taken" | "carryover", year: r.year, start_date: r.start_date ?? undefined, end_date: r.end_date ?? undefined, days: r.days, note: r.note ?? undefined };
+  }
+
+  async deleteDaysOff(id: number): Promise<void> {
+    await db.delete(daysOffEntries).where(eq(daysOffEntries.id, id));
   }
 }
 
