@@ -122,8 +122,27 @@ export async function seedDatabase() {
       note TEXT
     )
   `);
-  // Seed role grid if empty
+  // Fix promo_years values: DB must store years (e.g. 0.5 = 6 months).
+  // If any value is < 0.1 the DB got corrupted with wrong values — reset all promo fields.
   const existingRoles = await db.select().from(roleGridEntries);
+  if (existingRoles.length > 0) {
+    const hasCorrupt = existingRoles.some(
+      (r) => r.promo_years_fast < 0.1 || r.promo_years_normal < 0.1 || r.promo_years_slow < 0.1
+    );
+    if (hasCorrupt) {
+      console.log("Fixing corrupted promo_years values in role grid...");
+      for (const def of DEFAULT_ROLE_GRID) {
+        await db.execute(sql`
+          UPDATE role_grid
+          SET promo_years_fast   = ${def.promo_years_fast},
+              promo_years_normal = ${def.promo_years_normal},
+              promo_years_slow   = ${def.promo_years_slow}
+          WHERE role_code = ${def.role_code}
+        `);
+      }
+      console.log("Promo years fixed.");
+    }
+  }
   if (existingRoles.length === 0) {
     console.log("Seeding role grid...");
     await db.insert(roleGridEntries).values(DEFAULT_ROLE_GRID);
