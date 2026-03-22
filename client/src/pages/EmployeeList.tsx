@@ -426,7 +426,7 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
     name: "",
     date_of_birth: "1990-01-01",
     current_role_code: roleGrid[0]?.role_code || "",
-    hire_date: new Date().toISOString().slice(0, 7), // YYYY-MM
+    hire_date: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
     tenure_before_years: 0,
     last_promo_date: "", // Default to empty
     current_gross_fixed_year: 30000,
@@ -514,8 +514,8 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
             </div>
 
             <div className="space-y-2">
-              <Label>Hire Date (YYYY-MM)</Label>
-              <Input type="month" {...form.register("hire_date")} />
+              <Label>Hire Date</Label>
+              <Input type="date" {...form.register("hire_date")} />
             </div>
 
             <div className="space-y-2">

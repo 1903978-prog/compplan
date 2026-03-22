@@ -29,7 +29,9 @@ export const calculateEmployeeMetrics = (
   const dob = parseISO(employee.date_of_birth);
   const age = differenceInYears(today, dob);
   
-  const hireDate = parse(employee.hire_date, "yyyy-MM", new Date());
+  const hireDate = employee.hire_date.length === 10
+    ? parse(employee.hire_date, "yyyy-MM-dd", new Date())
+    : parse(employee.hire_date, "yyyy-MM", new Date());
   // Use today's date for comparison
   const monthsDiff = (today.getFullYear() - hireDate.getFullYear()) * 12 + (today.getMonth() - hireDate.getMonth());
   const hireTenure = Number((monthsDiff / 12).toFixed(1));
@@ -121,7 +123,7 @@ export const calculateEmployeeMetrics = (
   const baseDate = employee.last_promo_date ? parseISO(employee.last_promo_date) : hireDate;
   
   const calculateEffectiveDate = (promoMonths: number) => {
-    const eligibilityDate = addMonths(baseDate, Math.round(promoMonths));
+    const eligibilityDate = addMonths(baseDate, Math.round(promoMonths * 12));
     let validDate = eligibilityDate;
     let found = false;
 
@@ -160,7 +162,7 @@ export const calculateEmployeeMetrics = (
     const { eligibilityDate, effectiveDate } = calculateEffectiveDate(t.months);
     return {
       label: t.label as "Fast" | "Normal" | "Slow",
-      months: Math.round(t.months),
+      months: Math.round(t.months * 12),
       eligibilityDate,
       effectiveDate,
       isRecommended: recommended_track === t.label
@@ -296,16 +298,16 @@ export const calculateEmployeeMetrics = (
 };
 
 export const DEFAULT_ROLE_GRID: RoleGridRow[] = [
-    { role_code: "INT", role_name: "Intern",              next_role_code: "BA",  promo_years_fast: 3,  promo_years_normal: 6,  promo_years_slow: 9,  ral_min_k: 10,   ral_max_k: 12,   gross_fixed_min_month: 850,  gross_fixed_max_month: 1275, bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12 },
-    { role_code: "BA",  role_name: "Business Analyst",    next_role_code: "A1",  promo_years_fast: 9,  promo_years_normal: 12, promo_years_slow: 18, ral_min_k: 16.3, ral_max_k: 27.3, gross_fixed_min_month: 1600, gross_fixed_max_month: 2400, bonus_pct: 0,  meal_voucher_eur_per_day: 8, months_paid: 12 },
-    { role_code: "A1",  role_name: "Associate 1",         next_role_code: "A2",  promo_years_fast: 6,  promo_years_normal: 9,  promo_years_slow: 12, ral_min_k: 19.7, ral_max_k: 23.5, gross_fixed_min_month: 1872, gross_fixed_max_month: 2153, bonus_pct: 10, meal_voucher_eur_per_day: 8, months_paid: 12 },
-    { role_code: "A2",  role_name: "Associate 2",         next_role_code: "S1",  promo_years_fast: 6,  promo_years_normal: 9,  promo_years_slow: 12, ral_min_k: 24.7, ral_max_k: 30.4, gross_fixed_min_month: 2059, gross_fixed_max_month: 2368, bonus_pct: 10, meal_voucher_eur_per_day: 8, months_paid: 13 },
-    { role_code: "S1",  role_name: "Senior 1",            next_role_code: "S2",  promo_years_fast: 6,  promo_years_normal: 9,  promo_years_slow: 12, ral_min_k: 28.4, ral_max_k: 35.1, gross_fixed_min_month: 2265, gross_fixed_max_month: 2605, bonus_pct: 15, meal_voucher_eur_per_day: 8, months_paid: 13 },
-    { role_code: "S2",  role_name: "Senior 2",            next_role_code: "C1",  promo_years_fast: 6,  promo_years_normal: 9,  promo_years_slow: 12, ral_min_k: 31.3, ral_max_k: 39.3, gross_fixed_min_month: 2424, gross_fixed_max_month: 2787, bonus_pct: 15, meal_voucher_eur_per_day: 8, months_paid: 13 },
-    { role_code: "C1",  role_name: "Consultant 1",        next_role_code: "C2",  promo_years_fast: 9,  promo_years_normal: 12, promo_years_slow: 18, ral_min_k: 33.7, ral_max_k: 44.3, gross_fixed_min_month: 2545, gross_fixed_max_month: 3054, bonus_pct: 20, meal_voucher_eur_per_day: 8, months_paid: 13 },
-    { role_code: "C2",  role_name: "Consultant 2",        next_role_code: "EM1", promo_years_fast: 9,  promo_years_normal: 12, promo_years_slow: 18, ral_min_k: 40.4, ral_max_k: 50.8, gross_fixed_min_month: 2850, gross_fixed_max_month: 3420, bonus_pct: 20, meal_voucher_eur_per_day: 8, months_paid: 13 },
-    { role_code: "EM1", role_name: "Engagement Manager 1",next_role_code: "EM2", promo_years_fast: 12, promo_years_normal: 18, promo_years_slow: 24, ral_min_k: 50.8, ral_max_k: 62.4, gross_fixed_min_month: 3420, gross_fixed_max_month: 4104, bonus_pct: 20, meal_voucher_eur_per_day: 8, months_paid: 13 },
-    { role_code: "EM2", role_name: "Engagement Manager 2",next_role_code: null,  promo_years_fast: 12, promo_years_normal: 18, promo_years_slow: 24, ral_min_k: 62.4, ral_max_k: 81.1, gross_fixed_min_month: 4104, gross_fixed_max_month: 4925, bonus_pct: 25, meal_voucher_eur_per_day: 8, months_paid: 13 },
+    { role_code: "INT", role_name: "Intern",               next_role_code: "BA",  promo_years_fast: 0.25, promo_years_normal: 0.5,  promo_years_slow: 0.75, ral_min_k: 10,   ral_max_k: 12,   gross_fixed_min_month: 850,  gross_fixed_max_month: 1275, bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12 },
+    { role_code: "BA",  role_name: "Business Analyst",     next_role_code: "A1",  promo_years_fast: 0.75, promo_years_normal: 1.0,  promo_years_slow: 1.5,  ral_min_k: 16.3, ral_max_k: 27.3, gross_fixed_min_month: 1600, gross_fixed_max_month: 2400, bonus_pct: 0,  meal_voucher_eur_per_day: 8, months_paid: 12 },
+    { role_code: "A1",  role_name: "Associate 1",          next_role_code: "A2",  promo_years_fast: 0.5,  promo_years_normal: 0.75, promo_years_slow: 1.0,  ral_min_k: 19.7, ral_max_k: 23.5, gross_fixed_min_month: 1872, gross_fixed_max_month: 2153, bonus_pct: 10, meal_voucher_eur_per_day: 8, months_paid: 12 },
+    { role_code: "A2",  role_name: "Associate 2",          next_role_code: "S1",  promo_years_fast: 0.5,  promo_years_normal: 0.75, promo_years_slow: 1.0,  ral_min_k: 24.7, ral_max_k: 30.4, gross_fixed_min_month: 2059, gross_fixed_max_month: 2368, bonus_pct: 10, meal_voucher_eur_per_day: 8, months_paid: 13 },
+    { role_code: "S1",  role_name: "Senior 1",             next_role_code: "S2",  promo_years_fast: 0.5,  promo_years_normal: 0.75, promo_years_slow: 1.0,  ral_min_k: 28.4, ral_max_k: 35.1, gross_fixed_min_month: 2265, gross_fixed_max_month: 2605, bonus_pct: 15, meal_voucher_eur_per_day: 8, months_paid: 13 },
+    { role_code: "S2",  role_name: "Senior 2",             next_role_code: "C1",  promo_years_fast: 0.5,  promo_years_normal: 0.75, promo_years_slow: 1.0,  ral_min_k: 31.3, ral_max_k: 39.3, gross_fixed_min_month: 2424, gross_fixed_max_month: 2787, bonus_pct: 15, meal_voucher_eur_per_day: 8, months_paid: 13 },
+    { role_code: "C1",  role_name: "Consultant 1",         next_role_code: "C2",  promo_years_fast: 0.75, promo_years_normal: 1.0,  promo_years_slow: 1.5,  ral_min_k: 33.7, ral_max_k: 44.3, gross_fixed_min_month: 2545, gross_fixed_max_month: 3054, bonus_pct: 20, meal_voucher_eur_per_day: 8, months_paid: 13 },
+    { role_code: "C2",  role_name: "Consultant 2",         next_role_code: "EM1", promo_years_fast: 0.75, promo_years_normal: 1.0,  promo_years_slow: 1.5,  ral_min_k: 40.4, ral_max_k: 50.8, gross_fixed_min_month: 2850, gross_fixed_max_month: 3420, bonus_pct: 20, meal_voucher_eur_per_day: 8, months_paid: 13 },
+    { role_code: "EM1", role_name: "Engagement Manager 1", next_role_code: "EM2", promo_years_fast: 1.0,  promo_years_normal: 1.5,  promo_years_slow: 2.0,  ral_min_k: 50.8, ral_max_k: 62.4, gross_fixed_min_month: 3420, gross_fixed_max_month: 4104, bonus_pct: 20, meal_voucher_eur_per_day: 8, months_paid: 13 },
+    { role_code: "EM2", role_name: "Engagement Manager 2", next_role_code: null,  promo_years_fast: 1.0,  promo_years_normal: 1.5,  promo_years_slow: 2.0,  ral_min_k: 62.4, ral_max_k: 81.1, gross_fixed_min_month: 4104, gross_fixed_max_month: 4925, bonus_pct: 25, meal_voucher_eur_per_day: 8, months_paid: 13 },
 ];
 
 export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {

@@ -17,21 +17,26 @@ import { apiRequest } from "@/lib/queryClient";
 
 const CURRENT_YEAR = new Date().getFullYear();
 
-// Days accrued at the last day of each passed month this year
+// Days accrue from the month AFTER hiring (unless hired on the 1st, in which case the hire month counts).
+// Supports hire_date as YYYY-MM or YYYY-MM-DD.
 function accruedDays(hireDate: string, year: number): number {
   const today = new Date();
   if (today.getFullYear() < year) return 0;
 
-  const [hy, hm] = hireDate.split("-").map(Number);
-  const hireMonthStart = new Date(hy, hm - 1, 1);
-  const yearStart = new Date(year, 0, 1);
-  const effectiveStart = hireMonthStart > yearStart ? hireMonthStart : yearStart;
+  const parts = hireDate.split("-").map(Number);
+  const hy = parts[0], hm = parts[1], hd = parts[2] ?? 1;
+  // First month that accrues: hire month if hired on day 1, otherwise next month
+  const firstAccrualMonth = hd === 1 ? hm - 1 : hm; // 0-indexed
+  const firstAccrualYear = hy + Math.floor(firstAccrualMonth / 12);
+  const firstAccrualM = firstAccrualMonth % 12; // 0-indexed month in year
 
   let accrued = 0;
   for (let m = 0; m < 12; m++) {
-    const lastDay = new Date(year, m + 1, 0); // last day of month
+    const lastDay = new Date(year, m + 1, 0);
     if (lastDay > today) break;
-    if (new Date(year, m, 1) < effectiveStart) continue;
+    // Skip months before first accrual
+    if (year < firstAccrualYear) continue;
+    if (year === firstAccrualYear && m < firstAccrualM) continue;
     accrued += m === 11 ? 3 : 2;
   }
   return accrued;
