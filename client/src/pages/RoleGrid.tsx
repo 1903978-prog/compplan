@@ -143,8 +143,11 @@ export default function RoleGridPage() {
                 <TableHead className="text-center bg-purple-50/50">Fast (Yrs)</TableHead>
                 <TableHead className="text-center bg-blue-50/50">Norm (Yrs)</TableHead>
                 <TableHead className="text-center bg-orange-50/50">Slow (Yrs)</TableHead>
-                <TableHead className="text-center border-l">Gross fixed min (k€)</TableHead>
-                <TableHead className="text-center">Gross fixed max (k€)</TableHead>
+                <TableHead className="text-center border-l">Months</TableHead>
+                <TableHead className="text-center border-l">Gross yr min (k€)</TableHead>
+                <TableHead className="text-center">Gross yr max (k€)</TableHead>
+                <TableHead className="text-center border-l text-muted-foreground font-normal">Monthly min (€)</TableHead>
+                <TableHead className="text-center text-muted-foreground font-normal">Monthly max (€)</TableHead>
                 <TableHead className="text-center border-l text-muted-foreground font-normal">RAL min (k€)</TableHead>
                 <TableHead className="text-center text-muted-foreground font-normal">RAL max (k€)</TableHead>
                 <TableHead className="text-center border-l">Bonus %</TableHead>
@@ -189,6 +192,14 @@ export default function RoleGridPage() {
                         className="h-8 w-16 mx-auto text-center"
                       />
                   </TableCell>
+                  <TableCell className="border-l text-center">
+                     <Input
+                        type="number" step="1" min="12" max="13"
+                        value={row.months_paid}
+                        onChange={(e) => handleCellChange(index, "months_paid", parseInt(e.target.value))}
+                        className="h-8 w-14 mx-auto text-center font-mono"
+                      />
+                  </TableCell>
                   <TableCell className="border-l">
                      <Input
                         type="number" step="1"
@@ -204,6 +215,16 @@ export default function RoleGridPage() {
                         onChange={(e) => handleGrossChange(index, false, parseFloat(e.target.value))}
                         className="h-8 w-20 mx-auto text-right font-mono"
                       />
+                  </TableCell>
+                  <TableCell className="border-l">
+                     <span className="block w-20 mx-auto text-right font-mono text-muted-foreground text-sm pr-1">
+                       {row.gross_fixed_min_month.toLocaleString("it-IT")}
+                     </span>
+                  </TableCell>
+                  <TableCell>
+                     <span className="block w-20 mx-auto text-right font-mono text-muted-foreground text-sm pr-1">
+                       {row.gross_fixed_max_month.toLocaleString("it-IT")}
+                     </span>
                   </TableCell>
                   <TableCell className="border-l">
                      <Input
