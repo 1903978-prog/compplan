@@ -1,4 +1,4 @@
-import { addDays, addMonths, addYears, format, isAfter, isBefore, parse, setYear, isSameDay, differenceInYears, parseISO } from "date-fns";
+import { addMonths, format, parse, differenceInYears, parseISO } from "date-fns";
 import type { EmployeeInput, RoleGridRow, AdminSettings, EmployeeCalculationResult } from "@shared/schema";
 
 export const calculateEmployeeMetrics = (
@@ -120,38 +120,14 @@ export const calculateEmployeeMetrics = (
   }
 
   // 3. Calculate All Tracks
-  const baseDate = employee.last_promo_date ? parseISO(employee.last_promo_date) : hireDate;
-  
+  // Base date is always hire date — promo duration counts from when the employee joined
+  const baseDate = hireDate;
+
   const calculateEffectiveDate = (promoMonths: number) => {
     const eligibilityDate = addMonths(baseDate, Math.round(promoMonths * 12));
-    let validDate = eligibilityDate;
-    let found = false;
-
-    // Ordered windows for current and next year
-    const years = [eligibilityDate.getFullYear(), eligibilityDate.getFullYear() + 1];
-    for (const year of years) {
-      for (const windowStr of settings.promotion_windows) {
-        const [month, day] = windowStr.split("-").map(Number);
-        const windowDate = new Date(year, month - 1, day);
-        const windowPlus21 = addDays(windowDate, 21);
-
-        // Tolerance: If eligibility is within [Window, Window + 21 days]
-        if ((isSameDay(eligibilityDate, windowDate) || isAfter(eligibilityDate, windowDate)) && 
-            (isBefore(eligibilityDate, windowPlus21) || isSameDay(eligibilityDate, windowPlus21))) {
-          validDate = windowDate;
-          found = true;
-          break;
-        } 
-        // Otherwise, first window strictly after eligibility
-        if (isAfter(windowDate, eligibilityDate)) {
-          validDate = windowDate;
-          found = true;
-          break;
-        }
-      }
-      if (found) break;
-    }
-    return { eligibilityDate, effectiveDate: validDate };
+    // Effective date = 1st of the month immediately after eligibility
+    const effectiveDate = new Date(eligibilityDate.getFullYear(), eligibilityDate.getMonth() + 1, 1);
+    return { eligibilityDate, effectiveDate };
   };
 
   const tracks = [
@@ -181,44 +157,7 @@ export const calculateEmployeeMetrics = (
   } else {
     const recTrack = tracks.find(t => t.isRecommended);
     if (recTrack) {
-      let effectiveDate = recTrack.effectiveDate;
-      
-      // Promotion date override rule for Fast/Normal tracks
-      if ((recommended_track === "Fast" || recommended_track === "Normal") && employee.last_promo_date) {
-        const lastPromoDate = parseISO(employee.last_promo_date);
-        const twelveMonthGate = addMonths(lastPromoDate, 12);
-        
-        if (isAfter(effectiveDate, twelveMonthGate)) {
-          // Set to first promo window on or after twelveMonthGate
-          let overrideDate = twelveMonthGate;
-          let found = false;
-          const years = [twelveMonthGate.getFullYear(), twelveMonthGate.getFullYear() + 1];
-          
-          for (const year of years) {
-            for (const windowStr of settings.promotion_windows) {
-              const [month, day] = windowStr.split("-").map(Number);
-              const windowDate = new Date(year, month - 1, day);
-              const windowPlus21 = addDays(windowDate, 21);
-
-              if ((isSameDay(twelveMonthGate, windowDate) || isAfter(twelveMonthGate, windowDate)) && 
-                  (isBefore(twelveMonthGate, windowPlus21) || isSameDay(twelveMonthGate, windowPlus21))) {
-                overrideDate = windowDate;
-                found = true;
-                break;
-              } 
-              if (isAfter(windowDate, twelveMonthGate)) {
-                overrideDate = windowDate;
-                found = true;
-                break;
-              }
-            }
-            if (found) break;
-          }
-          effectiveDate = overrideDate;
-          policy_applied = "12-month minimum gate applied";
-        }
-      }
-      next_promo_date = format(effectiveDate, "MM/yy");
+      next_promo_date = format(recTrack.effectiveDate, "MM/yy");
     }
   }
 

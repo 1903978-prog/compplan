@@ -380,13 +380,13 @@ export default function EmployeeList() {
                               <CollapsibleContent className="pt-3 text-[10px] space-y-2 text-muted-foreground leading-relaxed">
                                 <div className="grid grid-cols-[80px_1fr] gap-2">
                                   <span className="font-medium text-foreground">Base Date:</span>
-                                  <span>{emp.last_promo_date ? `${format(parseISO(emp.last_promo_date), "dd/MM/yy")} (Last Promo)` : `${emp.hire_date} (Hire)`}</span>
-                                  
+                                  <span>{emp.hire_date} (Hire Date)</span>
+
                                   <span className="font-medium text-foreground">Logic:</span>
-                                  <span>Eligibility = BaseDate + (promo_years * 365.25) days</span>
-                                  
-                                  <span className="font-medium text-foreground">Rule:</span>
-                                  <span>If Eligibility within [Window, Window + 21 days], snap to Window. Else use next Window.</span>
+                                  <span>Eligibility = Hire Date + promo months</span>
+
+                                  <span className="font-medium text-foreground">Effective:</span>
+                                  <span>1st of the month immediately after Eligibility Date</span>
                                 </div>
                               </CollapsibleContent>
                             </Collapsible>
