@@ -67,8 +67,10 @@ export default function RoleGridPage() {
                 <TableHead className="text-center bg-purple-50/50">Fast (Yrs)</TableHead>
                 <TableHead className="text-center bg-blue-50/50">Norm (Yrs)</TableHead>
                 <TableHead className="text-center bg-orange-50/50">Slow (Yrs)</TableHead>
-                <TableHead className="text-center border-l">Gross annual min (k€)</TableHead>
-                <TableHead className="text-center">Gross annual max (k€)</TableHead>
+                <TableHead className="text-center border-l">Gross fixed min (k€)</TableHead>
+                <TableHead className="text-center">Gross fixed max (k€)</TableHead>
+                <TableHead className="text-center border-l text-muted-foreground font-normal">RAL min (k€)</TableHead>
+                <TableHead className="text-center text-muted-foreground font-normal">RAL max (k€)</TableHead>
                 <TableHead className="text-center border-l">Bonus %</TableHead>
               </TableRow>
             </TableHeader>
@@ -78,15 +80,15 @@ export default function RoleGridPage() {
                   <TableCell className="font-medium bg-muted/10">{row.role_code}</TableCell>
                   <TableCell>{row.role_name}</TableCell>
                   <TableCell>
-                      <Input 
-                        value={row.next_role_code || ""} 
+                      <Input
+                        value={row.next_role_code || ""}
                         onChange={(e) => handleCellChange(index, "next_role_code", e.target.value)}
                         className="h-8 w-20"
                         placeholder="-"
                       />
                   </TableCell>
                   <TableCell className="bg-purple-50/30">
-                     <Input 
+                     <Input
                         type="number" step="0.5"
                         value={row.promo_years_fast}
                         onChange={(e) => handleCellChange(index, "promo_years_fast", parseFloat(e.target.value))}
@@ -94,7 +96,7 @@ export default function RoleGridPage() {
                       />
                   </TableCell>
                   <TableCell className="bg-blue-50/30">
-                     <Input 
+                     <Input
                         type="number" step="0.5"
                         value={row.promo_years_normal}
                         onChange={(e) => handleCellChange(index, "promo_years_normal", parseFloat(e.target.value))}
@@ -102,7 +104,7 @@ export default function RoleGridPage() {
                       />
                   </TableCell>
                   <TableCell className="bg-orange-50/30">
-                     <Input 
+                     <Input
                         type="number" step="0.5"
                         value={row.promo_years_slow}
                         onChange={(e) => handleCellChange(index, "promo_years_slow", parseFloat(e.target.value))}
@@ -110,24 +112,46 @@ export default function RoleGridPage() {
                       />
                   </TableCell>
                   <TableCell className="border-l">
-                     <Input 
-                        type="number"
-                        value={row.ral_min_k}
-                        onChange={(e) => handleCellChange(index, "ral_min_k", parseFloat(e.target.value))}
+                     <Input
+                        type="number" step="100"
+                        value={Math.round(row.gross_fixed_min_month * row.months_paid / 1000 * 10) / 10}
+                        onChange={(e) => {
+                          const annualK = parseFloat(e.target.value);
+                          if (!isNaN(annualK)) handleCellChange(index, "gross_fixed_min_month", Math.round(annualK * 1000 / row.months_paid));
+                        }}
                         className="h-8 w-20 mx-auto text-right font-mono"
                       />
                   </TableCell>
                   <TableCell>
-                     <Input 
-                        type="number"
-                        value={row.ral_max_k}
-                        onChange={(e) => handleCellChange(index, "ral_max_k", parseFloat(e.target.value))}
+                     <Input
+                        type="number" step="100"
+                        value={Math.round(row.gross_fixed_max_month * row.months_paid / 1000 * 10) / 10}
+                        onChange={(e) => {
+                          const annualK = parseFloat(e.target.value);
+                          if (!isNaN(annualK)) handleCellChange(index, "gross_fixed_max_month", Math.round(annualK * 1000 / row.months_paid));
+                        }}
                         className="h-8 w-20 mx-auto text-right font-mono"
                       />
                   </TableCell>
                   <TableCell className="border-l">
+                     <Input
+                        type="number"
+                        value={row.ral_min_k}
+                        onChange={(e) => handleCellChange(index, "ral_min_k", parseFloat(e.target.value))}
+                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground"
+                      />
+                  </TableCell>
+                  <TableCell>
+                     <Input
+                        type="number"
+                        value={row.ral_max_k}
+                        onChange={(e) => handleCellChange(index, "ral_max_k", parseFloat(e.target.value))}
+                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground"
+                      />
+                  </TableCell>
+                  <TableCell className="border-l">
                      <div className="relative w-20 mx-auto">
-                        <Input 
+                        <Input
                             type="number"
                             value={row.bonus_pct}
                             onChange={(e) => handleCellChange(index, "bonus_pct", parseFloat(e.target.value))}
