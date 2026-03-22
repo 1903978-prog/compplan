@@ -159,16 +159,16 @@ export default function RoleGridPage() {
                   </TableCell>
                   <TableCell className="border-l">
                      <Input
-                        type="number" step="0.1"
-                        value={Math.round(row.gross_fixed_min_month * row.months_paid / 1000 * 10) / 10}
+                        type="number" step="1"
+                        value={Math.round(row.gross_fixed_min_month * row.months_paid / 1000)}
                         onChange={(e) => handleGrossChange(index, true, parseFloat(e.target.value))}
                         className="h-8 w-20 mx-auto text-right font-mono"
                       />
                   </TableCell>
                   <TableCell>
                      <Input
-                        type="number" step="0.1"
-                        value={Math.round(row.gross_fixed_max_month * row.months_paid / 1000 * 10) / 10}
+                        type="number" step="1"
+                        value={Math.round(row.gross_fixed_max_month * row.months_paid / 1000)}
                         onChange={(e) => handleGrossChange(index, false, parseFloat(e.target.value))}
                         className="h-8 w-20 mx-auto text-right font-mono"
                       />
@@ -176,17 +176,17 @@ export default function RoleGridPage() {
                   <TableCell className="border-l">
                      <Input
                         type="number"
-                        value={row.ral_min_k}
-                        onChange={(e) => handleCellChange(index, "ral_min_k", parseFloat(e.target.value))}
-                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground"
+                        value={Math.round(row.ral_min_k * 10) / 10}
+                        readOnly
+                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground bg-muted/30 cursor-default"
                       />
                   </TableCell>
                   <TableCell>
                      <Input
                         type="number"
-                        value={row.ral_max_k}
-                        onChange={(e) => handleCellChange(index, "ral_max_k", parseFloat(e.target.value))}
-                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground"
+                        value={Math.round(row.ral_max_k * 10) / 10}
+                        readOnly
+                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground bg-muted/30 cursor-default"
                       />
                   </TableCell>
                   <TableCell className="border-l">
