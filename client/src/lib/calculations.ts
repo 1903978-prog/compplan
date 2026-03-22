@@ -258,10 +258,11 @@ export const calculateEmployeeMetrics = (
     increase_pct = (increase_amount_monthly / gross_month) * 100;
   }
 
-  // 6. Band Status
+  // 6. Band Status (compare annual gross against ral_k ranges)
   let band_status: "Under" | "In band" | "Over" = "In band";
-  if (gross_month < currentRole.gross_fixed_min_month) band_status = "Under";
-  else if (gross_month > currentRole.gross_fixed_max_month) band_status = "Over";
+  const annualGross = employee.current_gross_fixed_year;
+  if (annualGross < currentRole.ral_min_k * 1000) band_status = "Under";
+  else if (annualGross > currentRole.ral_max_k * 1000) band_status = "Over";
 
   return {
     employeeId: employee.id,
@@ -283,10 +284,10 @@ export const calculateEmployeeMetrics = (
     totalTenure,
     hireTenure,
     tracks,
-    current_min: currentRole.gross_fixed_min_month * employee.months_paid,
-    current_max: currentRole.gross_fixed_max_month * employee.months_paid,
-    next_min: nextRole ? nextRole.gross_fixed_min_month * nextRole.months_paid : 0,
-    next_max: nextRole ? nextRole.gross_fixed_max_month * nextRole.months_paid : 0,
+    current_min: currentRole.ral_min_k * 1000,
+    current_max: currentRole.ral_max_k * 1000,
+    next_min: nextRole ? nextRole.ral_min_k * 1000 : 0,
+    next_max: nextRole ? nextRole.ral_max_k * 1000 : 0,
     annual_now: employee.current_gross_fixed_year,
     annual_future: future_gross_month * (nextRole ? nextRole.months_paid : employee.months_paid)
   };
