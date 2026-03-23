@@ -360,7 +360,8 @@ export default function RoleGridPage() {
                     </>);
                   })()}
                 </TableRow>
-              ))}
+              ))
+            })()}
             </TableBody>
           </Table>
         </div>
