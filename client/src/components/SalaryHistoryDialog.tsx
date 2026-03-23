@@ -44,8 +44,8 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
     try {
       const res = await fetch(`/api/salary-history/${employee.id}`, { credentials: "include" });
       const data = await res.json();
-      // Sort by effective_date descending (newest first)
-      setEntries((data as SalaryHistoryEntry[]).sort((a, b) => b.effective_date.localeCompare(a.effective_date)));
+      // Sort ascending: oldest first, newest (current) at the bottom
+      setEntries((data as SalaryHistoryEntry[]).sort((a, b) => a.effective_date.localeCompare(b.effective_date)));
     } catch {
       toast({ title: "Failed to load salary history", variant: "destructive" });
     } finally {
@@ -87,10 +87,10 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
     }
   };
 
-  // For each entry, compute delta vs the PREVIOUS entry (one below in descending list)
+  // For each entry, compute delta vs the entry before it (the older one)
   const getDelta = (idx: number) => {
-    if (idx >= entries.length - 1) return null;
-    const prev = entries[idx + 1];
+    if (idx === 0) return null;
+    const prev = entries[idx - 1];
     const delta = entries[idx].gross_fixed_year - prev.gross_fixed_year;
     const pct = (delta / prev.gross_fixed_year) * 100;
     return { delta, pct };
@@ -200,6 +200,7 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
             <div className="absolute left-[19px] top-3 bottom-3 w-0.5 bg-border z-0" />
 
             {entries.map((entry, idx) => {
+              const isNewest = idx === entries.length - 1;
               const delta = getDelta(idx);
               const monthlyGross = entry.gross_fixed_year / (entry.months_paid ?? 12);
               const ral = grossToRal(entry.gross_fixed_year);
@@ -208,13 +209,13 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
                 <div key={entry.id} className="relative flex gap-4 pb-4 z-10">
                   {/* Timeline dot */}
                   <div className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center text-xs font-bold z-10 bg-background ${
-                    idx === 0 ? "border-primary text-primary" : "border-border text-muted-foreground"
+                    isNewest ? "border-primary text-primary" : "border-border text-muted-foreground"
                   }`}>
-                    {idx === 0 ? "NOW" : fmtDate(entry.effective_date).slice(0, 3)}
+                    {isNewest ? "NOW" : fmtDate(entry.effective_date).slice(0, 3)}
                   </div>
 
                   {/* Card */}
-                  <div className={`flex-1 rounded-lg border p-3 ${idx === 0 ? "border-primary/30 bg-primary/5" : "bg-background"}`}>
+                  <div className={`flex-1 rounded-lg border p-3 ${isNewest ? "border-primary/30 bg-primary/5" : "bg-background"}`}>
                     {/* Header row */}
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div>
@@ -223,7 +224,7 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
                           {entry.role_code && (
                             <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{entry.role_code}</span>
                           )}
-                          {idx === 0 && <span className="text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded font-bold uppercase">Latest</span>}
+                          {isNewest && <span className="text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded font-bold uppercase">Latest</span>}
                         </div>
                         {entry.note && (
                           <div className="text-xs text-muted-foreground italic mt-0.5">{entry.note}</div>
