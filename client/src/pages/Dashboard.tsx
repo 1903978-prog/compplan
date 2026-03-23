@@ -5,7 +5,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, Download, ArrowRight, Gift, TrendingUp, Users, Wallet, BarChart3, AlertTriangle, Banknote } from "lucide-react";
+import { Search, Download, ArrowRight, Gift, TrendingUp, Users, Wallet, BarChart3, AlertTriangle, Banknote, ClipboardList } from "lucide-react";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { format, parseISO, addDays, isBefore, isAfter, startOfMonth, endOfMonth, addMonths, differenceInMonths } from "date-fns";
@@ -309,18 +309,39 @@ export default function Dashboard() {
                   {win.label} {wi === 0 && <span className="bg-primary text-primary-foreground text-[9px] px-1.5 py-0.5 rounded ml-1">NEXT</span>}
                 </div>
                 {win.employees.length > 0 ? (
-                  <div className="space-y-1">
-                    {win.employees.map(emp => (
-                      <div key={emp.id} className="flex justify-between items-center text-sm p-2 bg-background rounded border shadow-sm">
-                        <span className="font-medium">{emp.name}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground font-mono">{emp.current_role_code}</span>
-                          <ArrowRight className="w-3 h-3 text-muted-foreground" />
-                          <span className="text-xs font-bold text-primary font-mono">{emp.next_role_code}</span>
-                          <span className="text-[10px] text-emerald-600 font-semibold">+{emp.increase_pct.toFixed(1)}%</span>
+                  <div className="space-y-1.5">
+                    {win.employees.map(emp => {
+                      const completedIds = new Set((emp.completed_tests ?? []).map((ct: any) => ct.id));
+                      const pendingTests = settings.tests.filter(
+                        t => t.required_for_role === emp.next_role_code && !completedIds.has(t.id)
+                      );
+                      return (
+                        <div key={emp.id} className="p-2 bg-background rounded border shadow-sm">
+                          <div className="flex justify-between items-center text-sm">
+                            <span className="font-medium">{emp.name}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground font-mono">{emp.current_role_code}</span>
+                              <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                              <span className="text-xs font-bold text-primary font-mono">{emp.next_role_code}</span>
+                              <span className="text-[10px] text-emerald-600 font-semibold">+{emp.increase_pct.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                          {pendingTests.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1 items-center">
+                              <ClipboardList className="w-3 h-3 text-amber-500 shrink-0" />
+                              {pendingTests.map(t => (
+                                <span key={t.id} className="text-[10px] bg-amber-50 border border-amber-200 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                                  {t.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {pendingTests.length === 0 && settings.tests.some(t => t.required_for_role === emp.next_role_code) && (
+                            <div className="mt-1 text-[10px] text-emerald-600 font-semibold">✓ All required tests passed</div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-xs text-muted-foreground italic pl-1">No promotions scheduled.</p>

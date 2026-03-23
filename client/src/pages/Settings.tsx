@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { adminSettingsSchema, type AdminSettings } from "@shared/schema";
@@ -11,6 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useEffect } from "react";
 
 import { Plus, Trash2 } from "lucide-react";
+
+const PROMO_ROLES = ["BA", "A1", "A2", "S1", "S2", "C1", "C2", "EM1"] as const;
 
 export default function Settings() {
   const { settings, updateSettings } = useStore();
@@ -168,7 +171,7 @@ export default function Settings() {
                   size="sm"
                   onClick={() => {
                     const current = form.getValues("tests") || [];
-                    form.setValue("tests", [...current, { id: Math.random().toString(36).substr(2, 9), name: "", due_from_hire_months: 0 }]);
+                    form.setValue("tests", [...current, { id: Math.random().toString(36).substr(2, 9), name: "", required_for_role: "" }]);
                   }}
                 >
                   <Plus className="w-4 h-4 mr-2" />
@@ -182,9 +185,21 @@ export default function Settings() {
                       <Label>Test Name</Label>
                       <Input {...form.register(`tests.${index}.name`)} />
                     </div>
-                    <div className="w-32 space-y-2">
-                      <Label>Due (Months)</Label>
-                      <Input type="number" {...form.register(`tests.${index}.due_from_hire_months`, { valueAsNumber: true })} />
+                    <div className="w-40 space-y-2">
+                      <Label>Required for role</Label>
+                      <Select
+                        value={form.watch(`tests.${index}.required_for_role`) ?? ""}
+                        onValueChange={(v) => form.setValue(`tests.${index}.required_for_role`, v)}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Pick role…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROMO_ROLES.map(r => (
+                            <SelectItem key={r} value={r}>{r}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <Button 
                       type="button" 

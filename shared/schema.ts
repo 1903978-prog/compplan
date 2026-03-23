@@ -13,7 +13,9 @@ export type MonthlyRating = z.infer<typeof monthlyRatingSchema>;
 export const testSchema = z.object({
   id: z.string(),
   name: z.string(),
-  due_from_hire_months: z.number(),
+  required_for_role: z.string().default(""),
+  // legacy field kept optional so old DB data doesn't break on parse
+  due_from_hire_months: z.number().optional(),
 });
 export type Test = z.infer<typeof testSchema>;
 
@@ -68,13 +70,13 @@ export const adminSettingsSchema = z.object({
   track_fast_threshold: z.number().default(8.5),
   track_slow_threshold: z.number().default(7.0),
   tests: z.array(testSchema).default([
-    { id: "1", name: "Onboarding", due_from_hire_months: 2 },
-    { id: "2", name: "Project zero", due_from_hire_months: 2 },
-    { id: "3", name: "Policies", due_from_hire_months: 1 },
-    { id: "4", name: "Cybersecurity", due_from_hire_months: 1 },
-    { id: "5", name: "White belt", due_from_hire_months: 12 },
-    { id: "6", name: "Consulting foundations", due_from_hire_months: 12 },
-    { id: "7", name: "Green belt", due_from_hire_months: 24 },
+    { id: "1", name: "Onboarding",              required_for_role: "BA"  },
+    { id: "2", name: "Project zero",             required_for_role: "BA"  },
+    { id: "3", name: "Policies",                 required_for_role: "BA"  },
+    { id: "4", name: "Cybersecurity",            required_for_role: "BA"  },
+    { id: "5", name: "White belt",               required_for_role: "A2"  },
+    { id: "6", name: "Consulting foundations",   required_for_role: "S1"  },
+    { id: "7", name: "Green belt",               required_for_role: "C1"  },
   ]),
   benchmark_data: z.array(benchmarkRowSchema).default(DEFAULT_BENCHMARK),
   benchmark_updated_at: z.string().nullable().default(null),
