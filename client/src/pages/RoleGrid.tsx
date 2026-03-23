@@ -80,6 +80,7 @@ export default function RoleGridPage() {
 
   const handleMinIncreaseChange = (index: number, pct: number) => {
     if (isNaN(pct) || index === 0) return;
+    pct = Math.round(pct);
     const prev = gridState[index - 1];
     const prevMinAnnual = prev.gross_fixed_min_month * prev.months_paid;
     const newMinAnnual = Math.round(prevMinAnnual * (1 + pct / 100));
@@ -91,6 +92,7 @@ export default function RoleGridPage() {
 
   const handleMaxVsMinChange = (index: number, pct: number) => {
     if (isNaN(pct)) return;
+    pct = Math.round(pct);
     const row = gridState[index];
     const curMinAnnual = row.gross_fixed_min_month * row.months_paid;
     const newMaxAnnual = Math.round(curMinAnnual * (1 + pct / 100));
@@ -246,11 +248,11 @@ export default function RoleGridPage() {
                        const prev = gridState[index - 1];
                        const prevMin = prev.gross_fixed_min_month * prev.months_paid;
                        const curMin = row.gross_fixed_min_month * row.months_paid;
-                       const pct = prevMin > 0 ? Math.round((curMin / prevMin - 1) * 1000) / 10 : 0;
+                       const pct = prevMin > 0 ? Math.round((curMin / prevMin - 1) * 100) : 0;
                        return (
                          <div className="relative w-20 mx-auto">
-                           <Input type="number" step="0.5" value={pct}
-                             onChange={(e) => handleMinIncreaseChange(index, parseFloat(e.target.value))}
+                           <Input type="number" step="1" min="0" value={pct}
+                             onChange={(e) => handleMinIncreaseChange(index, parseInt(e.target.value))}
                              className="h-8 w-full pr-5 text-right font-mono" />
                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
                          </div>
@@ -261,11 +263,11 @@ export default function RoleGridPage() {
                      {(() => {
                        const curMin = row.gross_fixed_min_month * row.months_paid;
                        const curMax = row.gross_fixed_max_month * row.months_paid;
-                       const pct = curMin > 0 ? Math.round((curMax / curMin - 1) * 1000) / 10 : 0;
+                       const pct = curMin > 0 ? Math.round((curMax / curMin - 1) * 100) : 0;
                        return (
                          <div className="relative w-20 mx-auto">
-                           <Input type="number" step="0.5" value={pct}
-                             onChange={(e) => handleMaxVsMinChange(index, parseFloat(e.target.value))}
+                           <Input type="number" step="1" min="0" value={pct}
+                             onChange={(e) => handleMaxVsMinChange(index, parseInt(e.target.value))}
                              className="h-8 w-full pr-5 text-right font-mono" />
                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
                          </div>
