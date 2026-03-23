@@ -4,7 +4,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { RotateCcw } from "lucide-react";
 import { RoleGridRow } from "@shared/schema";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -41,7 +40,7 @@ function grossToRal(grossAnnual: number): number {
 }
 
 export default function RoleGridPage() {
-  const { roleGrid, updateRoleGrid, resetDefaults } = useStore();
+  const { roleGrid, updateRoleGrid } = useStore();
   const { toast } = useToast();
 
   // Local state for editing to avoid constant store updates on every keystroke
@@ -107,28 +106,15 @@ export default function RoleGridPage() {
     toast({ title: "Role Grid configuration saved" });
   };
 
-  const handleReset = async () => {
-    if (confirm("Reset to default configuration? This will wipe custom changes.")) {
-      await resetDefaults();
-      window.location.reload();
-    }
-  };
-
   return (
     <div className="space-y-6">
       <PageHeader
         title="Role Grid Configuration"
         description="Define role progression paths, salary bands, and promotion timing."
         actions={
-          <div className="flex gap-2">
-             <Button variant="outline" onClick={handleReset}>
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Reset Defaults
-             </Button>
-             <Button onClick={handleSave} disabled={!hasChanges} className={hasChanges ? "animate-pulse" : ""}>
-                Save Changes
-             </Button>
-          </div>
+          <Button onClick={handleSave} disabled={!hasChanges} className={hasChanges ? "animate-pulse" : ""}>
+            Save Changes
+          </Button>
         }
       />
 
