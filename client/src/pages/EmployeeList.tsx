@@ -268,6 +268,9 @@ export default function EmployeeList() {
               <TableHead className="text-right">Tenure (Total)</TableHead>
               <TableHead className="text-right">Rate</TableHead>
               <TableHead className="text-right">Yearly Gross</TableHead>
+              <TableHead className="text-right">Gross/mo</TableHead>
+              <TableHead className="text-right">Net/mo</TableHead>
+              <TableHead className="text-right">RAL</TableHead>
               <TableHead className="text-center">Paychecks</TableHead>
               <TableHead className="text-right">Meal Voucher</TableHead>
               <TableHead className="w-[180px]">Band Position</TableHead>
@@ -308,7 +311,10 @@ export default function EmployeeList() {
                             )}
                         </div>
                     </TableCell>
-                    <TableCell className="text-right">€{emp.current_gross_fixed_year.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">€{emp.current_gross_fixed_year.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">€{Math.round(metrics.gross_month).toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono text-xs text-emerald-700">€{Math.round(metrics.net_month).toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono text-xs text-muted-foreground">€{Math.round(grossToRal(emp.current_gross_fixed_year) * 1000).toLocaleString()}</TableCell>
                     <TableCell className="text-center">
                       <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${emp.months_paid === 13 ? "bg-violet-100 text-violet-700" : "bg-muted text-muted-foreground"}`}>
                         {emp.months_paid}mo
@@ -343,7 +349,7 @@ export default function EmployeeList() {
                   </TableRow>
                   {isExpanded && (
                     <TableRow className="bg-muted/30 hover:bg-muted/30">
-                      <TableCell colSpan={13}>
+                      <TableCell colSpan={16}>
                         <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
                           <Card className="p-4 bg-background">
                             <h4 className="font-bold text-sm mb-4">Promotion Tracks</h4>
