@@ -222,14 +222,22 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
               // end date = start of the chronologically next entry
               const nextEntry = entries[ascIdx + 1];
               const endDate = nextEntry ? nextEntry.effective_date : null;
-              // delta vs the previous (older) comp
               const prevEntry = entries[ascIdx - 1];
-              const delta = prevEntry
-                ? { d: entry.gross_fixed_year - prevEntry.gross_fixed_year, pct: ((entry.gross_fixed_year - prevEntry.gross_fixed_year) / prevEntry.gross_fixed_year) * 100 }
-                : null;
 
-              const monthlyGross = entry.gross_fixed_year / (entry.months_paid ?? 12);
-              const ral = grossToRal(entry.gross_fixed_year);
+              // For the ongoing entry always use the live employee record as source of truth
+              const displayGross = isCurrent ? employee.current_gross_fixed_year : entry.gross_fixed_year;
+              const displayMonths = isCurrent ? employee.months_paid : (entry.months_paid ?? 12);
+              const displayBonus = isCurrent ? employee.current_bonus_pct : entry.bonus_pct;
+              const displayVoucher = isCurrent ? employee.meal_voucher_daily : entry.meal_voucher_daily;
+              const displayRole = isCurrent ? employee.current_role_code : entry.role_code;
+              const monthlyGross = displayGross / displayMonths;
+              const ral = grossToRal(displayGross);
+              // delta: compare current live gross vs previous history entry gross
+              const deltaGross = isCurrent ? employee.current_gross_fixed_year : entry.gross_fixed_year;
+              const prevGrossForDelta = prevEntry ? prevEntry.gross_fixed_year : null;
+              const delta = prevGrossForDelta !== null
+                ? { d: deltaGross - prevGrossForDelta, pct: ((deltaGross - prevGrossForDelta) / prevGrossForDelta) * 100 }
+                : null;
               const isEditing = editingId === entry.id;
 
               return (
@@ -286,8 +294,8 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
                               : <span className="text-primary font-semibold">ongoing</span>
                             }
                           </span>
-                          {entry.role_code && (
-                            <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{entry.role_code}</span>
+                          {displayRole && (
+                            <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{displayRole}</span>
                           )}
                           <button onClick={() => startEdit(entry)}
                             className="text-muted-foreground hover:text-foreground transition-colors">
@@ -313,7 +321,7 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
                   <div className="grid grid-cols-4 gap-2 text-xs">
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase">Yearly Gross</div>
-                      <div className="font-bold text-sm">€{entry.gross_fixed_year.toLocaleString()}</div>
+                      <div className="font-bold text-sm">€{displayGross.toLocaleString()}</div>
                     </div>
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase">Monthly</div>
@@ -324,11 +332,11 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
                       <div className="font-semibold">€{Math.round(ral * 1000).toLocaleString()}</div>
                     </div>
                     <div className="flex flex-col gap-0.5">
-                      {entry.bonus_pct != null && (
-                        <div><span className="text-[10px] text-muted-foreground uppercase">Bonus </span><span className="font-semibold">{entry.bonus_pct}%</span></div>
+                      {displayBonus != null && (
+                        <div><span className="text-[10px] text-muted-foreground uppercase">Bonus </span><span className="font-semibold">{displayBonus}%</span></div>
                       )}
-                      {entry.meal_voucher_daily != null && entry.meal_voucher_daily > 0 && (
-                        <div><span className="text-[10px] text-muted-foreground uppercase">Voucher </span><span className="font-semibold">€{entry.meal_voucher_daily}/d</span></div>
+                      {displayVoucher != null && displayVoucher > 0 && (
+                        <div><span className="text-[10px] text-muted-foreground uppercase">Voucher </span><span className="font-semibold">€{displayVoucher}/d</span></div>
                       )}
                     </div>
                   </div>
