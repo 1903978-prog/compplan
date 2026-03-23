@@ -162,6 +162,11 @@ Return ONLY valid JSON array, no explanation:`;
     res.status(201).json(entry);
   });
 
+  app.patch("/api/salary-history/:id", requireAuth, async (req, res) => {
+    const entry = await storage.updateSalaryHistoryEntry(parseInt(req.params.id), req.body);
+    res.json(entry);
+  });
+
   app.delete("/api/salary-history/:id", requireAuth, async (req, res) => {
     await storage.deleteSalaryHistoryEntry(parseInt(req.params.id));
     res.status(204).end();

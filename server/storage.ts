@@ -30,6 +30,7 @@ export interface IStorage {
   // Salary history
   getSalaryHistory(employeeId: string): Promise<SalaryHistoryEntry[]>;
   createSalaryHistoryEntry(entry: Omit<SalaryHistoryEntry, "id">): Promise<SalaryHistoryEntry>;
+  updateSalaryHistoryEntry(id: number, patch: Partial<SalaryHistoryEntry>): Promise<SalaryHistoryEntry>;
   deleteSalaryHistoryEntry(id: number): Promise<void>;
 }
 
@@ -159,6 +160,22 @@ export class DatabaseStorage implements IStorage {
 
   async createSalaryHistoryEntry(entry: Omit<SalaryHistoryEntry, "id">): Promise<SalaryHistoryEntry> {
     const rows = await db.insert(salaryHistoryEntries).values(entry).returning();
+    const r = rows[0];
+    return {
+      id: r.id,
+      employee_id: r.employee_id,
+      effective_date: r.effective_date,
+      role_code: r.role_code ?? null,
+      gross_fixed_year: r.gross_fixed_year,
+      months_paid: r.months_paid ?? null,
+      bonus_pct: r.bonus_pct ?? null,
+      meal_voucher_daily: r.meal_voucher_daily ?? null,
+      note: r.note ?? null,
+    };
+  }
+
+  async updateSalaryHistoryEntry(id: number, patch: Partial<SalaryHistoryEntry>): Promise<SalaryHistoryEntry> {
+    const rows = await db.update(salaryHistoryEntries).set(patch).where(eq(salaryHistoryEntries.id, id)).returning();
     const r = rows[0];
     return {
       id: r.id,

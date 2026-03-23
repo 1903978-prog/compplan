@@ -3,7 +3,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trash2, Plus, TrendingUp, TrendingDown, Minus, Clock } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Trash2, Plus, TrendingUp, TrendingDown, Minus, Clock, Pencil, Check, X } from "lucide-react";
 import type { SalaryHistoryEntry, EmployeeInput } from "@shared/schema";
 import { grossToRal } from "@/lib/calculations";
 import { useToast } from "@/hooks/use-toast";
@@ -14,19 +15,40 @@ interface Props {
   onClose: () => void;
 }
 
-const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTHS = [
+  "Jan","Feb","Mar","Apr","May","Jun",
+  "Jul","Aug","Sep","Oct","Nov","Dec",
+];
+
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: CURRENT_YEAR - 2022 }, (_, i) => 2023 + i); // 2023…current
 
 function fmtDate(d: string) {
   const [y, m] = d.split("-");
-  return `${MONTH_NAMES[parseInt(m) - 1]} ${y}`;
+  return `${MONTHS[parseInt(m) - 1]} ${y}`;
+}
+
+/** Parse "YYYY-MM-DD" → { month: number (1-12), year: number } */
+function parseDate(d: string) {
+  const [y, m] = d.split("-");
+  return { year: parseInt(y), month: parseInt(m) };
+}
+
+/** Build "YYYY-MM-01" from parts */
+function buildDate(year: number, month: number) {
+  return `${year}-${String(month).padStart(2, "0")}-01`;
 }
 
 export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
   const { toast } = useToast();
-  // entries stored oldest→newest internally so we can compute end dates
+  // stored ascending (oldest → newest) for end-date computation
   const [entries, setEntries] = useState<SalaryHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  // id of the entry currently being edited
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editMonth, setEditMonth] = useState(1);
+  const [editYear, setEditYear] = useState(CURRENT_YEAR);
 
   const [form, setForm] = useState({
     effective_date: new Date().toISOString().slice(0, 10),
@@ -43,7 +65,6 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
     try {
       const res = await fetch(`/api/salary-history/${employee.id}`, { credentials: "include" });
       const data = await res.json();
-      // Store ascending internally (oldest → newest), we'll reverse for display
       setEntries((data as SalaryHistoryEntry[]).sort((a, b) => a.effective_date.localeCompare(b.effective_date)));
     } catch {
       toast({ title: "Failed to load salary history", variant: "destructive" });
@@ -75,6 +96,32 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
     }
   };
 
+  const startEdit = (entry: SalaryHistoryEntry) => {
+    const { year, month } = parseDate(entry.effective_date);
+    setEditYear(year);
+    setEditMonth(month);
+    setEditingId(entry.id!);
+  };
+
+  const cancelEdit = () => setEditingId(null);
+
+  const saveEdit = async (id: number) => {
+    try {
+      const res = await fetch(`/api/salary-history/${id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ effective_date: buildDate(editYear, editMonth) }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      await loadHistory();
+      setEditingId(null);
+      toast({ title: "Date updated" });
+    } catch {
+      toast({ title: "Failed to update date", variant: "destructive" });
+    }
+  };
+
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this entry?")) return;
     try {
@@ -86,7 +133,7 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
     }
   };
 
-  // Display order: newest first
+  // Display: newest first
   const displayed = [...entries].reverse();
 
   return (
@@ -170,13 +217,12 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
         ) : (
           <div className="space-y-3">
             {displayed.map((entry, displayIdx) => {
-              // In the ascending array, this entry is at position (entries.length - 1 - displayIdx)
               const ascIdx = entries.length - 1 - displayIdx;
-              const isCurrent = displayIdx === 0; // newest = first in display
-              // End date = start of the next chronological entry (one above in ascending array)
-              const nextEntry = entries[ascIdx + 1]; // next in time = already rendered above us
+              const isCurrent = displayIdx === 0;
+              // end date = start of the chronologically next entry
+              const nextEntry = entries[ascIdx + 1];
               const endDate = nextEntry ? nextEntry.effective_date : null;
-              // Delta vs previous (older = the entry below in display, ascIdx-1)
+              // delta vs the previous (older) comp
               const prevEntry = entries[ascIdx - 1];
               const delta = prevEntry
                 ? { d: entry.gross_fixed_year - prevEntry.gross_fixed_year, pct: ((entry.gross_fixed_year - prevEntry.gross_fixed_year) / prevEntry.gross_fixed_year) * 100 }
@@ -184,37 +230,83 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
 
               const monthlyGross = entry.gross_fixed_year / (entry.months_paid ?? 12);
               const ral = grossToRal(entry.gross_fixed_year);
+              const isEditing = editingId === entry.id;
 
               return (
                 <div key={entry.id} className={`rounded-lg border p-3 ${isCurrent ? "border-primary/40 bg-primary/5" : "bg-background"}`}>
-                  {/* Header */}
+                  {/* Header: date range (editable) + role + actions */}
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* Date range */}
-                        <span className="text-sm font-bold">
-                          {fmtDate(entry.effective_date)}
-                          {" → "}
-                          {endDate ? (
-                            <span className="text-muted-foreground font-normal">{fmtDate(endDate)}</span>
-                          ) : (
-                            <span className="text-primary font-semibold">ongoing</span>
+                    <div className="flex-1">
+                      {isEditing ? (
+                        /* ── Edit mode: month + year dropdowns ── */
+                        <div className="space-y-2">
+                          <div className="text-[10px] uppercase text-muted-foreground font-bold">Start date</div>
+                          <div className="flex items-center gap-2">
+                            <Select value={String(editMonth)} onValueChange={v => setEditMonth(parseInt(v))}>
+                              <SelectTrigger className="h-8 w-24 text-sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {MONTHS.map((m, i) => (
+                                  <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Select value={String(editYear)} onValueChange={v => setEditYear(parseInt(v))}>
+                              <SelectTrigger className="h-8 w-24 text-sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {YEARS.map(y => (
+                                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <button onClick={() => saveEdit(entry.id!)}
+                              className="h-7 w-7 rounded bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90">
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={cancelEdit}
+                              className="h-7 w-7 rounded border flex items-center justify-center hover:bg-muted text-muted-foreground">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            End: {endDate ? fmtDate(endDate) : <span className="text-primary font-semibold">ongoing</span>}
+                          </div>
+                        </div>
+                      ) : (
+                        /* ── View mode ── */
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold">
+                            {fmtDate(entry.effective_date)}
+                            {" → "}
+                            {endDate
+                              ? <span className="text-muted-foreground font-normal">{fmtDate(endDate)}</span>
+                              : <span className="text-primary font-semibold">ongoing</span>
+                            }
+                          </span>
+                          {entry.role_code && (
+                            <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{entry.role_code}</span>
                           )}
-                        </span>
-                        {entry.role_code && (
-                          <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{entry.role_code}</span>
-                        )}
-                      </div>
-                      {entry.note && (
+                          <button onClick={() => startEdit(entry)}
+                            className="text-muted-foreground hover:text-foreground transition-colors">
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                      {!isEditing && entry.note && (
                         <div className="text-xs text-muted-foreground italic mt-0.5">{entry.note}</div>
                       )}
                     </div>
-                    <button
-                      onClick={() => handleDelete(entry.id!)}
-                      className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {!isEditing && (
+                      <button
+                        onClick={() => handleDelete(entry.id!)}
+                        className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
 
                   {/* Salary grid */}
