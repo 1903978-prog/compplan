@@ -85,27 +85,10 @@ export const calculateEmployeeMetrics = (
   // 2. Determine Track based on Performance Score
   let recommended_track: "Fast" | "Normal" | "Slow" | "No promotion" = "No promotion";
 
-  // Check Promotion Gates (must be PASSED)
-  const isTestPassed = (name: string) => employee.completed_tests?.some(ct => {
-    const test = settings.tests.find(t => t.id === ct.id);
-    return test?.name.toLowerCase() === name.toLowerCase();
-  });
-
-  const canPromoteToA2 = isTestPassed("White belt");
-  const canPromoteToC1 = isTestPassed("Green belt");
-  const canPromoteToA1 = isTestPassed("Consulting foundations");
-
-  const nextRoleCode = currentRole.next_role_code;
-  let gatePassed = true;
-
-  if (nextRoleCode === "A2" && !canPromoteToA2) gatePassed = false;
-  if (nextRoleCode === "C1" && !canPromoteToC1) gatePassed = false;
-  if (nextRoleCode === "A1" && !canPromoteToA1) gatePassed = false;
-
   const fastThreshold = settings.track_fast_threshold ?? 8.5;
   const slowThreshold = settings.track_slow_threshold ?? 7.0;
 
-  if (performance_score !== null && performance_score > 5 && gatePassed) {
+  if (performance_score !== null && performance_score > 5) {
     if (performance_score >= fastThreshold) {
       recommended_track = "Fast";
     } else if (performance_score >= slowThreshold) {
@@ -173,28 +156,32 @@ export const calculateEmployeeMetrics = (
   if (nextRole && recommended_track !== "No promotion") {
     target_ral_min = nextRole.ral_min_k * 1000;
     target_ral_max = nextRole.ral_max_k * 1000;
-    
-    const minIncreaseMultiplier = 1 + (settings.min_promo_increase_pct / 100);
-    const minIncreaseTarget = gross_month * minIncreaseMultiplier;
-    
+
+    // Use per-employee override if set, otherwise fall back to global setting
+    const effectiveIncreasePct = employee.promo_increase_override != null
+      ? employee.promo_increase_override
+      : settings.min_promo_increase_pct;
+
+    const increaseMultiplier = 1 + (effectiveIncreasePct / 100);
+    const increaseTarget = gross_month * increaseMultiplier;
+
     const bandMinMonth = nextRole.gross_fixed_min_month;
     const bandMaxMonth = nextRole.gross_fixed_max_month;
 
-    if (minIncreaseTarget <= bandMinMonth) {
+    if (increaseTarget <= bandMinMonth) {
         future_gross_month = bandMinMonth;
         policy_applied = "Raised to role minimum band";
-    } else if (minIncreaseTarget >= bandMaxMonth) {
-        // New Rule: If future gross is above max, still apply at least a 5% increase
+    } else if (increaseTarget >= bandMaxMonth) {
         const fivePercentIncrease = gross_month * 1.05;
         future_gross_month = Math.max(bandMaxMonth, fivePercentIncrease);
-        policy_applied = fivePercentIncrease > bandMaxMonth 
-          ? "Exceeded band max: applied minimum 5% promotion increase" 
+        policy_applied = fivePercentIncrease > bandMaxMonth
+          ? "Exceeded band max: applied minimum 5% promotion increase"
           : "Capped at role maximum band";
     } else {
-        future_gross_month = minIncreaseTarget;
-        policy_applied = `Standard +${settings.min_promo_increase_pct}% promotion increase`;
+        future_gross_month = increaseTarget;
+        policy_applied = `+${effectiveIncreasePct.toFixed(1)}% promotion increase`;
     }
-    
+
     increase_amount_monthly = future_gross_month - gross_month;
     increase_pct = (increase_amount_monthly / gross_month) * 100;
   }

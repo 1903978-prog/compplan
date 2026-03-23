@@ -5,7 +5,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, Download, ArrowRight, Gift, TrendingUp } from "lucide-react";
+import { Search, Download, ArrowRight, Gift, TrendingUp, ChevronUp, ChevronDown } from "lucide-react";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { format, parseISO, addDays, isBefore, isAfter, startOfMonth, endOfMonth, addMonths, differenceInMonths } from "date-fns";
@@ -120,7 +120,7 @@ const ROLE_RANK: Record<string, number> = {
 };
 
 export default function Dashboard() {
-  const { employees, roleGrid, settings } = useStore();
+  const { employees, roleGrid, settings, updateEmployee } = useStore();
 
   const metrics = useMemo(() => {
     return employees.map(emp => {
@@ -361,13 +361,31 @@ export default function Dashboard() {
                         €{emp.current_gross_fixed_year.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-center text-xs">
-                        {emp.future_gross_month > 0 ? (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <span className="font-mono">€{Math.round(emp.future_gross_month * emp.months_paid).toLocaleString()}</span>
-                            <span className="text-emerald-600 font-medium">+{emp.increase_pct.toFixed(1)}%</span>
-                            <span className="text-[10px] text-muted-foreground">+€{Math.round(emp.increase_amount_monthly * emp.months_paid).toLocaleString()}/yr</span>
-                          </div>
-                        ) : (
+                        {emp.future_gross_month > 0 ? (() => {
+                          const raw = employees.find(e => e.id === emp.employeeId);
+                          const currentOverride = raw?.promo_increase_override ?? settings.min_promo_increase_pct;
+                          const step = async (delta: number) => {
+                            if (!raw) return;
+                            const next = Math.round((currentOverride + delta) * 10) / 10;
+                            if (next < 0 || next > 100) return;
+                            await updateEmployee(raw.id, { ...raw, promo_increase_override: next });
+                          };
+                          return (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="font-mono">€{Math.round(emp.future_gross_month * emp.months_paid).toLocaleString()}</span>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => step(-0.5)} className="h-5 w-5 rounded hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground">
+                                  <ChevronDown className="h-3 w-3" />
+                                </button>
+                                <span className="text-emerald-600 font-medium w-10 text-center">+{emp.increase_pct.toFixed(1)}%</span>
+                                <button onClick={() => step(0.5)} className="h-5 w-5 rounded hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground">
+                                  <ChevronUp className="h-3 w-3" />
+                                </button>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground">+€{Math.round(emp.increase_amount_monthly * emp.months_paid).toLocaleString()}/yr</span>
+                            </div>
+                          );
+                        })() : (
                           <span className="text-muted-foreground">—</span>
                         )}
                     </TableCell>

@@ -96,6 +96,7 @@ export const employeeInputSchema = z.object({
   performance_score: z.number().min(1).max(10),
   monthly_ratings: z.array(monthlyRatingSchema).default([]),
   completed_tests: z.array(completedTestSchema).default([]),
+  promo_increase_override: z.number().min(0).max(100).nullable().optional(),
 });
 export type EmployeeInput = z.infer<typeof employeeInputSchema>;
 
@@ -133,6 +134,7 @@ export const employees = pgTable("employees", {
   performance_score: real("performance_score").notNull().default(7),
   monthly_ratings: jsonb("monthly_ratings").$type<MonthlyRating[]>().notNull().default([]),
   completed_tests: jsonb("completed_tests").$type<CompletedTest[]>().notNull().default([]),
+  promo_increase_override: real("promo_increase_override"),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
