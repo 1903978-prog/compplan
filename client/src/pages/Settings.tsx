@@ -112,21 +112,51 @@ export default function Settings() {
             </div>
 
             <div className="space-y-2">
-                <Label>Promotion Windows (MM-DD)</Label>
-                {/* 
-                   Handling array input simply for this demo. 
-                   Real app might use a tag input or multi-field.
-                   We'll register it as a transform or just use the default array handling if we trust the user not to break it 
-                   Actually, let's just make it read-only for now or simple inputs.
-                */}
-                <div className="flex gap-2">
-                    {settings.promotion_windows.map((w, idx) => (
-                        <div key={idx} className="bg-secondary px-3 py-2 rounded-md font-mono text-sm border">
-                            {w}
+                <Label>Promotion Windows (Month)</Label>
+                <div className="flex flex-wrap gap-2 items-center">
+                    {(form.watch("promotion_windows") ?? []).map((w, idx) => {
+                      const month = parseInt(w.split("-")[0], 10);
+                      return (
+                        <div key={idx} className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            min="1"
+                            max="12"
+                            value={month}
+                            onChange={(e) => {
+                              const m = Math.min(12, Math.max(1, parseInt(e.target.value) || 1));
+                              const mm = String(m).padStart(2, "0");
+                              const current = form.getValues("promotion_windows") ?? [];
+                              const updated = [...current];
+                              updated[idx] = `${mm}-01`;
+                              form.setValue("promotion_windows", updated);
+                            }}
+                            className="h-8 w-16 text-center font-mono"
+                          />
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-destructive text-xs px-1"
+                            onClick={() => {
+                              const current = form.getValues("promotion_windows") ?? [];
+                              form.setValue("promotion_windows", current.filter((_, i) => i !== idx));
+                            }}
+                          >✕</button>
                         </div>
-                    ))}
+                      );
+                    })}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const current = form.getValues("promotion_windows") ?? [];
+                        form.setValue("promotion_windows", [...current, "01-01"]);
+                      }}
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">Fixed promo dates (Currently read-only in UI)</p>
+                <p className="text-xs text-muted-foreground">Enter month numbers (1–12). Effective promo date snaps to the next window.</p>
             </div>
 
             <div className="space-y-4 pt-4 border-t">

@@ -178,6 +178,7 @@ export default function RoleGridPage() {
                 <TableHead>Next Role</TableHead>
                 <TableHead className="text-center bg-purple-50/50">Fast (Mo)</TableHead>
                 <TableHead className="text-center bg-blue-50/50">Norm (Mo)</TableHead>
+                <TableHead className="text-center bg-blue-100/60 font-semibold">TOT norm (mo)</TableHead>
                 <TableHead className="text-center bg-orange-50/50">Slow (Mo)</TableHead>
                 <TableHead className="text-center border-l">Months</TableHead>
                 <TableHead className="text-center border-l">Gross yr min (k€)</TableHead>
@@ -198,7 +199,14 @@ export default function RoleGridPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {gridState.map((row, index) => (
+              {(() => {
+                // Precompute cumulative normal months for each row
+                let cumNorm = 0;
+                const cumNormByIndex: number[] = gridState.map(r => {
+                  cumNorm += Math.round(r.promo_years_normal * 12);
+                  return cumNorm;
+                });
+                return gridState.map((row, index) => (
                 <TableRow key={row.role_code}>
                   <TableCell className="font-medium bg-muted/10">{row.role_code}</TableCell>
                   <TableCell>{row.role_name}</TableCell>
@@ -225,6 +233,9 @@ export default function RoleGridPage() {
                         onChange={(e) => handleCellChange(index, "promo_years_normal", parseInt(e.target.value) / 12)}
                         className="h-8 w-14 mx-auto text-center"
                       />
+                  </TableCell>
+                  <TableCell className="bg-blue-100/20 text-center font-mono font-semibold text-blue-700">
+                    {cumNormByIndex[index]}
                   </TableCell>
                   <TableCell className="bg-orange-50/30">
                      <Input

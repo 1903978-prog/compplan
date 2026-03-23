@@ -8,13 +8,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload, History } from "lucide-react";
+import { SalaryHistoryDialog } from "@/components/SalaryHistoryDialog";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { employeeInputSchema, type EmployeeInput, type CompletedTest } from "@shared/schema";
 import { v4 as uuidv4 } from "uuid";
 import { useToast } from "@/hooks/use-toast";
-import { calculateEmployeeMetrics } from "@/lib/calculations";
+import { calculateEmployeeMetrics, grossToRal } from "@/lib/calculations";
 import { format, parseISO, addMonths, subMonths } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -134,6 +135,7 @@ export default function EmployeeList() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [historyEmployee, setHistoryEmployee] = useState<EmployeeInput | null>(null);
   const { toast } = useToast();
 
   const filteredEmployees = useMemo(() => {
@@ -309,7 +311,10 @@ export default function EmployeeList() {
                       <BandPosition metrics={metrics} />
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" title="Salary History" onClick={(e) => { e.stopPropagation(); setHistoryEmployee(emp); }}>
+                          <History className="w-4 h-4 text-muted-foreground hover:text-primary" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); openEdit(emp); }}>
                           <Pencil className="w-4 h-4 text-muted-foreground hover:text-primary" />
                         </Button>
@@ -340,6 +345,32 @@ export default function EmployeeList() {
                                 </div>
                               ))}
                             </div>
+                            {/* EEN Tenure vs Normal TOT tenure comparison */}
+                            {metrics.normal_tot_months > 0 && (() => {
+                              const eenMonths = Math.round(metrics.hireTenure * 12);
+                              const totMonths = metrics.normal_tot_months;
+                              const delta = eenMonths - totMonths;
+                              const pct = totMonths > 0 ? Math.round((eenMonths / totMonths) * 100) : 0;
+                              const isAhead = delta >= 0;
+                              return (
+                                <div className={`mt-3 p-3 rounded-lg border text-xs ${isAhead ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
+                                  <div className="font-bold text-sm mb-1">Tenure vs Normal Path</div>
+                                  <div className="grid grid-cols-2 gap-y-1 text-muted-foreground">
+                                    <span>EEN Tenure:</span>
+                                    <span className="text-right font-mono font-semibold text-foreground">{eenMonths} mo</span>
+                                    <span>TOT Normal Path:</span>
+                                    <span className="text-right font-mono font-semibold text-blue-700">{totMonths} mo</span>
+                                    <span>Delta:</span>
+                                    <span className={`text-right font-mono font-bold ${isAhead ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                      {isAhead ? "+" : ""}{delta} mo ({pct}%)
+                                    </span>
+                                  </div>
+                                  <div className={`mt-1 text-[10px] font-semibold ${isAhead ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                    {isAhead ? `▲ ${delta}mo ahead of normal path` : `▼ ${Math.abs(delta)}mo behind normal path`}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </Card>
 
                           <div className="space-y-6">
@@ -360,6 +391,14 @@ export default function EmployeeList() {
                                   <div className="flex justify-between pt-2 border-t">
                                     <span className="text-muted-foreground">Future Monthly Gross:</span>
                                     <span className="font-bold text-emerald-600">€{Math.round(metrics.future_gross_month).toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Future Yearly Gross:</span>
+                                    <span className="font-bold text-emerald-600">€{Math.round(metrics.annual_future).toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Future RAL:</span>
+                                    <span className="font-bold text-emerald-600">€{Math.round(grossToRal(metrics.annual_future) * 1000).toLocaleString()}</span>
                                   </div>
                                   <div className="flex justify-between items-center">
                                     <span className="text-muted-foreground">Increase vs Today:</span>
@@ -421,7 +460,7 @@ export default function EmployeeList() {
                                   <span>Eligibility = Last Promo Date (or Hire Date) + promo months</span>
 
                                   <span className="font-medium text-foreground">Effective:</span>
-                                  <span>1st of the month immediately after Eligibility Date</span>
+                                  <span>Next promotion window (Jan 1 / May 1 / Sep 1) on or after Eligibility Date</span>
                                 </div>
                               </CollapsibleContent>
                             </Collapsible>
@@ -444,11 +483,19 @@ export default function EmployeeList() {
         </Table>
       </Card>
 
-      <EmployeeDialog 
-        open={isDialogOpen} 
-        onOpenChange={setIsDialogOpen} 
-        editingId={editingId} 
+      <EmployeeDialog
+        open={isDialogOpen}
+        onOpenChange={setIsDialogOpen}
+        editingId={editingId}
       />
+
+      {historyEmployee && (
+        <SalaryHistoryDialog
+          employee={historyEmployee}
+          open={!!historyEmployee}
+          onClose={() => setHistoryEmployee(null)}
+        />
+      )}
     </div>
   );
 }

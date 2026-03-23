@@ -151,6 +151,22 @@ Return ONLY valid JSON array, no explanation:`;
     res.json(updated);
   });
 
+  // ── Salary History ─────────────────────────────────────────────────────────
+  app.get("/api/salary-history/:employeeId", requireAuth, async (req, res) => {
+    const entries = await storage.getSalaryHistory(req.params.employeeId);
+    res.json(entries);
+  });
+
+  app.post("/api/salary-history", requireAuth, async (req, res) => {
+    const entry = await storage.createSalaryHistoryEntry(req.body);
+    res.status(201).json(entry);
+  });
+
+  app.delete("/api/salary-history/:id", requireAuth, async (req, res) => {
+    await storage.deleteSalaryHistoryEntry(parseInt(req.params.id));
+    res.status(204).end();
+  });
+
   // ── Days Off ───────────────────────────────────────────────────────────────
   app.get("/api/days-off", requireAuth, async (req, res) => {
     const year = req.query.year ? parseInt(req.query.year as string) : undefined;

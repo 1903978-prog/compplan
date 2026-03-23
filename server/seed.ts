@@ -122,6 +122,21 @@ export async function seedDatabase() {
       note TEXT
     )
   `);
+
+  // Ensure salary_history table exists
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS salary_history (
+      id SERIAL PRIMARY KEY,
+      employee_id TEXT NOT NULL,
+      effective_date TEXT NOT NULL,
+      role_code TEXT,
+      gross_fixed_year REAL NOT NULL,
+      months_paid INTEGER,
+      bonus_pct REAL,
+      meal_voucher_daily REAL,
+      note TEXT
+    )
+  `);
   // Fix promo_years values: DB must store years (e.g. 0.5 = 6 months).
   // If any value is < 0.1 the DB got corrupted with wrong values — reset all promo fields.
   const existingRoles = await db.select().from(roleGridEntries);

@@ -1,13 +1,44 @@
 import { addMonths, format, parse, differenceInYears, parseISO } from "date-fns";
 import type { EmployeeInput, RoleGridRow, AdminSettings, EmployeeCalculationResult } from "@shared/schema";
 
+// RAL lookup table: [ral_k, gross_annual_eur] - sorted by gross ascending for interpolation
+const RAL_TABLE: [number, number][] = [
+  [10, 11200], [12, 15200], [20, 22724], [21, 23503], [22, 24288],
+  [23, 25312], [24, 26336], [25, 26964], [26, 27807], [27, 28559],
+  [28, 29354], [29, 29619], [30, 30423], [31, 31246], [32, 31998],
+  [33, 32654], [34, 33305], [35, 33808], [36, 34336], [37, 34992],
+  [38, 35456], [40, 36660], [41, 37685], [42, 38041], [43, 39077],
+  [44, 39404], [45, 40469], [46, 40777], [47, 41463], [48, 42238],
+  [49, 43253], [50, 43557], [51, 44765], [52, 44921], [53, 46157],
+  [54, 46324], [55, 47549], [56, 48245], [57, 48941], [58, 49092],
+  [59, 50333], [60, 50486], [62, 52312], [61, 52848], [65, 54296],
+  [63, 54320], [64, 55056], [70, 56000], [73, 57776], [80, 63280],
+  [90, 69952], [100, 76608], [110, 83200], [120, 89952], [130, 96624],
+  [140, 103280], [150, 109952], [160, 116624], [170, 123200], [180, 129920],
+  [190, 136480], [200, 143200], [215, 152000],
+];
+
+export function grossToRal(grossAnnual: number): number {
+  if (grossAnnual <= RAL_TABLE[0][1]) return RAL_TABLE[0][0];
+  if (grossAnnual >= RAL_TABLE[RAL_TABLE.length - 1][1]) return RAL_TABLE[RAL_TABLE.length - 1][0];
+  for (let i = 0; i < RAL_TABLE.length - 1; i++) {
+    const [ral1, gross1] = RAL_TABLE[i];
+    const [ral2, gross2] = RAL_TABLE[i + 1];
+    if (grossAnnual >= gross1 && grossAnnual <= gross2) {
+      const t = (grossAnnual - gross1) / (gross2 - gross1);
+      return Math.round((ral1 + t * (ral2 - ral1)) * 10) / 10;
+    }
+  }
+  return RAL_TABLE[RAL_TABLE.length - 1][0];
+}
+
 export const calculateEmployeeMetrics = (
   employee: EmployeeInput,
   roleGrid: RoleGridRow[],
   settings: AdminSettings
-): EmployeeCalculationResult & { 
-  age: number, 
-  totalTenure: number, 
+): EmployeeCalculationResult & {
+  age: number,
+  totalTenure: number,
   hireTenure: number,
   tracks: {
     label: string,
@@ -21,7 +52,8 @@ export const calculateEmployeeMetrics = (
   next_min: number,
   next_max: number,
   annual_now: number,
-  annual_future: number
+  annual_future: number,
+  normal_tot_months: number
 } => {
   const currentRole = roleGrid.find((r) => r.role_code === employee.current_role_code);
   
@@ -36,6 +68,12 @@ export const calculateEmployeeMetrics = (
   const monthsDiff = (today.getFullYear() - hireDate.getFullYear()) * 12 + (today.getMonth() - hireDate.getMonth());
   const hireTenure = Number((monthsDiff / 12).toFixed(1));
   const totalTenure = Number((hireTenure + employee.tenure_before_years).toFixed(1));
+
+  // Cumulative normal months up to and including the current role
+  const currentRoleIndex = roleGrid.findIndex(r => r.role_code === employee.current_role_code);
+  const normal_tot_months = currentRoleIndex >= 0
+    ? roleGrid.slice(0, currentRoleIndex + 1).reduce((sum, r) => sum + Math.round(r.promo_years_normal * 12), 0)
+    : 0;
 
   // Default fallback if role not found
   if (!currentRole) {
@@ -63,7 +101,8 @@ export const calculateEmployeeMetrics = (
       next_min: 0,
       next_max: 0,
       annual_now: 0,
-      annual_future: 0
+      annual_future: 0,
+      normal_tot_months
     };
   }
 
@@ -106,10 +145,28 @@ export const calculateEmployeeMetrics = (
         : parse(employee.last_promo_date, "yyyy-MM", new Date()))
     : hireDate;
 
+  // Snap a date to the next (or same-day) promotion window
+  const snapToNextWindow = (date: Date): Date => {
+    const windows = settings.promotion_windows ?? [];
+    if (!windows.length) return date;
+    // Sort windows by MM-DD
+    const sorted = [...windows].sort();
+    // Try current year then next year
+    for (let yearOffset = 0; yearOffset <= 1; yearOffset++) {
+      const year = date.getFullYear() + yearOffset;
+      for (const w of sorted) {
+        const [mm, dd] = w.split("-").map(Number);
+        const windowDate = new Date(year, mm - 1, dd);
+        if (windowDate >= date) return windowDate;
+      }
+    }
+    return date;
+  };
+
   const calculateEffectiveDate = (promoMonths: number) => {
     const eligibilityDate = addMonths(baseDate, Math.round(promoMonths * 12));
-    // Effective date = 1st of the month immediately after eligibility
-    const effectiveDate = new Date(eligibilityDate.getFullYear(), eligibilityDate.getMonth() + 1, 1);
+    // Effective date = next promotion window on or after eligibility date
+    const effectiveDate = snapToNextWindow(eligibilityDate);
     return { eligibilityDate, effectiveDate };
   };
 
@@ -219,7 +276,8 @@ export const calculateEmployeeMetrics = (
     next_min: nextRole ? nextRole.gross_fixed_min_month * nextRole.months_paid : 0,
     next_max: nextRole ? nextRole.gross_fixed_max_month * nextRole.months_paid : 0,
     annual_now: employee.current_gross_fixed_year,
-    annual_future: future_gross_month * (nextRole ? nextRole.months_paid : employee.months_paid)
+    annual_future: future_gross_month * (nextRole ? nextRole.months_paid : employee.months_paid),
+    normal_tot_months
   };
 };
 

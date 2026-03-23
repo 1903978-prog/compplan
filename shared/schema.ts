@@ -179,6 +179,33 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
 });
 
+// ─── Salary History ──────────────────────────────────────────────────────────
+
+export const salaryHistoryEntrySchema = z.object({
+  id: z.number().optional(),
+  employee_id: z.string(),
+  effective_date: z.string(),          // YYYY-MM-DD
+  role_code: z.string().optional().nullable(),
+  gross_fixed_year: z.number(),
+  months_paid: z.number().optional().nullable(),
+  bonus_pct: z.number().optional().nullable(),
+  meal_voucher_daily: z.number().optional().nullable(),
+  note: z.string().optional().nullable(),
+});
+export type SalaryHistoryEntry = z.infer<typeof salaryHistoryEntrySchema>;
+
+export const salaryHistoryEntries = pgTable("salary_history", {
+  id: serial("id").primaryKey(),
+  employee_id: text("employee_id").notNull(),
+  effective_date: text("effective_date").notNull(),
+  role_code: text("role_code"),
+  gross_fixed_year: real("gross_fixed_year").notNull(),
+  months_paid: integer("months_paid"),
+  bonus_pct: real("bonus_pct"),
+  meal_voucher_daily: real("meal_voucher_daily"),
+  note: text("note"),
+});
+
 // ─── Days Off ────────────────────────────────────────────────────────────────
 
 export const daysOffEntrySchema = z.object({
