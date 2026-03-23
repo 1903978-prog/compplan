@@ -5,7 +5,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, Download, ArrowRight, Gift, TrendingUp } from "lucide-react";
+import { Search, Download, ArrowRight, Gift, TrendingUp, Users, Wallet, BarChart3, AlertTriangle } from "lucide-react";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { format, parseISO, addDays, isBefore, isAfter, startOfMonth, endOfMonth, addMonths, differenceInMonths } from "date-fns";
@@ -169,36 +169,47 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
-  const nextOpening = useMemo(() => {
-    const months = [0, 4, 8]; // Jan, May, Sep
+  // Build sorted promo windows from settings
+  const promoWindows = useMemo(() => {
     const now = new Date();
-    const currentMonth = now.getMonth();
-    
-    let targetMonth = months.find(m => m > currentMonth);
-    let targetYear = now.getFullYear();
-    
-    if (targetMonth === undefined) {
-      targetMonth = 0;
-      targetYear++;
+    const raw = settings.promotion_windows ?? ["01-01", "05-01", "09-01"];
+    // Generate next 3 window occurrences from today
+    const windows: { date: Date; label: string }[] = [];
+    for (let yearOffset = 0; yearOffset <= 1; yearOffset++) {
+      for (const w of [...raw].sort()) {
+        const [mm, dd] = w.split("-").map(Number);
+        const d = new Date(now.getFullYear() + yearOffset, mm - 1, dd);
+        if (d >= now) windows.push({ date: d, label: format(d, "MMMM yyyy") });
+      }
     }
-    
-    return {
-      month: targetMonth,
-      year: targetYear,
-      label: format(new Date(targetYear, targetMonth, 1), "MMMM")
-    };
-  }, []);
+    return windows.slice(0, 3);
+  }, [settings.promotion_windows]);
 
-  const upcomingPromotions = useMemo(() => {
-    return metrics.filter(m => {
-      if (m.recommended_track === "No promotion" || !m.next_role_code) return false;
-      const recTrack = m.tracks.find((t: any) => t.isRecommended);
-      if (!recTrack) return false;
-      
-      const promoDate = recTrack.effectiveDate;
-      return promoDate.getMonth() === nextOpening.month && promoDate.getFullYear() === nextOpening.year;
-    });
-  }, [metrics, nextOpening]);
+  const nextOpening = promoWindows[0] ?? { date: new Date(), label: "—" };
+
+  // Group upcoming promotions by window
+  const promotionsByWindow = useMemo(() => {
+    return promoWindows.map(win => ({
+      ...win,
+      employees: metrics.filter(m => {
+        if (m.recommended_track === "No promotion" || !m.next_role_code) return false;
+        const recTrack = m.tracks.find((t: any) => t.isRecommended);
+        if (!recTrack) return false;
+        const pd = recTrack.effectiveDate as Date;
+        return pd.getMonth() === win.date.getMonth() && pd.getFullYear() === win.date.getFullYear();
+      }),
+    }));
+  }, [metrics, promoWindows]);
+
+  // KPI stats
+  const kpis = useMemo(() => {
+    const total = metrics.length;
+    const totalPayroll = metrics.reduce((s, m) => s + m.current_gross_fixed_year, 0);
+    const avgSalary = total > 0 ? totalPayroll / total : 0;
+    const overBand = metrics.filter(m => m.band_status === "Over").length;
+    const underBand = metrics.filter(m => m.band_status === "Under").length;
+    return { total, totalPayroll, avgSalary, overBand, underBand };
+  }, [metrics]);
 
   const upcomingBirthdays = useMemo(() => {
     const now = new Date();
@@ -230,27 +241,75 @@ export default function Dashboard() {
         }
       />
 
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-primary/10"><Users className="w-5 h-5 text-primary" /></div>
+          <div>
+            <div className="text-2xl font-bold">{kpis.total}</div>
+            <div className="text-xs text-muted-foreground">Employees</div>
+          </div>
+        </Card>
+        <Card className="p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-emerald-100"><Wallet className="w-5 h-5 text-emerald-600" /></div>
+          <div>
+            <div className="text-2xl font-bold">€{Math.round(kpis.totalPayroll / 1000)}k</div>
+            <div className="text-xs text-muted-foreground">Total Payroll / yr</div>
+          </div>
+        </Card>
+        <Card className="p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-blue-100"><BarChart3 className="w-5 h-5 text-blue-600" /></div>
+          <div>
+            <div className="text-2xl font-bold">€{Math.round(kpis.avgSalary / 1000)}k</div>
+            <div className="text-xs text-muted-foreground">Avg Salary / yr</div>
+          </div>
+        </Card>
+        <Card className="p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-amber-100"><AlertTriangle className="w-5 h-5 text-amber-600" /></div>
+          <div>
+            <div className="text-2xl font-bold">
+              {kpis.overBand > 0 && <span className="text-destructive">{kpis.overBand}↑</span>}
+              {kpis.overBand > 0 && kpis.underBand > 0 && <span className="text-muted-foreground mx-1">/</span>}
+              {kpis.underBand > 0 && <span className="text-amber-600">{kpis.underBand}↓</span>}
+              {kpis.overBand === 0 && kpis.underBand === 0 && <span className="text-emerald-600">✓</span>}
+            </div>
+            <div className="text-xs text-muted-foreground">Out-of-band</div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Promotion windows + birthdays */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card className="p-4 border-l-4 border-l-primary bg-primary/5">
           <div className="flex items-center gap-3 mb-3">
             <TrendingUp className="w-5 h-5 text-primary" />
-            <h3 className="font-bold text-sm">Promotions to announce in {nextOpening.label}</h3>
+            <h3 className="font-bold text-sm">Upcoming Promotion Windows</h3>
           </div>
-          <div className="space-y-2">
-            {upcomingPromotions.length > 0 ? (
-              upcomingPromotions.map(emp => (
-                <div key={emp.id} className="flex justify-between items-center text-sm p-2 bg-background rounded border shadow-sm">
-                  <span className="font-medium">{emp.name}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{emp.current_role_code}</span>
-                    <ArrowRight className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-xs font-bold text-primary">{emp.next_role_code}</span>
-                  </div>
+          <div className="space-y-3">
+            {promotionsByWindow.map((win, wi) => (
+              <div key={wi}>
+                <div className={`text-xs font-bold uppercase tracking-wide mb-1.5 ${wi === 0 ? "text-primary" : "text-muted-foreground"}`}>
+                  {win.label} {wi === 0 && <span className="bg-primary text-primary-foreground text-[9px] px-1.5 py-0.5 rounded ml-1">NEXT</span>}
                 </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground italic">No promotions scheduled for {nextOpening.label}.</p>
-            )}
+                {win.employees.length > 0 ? (
+                  <div className="space-y-1">
+                    {win.employees.map(emp => (
+                      <div key={emp.id} className="flex justify-between items-center text-sm p-2 bg-background rounded border shadow-sm">
+                        <span className="font-medium">{emp.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground font-mono">{emp.current_role_code}</span>
+                          <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-xs font-bold text-primary font-mono">{emp.next_role_code}</span>
+                          <span className="text-[10px] text-emerald-600 font-semibold">+{emp.increase_pct.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic pl-1">No promotions scheduled.</p>
+                )}
+              </div>
+            ))}
           </div>
         </Card>
 

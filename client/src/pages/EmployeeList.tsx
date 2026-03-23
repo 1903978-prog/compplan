@@ -570,11 +570,36 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
   const onSubmit = async (data: EmployeeInput) => {
     setSaveState("saving");
     try {
+      const isNew = !editingId;
+      const prevGross = editingEmployee?.current_gross_fixed_year ?? null;
+      const grossChanged = prevGross === null || prevGross !== data.current_gross_fixed_year;
+
       if (editingId) {
         await updateEmployee(editingId, data);
       } else {
         await addEmployee({ ...data, id: uuidv4() });
       }
+
+      // Auto-log salary history when gross changes or employee is new
+      if (grossChanged) {
+        const empId = editingId ?? (data as any).id ?? data.id;
+        await fetch("/api/salary-history", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employee_id: empId,
+            effective_date: new Date().toISOString().slice(0, 10),
+            role_code: data.current_role_code,
+            gross_fixed_year: data.current_gross_fixed_year,
+            months_paid: data.months_paid,
+            bonus_pct: data.current_bonus_pct,
+            meal_voucher_daily: data.meal_voucher_daily,
+            note: isNew ? "Initial salary on hire" : "Salary update",
+          }),
+        });
+      }
+
       setSaveState("saved");
       setTimeout(() => { onOpenChange(false); setSaveState("idle"); }, 1000);
     } catch (err) {
