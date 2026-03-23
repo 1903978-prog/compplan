@@ -25,6 +25,41 @@ const RAL_TABLE: [number, number][] = [
   [190, 136480], [200, 143200], [215, 152000],
 ];
 
+// Italian net salary calculator (2026 — single, no dependents, Milan, CCNL Commercio)
+function calculateNetMonthly(ral: number, monthsPaid: number): number {
+  if (!ral || ral <= 0) return 0;
+  // Step 1: INPS
+  const inps = ral * 0.0919;
+  // Step 2: Imponibile
+  const imponibile = ral - inps;
+  // Step 3: Cuneo Fiscale 2026
+  let cuneoBonusCash = 0;
+  let cuneoDeduction = 0;
+  if (ral <= 8500)        cuneoBonusCash = ral * 0.071;
+  else if (ral <= 15000)  cuneoBonusCash = ral * 0.053;
+  else if (ral <= 20000)  cuneoBonusCash = ral * 0.048;
+  else if (ral <= 32000)  cuneoDeduction = 1000;
+  else if (ral <= 40000)  cuneoDeduction = 1000 * ((40000 - ral) / 8000);
+  // Step 4: IRPEF Lorda (progressive on imponibile)
+  let irpefLorda = 0;
+  if (imponibile <= 28000)       irpefLorda = imponibile * 0.23;
+  else if (imponibile <= 50000)  irpefLorda = 28000 * 0.23 + (imponibile - 28000) * 0.33;
+  else                           irpefLorda = 28000 * 0.23 + 22000 * 0.33 + (imponibile - 50000) * 0.43;
+  // Step 5: Detrazione lavoro dipendente
+  let detrazione = 0;
+  if (imponibile <= 15000)       detrazione = Math.min(1955, 1955 * (1 - imponibile / 15000) + 1955 * 0.5);
+  else if (imponibile <= 28000)  detrazione = 1910 + 1190 * ((28000 - imponibile) / 13000);
+  else if (imponibile <= 50000)  detrazione = 1910 * ((50000 - imponibile) / 22000);
+  // Step 6: IRPEF Netta
+  const irpefNetta = Math.max(0, irpefLorda - detrazione - cuneoDeduction);
+  // Step 7: Local taxes (Milan)
+  const addRegionale = imponibile * 0.0173;
+  const addComunale  = imponibile * 0.008;
+  // Step 8: Netto Annuo
+  const nettoAnnuo = ral - inps - irpefNetta - addRegionale - addComunale + cuneoBonusCash;
+  return Math.round(nettoAnnuo / monthsPaid);
+}
+
 function grossToRal(grossAnnual: number): number {
   if (grossAnnual <= RAL_TABLE[0][1]) return RAL_TABLE[0][0];
   if (grossAnnual >= RAL_TABLE[RAL_TABLE.length - 1][1]) return RAL_TABLE[RAL_TABLE.length - 1][0];
@@ -46,6 +81,7 @@ export default function RoleGridPage() {
   // Local state for editing to avoid constant store updates on every keystroke
   const [gridState, setGridState] = useState(roleGrid);
   const [hasChanges, setHasChanges] = useState(false);
+  const [showTheoretical, setShowTheoretical] = useState(false);
 
   const handleCellChange = (index: number, field: keyof RoleGridRow, value: string | number) => {
     const newGrid = [...gridState];
@@ -114,9 +150,14 @@ export default function RoleGridPage() {
         title="Role Grid Configuration"
         description="Define role progression paths, salary bands, and promotion timing."
         actions={
-          <Button onClick={handleSave} disabled={!hasChanges} className={hasChanges ? "animate-pulse" : ""}>
-            Save Changes
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowTheoretical(v => !v)}>
+              {showTheoretical ? "Hide Theoretical" : "Show Theoretical"}
+            </Button>
+            <Button onClick={handleSave} disabled={!hasChanges} className={hasChanges ? "animate-pulse" : ""}>
+              Save Changes
+            </Button>
+          </div>
         }
       />
 
@@ -141,6 +182,12 @@ export default function RoleGridPage() {
                 <TableHead className="text-center border-l">Bonus %</TableHead>
                 <TableHead className="text-center border-l">% Min Inc.</TableHead>
                 <TableHead className="text-center">% (max−min)/min</TableHead>
+                {showTheoretical && <>
+                  <TableHead className="text-center border-l bg-emerald-50/50 text-emerald-700 font-normal text-xs">RAL min theor (k€)</TableHead>
+                  <TableHead className="text-center bg-emerald-50/50 text-emerald-700 font-normal text-xs">RAL max theor (k€)</TableHead>
+                  <TableHead className="text-center bg-teal-50/50 text-teal-700 font-normal text-xs">Net/mo min (€)</TableHead>
+                  <TableHead className="text-center bg-teal-50/50 text-teal-700 font-normal text-xs">Net/mo max (€)</TableHead>
+                </>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -274,6 +321,26 @@ export default function RoleGridPage() {
                        );
                      })()}
                   </TableCell>
+                  {showTheoretical && (() => {
+                    const ralMin = row.ral_min_k;
+                    const ralMax = row.ral_max_k;
+                    const netMin = calculateNetMonthly(ralMin * 1000, row.months_paid);
+                    const netMax = calculateNetMonthly(ralMax * 1000, row.months_paid);
+                    return (<>
+                      <TableCell className="border-l bg-emerald-50/30 text-center font-mono text-sm text-emerald-700">
+                        {Math.round(ralMin * 10) / 10}
+                      </TableCell>
+                      <TableCell className="bg-emerald-50/30 text-center font-mono text-sm text-emerald-700">
+                        {Math.round(ralMax * 10) / 10}
+                      </TableCell>
+                      <TableCell className="bg-teal-50/30 text-center font-mono text-sm text-teal-700">
+                        {netMin.toLocaleString("it-IT")}
+                      </TableCell>
+                      <TableCell className="bg-teal-50/30 text-center font-mono text-sm text-teal-700">
+                        {netMax.toLocaleString("it-IT")}
+                      </TableCell>
+                    </>);
+                  })()}
                 </TableRow>
               ))}
             </TableBody>
