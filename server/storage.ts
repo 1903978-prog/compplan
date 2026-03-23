@@ -85,35 +85,32 @@ export class DatabaseStorage implements IStorage {
     return this.getRoleGrid();
   }
 
+  private rowToSettings(row: typeof appSettings.$inferSelect): AdminSettings {
+    return {
+      net_factor: row.net_factor,
+      meal_voucher_days_per_month: row.meal_voucher_days_per_month,
+      min_promo_increase_pct: row.min_promo_increase_pct,
+      promotion_windows: (row.promotion_windows ?? ["01-01", "05-01", "09-01"]) as string[],
+      window_tolerance_days: row.window_tolerance_days,
+      track_fast_threshold: row.track_fast_threshold ?? 8.5,
+      track_slow_threshold: row.track_slow_threshold ?? 7.0,
+      tests: (row.tests ?? []) as import("@shared/schema").Test[],
+      benchmark_data: (row.benchmark_data ?? []) as import("@shared/schema").BenchmarkRow[],
+      benchmark_updated_at: row.benchmark_updated_at ?? null,
+    };
+  }
+
   async getSettings(): Promise<AdminSettings> {
     const rows = await db.select().from(appSettings);
     if (rows.length === 0) {
       throw new Error("Settings not seeded");
     }
-    const row = rows[0];
-    return {
-      net_factor: row.net_factor,
-      meal_voucher_days_per_month: row.meal_voucher_days_per_month,
-      min_promo_increase_pct: row.min_promo_increase_pct,
-      promotion_windows: row.promotion_windows as string[],
-      window_tolerance_days: row.window_tolerance_days,
-      tests: row.tests as import("@shared/schema").Test[],
-    };
+    return this.rowToSettings(rows[0]);
   }
 
   async updateSettings(data: Partial<AdminSettings>): Promise<AdminSettings> {
     const rows = await db.update(appSettings).set(data).where(eq(appSettings.id, 1)).returning();
-    const row = rows[0];
-    return {
-      net_factor: row.net_factor,
-      meal_voucher_days_per_month: row.meal_voucher_days_per_month,
-      min_promo_increase_pct: row.min_promo_increase_pct,
-      promotion_windows: row.promotion_windows as string[],
-      window_tolerance_days: row.window_tolerance_days,
-      track_fast_threshold: row.track_fast_threshold,
-      track_slow_threshold: row.track_slow_threshold,
-      tests: row.tests as import("@shared/schema").Test[],
-    };
+    return this.rowToSettings(rows[0]);
   }
 
   async getDaysOff(year?: number): Promise<DaysOffEntry[]> {
