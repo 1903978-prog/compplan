@@ -36,7 +36,7 @@ function Navigation() {
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-8">
-            <h1 className="text-xl font-bold tracking-tight text-primary">CompPlan</h1>
+            <h1 className="text-xl font-bold tracking-tight text-primary">CompPlan <span className="text-[10px] font-normal text-muted-foreground ml-1">v23Mar</span></h1>
             <div className="flex items-center gap-1">
               {navItems.map((item) => (
                 <Link
