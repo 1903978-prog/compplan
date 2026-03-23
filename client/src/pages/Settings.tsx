@@ -8,6 +8,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { adminSettingsSchema, type AdminSettings } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { useEffect } from "react";
 
 import { Plus, Trash2 } from "lucide-react";
 
@@ -19,6 +20,11 @@ export default function Settings() {
     resolver: zodResolver(adminSettingsSchema),
     defaultValues: settings,
   });
+
+  // Re-populate form whenever settings load from the API
+  useEffect(() => {
+    if (settings) form.reset(settings);
+  }, [settings]);
 
   const onSubmit = async (data: AdminSettings) => {
     await updateSettings(data);
