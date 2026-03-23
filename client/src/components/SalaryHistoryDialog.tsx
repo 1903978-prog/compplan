@@ -107,7 +107,7 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
         </DialogHeader>
 
         {/* Current salary summary */}
-        <div className="bg-muted/30 rounded-lg p-3 text-sm grid grid-cols-4 gap-3 border">
+        <div className="bg-muted/30 rounded-lg p-3 text-sm grid grid-cols-3 gap-3 border">
           <div>
             <div className="text-[10px] uppercase text-muted-foreground font-bold">Current Role</div>
             <div className="font-semibold font-mono">{employee.current_role_code}</div>
@@ -123,6 +123,14 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
           <div>
             <div className="text-[10px] uppercase text-muted-foreground font-bold">RAL</div>
             <div className="font-semibold">€{Math.round(grossToRal(employee.current_gross_fixed_year) * 1000).toLocaleString()}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase text-muted-foreground font-bold">Bonus</div>
+            <div className="font-semibold">{employee.current_bonus_pct ?? 0}%</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase text-muted-foreground font-bold">Meal Voucher</div>
+            <div className="font-semibold">{employee.meal_voucher_daily > 0 ? `€${employee.meal_voucher_daily}/d` : "—"}</div>
           </div>
         </div>
 
