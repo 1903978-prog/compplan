@@ -214,13 +214,26 @@ export default function Dashboard() {
   // Monthly cash outflow
   const cashOutflow = useMemo(() => {
     const now = new Date();
-    const isMarch = now.getMonth() === 2; // March = index 2
+    const isMarch    = now.getMonth() === 2;   // March  → bonuses
+    const isDecember = now.getMonth() === 11;  // December → 13th salary for 13-paycheck staff
     const monthName = format(now, "MMMM yyyy");
 
+    // Base monthly payroll (each person contributes their regular monthly gross)
     const baseMonthly = employees.reduce((s, emp) => s + emp.current_gross_fixed_year / emp.months_paid, 0);
+
+    // March: add full annual bonus per employee
     const bonusTotal = isMarch
       ? employees.reduce((s, emp) => s + emp.current_gross_fixed_year * (emp.current_bonus_pct / 100), 0)
       : 0;
+
+    // December: employees with 13 paychecks get an extra monthly salary (13th month)
+    const thirteenthTotal = isDecember
+      ? employees
+          .filter(emp => emp.months_paid === 13)
+          .reduce((s, emp) => s + emp.current_gross_fixed_year / emp.months_paid, 0)
+      : 0;
+
+    const total = baseMonthly + bonusTotal + thirteenthTotal;
 
     const bonusBreakdown = isMarch
       ? employees
@@ -228,13 +241,26 @@ export default function Dashboard() {
           .map(emp => ({
             name: emp.name,
             role: emp.current_role_code,
-            bonus: emp.current_gross_fixed_year * (emp.current_bonus_pct / 100),
-            pct: emp.current_bonus_pct,
+            amount: emp.current_gross_fixed_year * (emp.current_bonus_pct / 100),
+            label: `${emp.current_bonus_pct}% bonus`,
           }))
-          .sort((a, b) => b.bonus - a.bonus)
+          .sort((a, b) => b.amount - a.amount)
+      : isDecember
+      ? employees
+          .filter(emp => emp.months_paid === 13)
+          .map(emp => ({
+            name: emp.name,
+            role: emp.current_role_code,
+            amount: emp.current_gross_fixed_year / emp.months_paid,
+            label: `13th month`,
+          }))
+          .sort((a, b) => b.amount - a.amount)
       : [];
 
-    return { baseMonthly, bonusTotal, total: baseMonthly + bonusTotal, isMarch, monthName, bonusBreakdown };
+    const extraLabel = isMarch ? "incl. bonuses" : isDecember ? "incl. 13th month" : null;
+    const accentColor = isMarch ? "amber" : isDecember ? "violet" : "emerald";
+
+    return { baseMonthly, bonusTotal, thirteenthTotal, total, isMarch, isDecember, monthName, bonusBreakdown, extraLabel, accentColor };
   }, [employees]);
 
   const upcomingBirthdays = useMemo(() => {
@@ -268,52 +294,67 @@ export default function Dashboard() {
       />
 
       {/* Monthly Cash Outflow tile */}
-      <Card className={`p-5 border-l-4 ${cashOutflow.isMarch ? "border-l-amber-500 bg-amber-50/40" : "border-l-emerald-500 bg-emerald-50/30"}`}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3 mb-1">
-            <div className={`p-2 rounded-lg ${cashOutflow.isMarch ? "bg-amber-100" : "bg-emerald-100"}`}>
-              <Banknote className={`w-5 h-5 ${cashOutflow.isMarch ? "text-amber-600" : "text-emerald-600"}`} />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
-                Monthly Cash Outflow — {cashOutflow.monthName}
+      {(() => {
+        const c = cashOutflow.accentColor;
+        const borderCls  = c === "amber"   ? "border-l-amber-500 bg-amber-50/40"
+                         : c === "violet"  ? "border-l-violet-500 bg-violet-50/40"
+                         :                  "border-l-emerald-500 bg-emerald-50/30";
+        const iconBg     = c === "amber"   ? "bg-amber-100"   : c === "violet" ? "bg-violet-100"   : "bg-emerald-100";
+        const iconColor  = c === "amber"   ? "text-amber-600" : c === "violet" ? "text-violet-600" : "text-emerald-600";
+        const extraBadge = c === "amber"   ? "text-amber-700 bg-amber-100"
+                         : c === "violet"  ? "text-violet-700 bg-violet-100"
+                         :                  "";
+        const extraRowColor = c === "amber" ? "text-amber-700" : "text-violet-700";
+        return (
+          <Card className={`p-5 border-l-4 ${borderCls}`}>
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${iconBg}`}>
+                  <Banknote className={`w-5 h-5 ${iconColor}`} />
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                    Monthly Cash Outflow — {cashOutflow.monthName}
+                  </div>
+                  <div className="flex items-baseline gap-3 mt-0.5 flex-wrap">
+                    <span className="text-3xl font-bold">€{Math.round(cashOutflow.total).toLocaleString("it-IT")}</span>
+                    {cashOutflow.extraLabel && (
+                      <span className={`text-sm font-semibold px-2 py-0.5 rounded ${extraBadge}`}>
+                        {cashOutflow.extraLabel}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="flex items-baseline gap-3 mt-0.5 flex-wrap">
-                <span className="text-3xl font-bold">€{Math.round(cashOutflow.total).toLocaleString("it-IT")}</span>
-                {cashOutflow.isMarch && (
-                  <span className="text-sm text-amber-700 font-semibold bg-amber-100 px-2 py-0.5 rounded">
-                    incl. bonuses
-                  </span>
+
+              {/* Breakdown */}
+              <div className="text-xs space-y-1 min-w-[200px]">
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Base monthly gross</span>
+                  <span className="font-mono font-semibold">€{Math.round(cashOutflow.baseMonthly).toLocaleString("it-IT")}</span>
+                </div>
+                {(cashOutflow.isMarch || cashOutflow.isDecember) && (
+                  <>
+                    <div className={`flex justify-between gap-4 font-semibold ${extraRowColor}`}>
+                      <span>+ {cashOutflow.isMarch ? "Bonuses" : "13th month salaries"}</span>
+                      <span className="font-mono">€{Math.round(cashOutflow.isMarch ? cashOutflow.bonusTotal : cashOutflow.thirteenthTotal).toLocaleString("it-IT")}</span>
+                    </div>
+                    <div className="border-t pt-1 mt-1 space-y-0.5">
+                      {cashOutflow.bonusBreakdown.map(b => (
+                        <div key={b.name} className="flex justify-between gap-3 text-[11px] text-muted-foreground">
+                          <span>{b.name} <span className="font-mono text-[10px] opacity-70">{b.label}</span></span>
+                          <span className="font-mono">€{Math.round(b.amount).toLocaleString("it-IT")}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
-          </div>
+          </Card>
+        );
+      })()}
 
-          {/* Breakdown */}
-          <div className="text-xs space-y-1 min-w-[180px]">
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Base monthly gross</span>
-              <span className="font-mono font-semibold">€{Math.round(cashOutflow.baseMonthly).toLocaleString("it-IT")}</span>
-            </div>
-            {cashOutflow.isMarch && (
-              <>
-                <div className="flex justify-between gap-4 text-amber-700">
-                  <span>+ Bonuses (March)</span>
-                  <span className="font-mono font-semibold">€{Math.round(cashOutflow.bonusTotal).toLocaleString("it-IT")}</span>
-                </div>
-                <div className="border-t pt-1 mt-1 space-y-0.5">
-                  {cashOutflow.bonusBreakdown.map(b => (
-                    <div key={b.name} className="flex justify-between gap-4 text-[11px] text-muted-foreground">
-                      <span>{b.name} <span className="font-mono text-[10px]">({b.pct}%)</span></span>
-                      <span className="font-mono">€{Math.round(b.bonus).toLocaleString("it-IT")}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </Card>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
