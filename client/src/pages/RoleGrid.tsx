@@ -178,7 +178,7 @@ export default function RoleGridPage() {
                 <TableHead>Next Role</TableHead>
                 <TableHead className="text-center bg-purple-50/50">Fast (Mo)</TableHead>
                 <TableHead className="text-center bg-blue-50/50">Norm (Mo)</TableHead>
-                <TableHead className="text-center bg-blue-100/60 font-semibold">TOT norm (mo)</TableHead>
+                <TableHead className="text-center bg-blue-100/60 font-semibold">TOT norm (y)</TableHead>
                 <TableHead className="text-center bg-orange-50/50">Slow (Mo)</TableHead>
                 <TableHead className="text-center border-l">Months</TableHead>
                 <TableHead className="text-center border-l">Gross yr min (k€)</TableHead>
@@ -235,7 +235,7 @@ export default function RoleGridPage() {
                       />
                   </TableCell>
                   <TableCell className="bg-blue-100/20 text-center font-mono font-semibold text-blue-700">
-                    {cumNormByIndex[index]}
+                    {(cumNormByIndex[index] / 12).toFixed(1)}y
                   </TableCell>
                   <TableCell className="bg-orange-50/30">
                      <Input

@@ -268,6 +268,8 @@ export default function EmployeeList() {
               <TableHead className="text-right">Tenure (Total)</TableHead>
               <TableHead className="text-right">Rate</TableHead>
               <TableHead className="text-right">Yearly Gross</TableHead>
+              <TableHead className="text-center">Paychecks</TableHead>
+              <TableHead className="text-right">Meal Voucher</TableHead>
               <TableHead className="w-[180px]">Band Position</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -307,6 +309,21 @@ export default function EmployeeList() {
                         </div>
                     </TableCell>
                     <TableCell className="text-right">€{emp.current_gross_fixed_year.toLocaleString()}</TableCell>
+                    <TableCell className="text-center">
+                      <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${emp.months_paid === 13 ? "bg-violet-100 text-violet-700" : "bg-muted text-muted-foreground"}`}>
+                        {emp.months_paid}mo
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right text-xs">
+                      {emp.meal_voucher_daily > 0 ? (
+                        <div className="flex flex-col items-end">
+                          <span className="font-semibold">€{emp.meal_voucher_daily}/d</span>
+                          <span className="text-muted-foreground text-[10px]">€{Math.round(emp.meal_voucher_daily * (settings.meal_voucher_days_per_month ?? 20))}/mo</span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <BandPosition metrics={metrics} />
                     </TableCell>
@@ -326,7 +343,7 @@ export default function EmployeeList() {
                   </TableRow>
                   {isExpanded && (
                     <TableRow className="bg-muted/30 hover:bg-muted/30">
-                      <TableCell colSpan={11}>
+                      <TableCell colSpan={13}>
                         <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
                           <Card className="p-4 bg-background">
                             <h4 className="font-bold text-sm mb-4">Promotion Tracks</h4>
@@ -350,23 +367,23 @@ export default function EmployeeList() {
                               const eenMonths = Math.round(metrics.hireTenure * 12);
                               const totMonths = metrics.normal_tot_months;
                               const delta = eenMonths - totMonths;
-                              const pct = totMonths > 0 ? Math.round((eenMonths / totMonths) * 100) : 0;
                               const isAhead = delta >= 0;
+                              const toYears = (mo: number) => (mo / 12).toFixed(1) + "y";
                               return (
                                 <div className={`mt-3 p-3 rounded-lg border text-xs ${isAhead ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
                                   <div className="font-bold text-sm mb-1">Tenure vs Normal Path</div>
                                   <div className="grid grid-cols-2 gap-y-1 text-muted-foreground">
                                     <span>EEN Tenure:</span>
-                                    <span className="text-right font-mono font-semibold text-foreground">{eenMonths} mo</span>
+                                    <span className="text-right font-mono font-semibold text-foreground">{toYears(eenMonths)}</span>
                                     <span>TOT Normal Path:</span>
-                                    <span className="text-right font-mono font-semibold text-blue-700">{totMonths} mo</span>
+                                    <span className="text-right font-mono font-semibold text-blue-700">{toYears(totMonths)}</span>
                                     <span>Delta:</span>
                                     <span className={`text-right font-mono font-bold ${isAhead ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                      {isAhead ? "+" : ""}{delta} mo ({pct}%)
+                                      {isAhead ? "+" : ""}{toYears(delta)}
                                     </span>
                                   </div>
                                   <div className={`mt-1 text-[10px] font-semibold ${isAhead ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                    {isAhead ? `▲ ${delta}mo ahead of normal path` : `▼ ${Math.abs(delta)}mo behind normal path`}
+                                    {isAhead ? `▲ ${toYears(delta)} ahead of normal path` : `▼ ${toYears(Math.abs(delta))} behind normal path`}
                                   </div>
                                 </div>
                               );
