@@ -40,6 +40,25 @@ export const roleGridSchema = z.object({
 });
 export type RoleGridRow = z.infer<typeof roleGridSchema>;
 
+export const benchmarkRowSchema = z.object({
+  tenure_years: z.number(),
+  gen_p10: z.number(),
+  gen_median: z.number(),
+  gen_p75: z.number(),
+  strat_p10: z.number(),
+  strat_median: z.number(),
+  strat_p75: z.number(),
+});
+export type BenchmarkRow = z.infer<typeof benchmarkRowSchema>;
+
+export const DEFAULT_BENCHMARK: BenchmarkRow[] = [
+  { tenure_years: 1, gen_p10: 25, gen_median: 30, gen_p75: 38, strat_p10: 32, strat_median: 40, strat_p75: 48 },
+  { tenure_years: 2, gen_p10: 29, gen_median: 34, gen_p75: 42, strat_p10: 36, strat_median: 45, strat_p75: 55 },
+  { tenure_years: 3, gen_p10: 33, gen_median: 39, gen_p75: 47, strat_p10: 40, strat_median: 50, strat_p75: 63 },
+  { tenure_years: 4, gen_p10: 37, gen_median: 43, gen_p75: 53, strat_p10: 48, strat_median: 60, strat_p75: 75 },
+  { tenure_years: 5, gen_p10: 40, gen_median: 48, gen_p75: 60, strat_p10: 55, strat_median: 68, strat_p75: 82 },
+];
+
 export const adminSettingsSchema = z.object({
   net_factor: z.number().default(0.75),
   meal_voucher_days_per_month: z.number().default(20),
@@ -57,6 +76,8 @@ export const adminSettingsSchema = z.object({
     { id: "6", name: "Consulting foundations", due_from_hire_months: 12 },
     { id: "7", name: "Green belt", due_from_hire_months: 24 },
   ]),
+  benchmark_data: z.array(benchmarkRowSchema).default(DEFAULT_BENCHMARK),
+  benchmark_updated_at: z.string().nullable().default(null),
 });
 export type AdminSettings = z.infer<typeof adminSettingsSchema>;
 
@@ -145,6 +166,8 @@ export const appSettings = pgTable("app_settings", {
   track_fast_threshold: real("track_fast_threshold").notNull().default(8.5),
   track_slow_threshold: real("track_slow_threshold").notNull().default(7.0),
   tests: jsonb("tests").$type<Test[]>().notNull().default([]),
+  benchmark_data: jsonb("benchmark_data").$type<BenchmarkRow[]>().default([]),
+  benchmark_updated_at: text("benchmark_updated_at"),
 });
 
 // Minimal users table for auth

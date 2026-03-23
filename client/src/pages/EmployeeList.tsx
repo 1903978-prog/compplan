@@ -483,17 +483,20 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
     form.setValue("monthly_ratings", updated.filter(r => r.score != null) as any);
   };
 
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+
   const onSubmit = async (data: EmployeeInput) => {
+    setSaveState("saving");
     try {
       if (editingId) {
         await updateEmployee(editingId, data);
-        toast({ title: "Employee updated successfully" });
       } else {
         await addEmployee({ ...data, id: uuidv4() });
-        toast({ title: "Employee created successfully" });
       }
-      onOpenChange(false);
+      setSaveState("saved");
+      setTimeout(() => { onOpenChange(false); setSaveState("idle"); }, 1000);
     } catch (err) {
+      setSaveState("idle");
       toast({ title: "Error saving employee", description: String(err), variant: "destructive" });
     }
   };
@@ -714,7 +717,10 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
 
             <div className="flex justify-end gap-3 pt-4 border-t">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit">Save Employee</Button>
+            <Button type="submit" disabled={saveState !== "idle"}
+              className={saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : ""}>
+              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Save Employee"}
+            </Button>
           </div>
         </form>
       </DialogContent>

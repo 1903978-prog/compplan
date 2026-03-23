@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { RoleGridRow } from "@shared/schema";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { BenchmarkPanel } from "@/components/BenchmarkPanel";
+import { BarChart2 } from "lucide-react";
 
 // Lookup table: [ral_k, gross_piva_eur] - sorted by gross ascending for interpolation
 const RAL_TABLE: [number, number][] = [
@@ -82,6 +84,7 @@ export default function RoleGridPage() {
   const [gridState, setGridState] = useState(roleGrid);
   const [hasChanges, setHasChanges] = useState(false);
   const [showTheoretical, setShowTheoretical] = useState(false);
+  const [showBenchmark, setShowBenchmark] = useState(false);
 
   const handleCellChange = (index: number, field: keyof RoleGridRow, value: string | number) => {
     const newGrid = [...gridState];
@@ -151,6 +154,10 @@ export default function RoleGridPage() {
         description="Define role progression paths, salary bands, and promotion timing."
         actions={
           <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowBenchmark(true)}>
+              <BarChart2 className="w-4 h-4 mr-2" />
+              Benchmark
+            </Button>
             <Button variant="outline" onClick={() => setShowTheoretical(v => !v)}>
               {showTheoretical ? "Hide Theoretical" : "Show Theoretical"}
             </Button>
@@ -347,6 +354,8 @@ export default function RoleGridPage() {
           </Table>
         </div>
       </Card>
+
+      <BenchmarkPanel open={showBenchmark} onClose={() => setShowBenchmark(false)} />
     </div>
   );
 }
