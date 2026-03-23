@@ -293,85 +293,10 @@ export default function Dashboard() {
         }
       />
 
-      {/* KPI Cards — includes Cash Outflow right after Total Payroll */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card className="p-4 flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-primary/10"><Users className="w-5 h-5 text-primary" /></div>
-          <div>
-            <div className="text-2xl font-bold">{kpis.total}</div>
-            <div className="text-xs text-muted-foreground">Employees</div>
-          </div>
-        </Card>
-        <Card className="p-4 flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-emerald-100"><Wallet className="w-5 h-5 text-emerald-600" /></div>
-          <div>
-            <div className="text-2xl font-bold">€{Math.round(kpis.totalPayroll / 1000)}k</div>
-            <div className="text-xs text-muted-foreground">Total Payroll / yr</div>
-          </div>
-        </Card>
-        {/* Cash Outflow — right after Total Payroll */}
-        {(() => {
-          const c = cashOutflow.accentColor;
-          const borderCls  = c === "amber"  ? "border-l-amber-500 bg-amber-50/40"
-                           : c === "violet" ? "border-l-violet-500 bg-violet-50/40"
-                           :                 "border-l-emerald-500 bg-emerald-50/30";
-          const iconBg     = c === "amber"  ? "bg-amber-100"   : c === "violet" ? "bg-violet-100"   : "bg-emerald-100";
-          const iconColor  = c === "amber"  ? "text-amber-600" : c === "violet" ? "text-violet-600" : "text-emerald-600";
-          const extraColor = c === "amber"  ? "text-amber-700" : "text-violet-700";
-          return (
-            <Card className={`p-4 border-l-4 ${borderCls}`}>
-              <div className="flex items-center gap-2 mb-1">
-                <div className={`p-1.5 rounded-lg ${iconBg}`}>
-                  <Banknote className={`w-4 h-4 ${iconColor}`} />
-                </div>
-                <div className="text-xs text-muted-foreground font-medium leading-tight">Cash Outflow<br />{cashOutflow.monthName}</div>
-              </div>
-              <div className="text-2xl font-bold">€{Math.round(cashOutflow.total / 1000)}k</div>
-              <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
-                <div>€{Math.round(cashOutflow.baseMonthly / 1000)}k base monthly</div>
-                {cashOutflow.isMarch && cashOutflow.bonusTotal > 0 && (
-                  <div className={`font-semibold ${extraColor}`}>+ €{Math.round(cashOutflow.bonusTotal / 1000)}k bonuses</div>
-                )}
-                {cashOutflow.isDecember && cashOutflow.thirteenthTotal > 0 && (
-                  <div className={`font-semibold ${extraColor}`}>+ €{Math.round(cashOutflow.thirteenthTotal / 1000)}k 13th month</div>
-                )}
-                {cashOutflow.bonusBreakdown.length > 0 && (
-                  <div className="pt-0.5 space-y-0.5 border-t border-border/50">
-                    {cashOutflow.bonusBreakdown.map(b => (
-                      <div key={b.name} className="flex justify-between gap-1">
-                        <span className="truncate">{b.name}</span>
-                        <span className="font-mono shrink-0">€{Math.round(b.amount / 1000)}k</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </Card>
-          );
-        })()}
-        <Card className="p-4 flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-blue-100"><BarChart3 className="w-5 h-5 text-blue-600" /></div>
-          <div>
-            <div className="text-2xl font-bold">€{Math.round(kpis.avgSalary / 1000)}k</div>
-            <div className="text-xs text-muted-foreground">Avg Salary / yr</div>
-          </div>
-        </Card>
-        <Card className="p-4 flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-amber-100"><AlertTriangle className="w-5 h-5 text-amber-600" /></div>
-          <div>
-            <div className="text-2xl font-bold">
-              {kpis.overBand > 0 && <span className="text-destructive">{kpis.overBand}↑</span>}
-              {kpis.overBand > 0 && kpis.underBand > 0 && <span className="text-muted-foreground mx-1">/</span>}
-              {kpis.underBand > 0 && <span className="text-amber-600">{kpis.underBand}↓</span>}
-              {kpis.overBand === 0 && kpis.underBand === 0 && <span className="text-emerald-600">✓</span>}
-            </div>
-            <div className="text-xs text-muted-foreground">Out-of-band</div>
-          </div>
-        </Card>
-      </div>
+      {/* Main info row: Promo Windows (left) + 6 compact cards in 3×2 grid (right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.6fr] gap-4 items-start">
 
-      {/* Promotion windows + birthdays */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Left: Upcoming Promotion Windows */}
         <Card className="p-4 border-l-4 border-l-primary bg-primary/5">
           <div className="flex items-center gap-3 mb-3">
             <TrendingUp className="w-5 h-5 text-primary" />
@@ -405,27 +330,112 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card className="p-4 border-l-4 border-l-pink-500 bg-pink-500/5">
-          <div className="flex items-center gap-3 mb-3">
-            <Gift className="w-5 h-5 text-pink-500" />
-            <h3 className="font-bold text-sm">Birthdays in the next 30 days</h3>
-          </div>
-          <div className="space-y-2">
-            {upcomingBirthdays.length > 0 ? (
-              upcomingBirthdays.map(emp => {
-                const dob = parseISO(emp.date_of_birth);
-                return (
-                  <div key={emp.id} className="flex justify-between items-center text-sm p-2 bg-background rounded border shadow-sm">
-                    <span className="font-medium">{emp.name}</span>
-                    <span className="text-xs font-bold text-pink-600">{format(dob, "MMM dd")}</span>
+        {/* Right: 3×2 grid of 6 compact cards */}
+        <div className="grid grid-cols-3 gap-3">
+
+          {/* Row 1 */}
+          <Card className="p-3 flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-primary/10 shrink-0"><Users className="w-4 h-4 text-primary" /></div>
+            <div className="min-w-0">
+              <div className="text-xl font-bold">{kpis.total}</div>
+              <div className="text-[10px] text-muted-foreground truncate">Employees</div>
+            </div>
+          </Card>
+
+          <Card className="p-3 flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-emerald-100 shrink-0"><Wallet className="w-4 h-4 text-emerald-600" /></div>
+            <div className="min-w-0">
+              <div className="text-xl font-bold">€{Math.round(kpis.totalPayroll / 1000)}k</div>
+              <div className="text-[10px] text-muted-foreground truncate">Total Payroll / yr</div>
+            </div>
+          </Card>
+
+          {/* Cash Outflow */}
+          {(() => {
+            const c = cashOutflow.accentColor;
+            const borderCls  = c === "amber"  ? "border-l-amber-500 bg-amber-50/40"
+                             : c === "violet" ? "border-l-violet-500 bg-violet-50/40"
+                             :                 "border-l-emerald-500 bg-emerald-50/30";
+            const iconBg    = c === "amber"  ? "bg-amber-100"   : c === "violet" ? "bg-violet-100"   : "bg-emerald-100";
+            const iconColor = c === "amber"  ? "text-amber-600" : c === "violet" ? "text-violet-600" : "text-emerald-600";
+            const extraColor = c === "amber" ? "text-amber-700" : "text-violet-700";
+            return (
+              <Card className={`p-3 border-l-4 ${borderCls}`}>
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <div className={`p-1 rounded-lg ${iconBg} shrink-0`}>
+                    <Banknote className={`w-3.5 h-3.5 ${iconColor}`} />
                   </div>
-                );
-              })
+                  <div className="text-[10px] text-muted-foreground font-medium leading-tight truncate">Cash Outflow / mo</div>
+                </div>
+                <div className="text-xl font-bold">€{Math.round(cashOutflow.total / 1000)}k</div>
+                <div className="mt-0.5 space-y-0.5 text-[9px] text-muted-foreground">
+                  <div>€{Math.round(cashOutflow.baseMonthly / 1000)}k base</div>
+                  {cashOutflow.isMarch && cashOutflow.bonusTotal > 0 && (
+                    <div className={`font-semibold ${extraColor}`}>+€{Math.round(cashOutflow.bonusTotal / 1000)}k bonus</div>
+                  )}
+                  {cashOutflow.isDecember && cashOutflow.thirteenthTotal > 0 && (
+                    <div className={`font-semibold ${extraColor}`}>+€{Math.round(cashOutflow.thirteenthTotal / 1000)}k 13th</div>
+                  )}
+                  {cashOutflow.bonusBreakdown.slice(0, 3).map(b => (
+                    <div key={b.name} className="flex justify-between gap-1">
+                      <span className="truncate">{b.name}</span>
+                      <span className="font-mono shrink-0">€{Math.round(b.amount / 1000)}k</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            );
+          })()}
+
+          {/* Row 2 */}
+          <Card className="p-3 flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-blue-100 shrink-0"><BarChart3 className="w-4 h-4 text-blue-600" /></div>
+            <div className="min-w-0">
+              <div className="text-xl font-bold">€{Math.round(kpis.avgSalary / 1000)}k</div>
+              <div className="text-[10px] text-muted-foreground truncate">Avg Salary / yr</div>
+            </div>
+          </Card>
+
+          <Card className="p-3 flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-amber-100 shrink-0"><AlertTriangle className="w-4 h-4 text-amber-600" /></div>
+            <div className="min-w-0">
+              <div className="text-xl font-bold">
+                {kpis.overBand > 0 && <span className="text-destructive">{kpis.overBand}↑</span>}
+                {kpis.overBand > 0 && kpis.underBand > 0 && <span className="text-muted-foreground mx-0.5">/</span>}
+                {kpis.underBand > 0 && <span className="text-amber-600">{kpis.underBand}↓</span>}
+                {kpis.overBand === 0 && kpis.underBand === 0 && <span className="text-emerald-600">✓</span>}
+              </div>
+              <div className="text-[10px] text-muted-foreground truncate">Out-of-band</div>
+            </div>
+          </Card>
+
+          {/* Birthdays — compact */}
+          <Card className="p-3 border-l-4 border-l-pink-500 bg-pink-500/5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Gift className="w-3.5 h-3.5 text-pink-500 shrink-0" />
+              <div className="text-[10px] text-muted-foreground font-medium">Birthdays (30d)</div>
+            </div>
+            {upcomingBirthdays.length === 0 ? (
+              <div className="text-[10px] text-muted-foreground italic">None upcoming</div>
             ) : (
-              <p className="text-xs text-muted-foreground italic">No birthdays in the next 30 days.</p>
+              <div className="space-y-0.5">
+                {upcomingBirthdays.slice(0, 4).map(emp => {
+                  const dob = parseISO(emp.date_of_birth);
+                  return (
+                    <div key={emp.id} className="flex justify-between items-center text-[10px]">
+                      <span className="font-medium truncate">{emp.name}</span>
+                      <span className="font-bold text-pink-600 shrink-0 ml-1">{format(dob, "MMM d")}</span>
+                    </div>
+                  );
+                })}
+                {upcomingBirthdays.length > 4 && (
+                  <div className="text-[9px] text-muted-foreground">+{upcomingBirthdays.length - 4} more</div>
+                )}
+              </div>
             )}
-          </div>
-        </Card>
+          </Card>
+
+        </div>
       </div>
 
       <div className="bg-card rounded-xl border shadow-sm">
