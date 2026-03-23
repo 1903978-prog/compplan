@@ -437,6 +437,43 @@ export default function EmployeeList() {
                                     <span className="text-muted-foreground">Future RAL:</span>
                                     <span className="font-bold text-emerald-600">€{Math.round(grossToRal(metrics.annual_future) * 1000).toLocaleString()}</span>
                                   </div>
+
+                                  {/* Band targets: % to reach min / mid / max of next role */}
+                                  {metrics.next_min > 0 && (() => {
+                                    const cur = emp.current_gross_fixed_year;
+                                    const nextRole = roleGrid.find(r => r.role_code === metrics.next_role_code);
+                                    const mo = nextRole?.months_paid ?? emp.months_paid;
+                                    const targets = [
+                                      { label: "Min",  annual: metrics.next_min },
+                                      { label: "Mid",  annual: Math.round((metrics.next_min + metrics.next_max) / 2) },
+                                      { label: "Max",  annual: metrics.next_max },
+                                    ];
+                                    return (
+                                      <div className="pt-2 border-t">
+                                        <div className="text-[10px] uppercase text-muted-foreground font-bold mb-1.5 tracking-wide">
+                                          % increase to reach {metrics.next_role_code} band
+                                        </div>
+                                        <div className="space-y-1">
+                                          {targets.map(t => {
+                                            const pct = ((t.annual - cur) / cur) * 100;
+                                            const monthly = Math.round(t.annual / mo);
+                                            const color = pct <= 10 ? "text-emerald-600" : pct <= 20 ? "text-amber-600" : "text-destructive";
+                                            return (
+                                              <div key={t.label} className="flex items-center justify-between text-xs">
+                                                <span className="text-muted-foreground w-6">{t.label}</span>
+                                                <span className="font-mono text-foreground">€{t.annual.toLocaleString()}/yr</span>
+                                                <span className="text-muted-foreground font-mono text-[10px]">€{monthly.toLocaleString()}/mo</span>
+                                                <span className={`font-bold font-mono min-w-[52px] text-right ${color}`}>
+                                                  {pct >= 0 ? "+" : ""}{pct.toFixed(1)}%
+                                                </span>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+
                                   <div className="flex justify-between items-center">
                                     <span className="text-muted-foreground">Increase vs Today:</span>
                                     <div className="flex items-center gap-2">
