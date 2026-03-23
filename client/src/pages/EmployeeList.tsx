@@ -460,7 +460,7 @@ export default function EmployeeList() {
                                   <span>Eligibility = Last Promo Date (or Hire Date) + promo months</span>
 
                                   <span className="font-medium text-foreground">Effective:</span>
-                                  <span>Next promotion window (Jan 1 / May 1 / Sep 1) on or after Eligibility Date</span>
+                                  <span>Next promotion window on or after Eligibility Date. If Eligibility is within 30 days after a window, that earlier window is used instead.</span>
                                 </div>
                               </CollapsibleContent>
                             </Collapsible>

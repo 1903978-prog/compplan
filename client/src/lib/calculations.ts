@@ -149,9 +149,7 @@ export const calculateEmployeeMetrics = (
   const snapToNextWindow = (date: Date): Date => {
     const windows = settings.promotion_windows ?? [];
     if (!windows.length) return date;
-    // Sort windows by MM-DD
     const sorted = [...windows].sort();
-    // Try current year then next year
     for (let yearOffset = 0; yearOffset <= 1; yearOffset++) {
       const year = date.getFullYear() + yearOffset;
       for (const w of sorted) {
@@ -165,8 +163,13 @@ export const calculateEmployeeMetrics = (
 
   const calculateEffectiveDate = (promoMonths: number) => {
     const eligibilityDate = addMonths(baseDate, Math.round(promoMonths * 12));
-    // Effective date = next promotion window on or after eligibility date
-    const effectiveDate = snapToNextWindow(eligibilityDate);
+    // Normal effective date: next window on or after eligibility
+    const normalEffective = snapToNextWindow(eligibilityDate);
+    // Anticipation rule: if shifting eligibility back 30 days lands on an earlier window, use it
+    const earlyDate = new Date(eligibilityDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const earlyEffective = snapToNextWindow(earlyDate);
+    // Use earlier window only if it is genuinely before the normal one
+    const effectiveDate = earlyEffective < normalEffective ? earlyEffective : normalEffective;
     return { eligibilityDate, effectiveDate };
   };
 
