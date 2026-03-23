@@ -140,7 +140,7 @@ export default function RoleGridPage() {
                 <TableHead className="text-center text-muted-foreground font-normal">RAL max (k€)</TableHead>
                 <TableHead className="text-center border-l">Bonus %</TableHead>
                 <TableHead className="text-center border-l">% Min Inc.</TableHead>
-                <TableHead className="text-center">% Max/Min</TableHead>
+                <TableHead className="text-center">% (max−min)/min</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
