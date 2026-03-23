@@ -361,13 +361,48 @@ export default function EmployeeList() {
                                     <span className="text-muted-foreground">Future Monthly Gross:</span>
                                     <span className="font-bold text-emerald-600">€{Math.round(metrics.future_gross_month).toLocaleString()}</span>
                                   </div>
-                                  <div className="flex justify-between">
+                                  <div className="flex justify-between items-center">
                                     <span className="text-muted-foreground">Increase vs Today:</span>
-                                    <div className="text-right">
-                                      <div className="font-bold text-emerald-600">+{metrics.increase_pct.toFixed(1)}%</div>
-                                      <div className="text-[10px] text-muted-foreground">+€{Math.round(metrics.increase_amount_monthly).toLocaleString()}/mo</div>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        className="h-6 w-6 rounded border flex items-center justify-center hover:bg-muted text-muted-foreground"
+                                        onClick={async () => {
+                                          const cur = emp.promo_increase_override ?? settings.min_promo_increase_pct;
+                                          const next = Math.round((cur - 0.5) * 10) / 10;
+                                          if (next >= 0) await updateEmployee(emp.id, { ...emp, promo_increase_override: next });
+                                        }}
+                                      >
+                                        <ChevronLeft className="h-3 w-3" />
+                                      </button>
+                                      <div className="text-right min-w-[60px]">
+                                        <div className="font-bold text-emerald-600">+{metrics.increase_pct.toFixed(1)}%</div>
+                                        <div className="text-[10px] text-muted-foreground">+€{Math.round(metrics.increase_amount_monthly).toLocaleString()}/mo</div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="h-6 w-6 rounded border flex items-center justify-center hover:bg-muted text-muted-foreground"
+                                        onClick={async () => {
+                                          const cur = emp.promo_increase_override ?? settings.min_promo_increase_pct;
+                                          const next = Math.round((cur + 0.5) * 10) / 10;
+                                          if (next <= 100) await updateEmployee(emp.id, { ...emp, promo_increase_override: next });
+                                        }}
+                                      >
+                                        <ChevronRightIcon className="h-3 w-3" />
+                                      </button>
                                     </div>
                                   </div>
+                                  {emp.promo_increase_override != null && (
+                                    <div className="flex justify-end">
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-muted-foreground hover:text-destructive underline"
+                                        onClick={async () => await updateEmployee(emp.id, { ...emp, promo_increase_override: null })}
+                                      >
+                                        Reset to global ({settings.min_promo_increase_pct}%)
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </Card>
