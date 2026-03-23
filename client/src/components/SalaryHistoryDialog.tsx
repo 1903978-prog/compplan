@@ -17,18 +17,17 @@ interface Props {
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function fmtDate(d: string) {
-  // d = YYYY-MM-DD
   const [y, m] = d.split("-");
   return `${MONTH_NAMES[parseInt(m) - 1]} ${y}`;
 }
 
 export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
   const { toast } = useToast();
+  // entries stored oldest→newest internally so we can compute end dates
   const [entries, setEntries] = useState<SalaryHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  // New entry form state
   const [form, setForm] = useState({
     effective_date: new Date().toISOString().slice(0, 10),
     role_code: employee.current_role_code,
@@ -44,7 +43,7 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
     try {
       const res = await fetch(`/api/salary-history/${employee.id}`, { credentials: "include" });
       const data = await res.json();
-      // Sort ascending: oldest first, newest (current) at the bottom
+      // Store ascending internally (oldest → newest), we'll reverse for display
       setEntries((data as SalaryHistoryEntry[]).sort((a, b) => a.effective_date.localeCompare(b.effective_date)));
     } catch {
       toast({ title: "Failed to load salary history", variant: "destructive" });
@@ -87,14 +86,8 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
     }
   };
 
-  // For each entry, compute delta vs the entry before it (the older one)
-  const getDelta = (idx: number) => {
-    if (idx === 0) return null;
-    const prev = entries[idx - 1];
-    const delta = entries[idx].gross_fixed_year - prev.gross_fixed_year;
-    const pct = (delta / prev.gross_fixed_year) * 100;
-    return { delta, pct };
-  };
+  // Display order: newest first
+  const displayed = [...entries].reverse();
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -105,34 +98,6 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
             Salary History — {employee.name}
           </DialogTitle>
         </DialogHeader>
-
-        {/* Current salary summary */}
-        <div className="bg-muted/30 rounded-lg p-3 text-sm grid grid-cols-3 gap-3 border">
-          <div>
-            <div className="text-[10px] uppercase text-muted-foreground font-bold">Current Role</div>
-            <div className="font-semibold font-mono">{employee.current_role_code}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase text-muted-foreground font-bold">Yearly Gross</div>
-            <div className="font-semibold">€{employee.current_gross_fixed_year.toLocaleString()}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase text-muted-foreground font-bold">Monthly Gross</div>
-            <div className="font-semibold">€{Math.round(employee.current_gross_fixed_year / employee.months_paid).toLocaleString()}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase text-muted-foreground font-bold">RAL</div>
-            <div className="font-semibold">€{Math.round(grossToRal(employee.current_gross_fixed_year) * 1000).toLocaleString()}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase text-muted-foreground font-bold">Bonus</div>
-            <div className="font-semibold">{employee.current_bonus_pct ?? 0}%</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase text-muted-foreground font-bold">Meal Voucher</div>
-            <div className="font-semibold">{employee.meal_voucher_daily > 0 ? `€${employee.meal_voucher_daily}/d` : "—"}</div>
-          </div>
-        </div>
 
         {/* Add entry button */}
         <div className="flex justify-end">
@@ -195,90 +160,95 @@ export function SalaryHistoryDialog({ employee, open, onClose }: Props) {
           </div>
         )}
 
-        {/* History timeline */}
+        {/* History list */}
         {loading ? (
           <div className="text-center py-8 text-muted-foreground text-sm">Loading…</div>
-        ) : entries.length === 0 ? (
+        ) : displayed.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground text-sm italic">
             No salary history logged yet. Click "Log Salary Entry" to start tracking.
           </div>
         ) : (
-          <div className="relative space-y-0">
-            {/* Vertical timeline line */}
-            <div className="absolute left-[19px] top-3 bottom-3 w-0.5 bg-border z-0" />
+          <div className="space-y-3">
+            {displayed.map((entry, displayIdx) => {
+              // In the ascending array, this entry is at position (entries.length - 1 - displayIdx)
+              const ascIdx = entries.length - 1 - displayIdx;
+              const isCurrent = displayIdx === 0; // newest = first in display
+              // End date = start of the next chronological entry (one above in ascending array)
+              const nextEntry = entries[ascIdx + 1]; // next in time = already rendered above us
+              const endDate = nextEntry ? nextEntry.effective_date : null;
+              // Delta vs previous (older = the entry below in display, ascIdx-1)
+              const prevEntry = entries[ascIdx - 1];
+              const delta = prevEntry
+                ? { d: entry.gross_fixed_year - prevEntry.gross_fixed_year, pct: ((entry.gross_fixed_year - prevEntry.gross_fixed_year) / prevEntry.gross_fixed_year) * 100 }
+                : null;
 
-            {entries.map((entry, idx) => {
-              const isNewest = idx === entries.length - 1;
-              const delta = getDelta(idx);
               const monthlyGross = entry.gross_fixed_year / (entry.months_paid ?? 12);
               const ral = grossToRal(entry.gross_fixed_year);
 
               return (
-                <div key={entry.id} className="relative flex gap-4 pb-4 z-10">
-                  {/* Timeline dot */}
-                  <div className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center text-xs font-bold z-10 bg-background ${
-                    isNewest ? "border-primary text-primary" : "border-border text-muted-foreground"
-                  }`}>
-                    {isNewest ? "NOW" : fmtDate(entry.effective_date).slice(0, 3)}
-                  </div>
-
-                  {/* Card */}
-                  <div className={`flex-1 rounded-lg border p-3 ${isNewest ? "border-primary/30 bg-primary/5" : "bg-background"}`}>
-                    {/* Header row */}
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold">{fmtDate(entry.effective_date)}</span>
-                          {entry.role_code && (
-                            <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{entry.role_code}</span>
+                <div key={entry.id} className={`rounded-lg border p-3 ${isCurrent ? "border-primary/40 bg-primary/5" : "bg-background"}`}>
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Date range */}
+                        <span className="text-sm font-bold">
+                          {fmtDate(entry.effective_date)}
+                          {" → "}
+                          {endDate ? (
+                            <span className="text-muted-foreground font-normal">{fmtDate(endDate)}</span>
+                          ) : (
+                            <span className="text-primary font-semibold">ongoing</span>
                           )}
-                          {isNewest && <span className="text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded font-bold uppercase">Latest</span>}
-                        </div>
-                        {entry.note && (
-                          <div className="text-xs text-muted-foreground italic mt-0.5">{entry.note}</div>
+                        </span>
+                        {entry.role_code && (
+                          <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{entry.role_code}</span>
                         )}
                       </div>
-                      <button
-                        onClick={() => handleDelete(entry.id!)}
-                        className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {entry.note && (
+                        <div className="text-xs text-muted-foreground italic mt-0.5">{entry.note}</div>
+                      )}
                     </div>
-
-                    {/* Salary grid */}
-                    <div className="grid grid-cols-4 gap-2 text-xs">
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase">Yearly Gross</div>
-                        <div className="font-bold text-sm">€{entry.gross_fixed_year.toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase">Monthly</div>
-                        <div className="font-semibold">€{Math.round(monthlyGross).toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase">RAL</div>
-                        <div className="font-semibold">€{Math.round(ral * 1000).toLocaleString()}</div>
-                      </div>
-                      <div className="flex flex-col gap-0.5">
-                        {entry.bonus_pct != null && (
-                          <div><span className="text-[10px] text-muted-foreground uppercase">Bonus </span><span className="font-semibold">{entry.bonus_pct}%</span></div>
-                        )}
-                        {entry.meal_voucher_daily != null && (
-                          <div><span className="text-[10px] text-muted-foreground uppercase">Voucher </span><span className="font-semibold">€{entry.meal_voucher_daily}/d</span></div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Delta vs previous */}
-                    {delta && (
-                      <div className={`mt-2 pt-2 border-t flex items-center gap-1.5 text-xs font-semibold ${delta.delta > 0 ? "text-emerald-600" : delta.delta < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                        {delta.delta > 0 ? <TrendingUp className="w-3 h-3" /> : delta.delta < 0 ? <TrendingDown className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
-                        {delta.delta > 0 ? "+" : ""}{delta.delta.toLocaleString()} €/yr
-                        ({delta.delta > 0 ? "+" : ""}{delta.pct.toFixed(1)}% vs prev)
-                      </div>
-                    )}
+                    <button
+                      onClick={() => handleDelete(entry.id!)}
+                      className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
+
+                  {/* Salary grid */}
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase">Yearly Gross</div>
+                      <div className="font-bold text-sm">€{entry.gross_fixed_year.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase">Monthly</div>
+                      <div className="font-semibold">€{Math.round(monthlyGross).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase">RAL</div>
+                      <div className="font-semibold">€{Math.round(ral * 1000).toLocaleString()}</div>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {entry.bonus_pct != null && (
+                        <div><span className="text-[10px] text-muted-foreground uppercase">Bonus </span><span className="font-semibold">{entry.bonus_pct}%</span></div>
+                      )}
+                      {entry.meal_voucher_daily != null && entry.meal_voucher_daily > 0 && (
+                        <div><span className="text-[10px] text-muted-foreground uppercase">Voucher </span><span className="font-semibold">€{entry.meal_voucher_daily}/d</span></div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Delta vs previous comp */}
+                  {delta && (
+                    <div className={`mt-2 pt-2 border-t flex items-center gap-1.5 text-xs font-semibold ${delta.d > 0 ? "text-emerald-600" : delta.d < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                      {delta.d > 0 ? <TrendingUp className="w-3 h-3" /> : delta.d < 0 ? <TrendingDown className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
+                      {delta.d > 0 ? "+" : ""}{delta.d.toLocaleString()} €/yr vs previous
+                      ({delta.d > 0 ? "+" : ""}{delta.pct.toFixed(1)}%)
+                    </div>
+                  )}
                 </div>
               );
             })}
