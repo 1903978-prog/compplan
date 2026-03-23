@@ -380,10 +380,10 @@ export default function EmployeeList() {
                               <CollapsibleContent className="pt-3 text-[10px] space-y-2 text-muted-foreground leading-relaxed">
                                 <div className="grid grid-cols-[80px_1fr] gap-2">
                                   <span className="font-medium text-foreground">Base Date:</span>
-                                  <span>{emp.hire_date} (Hire Date)</span>
+                                  <span>{emp.last_promo_date ? `${emp.last_promo_date} (Last Promo)` : `${emp.hire_date} (Hire Date)`}</span>
 
                                   <span className="font-medium text-foreground">Logic:</span>
-                                  <span>Eligibility = Hire Date + promo months</span>
+                                  <span>Eligibility = Last Promo Date (or Hire Date) + promo months</span>
 
                                   <span className="font-medium text-foreground">Effective:</span>
                                   <span>1st of the month immediately after Eligibility Date</span>

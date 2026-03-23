@@ -116,8 +116,12 @@ export const calculateEmployeeMetrics = (
   }
 
   // 3. Calculate All Tracks
-  // Base date is always hire date — promo duration counts from when the employee joined
-  const baseDate = hireDate;
+  // Base = last promo date if set, otherwise hire date
+  const baseDate = employee.last_promo_date
+    ? (employee.last_promo_date.length === 10
+        ? parse(employee.last_promo_date, "yyyy-MM-dd", new Date())
+        : parse(employee.last_promo_date, "yyyy-MM", new Date()))
+    : hireDate;
 
   const calculateEffectiveDate = (promoMonths: number) => {
     const eligibilityDate = addMonths(baseDate, Math.round(promoMonths * 12));
