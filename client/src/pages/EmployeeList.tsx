@@ -566,6 +566,7 @@ export default function EmployeeList() {
       {historyEmployee && (
         <SalaryHistoryDialog
           employee={historyEmployee}
+          roleGrid={roleGrid}
           open={!!historyEmployee}
           onClose={() => setHistoryEmployee(null)}
         />
