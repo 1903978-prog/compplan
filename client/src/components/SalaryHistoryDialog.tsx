@@ -54,14 +54,17 @@ export function SalaryHistoryDialog({ employee, roleGrid, open, onClose }: Props
   const [editMonth, setEditMonth] = useState(1);
   const [editYear, setEditYear] = useState(CURRENT_YEAR);
 
-  // When role changes in form, auto-fill months_paid from roleGrid
+  // When role changes in form, auto-fill months_paid, bonus, and meal voucher
   const handleFormRoleChange = (roleCode: string) => {
     setFormRole(roleCode);
     const roleRow = roleGrid.find(r => r.role_code === roleCode);
     if (roleRow) {
       setFormMonths(roleRow.months_paid);
     }
-    // bonus and meal voucher stay at current employee values (user can override)
+    // If selecting the current role, use live employee values; otherwise default to 0
+    const isCurrent = roleCode === employee.current_role_code;
+    setFormBonus(isCurrent ? (employee.current_bonus_pct ?? 0) : 0);
+    setFormVoucher(isCurrent ? (employee.meal_voucher_daily ?? 0) : 0);
   };
 
   const loadHistory = async () => {
