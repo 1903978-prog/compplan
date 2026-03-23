@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Calendar, Star, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { employeeInputSchema, type EmployeeInput, type CompletedTest } from "@shared/schema";
@@ -445,16 +445,43 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
     defaultValues: editingEmployee || { ...defaultValues, id: uuidv4() },
   });
 
+  // Generate last 12 months as YYYY-MM strings (most recent first)
+  const last12Months = useMemo(() => {
+    const months: string[] = [];
+    const d = new Date();
+    for (let i = 0; i < 12; i++) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      months.push(`${y}-${m}`);
+      d.setMonth(d.getMonth() - 1);
+    }
+    return months; // [this month, last month, ..., 11 months ago]
+  }, []);
+
   // Use useEffect to reset form when dialog opens/closes or editingId changes
   useEffect(() => {
     if (open) {
-      if (editingId && editingEmployee) {
-        form.reset(editingEmployee);
-      } else {
-        form.reset({ ...defaultValues, id: uuidv4() });
-      }
+      const base = editingId && editingEmployee ? editingEmployee : { ...defaultValues, id: uuidv4() };
+      // Merge existing ratings with the fixed 12-month window
+      const existingMap = new Map((base.monthly_ratings || []).map(r => [r.month, r.score]));
+      const ratings = last12Months.map(month => ({
+        month,
+        score: existingMap.has(month) ? existingMap.get(month)! : null as any,
+      }));
+      form.reset({ ...base, monthly_ratings: ratings.filter(r => r.score != null) });
+      setRatings12(ratings);
     }
   }, [open, editingId, editingEmployee, form]);
+
+  // Local 12-month ratings state (null = not entered)
+  const [ratings12, setRatings12] = useState<{ month: string; score: number | null }[]>([]);
+
+  const updateRating12 = (month: string, score: number | null) => {
+    const updated = ratings12.map(r => r.month === month ? { ...r, score } : r);
+    setRatings12(updated);
+    // Only persist months with a score into the form field
+    form.setValue("monthly_ratings", updated.filter(r => r.score != null) as any);
+  };
 
   const onSubmit = async (data: EmployeeInput) => {
     try {
@@ -555,111 +582,50 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
               />
             </div>
 
-            <div className="space-y-4 col-span-2 border-t pt-4">
-              <div className="flex justify-between items-center">
-                <Label className="text-base font-bold">Monthly Ratings (Last 12 months used for Rate)</Label>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => {
-                    const current = form.getValues("monthly_ratings") || [];
-                    form.setValue("monthly_ratings", [...current, { month: new Date().toISOString().slice(0, 7), score: 7 }]);
-                  }}
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Month
-                </Button>
+            <div className="col-span-2 border-t pt-4 space-y-2">
+              <Label className="text-base font-bold">Monthly Ratings (last 12 months)</Label>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-0">
+                {ratings12.map(({ month, score }) => {
+                  const [y, m] = month.split("-");
+                  const label = `${m}/${y.slice(2)}`;
+                  return (
+                    <div key={month} className="flex items-center justify-between py-1 border-b border-muted/40 last:border-0">
+                      <span className="text-sm font-mono text-muted-foreground w-14">{label}</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="h-6 w-6 rounded flex items-center justify-center hover:bg-muted text-muted-foreground"
+                          onClick={() => updateRating12(month, score != null ? Math.max(1, Math.round((score - 0.5) * 10) / 10) : 7)}
+                        >
+                          <ChevronLeft className="h-3 w-3" />
+                        </button>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="1"
+                          max="10"
+                          className="h-7 w-14 text-center text-sm border rounded font-mono bg-background"
+                          value={score ?? ""}
+                          placeholder="—"
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            updateRating12(month, isNaN(v) ? null : Math.min(10, Math.max(1, v)));
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="h-6 w-6 rounded flex items-center justify-center hover:bg-muted text-muted-foreground"
+                          onClick={() => updateRating12(month, score != null ? Math.min(10, Math.round((score + 0.5) * 10) / 10) : 7)}
+                        >
+                          <ChevronRightIcon className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Controller
-                  control={form.control}
-                  name="monthly_ratings"
-                  render={({ field }) => (
-                    <>
-                      {(field.value || []).map((rating, index) => (
-                        <div key={index} className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border">
-                          <Calendar className="w-4 h-4 text-muted-foreground" />
-                          <div className="flex items-center gap-1">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => {
-                                const newVal = [...field.value];
-                                const [year, month] = newVal[index].month.split('-').map(Number);
-                                const date = new Date(year, month - 1, 1);
-                                date.setMonth(date.getMonth() - 1);
-                                newVal[index].month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-                                field.onChange(newVal);
-                              }}
-                            >
-                              <ChevronLeft className="h-3 w-3" />
-                            </Button>
-                            <Input 
-                              type="month" 
-                              className="h-8 w-32"
-                              value={rating.month}
-                              onChange={(e) => {
-                                const newVal = [...field.value];
-                                newVal[index].month = e.target.value;
-                                field.onChange(newVal);
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => {
-                                const newVal = [...field.value];
-                                const [year, month] = newVal[index].month.split('-').map(Number);
-                                const date = new Date(year, month - 1, 1);
-                                date.setMonth(date.getMonth() + 1);
-                                newVal[index].month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-                                field.onChange(newVal);
-                              }}
-                            >
-                              <ChevronRightIcon className="h-3 w-3" />
-                            </Button>
-                          </div>
-                          <Star className="w-4 h-4 text-yellow-500 ml-2" />
-                          <Input 
-                            type="number" 
-                            step="0.1"
-                            min="1"
-                            max="10"
-                            className="h-8 w-20"
-                            value={rating.score}
-                            onChange={(e) => {
-                              const newVal = [...field.value];
-                              newVal[index].score = parseFloat(e.target.value);
-                              field.onChange(newVal);
-                            }}
-                          />
-                          <Button 
-                            type="button" 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-destructive ml-auto"
-                            onClick={() => {
-                              const newVal = field.value.filter((_, i) => i !== index);
-                              field.onChange(newVal);
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                />
-              </div>
-              
               <p className="text-xs text-muted-foreground italic">
-                If no monthly ratings are provided, the manual "Rate" value below will be used.
+                Leave a month blank to exclude it. Filled months are averaged for the Rate.
               </p>
             </div>
 
