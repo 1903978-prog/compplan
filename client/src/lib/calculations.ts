@@ -71,15 +71,15 @@ export const calculateEmployeeMetrics = (
   const gross_month = employee.current_gross_fixed_year / employee.months_paid;
   const net_month = (gross_month * settings.net_factor); 
 
-  // 1b. Calculate Performance Score from Monthly Ratings if available
+  // 1b. Performance score: average of monthly ratings (last 12), fallback to manual score
   let performance_score: number | null = null;
   if (employee.monthly_ratings && employee.monthly_ratings.length > 0) {
-    // Sort ratings by month descending
     const sortedRatings = [...employee.monthly_ratings].sort((a, b) => b.month.localeCompare(a.month));
-    // Take last 12 months
     const last12 = sortedRatings.slice(0, 12);
     const sum = last12.reduce((acc, curr) => acc + curr.score, 0);
-    performance_score = sum / last12.length;
+    performance_score = Math.round((sum / last12.length) * 10) / 10;
+  } else if (employee.performance_score != null && employee.performance_score > 0) {
+    performance_score = employee.performance_score;
   }
 
   // 2. Determine Track based on Performance Score
@@ -105,18 +105,14 @@ export const calculateEmployeeMetrics = (
   const fastThreshold = settings.track_fast_threshold ?? 8.5;
   const slowThreshold = settings.track_slow_threshold ?? 7.0;
 
-  if (performance_score !== null && gatePassed) {
-    if (performance_score > fastThreshold) {
+  if (performance_score !== null && performance_score > 5 && gatePassed) {
+    if (performance_score >= fastThreshold) {
       recommended_track = "Fast";
-    } else if (performance_score > slowThreshold) {
+    } else if (performance_score >= slowThreshold) {
       recommended_track = "Normal";
-    } else if (performance_score > 5.0) {
-      recommended_track = "Slow";
     } else {
-      recommended_track = "No promotion";
+      recommended_track = "Slow";
     }
-  } else {
-    recommended_track = "No promotion";
   }
 
   // 3. Calculate All Tracks
