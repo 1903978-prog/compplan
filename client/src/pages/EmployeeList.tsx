@@ -368,29 +368,43 @@ export default function EmployeeList() {
                                 </div>
                               ))}
                             </div>
-                            {/* EEN Tenure vs Normal TOT tenure comparison */}
+                            {/* EEN Tenure vs Normal/Fast TOT comparison */}
                             {metrics.normal_tot_months > 0 && (() => {
                               const eenMonths = Math.round(metrics.hireTenure * 12);
-                              const totMonths = metrics.normal_tot_months;
-                              const delta = eenMonths - totMonths;
-                              const isAhead = delta >= 0;
+                              const normTot = metrics.normal_tot_months;
+                              const fastTot = metrics.fast_tot_months ?? 0;
+                              const deltaNorm = eenMonths - normTot;
+                              const isAheadNorm = deltaNorm >= 0;
+                              const belowFast = fastTot > 0 && eenMonths < fastTot;
                               const toYears = (mo: number) => (mo / 12).toFixed(1) + "y";
+                              const nextRoleName = roleGrid.find(r => r.role_code === metrics.next_role_code)?.role_name ?? metrics.next_role_code ?? "next role";
                               return (
-                                <div className={`mt-3 p-3 rounded-lg border text-xs ${isAhead ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
-                                  <div className="font-bold text-sm mb-1">Tenure vs Normal Path</div>
+                                <div className={`mt-3 p-3 rounded-lg border text-xs ${isAheadNorm ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
+                                  <div className="font-bold text-sm mb-2">Path to {nextRoleName}</div>
                                   <div className="grid grid-cols-2 gap-y-1 text-muted-foreground">
                                     <span>EEN Tenure:</span>
                                     <span className="text-right font-mono font-semibold text-foreground">{toYears(eenMonths)}</span>
-                                    <span>TOT Normal Path:</span>
-                                    <span className="text-right font-mono font-semibold text-blue-700">{toYears(totMonths)}</span>
-                                    <span>Delta:</span>
-                                    <span className={`text-right font-mono font-bold ${isAhead ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                      {isAhead ? "+" : ""}{toYears(delta)}
+                                    <span className="text-blue-700">Normal path TOT:</span>
+                                    <span className="text-right font-mono font-semibold text-blue-700">{toYears(normTot)}</span>
+                                    {fastTot > 0 && <>
+                                      <span className="text-purple-700">Fast path TOT:</span>
+                                      <span className="text-right font-mono font-semibold text-purple-700">{toYears(fastTot)}</span>
+                                    </>}
+                                    <span>vs Normal:</span>
+                                    <span className={`text-right font-mono font-bold ${isAheadNorm ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                      {isAheadNorm ? "+" : ""}{toYears(deltaNorm)}
                                     </span>
                                   </div>
-                                  <div className={`mt-1 text-[10px] font-semibold ${isAhead ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                    {isAhead ? `▲ ${toYears(delta)} ahead of normal path` : `▼ ${toYears(Math.abs(delta))} behind normal path`}
-                                  </div>
+                                  {belowFast && (
+                                    <div className="mt-2 flex items-center gap-1 text-[10px] font-bold text-destructive bg-destructive/10 border border-destructive/20 rounded px-2 py-1">
+                                      ⚠ Below fast-track minimum ({toYears(fastTot)}) — not eligible yet
+                                    </div>
+                                  )}
+                                  {!belowFast && (
+                                    <div className={`mt-1 text-[10px] font-semibold ${isAheadNorm ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                      {isAheadNorm ? `▲ ${toYears(deltaNorm)} ahead of normal path` : `▼ ${toYears(Math.abs(deltaNorm))} behind normal path`}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })()}

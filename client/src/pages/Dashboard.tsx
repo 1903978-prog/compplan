@@ -293,71 +293,8 @@ export default function Dashboard() {
         }
       />
 
-      {/* Monthly Cash Outflow tile */}
-      {(() => {
-        const c = cashOutflow.accentColor;
-        const borderCls  = c === "amber"   ? "border-l-amber-500 bg-amber-50/40"
-                         : c === "violet"  ? "border-l-violet-500 bg-violet-50/40"
-                         :                  "border-l-emerald-500 bg-emerald-50/30";
-        const iconBg     = c === "amber"   ? "bg-amber-100"   : c === "violet" ? "bg-violet-100"   : "bg-emerald-100";
-        const iconColor  = c === "amber"   ? "text-amber-600" : c === "violet" ? "text-violet-600" : "text-emerald-600";
-        const extraBadge = c === "amber"   ? "text-amber-700 bg-amber-100"
-                         : c === "violet"  ? "text-violet-700 bg-violet-100"
-                         :                  "";
-        const extraRowColor = c === "amber" ? "text-amber-700" : "text-violet-700";
-        return (
-          <Card className={`p-5 border-l-4 ${borderCls}`}>
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${iconBg}`}>
-                  <Banknote className={`w-5 h-5 ${iconColor}`} />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
-                    Monthly Cash Outflow — {cashOutflow.monthName}
-                  </div>
-                  <div className="flex items-baseline gap-3 mt-0.5 flex-wrap">
-                    <span className="text-3xl font-bold">€{Math.round(cashOutflow.total).toLocaleString("it-IT")}</span>
-                    {cashOutflow.extraLabel && (
-                      <span className={`text-sm font-semibold px-2 py-0.5 rounded ${extraBadge}`}>
-                        {cashOutflow.extraLabel}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Breakdown */}
-              <div className="text-xs space-y-1 min-w-[200px]">
-                <div className="flex justify-between gap-4">
-                  <span className="text-muted-foreground">Base monthly gross</span>
-                  <span className="font-mono font-semibold">€{Math.round(cashOutflow.baseMonthly).toLocaleString("it-IT")}</span>
-                </div>
-                {(cashOutflow.isMarch || cashOutflow.isDecember) && (
-                  <>
-                    <div className={`flex justify-between gap-4 font-semibold ${extraRowColor}`}>
-                      <span>+ {cashOutflow.isMarch ? "Bonuses" : "13th month salaries"}</span>
-                      <span className="font-mono">€{Math.round(cashOutflow.isMarch ? cashOutflow.bonusTotal : cashOutflow.thirteenthTotal).toLocaleString("it-IT")}</span>
-                    </div>
-                    <div className="border-t pt-1 mt-1 space-y-0.5">
-                      {cashOutflow.bonusBreakdown.map(b => (
-                        <div key={b.name} className="flex justify-between gap-3 text-[11px] text-muted-foreground">
-                          <span>{b.name} <span className="font-mono text-[10px] opacity-70">{b.label}</span></span>
-                          <span className="font-mono">€{Math.round(b.amount).toLocaleString("it-IT")}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </Card>
-        );
-      })()}
-
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* KPI Cards — includes Cash Outflow right after Total Payroll */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card className="p-4 flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10"><Users className="w-5 h-5 text-primary" /></div>
           <div>
@@ -372,6 +309,46 @@ export default function Dashboard() {
             <div className="text-xs text-muted-foreground">Total Payroll / yr</div>
           </div>
         </Card>
+        {/* Cash Outflow — right after Total Payroll */}
+        {(() => {
+          const c = cashOutflow.accentColor;
+          const borderCls  = c === "amber"  ? "border-l-amber-500 bg-amber-50/40"
+                           : c === "violet" ? "border-l-violet-500 bg-violet-50/40"
+                           :                 "border-l-emerald-500 bg-emerald-50/30";
+          const iconBg     = c === "amber"  ? "bg-amber-100"   : c === "violet" ? "bg-violet-100"   : "bg-emerald-100";
+          const iconColor  = c === "amber"  ? "text-amber-600" : c === "violet" ? "text-violet-600" : "text-emerald-600";
+          const extraColor = c === "amber"  ? "text-amber-700" : "text-violet-700";
+          return (
+            <Card className={`p-4 border-l-4 ${borderCls}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <div className={`p-1.5 rounded-lg ${iconBg}`}>
+                  <Banknote className={`w-4 h-4 ${iconColor}`} />
+                </div>
+                <div className="text-xs text-muted-foreground font-medium leading-tight">Cash Outflow<br />{cashOutflow.monthName}</div>
+              </div>
+              <div className="text-2xl font-bold">€{Math.round(cashOutflow.total / 1000)}k</div>
+              <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                <div>€{Math.round(cashOutflow.baseMonthly / 1000)}k base monthly</div>
+                {cashOutflow.isMarch && cashOutflow.bonusTotal > 0 && (
+                  <div className={`font-semibold ${extraColor}`}>+ €{Math.round(cashOutflow.bonusTotal / 1000)}k bonuses</div>
+                )}
+                {cashOutflow.isDecember && cashOutflow.thirteenthTotal > 0 && (
+                  <div className={`font-semibold ${extraColor}`}>+ €{Math.round(cashOutflow.thirteenthTotal / 1000)}k 13th month</div>
+                )}
+                {cashOutflow.bonusBreakdown.length > 0 && (
+                  <div className="pt-0.5 space-y-0.5 border-t border-border/50">
+                    {cashOutflow.bonusBreakdown.map(b => (
+                      <div key={b.name} className="flex justify-between gap-1">
+                        <span className="truncate">{b.name}</span>
+                        <span className="font-mono shrink-0">€{Math.round(b.amount / 1000)}k</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Card>
+          );
+        })()}
         <Card className="p-4 flex items-center gap-3">
           <div className="p-2 rounded-lg bg-blue-100"><BarChart3 className="w-5 h-5 text-blue-600" /></div>
           <div>

@@ -53,7 +53,8 @@ export const calculateEmployeeMetrics = (
   next_max: number,
   annual_now: number,
   annual_future: number,
-  normal_tot_months: number
+  normal_tot_months: number,
+  fast_tot_months: number
 } => {
   const currentRole = roleGrid.find((r) => r.role_code === employee.current_role_code);
   
@@ -69,10 +70,14 @@ export const calculateEmployeeMetrics = (
   const hireTenure = Number((monthsDiff / 12).toFixed(1));
   const totalTenure = Number((hireTenure + employee.tenure_before_years).toFixed(1));
 
-  // Cumulative normal months up to and including the current role
+  // Cumulative normal AND fast months up to and including the current role
+  // = total months needed from the very first role to reach the NEXT promotion
   const currentRoleIndex = roleGrid.findIndex(r => r.role_code === employee.current_role_code);
   const normal_tot_months = currentRoleIndex >= 0
     ? roleGrid.slice(0, currentRoleIndex + 1).reduce((sum, r) => sum + Math.round(r.promo_years_normal * 12), 0)
+    : 0;
+  const fast_tot_months = currentRoleIndex >= 0
+    ? roleGrid.slice(0, currentRoleIndex + 1).reduce((sum, r) => sum + Math.round(r.promo_years_fast * 12), 0)
     : 0;
 
   // Default fallback if role not found
@@ -102,7 +107,8 @@ export const calculateEmployeeMetrics = (
       next_max: 0,
       annual_now: 0,
       annual_future: 0,
-      normal_tot_months
+      normal_tot_months,
+      fast_tot_months
     };
   }
 
@@ -280,7 +286,8 @@ export const calculateEmployeeMetrics = (
     next_max: nextRole ? nextRole.gross_fixed_max_month * nextRole.months_paid : 0,
     annual_now: employee.current_gross_fixed_year,
     annual_future: future_gross_month * (nextRole ? nextRole.months_paid : employee.months_paid),
-    normal_tot_months
+    normal_tot_months,
+    fast_tot_months
   };
 };
 
