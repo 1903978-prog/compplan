@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, CheckCircle, XCircle, Clock, AlertTriangle, Info, ChevronDown, ChevronUp, Eye, Percent,
+  Users, AlertTriangle, Eye,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS,
@@ -72,7 +72,6 @@ export default function PricingTool() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
-  const [showCalc, setShowCalc] = useState(false);
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
 
   const loadAll = async () => {
@@ -130,7 +129,6 @@ export default function PricingTool() {
     if (settings) base.staffing = initStaffing(settings);
     setForm(base);
     setView("form");
-    setShowCalc(false);
     setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
   };
 
@@ -142,7 +140,6 @@ export default function PricingTool() {
       staffing: c.staffing ?? [],
     });
     setView("form");
-    setShowCalc(false);
     if (c.case_discounts?.length) {
       setCaseDiscounts(c.case_discounts);
     } else if (settings) {
@@ -580,35 +577,169 @@ export default function PricingTool() {
                   Fill in region, duration, and staffing to see the recommendation
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {/* 3 price numbers */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="text-center p-3 bg-muted/30 rounded-lg">
-                      <div className="text-[10px] text-muted-foreground uppercase font-bold">Low</div>
-                      <div className="text-lg font-bold text-muted-foreground">€{fmtK(recommendation.low_weekly)}</div>
-                      <div className="text-[10px] text-muted-foreground">/week</div>
+                <div className="space-y-3">
+
+                  {/* ── BASELINE ─────────────────────────────────────────── */}
+                  <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                        Baseline rate
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">IT · PE · &gt;€1B · Medium</span>
                     </div>
-                    <div className="text-center p-3 bg-primary/10 rounded-lg border border-primary/20">
-                      <div className="text-[10px] text-primary uppercase font-bold">Target</div>
-                      <div className="text-2xl font-bold text-primary">€{fmtK(recommendation.target_weekly)}</div>
-                      <div className="text-[10px] text-muted-foreground">/week</div>
-                    </div>
-                    <div className="text-center p-3 bg-amber-50 rounded-lg border border-amber-100">
-                      <div className="text-[10px] text-amber-700 uppercase font-bold">High</div>
-                      <div className="text-lg font-bold text-amber-600">€{fmtK(recommendation.high_weekly)}</div>
-                      <div className="text-[10px] text-muted-foreground">/week</div>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-xl font-bold">{fmt(recommendation.base_weekly)}</span>
+                      <span className="text-xs text-muted-foreground">/week</span>
                     </div>
                   </div>
 
+                  {/* ── ADJUSTMENTS WATERFALL ────────────────────────────── */}
+                  {(() => {
+                    const steps: { label: string; reason: string; multiplier: number; result: number }[] = [];
+
+                    if (recommendation.geo_multiplier !== 1.0) {
+                      const pct = ((recommendation.geo_multiplier - 1) * 100);
+                      const sign = pct > 0 ? "+" : "";
+                      steps.push({
+                        label: `Geography — ${form.region}`,
+                        reason: `${form.region} market carries a ${sign}${pct.toFixed(0)}% regional rate adjustment`,
+                        multiplier: recommendation.geo_multiplier,
+                        result: recommendation.geo_adjusted,
+                      });
+                    }
+
+                    if (recommendation.ownership_multiplier !== 1.0) {
+                      const pct = ((recommendation.ownership_multiplier - 1) * 100);
+                      const sign = pct > 0 ? "+" : "";
+                      steps.push({
+                        label: "Ownership — Non-PE",
+                        reason: `Non-PE clients receive a ${sign}${pct.toFixed(0)}% ownership adjustment vs PE baseline`,
+                        multiplier: recommendation.ownership_multiplier,
+                        result: recommendation.ownership_adjusted,
+                      });
+                    }
+
+                    if (recommendation.size_multiplier !== 1.0) {
+                      const pct = ((recommendation.size_multiplier - 1) * 100);
+                      const sign = pct > 0 ? "+" : "";
+                      const bandLabel = settings?.revenue_band_multipliers.find(b => b.value === form.revenue_band)?.label ?? form.revenue_band;
+                      steps.push({
+                        label: `Revenue — ${bandLabel}`,
+                        reason: `Revenue band below €1B target applies a ${sign}${pct.toFixed(0)}% size adjustment`,
+                        multiplier: recommendation.size_multiplier,
+                        result: recommendation.size_adjusted,
+                      });
+                    }
+
+                    if (recommendation.sensitivity_multiplier !== 1.0) {
+                      const pct = ((recommendation.sensitivity_multiplier - 1) * 100);
+                      const sign = pct > 0 ? "+" : "";
+                      const sensLabels: Record<string, string> = {
+                        low: "Low sensitivity — client not price-conscious",
+                        high: "High sensitivity — competitive / budget pressure",
+                      };
+                      steps.push({
+                        label: `Sensitivity — ${form.price_sensitivity}`,
+                        reason: sensLabels[form.price_sensitivity] ?? `Price sensitivity applies a ${sign}${pct.toFixed(0)}% adjustment`,
+                        multiplier: recommendation.sensitivity_multiplier,
+                        result: recommendation.sensitivity_adjusted,
+                      });
+                    }
+
+                    if (steps.length === 0) return (
+                      <div className="text-xs text-muted-foreground text-center py-1 italic">
+                        No adjustments — case matches the baseline profile
+                      </div>
+                    );
+
+                    return (
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                          Adjustments
+                        </div>
+                        <div className="divide-y">
+                          {steps.map((step, i) => {
+                            const pct = ((step.multiplier - 1) * 100);
+                            const isPositive = pct > 0;
+                            return (
+                              <div key={i} className="px-3 py-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium">{step.label}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isPositive ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>
+                                      {isPositive ? "+" : ""}{pct.toFixed(0)}%
+                                    </span>
+                                    <span className="text-xs font-semibold font-mono">{fmt(step.result)}</span>
+                                  </div>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground mt-0.5">{step.reason}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── ADJUSTED PRICE ───────────────────────────────────── */}
+                  <div className="rounded-lg border-2 border-primary/30 bg-primary/5 px-3 py-2.5">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-primary mb-0.5">
+                      Adjusted price
+                    </div>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-2xl font-bold text-primary">{fmt(recommendation.sensitivity_adjusted)}</span>
+                      <span className="text-xs text-muted-foreground">/week</span>
+                    </div>
+                    {form.duration_weeks > 0 && (
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        = {fmt(recommendation.sensitivity_adjusted * form.duration_weeks)} over {form.duration_weeks}w
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── RECOMMENDATION BRACKET ───────────────────────────── */}
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
+                      Negotiation range
+                      {(recommendation.history_anchor || recommendation.comparable_wins.length > 0) && (
+                        <span className="ml-1 font-normal normal-case">(blended with historical data)</span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <div className="text-center p-2.5 bg-muted/30 rounded-lg">
+                        <div className="text-[10px] text-muted-foreground uppercase font-bold">Low</div>
+                        <div className="text-base font-bold text-muted-foreground">{fmt(recommendation.low_weekly)}</div>
+                        <div className="text-[10px] text-muted-foreground">/week</div>
+                      </div>
+                      <div className="text-center p-2.5 bg-primary/10 rounded-lg border border-primary/20">
+                        <div className="text-[10px] text-primary uppercase font-bold">Target</div>
+                        <div className="text-xl font-bold text-primary">{fmt(recommendation.target_weekly)}</div>
+                        <div className="text-[10px] text-muted-foreground">/week</div>
+                      </div>
+                      <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-100">
+                        <div className="text-[10px] text-amber-700 uppercase font-bold">High</div>
+                        <div className="text-base font-bold text-amber-600">{fmt(recommendation.high_weekly)}</div>
+                        <div className="text-[10px] text-muted-foreground">/week</div>
+                      </div>
+                    </div>
+
+                    {/* fund anchor note */}
+                    {recommendation.history_anchor && (
+                      <div className="text-[10px] text-blue-600 mt-1 px-0.5">
+                        Fund anchor ({recommendation.fund_proposals_count} prior proposals): {fmt(recommendation.history_anchor)}/wk blended in
+                      </div>
+                    )}
+                  </div>
+
                   {/* Posture + confidence */}
-                  <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center justify-between text-xs px-0.5">
                     <PostureBadge posture={recommendation.posture} />
                     <span className="text-muted-foreground">
                       Confidence: <ConfidenceBadge label={recommendation.confidence_label} />
                     </span>
                   </div>
 
-                  {/* Totals */}
+                  {/* Totals row */}
                   {form.duration_weeks > 0 && (
                     <div className="grid grid-cols-3 gap-1 text-[10px] text-center text-muted-foreground bg-muted/20 rounded p-2">
                       <div>Low total<br /><span className="font-semibold text-foreground text-xs">{fmt(recommendation.low_total)}</span></div>
@@ -617,7 +748,7 @@ export default function PricingTool() {
                     </div>
                   )}
 
-                  {/* Discount module */}
+                  {/* ── DISCOUNT MODULE ──────────────────────────────────── */}
                   {caseDiscounts.length > 0 && (
                     <div className="border rounded-lg overflow-hidden">
                       <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
@@ -672,7 +803,7 @@ export default function PricingTool() {
                     </div>
                   )}
 
-                  {/* Gross margin */}
+                  {/* ── GROSS MARGIN ─────────────────────────────────────── */}
                   {totalWeeklyCost > 0 && (
                     <div className="border rounded-lg overflow-hidden">
                       <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
@@ -697,54 +828,7 @@ export default function PricingTool() {
                     </div>
                   )}
 
-                  {/* Calculation breakdown (collapsible) */}
-                  <div>
-                    <button onClick={() => setShowCalc(v => !v)}
-                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
-                      {showCalc ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      {showCalc ? "Hide" : "Show"} calculation layers
-                    </button>
-                    {showCalc && (
-                      <div className="mt-2 space-y-1 text-xs bg-muted/20 rounded p-2 font-mono">
-                        {[
-                          { label: "Base staffing", val: recommendation.base_weekly },
-                          { label: `× Geography (${form.region}, ×${recommendation.geo_multiplier.toFixed(2)})`, val: recommendation.geo_adjusted },
-                          { label: `× Ownership (×${recommendation.ownership_multiplier.toFixed(2)})`, val: recommendation.ownership_adjusted },
-                          { label: `× Revenue band (×${recommendation.size_multiplier.toFixed(2)})`, val: recommendation.size_adjusted },
-                          { label: `× Sensitivity (×${recommendation.sensitivity_multiplier.toFixed(2)})`, val: recommendation.sensitivity_adjusted },
-                        ].map((row, i) => (
-                          <div key={i} className={`flex justify-between ${i === 4 ? "font-bold text-foreground" : "text-muted-foreground"}`}>
-                            <span>{row.label}</span>
-                            <span>{fmt(row.val)}</span>
-                          </div>
-                        ))}
-                        {recommendation.history_anchor && (
-                          <div className="flex justify-between text-blue-600 border-t pt-1 mt-1">
-                            <span>Fund anchor</span>
-                            <span>{fmt(recommendation.history_anchor)}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between font-bold text-primary border-t pt-1 mt-1">
-                          <span>→ Target</span>
-                          <span>{fmt(recommendation.target_weekly)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Drivers */}
-                  {recommendation.drivers.length > 0 && (
-                    <div className="space-y-1">
-                      {recommendation.drivers.map((d, i) => (
-                        <div key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                          <Info className="w-3 h-3 mt-0.5 shrink-0 text-blue-400" />
-                          {d}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Warnings */}
+                  {/* ── WARNINGS ─────────────────────────────────────────── */}
                   {recommendation.warnings.length > 0 && (
                     <div className="space-y-1">
                       {recommendation.warnings.map((w, i) => (
