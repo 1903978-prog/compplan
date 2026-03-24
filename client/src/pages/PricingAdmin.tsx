@@ -240,11 +240,13 @@ function InfoTooltip({ content }: { content: string }) {
 interface RolesTabProps {
   roles: PricingRole[];
   onChange: (roles: PricingRole[]) => void;
+  staffCosts: StaffCostEntry[];
+  onStaffCostChange: (costs: StaffCostEntry[]) => void;
   onSave: () => void;
   saving: boolean;
 }
 
-function RolesTab({ roles, onChange, onSave, saving }: RolesTabProps) {
+function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, saving }: RolesTabProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBuf, setEditBuf] = useState<Partial<PricingRole>>({});
 
@@ -325,6 +327,7 @@ function RolesTab({ roles, onChange, onSave, saving }: RolesTabProps) {
               <TableHead className="w-8 text-center">#</TableHead>
               <TableHead>Role Name</TableHead>
               <TableHead className="text-right">Daily Rate (€)</TableHead>
+              <TableHead className="text-right">Internal Cost (€/day)</TableHead>
               <TableHead className="text-center">Active</TableHead>
               <TableHead className="text-center w-24">Actions</TableHead>
             </TableRow>
@@ -373,6 +376,29 @@ function RolesTab({ roles, onChange, onSave, saving }: RolesTabProps) {
                         €{role.default_daily_rate.toLocaleString()}
                       </span>
                     )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {(() => {
+                      const entry = staffCosts.find(c => c.role_id === role.id);
+                      const cost = entry?.daily_cost ?? 0;
+                      return (
+                        <Input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={cost}
+                          onChange={e => {
+                            const val = parseFloat(e.target.value) || 0;
+                            if (entry) {
+                              onStaffCostChange(staffCosts.map(c => c.role_id === role.id ? { ...c, daily_cost: val } : c));
+                            } else {
+                              onStaffCostChange([...staffCosts, { role_id: role.id, role_name: role.role_name, daily_cost: val }]);
+                            }
+                          }}
+                          className="h-8 text-sm text-right w-28 ml-auto font-mono"
+                        />
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="text-center">
                     <button
@@ -1616,6 +1642,8 @@ export default function PricingAdmin() {
             <RolesTab
               roles={settings.roles}
               onChange={(roles) => patchSettings({ roles })}
+              staffCosts={settings.staff_costs ?? []}
+              onStaffCostChange={(staff_costs) => patchSettings({ staff_costs })}
               onSave={handleSave}
               saving={saving}
             />
