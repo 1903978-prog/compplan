@@ -191,26 +191,37 @@ export default function Settings() {
               </div>
               <div className="space-y-3">
                 {form.watch("tests")?.map((test, index) => (
-                  <div key={test.id} className="flex gap-4 items-end p-3 border rounded-lg bg-muted/10">
+                  <div key={test.id} className="flex gap-4 items-start p-3 border rounded-lg bg-muted/10">
                     <div className="flex-1 space-y-2">
                       <Label>Test Name</Label>
                       <Input {...form.register(`tests.${index}.name`)} />
                     </div>
-                    <div className="w-40 space-y-2">
-                      <Label>Required for role</Label>
+                    <div className="w-52 space-y-2">
+                      <Label>Precondition for promotion to</Label>
                       <Select
                         value={form.watch(`tests.${index}.required_for_role`) ?? ""}
                         onValueChange={(v) => form.setValue(`tests.${index}.required_for_role`, v)}
                       >
                         <SelectTrigger className="h-9">
-                          <SelectValue placeholder="Pick role…" />
+                          <SelectValue placeholder="Pick level…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {PROMO_ROLES.map(r => (
-                            <SelectItem key={r} value={r}>{r}</SelectItem>
-                          ))}
+                          {PROMO_ROLES.map(r => {
+                            const roleName = roleGrid.find(rg => rg.role_code === r)?.role_name ?? ROLE_LABELS[r] ?? r;
+                            return (
+                              <SelectItem key={r} value={r}>
+                                <span className="font-mono font-semibold">{r}</span>
+                                <span className="ml-2 text-muted-foreground">{roleName}</span>
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
+                      {form.watch(`tests.${index}.required_for_role`) && (
+                        <p className="text-[10px] text-muted-foreground italic">
+                          Must pass to be promoted to {roleGrid.find(rg => rg.role_code === form.watch(`tests.${index}.required_for_role`))?.role_name ?? ROLE_LABELS[form.watch(`tests.${index}.required_for_role`)] ?? form.watch(`tests.${index}.required_for_role`)}
+                        </p>
+                      )}
                     </div>
                     <Button 
                       type="button" 

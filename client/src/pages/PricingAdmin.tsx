@@ -56,12 +56,32 @@ interface SensitivityMultiplier {
   multiplier: number;
 }
 
+interface RateMatrixCell {
+  min_weekly: number;
+  max_weekly: number;
+  note: string;
+  avoid: boolean;
+}
+
+interface RateMatrixRow {
+  client_type: string;
+  rates: Record<string, RateMatrixCell>;
+}
+
+interface FloorRule {
+  min_weekly: number;
+  description: string;
+}
+
 interface PricingSettings {
   roles: PricingRole[];
   regions: PricingRegion[];
   ownership_multipliers: OwnershipMultiplier[];
   revenue_band_multipliers: RevenueBandMultiplier[];
   sensitivity_multipliers: SensitivityMultiplier[];
+  funds: string[];
+  rate_matrix: RateMatrixRow[];
+  floor_rule: FloorRule;
   bracket_low_pct: number;
   bracket_high_pct: number;
   aggressive_threshold_pct: number;
@@ -109,6 +129,53 @@ const DEFAULT_SETTINGS: PricingSettings = {
     { value: "medium", label: "Medium", multiplier: 1.0 },
     { value: "high", label: "High", multiplier: 0.9 },
   ],
+  funds: ["CARLYLE", "BAIN CAP", "KPS", "ADVENT", "CVC"],
+  rate_matrix: [
+    {
+      client_type: "PE/LBO",
+      rates: {
+        Italy:  { min_weekly: 30000, max_weekly: 34000, note: "", avoid: false },
+        France: { min_weekly: 32000, max_weekly: 36000, note: "", avoid: false },
+        UK:     { min_weekly: 36000, max_weekly: 42000, note: "", avoid: false },
+        DACH:   { min_weekly: 34000, max_weekly: 40000, note: "", avoid: false },
+        US:     { min_weekly: 42000, max_weekly: 50000, note: "", avoid: false },
+      },
+    },
+    {
+      client_type: "Corporate >€1B",
+      rates: {
+        Italy:  { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        France: { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
+        UK:     { min_weekly: 28000, max_weekly: 35000, note: "", avoid: false },
+        DACH:   { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
+        US:     { min_weekly: 35000, max_weekly: 44000, note: "", avoid: false },
+      },
+    },
+    {
+      client_type: "Family PMI €200M+",
+      rates: {
+        Italy:  { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
+        France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
+        UK:     { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        DACH:   { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
+        US:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+      },
+    },
+    {
+      client_type: "Family PMI <€200M",
+      rates: {
+        Italy:  { min_weekly: 10000, max_weekly: 15000, note: "", avoid: false },
+        France: { min_weekly: 12000, max_weekly: 16000, note: "", avoid: false },
+        UK:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+        DACH:   { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+        US:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+      },
+    },
+  ],
+  floor_rule: {
+    min_weekly: 30000,
+    description: "Never quote below €30k/week for any EM+2 engagement in Europe",
+  },
   bracket_low_pct: 10,
   bracket_high_pct: 15,
   aggressive_threshold_pct: 20,
@@ -966,9 +1033,247 @@ function BracketRulesTab({ settings, onChange, onSave, saving }: BracketRulesTab
   );
 }
 
+// ─── Tab: PE Funds ────────────────────────────────────────────────────────────
+
+interface FundsTabProps {
+  settings: PricingSettings;
+  onChange: (patch: Partial<PricingSettings>) => void;
+  onSave: () => void;
+  saving: boolean;
+}
+
+function FundsTab({ settings, onChange, onSave, saving }: FundsTabProps) {
+  const funds = settings.funds ?? [];
+  const [newFund, setNewFund] = useState("");
+
+  const addFund = () => {
+    const trimmed = newFund.trim().toUpperCase();
+    if (!trimmed || funds.includes(trimmed)) return;
+    onChange({ funds: [...funds, trimmed] });
+    setNewFund("");
+  };
+
+  const removeFund = (fund: string) => {
+    onChange({ funds: funds.filter((f) => f !== fund) });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">PE Fund Names</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Define the list of PE funds available as dropdown options when creating pricing cases.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {funds.map((fund) => (
+          <div
+            key={fund}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-sm font-medium border border-primary/20"
+          >
+            {fund}
+            <button
+              type="button"
+              onClick={() => removeFund(fund)}
+              className="text-primary/60 hover:text-destructive transition-colors ml-0.5"
+              aria-label={`Remove ${fund}`}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+        {funds.length === 0 && (
+          <p className="text-xs text-muted-foreground italic">No funds configured.</p>
+        )}
+      </div>
+
+      <div className="flex gap-2 items-center">
+        <Input
+          placeholder="Fund name (e.g. BLACKSTONE)"
+          value={newFund}
+          onChange={(e) => setNewFund(e.target.value.toUpperCase())}
+          onKeyDown={(e) => e.key === "Enter" && addFund()}
+          className="h-9 text-sm uppercase max-w-xs"
+        />
+        <Button type="button" size="sm" variant="outline" onClick={addFund} disabled={!newFund.trim()}>
+          <Plus className="w-3.5 h-3.5 mr-1" />
+          Add Fund
+        </Button>
+      </div>
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={onSave} disabled={saving} size="sm">
+          <Save className="w-3.5 h-3.5 mr-1.5" />
+          {saving ? "Saving…" : "Save Settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tab: Rate Matrix ─────────────────────────────────────────────────────────
+
+const RATE_MATRIX_REGIONS = ["Italy", "France", "UK", "DACH", "US"];
+
+interface RateMatrixTabProps {
+  settings: PricingSettings;
+  onChange: (patch: Partial<PricingSettings>) => void;
+  onSave: () => void;
+  saving: boolean;
+}
+
+function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProps) {
+  const matrix: RateMatrixRow[] = settings.rate_matrix ?? [];
+  const floorRule: FloorRule = settings.floor_rule ?? { min_weekly: 30000, description: "" };
+
+  const updateCell = (rowIdx: number, region: string, field: keyof RateMatrixCell, value: number | boolean | string) => {
+    const newMatrix = matrix.map((row, i) => {
+      if (i !== rowIdx) return row;
+      return {
+        ...row,
+        rates: {
+          ...row.rates,
+          [region]: { ...(row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false }), [field]: value },
+        },
+      };
+    });
+    onChange({ rate_matrix: newMatrix });
+  };
+
+  const updateFloorRule = (field: keyof FloorRule, value: number | string) => {
+    onChange({ floor_rule: { ...floorRule, [field]: value } });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Fee Strategy Matrix</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Weekly rate reference ranges (€k) by client type and market. Used as a sanity-check overlay on computed prices.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left py-2 pr-4 font-medium text-muted-foreground text-xs uppercase tracking-wide w-44">Client Type</th>
+              {RATE_MATRIX_REGIONS.map((region) => (
+                <th key={region} className="text-center py-2 px-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">
+                  {region}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.map((row, rowIdx) => (
+              <tr key={row.client_type} className="border-t">
+                <td className="py-3 pr-4 font-medium text-sm align-top">{row.client_type}</td>
+                {RATE_MATRIX_REGIONS.map((region) => {
+                  const cell: RateMatrixCell = row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
+                  return (
+                    <td key={region} className="py-2 px-2 align-top">
+                      {cell.avoid ? (
+                        <div className="flex flex-col items-center gap-1">
+                          <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100 text-xs">AVOID</Badge>
+                          <button
+                            type="button"
+                            onClick={() => updateCell(rowIdx, region, "avoid", false)}
+                            className="text-xs text-muted-foreground hover:text-foreground underline"
+                          >
+                            set range
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1 min-w-[80px]">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-muted-foreground w-5">Min</span>
+                            <Input
+                              type="number"
+                              step="1000"
+                              min="0"
+                              value={cell.min_weekly}
+                              onChange={(e) => updateCell(rowIdx, region, "min_weekly", parseInt(e.target.value) || 0)}
+                              className="h-7 text-xs text-center font-mono w-20 px-1"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-muted-foreground w-5">Max</span>
+                            <Input
+                              type="number"
+                              step="1000"
+                              min="0"
+                              value={cell.max_weekly}
+                              onChange={(e) => updateCell(rowIdx, region, "max_weekly", parseInt(e.target.value) || 0)}
+                              className="h-7 text-xs text-center font-mono w-20 px-1"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => updateCell(rowIdx, region, "avoid", true)}
+                            className="text-xs text-muted-foreground hover:text-red-600 underline text-left"
+                          >
+                            mark avoid
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Floor Rule */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Global Floor Rule</CardTitle>
+          <CardDescription className="text-xs">
+            Minimum weekly rate that must never be undercut, regardless of the calculation output.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label className="text-sm">Floor price (€/week)</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">€</span>
+              <Input
+                type="number"
+                step="1000"
+                min="0"
+                value={floorRule.min_weekly}
+                onChange={(e) => updateFloorRule("min_weekly", parseInt(e.target.value) || 0)}
+                className="pl-7 font-mono"
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm">Description / Scope</Label>
+            <Input
+              value={floorRule.description}
+              onChange={(e) => updateFloorRule("description", e.target.value)}
+              placeholder="e.g. Never quote below €30k/week for EM+2 in Europe"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={onSave} disabled={saving} size="sm">
+          <Save className="w-3.5 h-3.5 mr-1.5" />
+          {saving ? "Saving…" : "Save Settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tabs list ────────────────────────────────────────────────────────────────
 
-type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules";
+type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "funds" | "rate_matrix";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "roles", label: "Roles & Rates" },
@@ -976,6 +1281,8 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "client_multipliers", label: "Client Multipliers" },
   { id: "sensitivity", label: "Sensitivity" },
   { id: "bracket_rules", label: "Bracket & Rules" },
+  { id: "funds", label: "PE Funds" },
+  { id: "rate_matrix", label: "Rate Matrix" },
 ];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -996,7 +1303,8 @@ export default function PricingAdmin() {
         return res.json();
       })
       .then((data: PricingSettings) => {
-        setSettings(data);
+        // Merge with defaults so any newly-added fields are always present
+        setSettings({ ...DEFAULT_SETTINGS, ...data });
       })
       .catch((err) => {
         console.error("Failed to load pricing settings:", err);
@@ -1138,6 +1446,13 @@ export default function PricingAdmin() {
               onSave={handleSave}
               saving={saving}
             />
+          )}
+          {activeTab === "funds" && (
+            <FundsTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
+          )}
+
+          {activeTab === "rate_matrix" && (
+            <RateMatrixTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
           )}
         </CardContent>
       </Card>

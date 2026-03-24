@@ -35,12 +35,32 @@ export interface SensitivityMultiplier {
   multiplier: number;
 }
 
+export interface RateMatrixCell {
+  min_weekly: number;
+  max_weekly: number;
+  note: string;
+  avoid: boolean;
+}
+
+export interface RateMatrixRow {
+  client_type: string;
+  rates: Record<string, RateMatrixCell>; // keyed by region name
+}
+
+export interface FloorRule {
+  min_weekly: number;
+  description: string;
+}
+
 export interface PricingSettings {
   roles: PricingRole[];
   regions: PricingRegion[];
   ownership_multipliers: OwnershipMultiplier[];
   revenue_band_multipliers: RevenueBandMultiplier[];
   sensitivity_multipliers: SensitivityMultiplier[];
+  funds: string[];  // configurable PE fund names
+  rate_matrix: RateMatrixRow[];
+  floor_rule: FloorRule;
   bracket_low_pct: number;
   bracket_high_pct: number;
   aggressive_threshold_pct: number;
@@ -148,7 +168,7 @@ export const REGIONS = [
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
   roles: [
-    { id: "partner", role_name: "Partner", default_daily_rate: 3500, active: false, sort_order: 0 },
+    { id: "partner", role_name: "Partner", default_daily_rate: 7000, active: true, sort_order: 0 },
     { id: "manager", role_name: "Manager", default_daily_rate: 2200, active: true, sort_order: 1 },
     { id: "associate", role_name: "Associate", default_daily_rate: 1400, active: true, sort_order: 2 },
     { id: "analyst", role_name: "Analyst", default_daily_rate: 900, active: false, sort_order: 3 },
@@ -179,6 +199,53 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { value: "medium", label: "Medium sensitivity", multiplier: 1.00 },
     { value: "high", label: "High sensitivity", multiplier: 0.90 },
   ],
+  funds: ["CARLYLE", "BAIN CAP", "KPS", "ADVENT", "CVC"],
+  rate_matrix: [
+    {
+      client_type: "PE/LBO",
+      rates: {
+        Italy:  { min_weekly: 30000, max_weekly: 34000, note: "", avoid: false },
+        France: { min_weekly: 32000, max_weekly: 36000, note: "", avoid: false },
+        UK:     { min_weekly: 36000, max_weekly: 42000, note: "", avoid: false },
+        DACH:   { min_weekly: 34000, max_weekly: 40000, note: "", avoid: false },
+        US:     { min_weekly: 42000, max_weekly: 50000, note: "", avoid: false },
+      },
+    },
+    {
+      client_type: "Corporate >€1B",
+      rates: {
+        Italy:  { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        France: { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
+        UK:     { min_weekly: 28000, max_weekly: 35000, note: "", avoid: false },
+        DACH:   { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
+        US:     { min_weekly: 35000, max_weekly: 44000, note: "", avoid: false },
+      },
+    },
+    {
+      client_type: "Family PMI €200M+",
+      rates: {
+        Italy:  { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
+        France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
+        UK:     { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        DACH:   { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
+        US:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+      },
+    },
+    {
+      client_type: "Family PMI <€200M",
+      rates: {
+        Italy:  { min_weekly: 10000, max_weekly: 15000, note: "", avoid: false },
+        France: { min_weekly: 12000, max_weekly: 16000, note: "", avoid: false },
+        UK:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+        DACH:   { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+        US:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+      },
+    },
+  ],
+  floor_rule: {
+    min_weekly: 30000,
+    description: "Never quote below €30k/week for any EM+2 engagement in Europe",
+  },
   bracket_low_pct: 12,
   bracket_high_pct: 18,
   aggressive_threshold_pct: 20,
