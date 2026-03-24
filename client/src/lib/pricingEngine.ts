@@ -171,10 +171,9 @@ export const REVENUE_BANDS = [
 ];
 
 export const REGIONS = [
-  "Italy",
-  "South Europe",
-  "France",
-  "Germany",
+  "IT",
+  "FR",
+  "DE",
   "UK",
   "US",
   "Asia",
@@ -191,14 +190,13 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { id: "ba",           role_name: "BA",            default_daily_rate: 900,  active: true,  sort_order: 5 },
   ],
   regions: [
-    { id: "italy", region_name: "Italy", multiplier: 1.0, is_baseline: true },
-    { id: "south_europe", region_name: "South Europe", multiplier: 0.95, is_baseline: false },
-    { id: "france", region_name: "France", multiplier: 1.10, is_baseline: false },
-    { id: "germany", region_name: "Germany", multiplier: 1.15, is_baseline: false },
-    { id: "uk", region_name: "UK", multiplier: 1.25, is_baseline: false },
-    { id: "us", region_name: "US", multiplier: 1.40, is_baseline: false },
-    { id: "asia", region_name: "Asia", multiplier: 1.05, is_baseline: false },
-    { id: "middle_east", region_name: "Middle East", multiplier: 1.20, is_baseline: false },
+    { id: "italy",        region_name: "IT",           multiplier: 1.0,  is_baseline: true  },
+    { id: "france",       region_name: "FR",           multiplier: 1.10, is_baseline: false },
+    { id: "germany",      region_name: "DE",           multiplier: 1.15, is_baseline: false },
+    { id: "uk",           region_name: "UK",           multiplier: 1.25, is_baseline: false },
+    { id: "us",           region_name: "US",           multiplier: 1.40, is_baseline: false },
+    { id: "asia",         region_name: "Asia",         multiplier: 1.05, is_baseline: false },
+    { id: "middle_east",  region_name: "Middle East",  multiplier: 1.20, is_baseline: false },
   ],
   ownership_multipliers: [
     { value: "pe", label: "Private Equity owned", multiplier: 1.0, is_baseline: true },

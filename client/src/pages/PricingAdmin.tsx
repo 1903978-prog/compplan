@@ -1142,8 +1142,7 @@ function DiscountsAndCostsTab({ settings, onChange, onSave, saving }: DiscountsA
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <TableHead>Discount Name</TableHead>
-                <TableHead className="text-center w-32">Default %</TableHead>
-                <TableHead className="text-center w-24">Active</TableHead>
+                <TableHead className="text-center w-36">Default %</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
@@ -1166,18 +1165,10 @@ function DiscountsAndCostsTab({ settings, onChange, onSave, saving }: DiscountsA
                         max="100"
                         value={d.default_pct}
                         onChange={e => updateDiscount(d.id, "default_pct", parseFloat(e.target.value) || 0)}
-                        className="h-8 text-sm text-center w-20 font-mono pr-6"
+                        className="h-8 text-sm text-center w-24 font-mono pr-6"
                       />
                       <span className="absolute right-2 text-muted-foreground text-sm">%</span>
                     </div>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <input
-                      type="checkbox"
-                      checked={d.active}
-                      onChange={e => updateDiscount(d.id, "active", e.target.checked)}
-                      className="h-4 w-4 rounded"
-                    />
                   </TableCell>
                   <TableCell>
                     <button

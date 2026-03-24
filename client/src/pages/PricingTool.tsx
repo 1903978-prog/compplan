@@ -41,7 +41,7 @@ const fmtK = (n: number) => Math.round(n).toLocaleString("it-IT");
 function emptyCase(): PricingCase {
   return {
     project_name: "", client_name: "", fund_name: "",
-    region: "Italy", pe_owned: true, revenue_band: "above_1b",
+    region: "IT", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 8, notes: "", status: "draft", staffing: [],
   };
 }
@@ -131,8 +131,7 @@ export default function PricingTool() {
     setForm(base);
     setView("form");
     setShowCalc(false);
-    const activeDiscounts = (settings?.discounts ?? []).filter(d => d.active);
-    setCaseDiscounts(activeDiscounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: true })));
+    setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
   };
 
   const openCase = (c: any) => {
@@ -147,8 +146,7 @@ export default function PricingTool() {
     if (c.case_discounts?.length) {
       setCaseDiscounts(c.case_discounts);
     } else if (settings) {
-      const activeDiscounts = settings.discounts.filter(d => d.active);
-      setCaseDiscounts(activeDiscounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: true })));
+      setCaseDiscounts(settings.discounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
     }
   };
 
