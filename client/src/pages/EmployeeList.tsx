@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload, History } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload, History, TrendingUp, CheckCircle2 } from "lucide-react";
 import { SalaryHistoryDialog } from "@/components/SalaryHistoryDialog";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -136,7 +136,19 @@ export default function EmployeeList() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [historyEmployee, setHistoryEmployee] = useState<EmployeeInput | null>(null);
+  const [scheduleRaiseEmployee, setScheduleRaiseEmployee] = useState<EmployeeInput | null>(null);
   const { toast } = useToast();
+
+  const handleApplyRaise = async (emp: EmployeeInput) => {
+    if (!emp.pending_salary_gross || !emp.pending_salary_date) return;
+    await updateEmployee(emp.id, {
+      ...emp,
+      current_gross_fixed_year: emp.pending_salary_gross,
+      pending_salary_gross: null,
+      pending_salary_date: null,
+    });
+    toast({ title: `Salary updated to €${emp.pending_salary_gross.toLocaleString()} for ${emp.name}` });
+  };
 
   const filteredEmployees = useMemo(() => {
     return employees
@@ -291,7 +303,29 @@ export default function EmployeeList() {
                     <TableCell>
                       {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                     </TableCell>
-                    <TableCell className="font-medium">{emp.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex flex-col gap-0.5">
+                        <span>{emp.name}</span>
+                        {emp.pending_salary_date && emp.pending_salary_gross && (() => {
+                          const today = new Date().toISOString().slice(0, 10);
+                          const isDue = emp.pending_salary_date <= today;
+                          return (
+                            <div className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded w-fit ${isDue ? "bg-emerald-50 border border-emerald-300 text-emerald-700" : "bg-amber-50 border border-amber-200 text-amber-700"}`}>
+                              {isDue ? <CheckCircle2 className="w-2.5 h-2.5" /> : <TrendingUp className="w-2.5 h-2.5" />}
+                              €{emp.pending_salary_gross.toLocaleString()} from {format(parseISO(emp.pending_salary_date), "MM/yy")}
+                              {isDue && (
+                                <button
+                                  className="ml-1 underline hover:no-underline text-emerald-700 font-bold"
+                                  onClick={(e) => { e.stopPropagation(); handleApplyRaise(emp); }}
+                                >
+                                  Apply
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </TableCell>
                     <TableCell>
                         <span className="bg-secondary px-2 py-1 rounded text-xs font-mono">{emp.current_role_code}</span>
                     </TableCell>
@@ -335,6 +369,9 @@ export default function EmployeeList() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" title="Schedule Salary Increase" onClick={(e) => { e.stopPropagation(); setScheduleRaiseEmployee(emp); }}>
+                          <TrendingUp className="w-4 h-4 text-amber-500 hover:text-amber-600" />
+                        </Button>
                         <Button variant="ghost" size="icon" title="Salary History" onClick={(e) => { e.stopPropagation(); setHistoryEmployee(emp); }}>
                           <History className="w-4 h-4 text-muted-foreground hover:text-primary" />
                         </Button>
@@ -569,6 +606,14 @@ export default function EmployeeList() {
           roleGrid={roleGrid}
           open={!!historyEmployee}
           onClose={() => setHistoryEmployee(null)}
+        />
+      )}
+
+      {scheduleRaiseEmployee && (
+        <ScheduleSalaryIncreaseDialog
+          employee={scheduleRaiseEmployee}
+          open={!!scheduleRaiseEmployee}
+          onClose={() => setScheduleRaiseEmployee(null)}
         />
       )}
     </div>
@@ -905,6 +950,143 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
             </Button>
           </div>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ScheduleSalaryIncreaseDialog({
+  employee,
+  open,
+  onClose,
+}: {
+  employee: EmployeeInput;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { updateEmployee } = useStore();
+  const { toast } = useToast();
+  const [newGross, setNewGross] = useState(employee.current_gross_fixed_year);
+  const [effectiveDate, setEffectiveDate] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Reset when employee changes
+  useEffect(() => {
+    setNewGross(employee.current_gross_fixed_year);
+    setNote("");
+  }, [employee.id]);
+
+  const handleSave = async () => {
+    if (!newGross || newGross <= 0 || !effectiveDate) return;
+    setSaving(true);
+    try {
+      // Save pending raise on the employee record
+      await updateEmployee(employee.id, {
+        ...employee,
+        pending_salary_gross: newGross,
+        pending_salary_date: effectiveDate,
+      });
+      // Log to salary history so it appears in the logs
+      await fetch("/api/salary-history", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: employee.id,
+          effective_date: effectiveDate,
+          role_code: employee.current_role_code,
+          gross_fixed_year: newGross,
+          months_paid: employee.months_paid,
+          bonus_pct: employee.current_bonus_pct,
+          meal_voucher_daily: employee.meal_voucher_daily,
+          note: note || "Scheduled salary increase",
+        }),
+      });
+      toast({ title: `Salary increase of €${newGross.toLocaleString()} scheduled from ${format(parseISO(effectiveDate), "dd/MM/yyyy")}` });
+      onClose();
+    } catch (err) {
+      toast({ title: "Failed to schedule raise", description: String(err), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const increase = newGross - employee.current_gross_fixed_year;
+  const increasePct = employee.current_gross_fixed_year > 0
+    ? ((increase / employee.current_gross_fixed_year) * 100)
+    : 0;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-amber-500" />
+            Schedule Salary Increase — {employee.name}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 mt-2">
+          <div className="p-3 bg-muted/30 rounded-lg text-sm">
+            <div className="text-muted-foreground text-xs uppercase font-bold mb-1">Current Salary</div>
+            <div className="font-bold text-lg">€{employee.current_gross_fixed_year.toLocaleString()}/yr</div>
+            <div className="text-xs text-muted-foreground">€{Math.round(employee.current_gross_fixed_year / employee.months_paid).toLocaleString()}/mo</div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>New Yearly Gross (€)</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">€</span>
+              <Input
+                type="number"
+                className="pl-7"
+                value={newGross}
+                onChange={(e) => setNewGross(parseFloat(e.target.value) || 0)}
+              />
+            </div>
+            {increase !== 0 && (
+              <p className={`text-xs font-semibold ${increase > 0 ? "text-emerald-600" : "text-destructive"}`}>
+                {increase > 0 ? "+" : ""}€{increase.toLocaleString()} ({increasePct >= 0 ? "+" : ""}{increasePct.toFixed(1)}%)
+                — new monthly: €{Math.round(newGross / employee.months_paid).toLocaleString()}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label>Effective Date</Label>
+            <Input
+              type="date"
+              value={effectiveDate}
+              onChange={(e) => setEffectiveDate(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">Current salary remains unchanged until this date.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Note (optional)</Label>
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Annual review, merit increase…"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button
+              onClick={handleSave}
+              disabled={saving || newGross <= 0 || !effectiveDate}
+              className="bg-amber-500 hover:bg-amber-600 text-white"
+            >
+              {saving ? "Saving…" : "Schedule Increase"}
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

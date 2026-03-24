@@ -189,5 +189,62 @@ Return ONLY valid JSON array, no explanation:`;
     res.status(204).end();
   });
 
+  // ── Pricing Tool ───────────────────────────────────────────────────────────
+  app.get("/api/pricing/settings", requireAuth, async (_req, res) => {
+    const data = await storage.getPricingSettings();
+    res.json(data);
+  });
+
+  app.put("/api/pricing/settings", requireAuth, async (req, res) => {
+    const data = await storage.upsertPricingSettings(req.body);
+    res.json(data);
+  });
+
+  app.get("/api/pricing/cases", requireAuth, async (_req, res) => {
+    const cases = await storage.getPricingCases();
+    res.json(cases);
+  });
+
+  app.get("/api/pricing/cases/:id", requireAuth, async (req, res) => {
+    const c = await storage.getPricingCase(parseInt(req.params.id));
+    if (!c) { res.status(404).json({ message: "Not found" }); return; }
+    res.json(c);
+  });
+
+  app.post("/api/pricing/cases", requireAuth, async (req, res) => {
+    const c = await storage.createPricingCase(req.body);
+    res.status(201).json(c);
+  });
+
+  app.put("/api/pricing/cases/:id", requireAuth, async (req, res) => {
+    const c = await storage.updatePricingCase(parseInt(req.params.id), req.body);
+    res.json(c);
+  });
+
+  app.delete("/api/pricing/cases/:id", requireAuth, async (req, res) => {
+    await storage.deletePricingCase(parseInt(req.params.id));
+    res.status(204).end();
+  });
+
+  app.get("/api/pricing/proposals", requireAuth, async (_req, res) => {
+    const proposals = await storage.getPricingProposals();
+    res.json(proposals);
+  });
+
+  app.post("/api/pricing/proposals", requireAuth, async (req, res) => {
+    const p = await storage.createPricingProposal(req.body);
+    res.status(201).json(p);
+  });
+
+  app.put("/api/pricing/proposals/:id", requireAuth, async (req, res) => {
+    const p = await storage.updatePricingProposal(parseInt(req.params.id), req.body);
+    res.json(p);
+  });
+
+  app.delete("/api/pricing/proposals/:id", requireAuth, async (req, res) => {
+    await storage.deletePricingProposal(parseInt(req.params.id));
+    res.status(204).end();
+  });
+
   return httpServer;
 }

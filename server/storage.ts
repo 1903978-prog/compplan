@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
+  pricingSettingsTable, pricingCases, pricingProposals,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
 } from "@shared/schema";
@@ -32,6 +33,19 @@ export interface IStorage {
   createSalaryHistoryEntry(entry: Omit<SalaryHistoryEntry, "id">): Promise<SalaryHistoryEntry>;
   updateSalaryHistoryEntry(id: number, patch: Partial<SalaryHistoryEntry>): Promise<SalaryHistoryEntry>;
   deleteSalaryHistoryEntry(id: number): Promise<void>;
+
+  // Pricing
+  getPricingSettings(): Promise<Record<string, any>>;
+  upsertPricingSettings(data: Record<string, any>): Promise<Record<string, any>>;
+  getPricingCases(): Promise<any[]>;
+  getPricingCase(id: number): Promise<any | undefined>;
+  createPricingCase(data: any): Promise<any>;
+  updatePricingCase(id: number, data: any): Promise<any>;
+  deletePricingCase(id: number): Promise<void>;
+  getPricingProposals(): Promise<any[]>;
+  createPricingProposal(data: any): Promise<any>;
+  updatePricingProposal(id: number, data: any): Promise<any>;
+  deletePricingProposal(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -192,6 +206,66 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSalaryHistoryEntry(id: number): Promise<void> {
     await db.delete(salaryHistoryEntries).where(eq(salaryHistoryEntries.id, id));
+  }
+
+  // ── Pricing ────────────────────────────────────────────────────────────────
+  async getPricingSettings(): Promise<Record<string, any>> {
+    const rows = await db.select().from(pricingSettingsTable);
+    return rows.length > 0 ? (rows[0].data as Record<string, any>) : {};
+  }
+
+  async upsertPricingSettings(data: Record<string, any>): Promise<Record<string, any>> {
+    const rows = await db.select().from(pricingSettingsTable);
+    if (rows.length === 0) {
+      await db.insert(pricingSettingsTable).values({ data });
+    } else {
+      await db.update(pricingSettingsTable).set({ data }).where(eq(pricingSettingsTable.id, rows[0].id));
+    }
+    return data;
+  }
+
+  async getPricingCases(): Promise<any[]> {
+    return db.select().from(pricingCases).orderBy(pricingCases.id);
+  }
+
+  async getPricingCase(id: number): Promise<any | undefined> {
+    const rows = await db.select().from(pricingCases).where(eq(pricingCases.id, id));
+    return rows[0];
+  }
+
+  async createPricingCase(data: any): Promise<any> {
+    const now = new Date().toISOString();
+    const rows = await db.insert(pricingCases).values({ ...data, created_at: now, updated_at: now }).returning();
+    return rows[0];
+  }
+
+  async updatePricingCase(id: number, data: any): Promise<any> {
+    const now = new Date().toISOString();
+    const rows = await db.update(pricingCases).set({ ...data, updated_at: now }).where(eq(pricingCases.id, id)).returning();
+    return rows[0];
+  }
+
+  async deletePricingCase(id: number): Promise<void> {
+    await db.delete(pricingCases).where(eq(pricingCases.id, id));
+  }
+
+  async getPricingProposals(): Promise<any[]> {
+    return db.select().from(pricingProposals).orderBy(pricingProposals.proposal_date);
+  }
+
+  async createPricingProposal(data: any): Promise<any> {
+    const now = new Date().toISOString();
+    const rows = await db.insert(pricingProposals).values({ ...data, created_at: now }).returning();
+    return rows[0];
+  }
+
+  async updatePricingProposal(id: number, data: any): Promise<any> {
+    const rows = await db.update(pricingProposals).set(data).where(eq(pricingProposals.id, id)).returning();
+    return rows[0];
+  }
+
+  async deletePricingProposal(id: number): Promise<void> {
+    await db.delete(pricingProposals).where(eq(pricingProposals.id, id));
   }
 }
 

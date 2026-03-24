@@ -15,8 +15,19 @@ import { Plus, Trash2 } from "lucide-react";
 
 const PROMO_ROLES = ["BA", "A1", "A2", "S1", "S2", "C1", "C2", "EM1"] as const;
 
+const ROLE_LABELS: Record<string, string> = {
+  "BA": "Business Analyst",
+  "A1": "Associate A1",
+  "A2": "Associate A2",
+  "S1": "Senior S1",
+  "S2": "Senior S2",
+  "C1": "Consultant C1",
+  "C2": "Consultant C2",
+  "EM1": "Engagement Manager EM1",
+};
+
 export default function Settings() {
-  const { settings, updateSettings } = useStore();
+  const { settings, updateSettings, roleGrid } = useStore();
   const { toast } = useToast();
 
   const form = useForm<AdminSettings>({

@@ -18,7 +18,8 @@ interface Props {
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const CURRENT_YEAR = new Date().getFullYear();
-const YEARS = Array.from({ length: CURRENT_YEAR - 2022 }, (_, i) => 2023 + i); // 2023…current year
+const TODAY = new Date().toISOString().slice(0, 10);
+const YEARS = Array.from({ length: CURRENT_YEAR - 2022 + 3 }, (_, i) => 2023 + i); // 2023…current+2
 
 function fmtDate(d: string) {
   const [y, m] = d.split("-");
@@ -279,7 +280,8 @@ export function SalaryHistoryDialog({ employee, roleGrid, open, onClose }: Props
           <div className="space-y-3">
             {displayed.map((entry, displayIdx) => {
               const ascIdx = entries.length - 1 - displayIdx;
-              const isCurrent = displayIdx === 0;
+              const isScheduled = entry.effective_date > TODAY;
+              const isCurrent = displayIdx === 0 && !isScheduled;
               const nextEntry = entries[ascIdx + 1];
               const endDate = nextEntry ? nextEntry.effective_date : null;
               const prevEntry = entries[ascIdx - 1];
@@ -302,7 +304,13 @@ export function SalaryHistoryDialog({ employee, roleGrid, open, onClose }: Props
               const isEditing = editingId === entry.id;
 
               return (
-                <div key={entry.id} className={`rounded-lg border p-3 ${isCurrent ? "border-primary/40 bg-primary/5" : "bg-background"}`}>
+                <div key={entry.id} className={`rounded-lg border p-3 ${isScheduled ? "border-amber-300 bg-amber-50/50" : isCurrent ? "border-primary/40 bg-primary/5" : "bg-background"}`}>
+                  {isScheduled && (
+                    <div className="flex items-center gap-1 text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-2">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      Scheduled — pending until effective date
+                    </div>
+                  )}
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex-1">
                       {isEditing ? (

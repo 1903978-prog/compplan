@@ -137,6 +137,56 @@ export async function seedDatabase() {
       note TEXT
     )
   `);
+  // Pricing Tool tables
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS pricing_settings (
+      id SERIAL PRIMARY KEY,
+      data JSONB NOT NULL DEFAULT '{}'
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS pricing_cases (
+      id SERIAL PRIMARY KEY,
+      project_name TEXT NOT NULL,
+      client_name TEXT NOT NULL DEFAULT '',
+      fund_name TEXT,
+      industry TEXT,
+      country TEXT,
+      region TEXT NOT NULL DEFAULT 'Italy',
+      pe_owned INTEGER NOT NULL DEFAULT 1,
+      revenue_band TEXT NOT NULL DEFAULT 'above_1b',
+      price_sensitivity TEXT NOT NULL DEFAULT 'medium',
+      duration_weeks REAL NOT NULL DEFAULT 8,
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      staffing JSONB NOT NULL DEFAULT '[]',
+      recommendation JSONB,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS pricing_proposals (
+      id SERIAL PRIMARY KEY,
+      proposal_date TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      client_name TEXT,
+      fund_name TEXT,
+      region TEXT NOT NULL,
+      country TEXT,
+      pe_owned INTEGER NOT NULL DEFAULT 1,
+      revenue_band TEXT NOT NULL DEFAULT 'above_1b',
+      price_sensitivity TEXT,
+      duration_weeks REAL,
+      weekly_price REAL NOT NULL,
+      total_fee REAL,
+      outcome TEXT NOT NULL DEFAULT 'pending',
+      loss_reason TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // Fix promo_years values: DB must store years (e.g. 0.5 = 6 months).
   // If any value is < 0.1 the DB got corrupted with wrong values — reset all promo fields.
   const existingRoles = await db.select().from(roleGridEntries);

@@ -99,6 +99,8 @@ export const employeeInputSchema = z.object({
   monthly_ratings: z.array(monthlyRatingSchema).default([]),
   completed_tests: z.array(completedTestSchema).default([]),
   promo_increase_override: z.number().min(0).max(100).nullable().optional(),
+  pending_salary_gross: z.number().nullable().optional(),
+  pending_salary_date: z.string().nullable().optional(),
 });
 export type EmployeeInput = z.infer<typeof employeeInputSchema>;
 
@@ -137,6 +139,8 @@ export const employees = pgTable("employees", {
   monthly_ratings: jsonb("monthly_ratings").$type<MonthlyRating[]>().notNull().default([]),
   completed_tests: jsonb("completed_tests").$type<CompletedTest[]>().notNull().default([]),
   promo_increase_override: real("promo_increase_override"),
+  pending_salary_gross: real("pending_salary_gross"),
+  pending_salary_date: text("pending_salary_date"),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
@@ -231,4 +235,51 @@ export const daysOffEntries = pgTable("days_off_entries", {
   end_date: text("end_date"),
   days: real("days").notNull(),
   note: text("note"),
+});
+
+// ─── Pricing Tool ─────────────────────────────────────────────────────────────
+
+export const pricingSettingsTable = pgTable("pricing_settings", {
+  id: serial("id").primaryKey(),
+  data: jsonb("data").notNull().default({}),
+});
+
+export const pricingCases = pgTable("pricing_cases", {
+  id: serial("id").primaryKey(),
+  project_name: text("project_name").notNull(),
+  client_name: text("client_name").notNull().default(""),
+  fund_name: text("fund_name"),
+  industry: text("industry"),
+  country: text("country"),
+  region: text("region").notNull().default("Italy"),
+  pe_owned: integer("pe_owned").notNull().default(1), // 1=true, 0=false
+  revenue_band: text("revenue_band").notNull().default("above_1b"),
+  price_sensitivity: text("price_sensitivity").notNull().default("medium"),
+  duration_weeks: real("duration_weeks").notNull().default(8),
+  notes: text("notes"),
+  status: text("status").notNull().default("draft"),
+  staffing: jsonb("staffing").notNull().default([]),
+  recommendation: jsonb("recommendation"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
+export const pricingProposals = pgTable("pricing_proposals", {
+  id: serial("id").primaryKey(),
+  proposal_date: text("proposal_date").notNull(),
+  project_name: text("project_name").notNull(),
+  client_name: text("client_name"),
+  fund_name: text("fund_name"),
+  region: text("region").notNull(),
+  country: text("country"),
+  pe_owned: integer("pe_owned").notNull().default(1),
+  revenue_band: text("revenue_band").notNull().default("above_1b"),
+  price_sensitivity: text("price_sensitivity"),
+  duration_weeks: real("duration_weeks"),
+  weekly_price: real("weekly_price").notNull(),
+  total_fee: real("total_fee"),
+  outcome: text("outcome").notNull().default("pending"),
+  loss_reason: text("loss_reason"),
+  notes: text("notes"),
+  created_at: text("created_at").notNull(),
 });
