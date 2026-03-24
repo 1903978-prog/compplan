@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, CheckCircle, XCircle, Clock, AlertTriangle, Info, ChevronDown, ChevronUp, Eye,
+  Users, CheckCircle, XCircle, Clock, AlertTriangle, Info, ChevronDown, ChevronUp, Eye, Percent,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS,
@@ -22,8 +22,6 @@ interface PricingCase {
   project_name: string;
   client_name: string;
   fund_name: string;
-  industry: string;
-  country: string;
   region: string;
   pe_owned: boolean;
   revenue_band: string;
@@ -33,6 +31,7 @@ interface PricingCase {
   status: string;
   staffing: StaffingLine[];
   recommendation?: PricingRecommendation | null;
+  case_discounts?: { id: string; name: string; pct: number; enabled: boolean }[];
   created_at?: string;
 }
 
@@ -41,7 +40,7 @@ const fmtK = (n: number) => Math.round(n).toLocaleString("it-IT");
 
 function emptyCase(): PricingCase {
   return {
-    project_name: "", client_name: "", fund_name: "", industry: "", country: "",
+    project_name: "", client_name: "", fund_name: "",
     region: "Italy", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 8, notes: "", status: "draft", staffing: [],
   };
@@ -74,6 +73,7 @@ export default function PricingTool() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
   const [showCalc, setShowCalc] = useState(false);
+  const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -108,14 +108,20 @@ export default function PricingTool() {
 
   // Initialise staffing from settings when opening form
   const initStaffing = (s: PricingSettings): StaffingLine[] => {
+    const defaults: Record<string, { days: number; count: number }> = {
+      "Partner":   { days: 1, count: 1 },
+      "Manager":   { days: 5, count: 1 },
+      "Associate": { days: 5, count: 2 },
+    };
     return s.roles
-      .filter(r => r.active && (r.role_name === "Manager" || r.role_name === "Associate"))
+      .filter(r => r.active && defaults[r.role_name])
+      .sort((a, b) => a.sort_order - b.sort_order)
       .map(r => ({
         role_id: r.id,
         role_name: r.role_name,
-        days_per_week: r.role_name === "Manager" ? 5 : 4,
+        days_per_week: defaults[r.role_name].days,
         daily_rate_used: r.default_daily_rate,
-        count: r.role_name === "Associate" ? 2 : 1,
+        count: defaults[r.role_name].count,
       }));
   };
 
@@ -125,16 +131,25 @@ export default function PricingTool() {
     setForm(base);
     setView("form");
     setShowCalc(false);
+    const activeDiscounts = (settings?.discounts ?? []).filter(d => d.active);
+    setCaseDiscounts(activeDiscounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: true })));
   };
 
   const openCase = (c: any) => {
+    const { industry: _i, country: _c, ...rest } = c;
     setForm({
-      ...c,
+      ...rest,
       pe_owned: c.pe_owned === 1 || c.pe_owned === true,
       staffing: c.staffing ?? [],
     });
     setView("form");
     setShowCalc(false);
+    if (c.case_discounts?.length) {
+      setCaseDiscounts(c.case_discounts);
+    } else if (settings) {
+      const activeDiscounts = settings.discounts.filter(d => d.active);
+      setCaseDiscounts(activeDiscounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: true })));
+    }
   };
 
   const deleteCase = async (id: number) => {
@@ -171,6 +186,7 @@ export default function PricingTool() {
         pe_owned: form.pe_owned ? 1 : 0,
         status,
         recommendation: recommendation ?? null,
+        case_discounts: caseDiscounts,
       };
       const method = form.id ? "PUT" : "POST";
       const url = form.id ? `/api/pricing/cases/${form.id}` : "/api/pricing/cases";
@@ -216,6 +232,23 @@ export default function PricingTool() {
   };
 
   const baseWeeklyDisplay = form.staffing.reduce((s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0);
+
+  const totalWeeklyCost = useMemo(() => {
+    if (!settings) return 0;
+    return form.staffing.reduce((sum, line) => {
+      const costEntry = (settings.staff_costs ?? []).find(c => c.role_id === line.role_id);
+      return sum + line.days_per_week * (costEntry?.daily_cost ?? 0) * line.count;
+    }, 0);
+  }, [form.staffing, settings]);
+
+  const totalDiscountPct = caseDiscounts.filter(d => d.enabled).reduce((s, d) => s + d.pct, 0);
+  const netMultiplier = 1 - totalDiscountPct / 100;
+  const netTargetWeekly = recommendation ? Math.round(recommendation.target_weekly * netMultiplier) : 0;
+  const netTargetTotal = netTargetWeekly * form.duration_weeks;
+  const totalProjectCost = totalWeeklyCost * form.duration_weeks;
+  const netRevenue = totalDiscountPct > 0 ? netTargetTotal : (recommendation?.target_total ?? 0);
+  const grossMarginEur = netRevenue - totalProjectCost;
+  const grossMarginPct = netRevenue > 0 ? (grossMarginEur / netRevenue) * 100 : 0;
 
   // Fund history for display
   const fundProposals = useMemo(() => {
@@ -378,19 +411,16 @@ export default function PricingTool() {
                     placeholder="Client name" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Fund / Shareholder</Label>
-                  <Input value={form.fund_name} onChange={e => setForm(f => ({ ...f, fund_name: e.target.value }))}
-                    placeholder="e.g. Advent International" />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Industry / Sector</Label>
-                  <Input value={form.industry} onChange={e => setForm(f => ({ ...f, industry: e.target.value }))}
-                    placeholder="e.g. Retail, Manufacturing" />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Country</Label>
-                  <Input value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
-                    placeholder="e.g. Italy, Germany" />
+                  <Label className="text-xs">PE Fund / Shareholder</Label>
+                  <Select value={form.fund_name || "__none__"} onValueChange={v => setForm(f => ({ ...f, fund_name: v === "__none__" ? "" : v }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select fund…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— None / Unknown —</SelectItem>
+                      {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds).map(fund => (
+                        <SelectItem key={fund} value={fund}>{fund}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Region <span className="text-destructive">*</span></Label>
@@ -498,14 +528,7 @@ export default function PricingTool() {
                                   <span className="text-xs text-muted-foreground">staff</span>
                                 </div>
                               )}
-                              <div className="flex items-center gap-1">
-                                <span className="text-xs text-muted-foreground">€</span>
-                                <Input type="number" min="0" step="50"
-                                  value={line.daily_rate_used}
-                                  onChange={e => updateStaffingLine(role.id, "daily_rate_used", parseFloat(e.target.value) || 0)}
-                                  className="h-7 w-20 text-xs text-center" />
-                                <span className="text-xs text-muted-foreground">/day</span>
-                              </div>
+                              <span className="text-xs text-muted-foreground bg-muted/40 px-2 py-1 rounded">€{line.daily_rate_used.toLocaleString("it-IT")}/day</span>
                               <span className="text-xs text-muted-foreground ml-auto">
                                 = <span className="font-semibold text-foreground">{fmt(weeklyRole)}/wk</span>
                               </span>
@@ -593,6 +616,86 @@ export default function PricingTool() {
                       <div>Low total<br /><span className="font-semibold text-foreground text-xs">{fmt(recommendation.low_total)}</span></div>
                       <div className="border-x">Target total<br /><span className="font-bold text-primary text-xs">{fmt(recommendation.target_total)}</span></div>
                       <div>High total<br /><span className="font-semibold text-amber-600 text-xs">{fmt(recommendation.high_total)}</span></div>
+                    </div>
+                  )}
+
+                  {/* Discount module */}
+                  {caseDiscounts.length > 0 && (
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
+                        Discounts
+                      </div>
+                      <div className="divide-y">
+                        {caseDiscounts.map(d => (
+                          <div key={d.id} className="flex items-center gap-2 px-3 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={d.enabled}
+                              onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, enabled: e.target.checked } : x))}
+                              className="h-3.5 w-3.5 rounded"
+                            />
+                            <span className="text-xs flex-1 text-muted-foreground">{d.name}</span>
+                            <div className="relative flex items-center">
+                              <input
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                max="100"
+                                value={d.pct}
+                                onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, pct: parseFloat(e.target.value) || 0 } : x))}
+                                disabled={!d.enabled}
+                                className="h-6 w-14 text-xs text-center font-mono border rounded pr-4 disabled:opacity-40 bg-background"
+                              />
+                              <span className="absolute right-1.5 text-[10px] text-muted-foreground">%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {totalDiscountPct > 0 && (
+                        <div className="bg-muted/20 px-3 py-1.5 flex justify-between items-center border-t">
+                          <span className="text-xs text-muted-foreground">Total discount</span>
+                          <span className="text-xs font-semibold">{totalDiscountPct.toFixed(1)}%</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Net price */}
+                  {totalDiscountPct > 0 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
+                        <div className="text-[10px] text-emerald-700 uppercase font-bold">Net / week</div>
+                        <div className="text-lg font-bold text-emerald-700">{fmt(netTargetWeekly)}</div>
+                      </div>
+                      <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
+                        <div className="text-[10px] text-emerald-700 uppercase font-bold">Net total</div>
+                        <div className="text-lg font-bold text-emerald-700">{fmt(netTargetTotal)}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Gross margin */}
+                  {totalWeeklyCost > 0 && (
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
+                        Gross Margin
+                      </div>
+                      <div className="px-3 py-2 space-y-1 text-xs">
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Net revenue</span>
+                          <span className="font-mono">{fmt(netRevenue)}</span>
+                        </div>
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Staff cost ({fmt(totalWeeklyCost)}/wk)</span>
+                          <span className="font-mono text-red-600">− {fmt(totalProjectCost)}</span>
+                        </div>
+                        <div className="flex justify-between font-semibold border-t pt-1 mt-1">
+                          <span>Gross margin</span>
+                          <span className={`font-mono ${grossMarginEur >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                            {fmt(grossMarginEur)} ({grossMarginPct.toFixed(1)}%)
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   )}
 

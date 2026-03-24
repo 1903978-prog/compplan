@@ -35,6 +35,19 @@ export interface SensitivityMultiplier {
   multiplier: number;
 }
 
+export interface PricingDiscount {
+  id: string;
+  name: string;
+  default_pct: number;  // default percentage (0–100)
+  active: boolean;      // whether it appears by default on new cases
+}
+
+export interface StaffCostEntry {
+  role_id: string;
+  role_name: string;
+  daily_cost: number;
+}
+
 export interface RateMatrixCell {
   min_weekly: number;
   max_weekly: number;
@@ -59,6 +72,8 @@ export interface PricingSettings {
   revenue_band_multipliers: RevenueBandMultiplier[];
   sensitivity_multipliers: SensitivityMultiplier[];
   funds: string[];  // configurable PE fund names
+  discounts: PricingDiscount[];
+  staff_costs: StaffCostEntry[];
   rate_matrix: RateMatrixRow[];
   floor_rule: FloorRule;
   bracket_low_pct: number;
@@ -200,6 +215,18 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { value: "high", label: "High sensitivity", multiplier: 0.90 },
   ],
   funds: ["CARLYLE", "BAIN CAP", "KPS", "ADVENT", "CVC"],
+  discounts: [
+    { id: "oneoff", name: "One-off discount", default_pct: 0, active: true },
+    { id: "prompt_payment", name: "Prompt payment discount", default_pct: 3, active: true },
+    { id: "rebate", name: "Rebate", default_pct: 2, active: false },
+  ],
+  staff_costs: [
+    { role_id: "partner",   role_name: "Partner",          daily_cost: 0    },
+    { role_id: "manager",   role_name: "Manager",          daily_cost: 400  },
+    { role_id: "associate", role_name: "Associate",        daily_cost: 283  },
+    { role_id: "analyst",   role_name: "Analyst",          daily_cost: 220  },
+    { role_id: "counsel",   role_name: "Counsel / Expert", daily_cost: 1500 },
+  ],
   rate_matrix: [
     {
       client_type: "PE/LBO",

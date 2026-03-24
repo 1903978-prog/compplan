@@ -56,6 +56,19 @@ interface SensitivityMultiplier {
   multiplier: number;
 }
 
+interface PricingDiscount {
+  id: string;
+  name: string;
+  default_pct: number;
+  active: boolean;
+}
+
+interface StaffCostEntry {
+  role_id: string;
+  role_name: string;
+  daily_cost: number;
+}
+
 interface RateMatrixCell {
   min_weekly: number;
   max_weekly: number;
@@ -80,6 +93,8 @@ interface PricingSettings {
   revenue_band_multipliers: RevenueBandMultiplier[];
   sensitivity_multipliers: SensitivityMultiplier[];
   funds: string[];
+  discounts: PricingDiscount[];
+  staff_costs: StaffCostEntry[];
   rate_matrix: RateMatrixRow[];
   floor_rule: FloorRule;
   bracket_low_pct: number;
@@ -130,6 +145,18 @@ const DEFAULT_SETTINGS: PricingSettings = {
     { value: "high", label: "High", multiplier: 0.9 },
   ],
   funds: ["CARLYLE", "BAIN CAP", "KPS", "ADVENT", "CVC"],
+  discounts: [
+    { id: "oneoff", name: "One-off discount", default_pct: 0, active: true },
+    { id: "prompt_payment", name: "Prompt payment discount", default_pct: 3, active: true },
+    { id: "rebate", name: "Rebate", default_pct: 2, active: false },
+  ],
+  staff_costs: [
+    { role_id: "partner",   role_name: "Partner",          daily_cost: 0    },
+    { role_id: "manager",   role_name: "Manager",          daily_cost: 400  },
+    { role_id: "associate", role_name: "Associate",        daily_cost: 283  },
+    { role_id: "analyst",   role_name: "Analyst",          daily_cost: 220  },
+    { role_id: "counsel",   role_name: "Counsel / Expert", daily_cost: 1500 },
+  ],
   rate_matrix: [
     {
       client_type: "PE/LBO",
@@ -1033,6 +1060,195 @@ function BracketRulesTab({ settings, onChange, onSave, saving }: BracketRulesTab
   );
 }
 
+// ─── Tab: Discounts & Staff Costs ────────────────────────────────────────────
+
+interface DiscountsAndCostsTabProps {
+  settings: PricingSettings;
+  onChange: (patch: Partial<PricingSettings>) => void;
+  onSave: () => void;
+  saving: boolean;
+}
+
+function DiscountsAndCostsTab({ settings, onChange, onSave, saving }: DiscountsAndCostsTabProps) {
+  const discounts: PricingDiscount[] = settings.discounts ?? [];
+  const staffCosts: StaffCostEntry[] = settings.staff_costs ?? [];
+  const [newName, setNewName] = useState("");
+  const [newPct, setNewPct] = useState<number>(0);
+
+  const updateDiscount = (id: string, field: keyof PricingDiscount, value: any) => {
+    onChange({ discounts: discounts.map(d => d.id === id ? { ...d, [field]: value } : d) });
+  };
+
+  const addDiscount = () => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const newDiscount: PricingDiscount = {
+      id: crypto.randomUUID(),
+      name: trimmed,
+      default_pct: newPct,
+      active: true,
+    };
+    onChange({ discounts: [...discounts, newDiscount] });
+    setNewName("");
+    setNewPct(0);
+  };
+
+  const removeDiscount = (id: string) => {
+    onChange({ discounts: discounts.filter(d => d.id !== id) });
+  };
+
+  const updateStaffCost = (role_id: string, daily_cost: number) => {
+    onChange({ staff_costs: staffCosts.map(c => c.role_id === role_id ? { ...c, daily_cost } : c) });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Discounts */}
+      <div className="space-y-3">
+        <div>
+          <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Commercial Discounts</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Define discount types and their default percentages. These appear as options when building a pricing case.
+          </p>
+        </div>
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30">
+                <TableHead>Discount Name</TableHead>
+                <TableHead className="text-center w-32">Default %</TableHead>
+                <TableHead className="text-center w-24">Active</TableHead>
+                <TableHead className="w-12" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {discounts.map(d => (
+                <TableRow key={d.id}>
+                  <TableCell>
+                    <Input
+                      value={d.name}
+                      onChange={e => updateDiscount(d.id, "name", e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <div className="relative flex items-center justify-center">
+                      <Input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="100"
+                        value={d.default_pct}
+                        onChange={e => updateDiscount(d.id, "default_pct", parseFloat(e.target.value) || 0)}
+                        className="h-8 text-sm text-center w-20 font-mono pr-6"
+                      />
+                      <span className="absolute right-2 text-muted-foreground text-sm">%</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <input
+                      type="checkbox"
+                      checked={d.active}
+                      onChange={e => updateDiscount(d.id, "active", e.target.checked)}
+                      className="h-4 w-4 rounded"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <button
+                      type="button"
+                      onClick={() => removeDiscount(d.id)}
+                      className="text-muted-foreground hover:text-destructive transition-colors p-1 rounded"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+        <div className="flex gap-2 items-center">
+          <Input
+            placeholder="Discount name"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && addDiscount()}
+            className="h-9 text-sm max-w-xs"
+          />
+          <div className="relative flex items-center">
+            <Input
+              type="number"
+              step="0.5"
+              min="0"
+              max="100"
+              value={newPct}
+              onChange={e => setNewPct(parseFloat(e.target.value) || 0)}
+              className="h-9 text-sm text-center w-20 font-mono pr-6"
+            />
+            <span className="absolute right-2 text-muted-foreground text-sm">%</span>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={addDiscount} disabled={!newName.trim()}>
+            <Plus className="w-3.5 h-3.5 mr-1" />
+            Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Staff costs */}
+      <div className="space-y-3">
+        <div>
+          <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Staff Daily Costs</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Internal cost per consultant day (€). Used to compute gross margin on each case.
+            Set to 0 for partners or roles where cost is not tracked.
+          </p>
+        </div>
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30">
+                <TableHead>Role</TableHead>
+                <TableHead className="text-right">Daily Cost (€)</TableHead>
+                <TableHead className="text-right text-muted-foreground text-xs">Weekly equiv. (5d)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {staffCosts.map(c => (
+                <TableRow key={c.role_id}>
+                  <TableCell className="font-medium text-sm">{c.role_name}</TableCell>
+                  <TableCell>
+                    <div className="relative flex items-center justify-end">
+                      <span className="absolute left-2 text-muted-foreground text-sm">€</span>
+                      <Input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={c.daily_cost}
+                        onChange={e => updateStaffCost(c.role_id, parseFloat(e.target.value) || 0)}
+                        className="h-8 text-sm text-right w-28 font-mono pl-6"
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground text-sm font-mono">
+                    {c.daily_cost > 0 ? `€${(c.daily_cost * 5).toLocaleString("it-IT")}` : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={onSave} disabled={saving} size="sm">
+          <Save className="w-3.5 h-3.5 mr-1.5" />
+          {saving ? "Saving…" : "Save Settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab: PE Funds ────────────────────────────────────────────────────────────
 
 interface FundsTabProps {
@@ -1273,7 +1489,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
 
 // ─── Tabs list ────────────────────────────────────────────────────────────────
 
-type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "funds" | "rate_matrix";
+type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "roles", label: "Roles & Rates" },
@@ -1281,6 +1497,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "client_multipliers", label: "Client Multipliers" },
   { id: "sensitivity", label: "Sensitivity" },
   { id: "bracket_rules", label: "Bracket & Rules" },
+  { id: "discounts_costs", label: "Discounts & Costs" },
   { id: "funds", label: "PE Funds" },
   { id: "rate_matrix", label: "Rate Matrix" },
 ];
@@ -1446,6 +1663,9 @@ export default function PricingAdmin() {
               onSave={handleSave}
               saving={saving}
             />
+          )}
+          {activeTab === "discounts_costs" && (
+            <DiscountsAndCostsTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
           )}
           {activeTab === "funds" && (
             <FundsTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
