@@ -109,9 +109,9 @@ export default function PricingTool() {
   // Initialise staffing from settings when opening form
   const initStaffing = (s: PricingSettings): StaffingLine[] => {
     const defaults: Record<string, { days: number; count: number }> = {
-      "Partner":   { days: 1, count: 1 },
-      "Manager":   { days: 5, count: 1 },
-      "Associate": { days: 5, count: 2 },
+      "Partner":     { days: 1, count: 1 },
+      "Manager INT": { days: 5, count: 1 },
+      "ASC IN":      { days: 5, count: 2 },
     };
     return s.roles
       .filter(r => r.active && defaults[r.role_name])
@@ -518,7 +518,7 @@ export default function PricingTool() {
                                   className="h-7 w-16 text-xs text-center" />
                                 <span className="text-xs text-muted-foreground">d/wk</span>
                               </div>
-                              {role.role_name === "Associate" && (
+                              {(role.role_name === "ASC IN" || role.role_name === "ASC EXT" || role.role_name === "BA") && (
                                 <div className="flex items-center gap-1">
                                   <span className="text-xs text-muted-foreground">×</span>
                                   <Input type="number" min="1" max="10" step="1"

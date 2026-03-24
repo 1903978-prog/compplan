@@ -183,11 +183,12 @@ export const REGIONS = [
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
   roles: [
-    { id: "partner", role_name: "Partner", default_daily_rate: 7000, active: true, sort_order: 0 },
-    { id: "manager", role_name: "Manager", default_daily_rate: 2200, active: true, sort_order: 1 },
-    { id: "associate", role_name: "Associate", default_daily_rate: 1400, active: true, sort_order: 2 },
-    { id: "analyst", role_name: "Analyst", default_daily_rate: 900, active: false, sort_order: 3 },
-    { id: "counsel", role_name: "Counsel / Expert", default_daily_rate: 2800, active: false, sort_order: 4 },
+    { id: "partner",      role_name: "Partner",      default_daily_rate: 7000, active: true,  sort_order: 0 },
+    { id: "manager_ext",  role_name: "Manager EXT",  default_daily_rate: 2800, active: true,  sort_order: 1 },
+    { id: "manager_int",  role_name: "Manager INT",  default_daily_rate: 2200, active: true,  sort_order: 2 },
+    { id: "asc_ext",      role_name: "ASC EXT",      default_daily_rate: 1400, active: true,  sort_order: 3 },
+    { id: "asc_in",       role_name: "ASC IN",       default_daily_rate: 1200, active: true,  sort_order: 4 },
+    { id: "ba",           role_name: "BA",            default_daily_rate: 900,  active: true,  sort_order: 5 },
   ],
   regions: [
     { id: "italy", region_name: "Italy", multiplier: 1.0, is_baseline: true },
@@ -221,11 +222,12 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { id: "rebate", name: "Rebate", default_pct: 2, active: false },
   ],
   staff_costs: [
-    { role_id: "partner",   role_name: "Partner",          daily_cost: 0    },
-    { role_id: "manager",   role_name: "Manager",          daily_cost: 400  },
-    { role_id: "associate", role_name: "Associate",        daily_cost: 283  },
-    { role_id: "analyst",   role_name: "Analyst",          daily_cost: 220  },
-    { role_id: "counsel",   role_name: "Counsel / Expert", daily_cost: 1500 },
+    { role_id: "partner",     role_name: "Partner",     daily_cost: 0    },
+    { role_id: "manager_ext", role_name: "Manager EXT", daily_cost: 1500 },
+    { role_id: "manager_int", role_name: "Manager INT", daily_cost: 400  },
+    { role_id: "asc_ext",     role_name: "ASC EXT",     daily_cost: 1500 },
+    { role_id: "asc_in",      role_name: "ASC IN",      daily_cost: 250  },
+    { role_id: "ba",          role_name: "BA",           daily_cost: 150  },
   ],
   rate_matrix: [
     {
