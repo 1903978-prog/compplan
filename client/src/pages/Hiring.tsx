@@ -189,9 +189,18 @@ function CandidateCard({
 
         {/* Date chip + lock indicator */}
         <div className="flex items-center gap-1.5 pt-0.5">
-          <span className="text-[9px] text-muted-foreground/50">
-            Added {new Date(candidate.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
-          </span>
+          {(() => {
+            const created = new Date(candidate.created_at);
+            const days = Math.floor((Date.now() - created.getTime()) / 86400000);
+            const dd = String(created.getDate()).padStart(2, "0");
+            const mm = String(created.getMonth() + 1).padStart(2, "0");
+            const ageColor = days > 5 ? "text-red-500 font-semibold" : days > 3 ? "text-orange-500 font-semibold" : "text-muted-foreground/50";
+            return (
+              <span className={`text-[9px] ${ageColor}`} title={`Created ${dd}/${mm}, ${days} day${days !== 1 ? "s" : ""} in funnel`}>
+                {dd}/{mm} · {days}d
+              </span>
+            );
+          })()}
           {candidate.sync_locked === 1 && (
             <span title="Manually positioned — sync won't move this card">
               <Lock className="w-2.5 h-2.5 text-muted-foreground/40" />
