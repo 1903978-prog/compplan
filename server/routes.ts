@@ -246,5 +246,94 @@ Return ONLY valid JSON array, no explanation:`;
     res.status(204).end();
   });
 
+  // ── AI Pricing Suggestion ──────────────────────────────────────────────────
+  app.post("/api/pricing/ai-suggest", requireAuth, async (req, res) => {
+    const anthropic = new Anthropic();
+    const { currentCase, proposals } = req.body as {
+      currentCase: {
+        region: string;
+        pe_owned: boolean;
+        revenue_band: string;
+        price_sensitivity: string;
+        duration_weeks: number;
+        staffing: { role_name: string; days_per_week: number; daily_rate_used: number; count: number }[];
+        fund_name?: string;
+        engineBaseline?: number;
+        engineLow?: number;
+        engineTarget?: number;
+        engineHigh?: number;
+      };
+      proposals: {
+        project_name?: string;
+        client_name?: string;
+        fund_name?: string;
+        region: string;
+        pe_owned: boolean;
+        revenue_band: string;
+        weekly_price: number;
+        duration_weeks?: number;
+        outcome: string;
+        notes?: string;
+      }[];
+    };
+
+    const wonProposals = proposals.filter(p => p.outcome === "won");
+    const lostProposals = proposals.filter(p => p.outcome === "lost");
+
+    const fmtP = (p: typeof proposals[0]) =>
+      `  - ${p.project_name || "Project"}${p.fund_name ? ` [${p.fund_name}]` : ""}: €${p.weekly_price.toLocaleString()}/wk${p.duration_weeks ? `, ${p.duration_weeks}w` : ""}, ${p.region}, ${p.pe_owned ? "PE" : "Non-PE"}, ${p.revenue_band}${p.notes ? ` — "${p.notes}"` : ""}`;
+
+    const staffingDesc = currentCase.staffing
+      .map(s => `${s.count > 1 ? s.count + "× " : ""}${s.role_name} ${s.days_per_week}d/wk @€${s.daily_rate_used.toLocaleString()}/day`)
+      .join(", ");
+
+    const prompt = `You are a senior pricing advisor for a management consulting firm specialising in PE-backed transformation projects.
+
+## Historical deal database
+
+WON deals (${wonProposals.length}):
+${wonProposals.length ? wonProposals.map(fmtP).join("\n") : "  (none on record yet)"}
+
+LOST deals (${lostProposals.length}):
+${lostProposals.length ? lostProposals.map(fmtP).join("\n") : "  (none on record yet)"}
+
+## Engagement to price
+
+- Region: ${currentCase.region}
+- PE-owned client: ${currentCase.pe_owned ? "Yes" : "No"}
+- Revenue band: ${currentCase.revenue_band}
+- Price sensitivity: ${currentCase.price_sensitivity}
+- Duration: ${currentCase.duration_weeks} weeks
+- Staffing: ${staffingDesc}${currentCase.fund_name ? `\n- Fund: ${currentCase.fund_name}` : ""}
+- Internal engine range: Low €${(currentCase.engineLow ?? 0).toLocaleString()} · Target €${(currentCase.engineTarget ?? 0).toLocaleString()} · High €${(currentCase.engineHigh ?? 0).toLocaleString()}/week
+
+## Task
+
+Based on the historical deal data and engagement profile above, return a JSON object (no markdown, no explanation outside the JSON) with this exact shape:
+{
+  "suggested_low": <number — weekly €>,
+  "suggested_high": <number — weekly €>,
+  "win_probability_pct": <number 0-100>,
+  "recommendation": "low" | "target" | "high",
+  "risks": [<string>, <string>],
+  "reasoning": "<2-3 sentences citing specific data points from the history>"
+}`;
+
+    try {
+      const message = await anthropic.messages.create({
+        model: "claude-opus-4-5",
+        max_tokens: 512,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const text = message.content[0].type === "text" ? message.content[0].text : "{}";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("No JSON in response");
+      res.json(JSON.parse(jsonMatch[0]));
+    } catch (err) {
+      console.error("AI suggest error:", err);
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   return httpServer;
 }

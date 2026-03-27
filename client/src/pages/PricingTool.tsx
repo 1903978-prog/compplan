@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye,
+  Users, AlertTriangle, Eye, History, Brain, CheckCircle, XCircle, Clock,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS,
@@ -37,6 +37,25 @@ interface PricingCase {
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
 const fmtK = (n: number) => Math.round(n).toLocaleString("it-IT");
+
+function emptyProposal(): PricingProposal {
+  return {
+    proposal_date: new Date().toISOString().slice(0, 10),
+    project_name: "",
+    client_name: "",
+    fund_name: "",
+    region: "IT",
+    pe_owned: true,
+    revenue_band: "above_1b",
+    price_sensitivity: "medium",
+    duration_weeks: 8,
+    weekly_price: 0,
+    total_fee: null,
+    outcome: "won",
+    loss_reason: "",
+    notes: "",
+  };
+}
 
 function emptyCase(): PricingCase {
   return {
@@ -73,6 +92,16 @@ export default function PricingTool() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
+  const [mainTab, setMainTab] = useState<"cases" | "history">("cases");
+  const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
+  const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
+  const [showHistoryForm, setShowHistoryForm] = useState(false);
+  const [savingProposal, setSavingProposal] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<{
+    suggested_low: number; suggested_high: number; win_probability_pct: number;
+    recommendation: string; risks: string[]; reasoning: string;
+  } | null>(null);
+  const [loadingAi, setLoadingAi] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -151,6 +180,91 @@ export default function PricingTool() {
     if (!confirm("Delete this pricing case?")) return;
     await fetch(`/api/pricing/cases/${id}`, { method: "DELETE", credentials: "include" });
     loadAll();
+  };
+
+  const saveProposal = async () => {
+    if (!historyForm.project_name.trim()) {
+      toast({ title: "Project name is required", variant: "destructive" });
+      return;
+    }
+    if (!historyForm.weekly_price) {
+      toast({ title: "Weekly price is required", variant: "destructive" });
+      return;
+    }
+    setSavingProposal(true);
+    try {
+      const payload = { ...historyForm, pe_owned: historyForm.pe_owned ? 1 : 0 };
+      if (editingProposalId) {
+        await fetch(`/api/pricing/proposals/${editingProposalId}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        toast({ title: "Proposal updated" });
+      } else {
+        await fetch("/api/pricing/proposals", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        toast({ title: "Proposal saved" });
+      }
+      setShowHistoryForm(false);
+      setEditingProposalId(null);
+      setHistoryForm(emptyProposal());
+      loadAll();
+    } catch {
+      toast({ title: "Failed to save", variant: "destructive" });
+    } finally {
+      setSavingProposal(false);
+    }
+  };
+
+  const editProposal = (p: PricingProposal) => {
+    setHistoryForm({ ...p, pe_owned: p.pe_owned === (1 as any) || p.pe_owned === true });
+    setEditingProposalId(p.id ?? null);
+    setShowHistoryForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const deleteProposal = async (id: number) => {
+    if (!confirm("Delete this past proposal?")) return;
+    await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
+    loadAll();
+  };
+
+  const getAiSuggestion = async () => {
+    if (!recommendation) return;
+    setLoadingAi(true);
+    setAiSuggestion(null);
+    try {
+      const res = await fetch("/api/pricing/ai-suggest", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentCase: {
+            region: form.region,
+            pe_owned: form.pe_owned,
+            revenue_band: form.revenue_band,
+            price_sensitivity: form.price_sensitivity,
+            duration_weeks: form.duration_weeks,
+            staffing: form.staffing,
+            fund_name: form.fund_name || null,
+            engineBaseline: recommendation.base_weekly,
+            engineLow: recommendation.low_weekly,
+            engineTarget: recommendation.target_weekly,
+            engineHigh: recommendation.high_weekly,
+          },
+          proposals,
+        }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+      setAiSuggestion(await res.json());
+    } catch {
+      toast({ title: "AI analysis failed", variant: "destructive" });
+    } finally {
+      setLoadingAi(false);
+    }
   };
 
   // Live recommendation
@@ -273,97 +387,341 @@ export default function PricingTool() {
               <p className="text-sm text-muted-foreground">Commercial pricing decision support</p>
             </div>
           </div>
-          <Button onClick={openNewForm} disabled={loading}>
-            <Plus className="w-4 h-4 mr-2" /> New Pricing Case
-          </Button>
+          {mainTab === "cases" ? (
+            <Button onClick={openNewForm} disabled={loading}>
+              <Plus className="w-4 h-4 mr-2" /> New Pricing Case
+            </Button>
+          ) : (
+            <Button onClick={() => { setHistoryForm(emptyProposal()); setEditingProposalId(null); setShowHistoryForm(true); }}>
+              <Plus className="w-4 h-4 mr-2" /> Log Past Project
+            </Button>
+          )}
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-4 gap-4">
-          {[
-            { label: "Total Cases", value: cases.length, icon: Users },
-            { label: "With Recommendations", value: cases.filter(c => c.recommendation).length, icon: TrendingUp },
-            { label: "Avg Target / Week", value: avgTarget > 0 ? fmt(avgTarget) : "—", icon: DollarSign },
-            { label: "Historical Proposals", value: proposals.length, icon: TrendingDown },
-          ].map(stat => (
-            <Card key={stat.label} className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xs text-muted-foreground uppercase font-bold mb-1">{stat.label}</div>
-                  <div className="text-2xl font-bold">{typeof stat.value === "number" ? stat.value : stat.value}</div>
-                </div>
-                <stat.icon className="w-8 h-8 text-muted-foreground/30" />
-              </div>
-            </Card>
+        {/* Tab navigation */}
+        <div className="flex gap-1 border-b">
+          {([
+            { id: "cases" as const, label: "Pricing Cases", icon: DollarSign },
+            { id: "history" as const, label: "Past Projects", icon: History },
+          ]).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setMainTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                mainTab === tab.id
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                {tab.id === "cases" ? cases.length : proposals.length}
+              </span>
+            </button>
           ))}
         </div>
 
-        {/* Cases table */}
-        {loading ? (
-          <div className="text-center py-12 text-muted-foreground">Loading...</div>
-        ) : cases.length === 0 ? (
-          <Card className="py-16">
-            <CardContent className="flex flex-col items-center gap-4">
-              <DollarSign className="w-12 h-12 text-muted-foreground/30" />
-              <div className="text-center">
-                <p className="font-semibold text-lg">No pricing cases yet</p>
-                <p className="text-sm text-muted-foreground">Create your first case to get started</p>
-              </div>
-              <Button onClick={openNewForm}><Plus className="w-4 h-4 mr-2" /> New Pricing Case</Button>
-            </CardContent>
-          </Card>
+        {mainTab === "cases" ? (
+          <>
+            {/* Stats */}
+            <div className="grid grid-cols-4 gap-4">
+              {[
+                { label: "Total Cases", value: cases.length, icon: Users },
+                { label: "With Recommendations", value: cases.filter(c => c.recommendation).length, icon: TrendingUp },
+                { label: "Avg Target / Week", value: avgTarget > 0 ? fmt(avgTarget) : "—", icon: DollarSign },
+                { label: "Past Proposals", value: proposals.length, icon: TrendingDown },
+              ].map(stat => (
+                <Card key={stat.label} className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs text-muted-foreground uppercase font-bold mb-1">{stat.label}</div>
+                      <div className="text-2xl font-bold">{typeof stat.value === "number" ? stat.value : stat.value}</div>
+                    </div>
+                    <stat.icon className="w-8 h-8 text-muted-foreground/30" />
+                  </div>
+                </Card>
+              ))}
+            </div>
+
+            {/* Cases table */}
+            {loading ? (
+              <div className="text-center py-12 text-muted-foreground">Loading...</div>
+            ) : cases.length === 0 ? (
+              <Card className="py-16">
+                <CardContent className="flex flex-col items-center gap-4">
+                  <DollarSign className="w-12 h-12 text-muted-foreground/30" />
+                  <div className="text-center">
+                    <p className="font-semibold text-lg">No pricing cases yet</p>
+                    <p className="text-sm text-muted-foreground">Create your first case to get started</p>
+                  </div>
+                  <Button onClick={openNewForm}><Plus className="w-4 h-4 mr-2" /> New Pricing Case</Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Client</TableHead>
+                      <TableHead>Fund</TableHead>
+                      <TableHead>Region</TableHead>
+                      <TableHead>Duration</TableHead>
+                      <TableHead>Target / wk</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="w-20">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cases.map(c => (
+                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
+                        <TableCell className="font-semibold">{c.project_name}</TableCell>
+                        <TableCell>{c.client_name || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground text-sm">{c.fund_name || "—"}</TableCell>
+                        <TableCell><Badge variant="secondary" className="text-xs">{c.region}</Badge></TableCell>
+                        <TableCell>{c.duration_weeks}w</TableCell>
+                        <TableCell className="font-semibold text-emerald-600">
+                          {c.recommendation?.target_weekly ? fmt(c.recommendation.target_weekly) : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={c.status === "final" ? "default" : "secondary"} className="text-xs capitalize">
+                            {c.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {c.created_at ? new Date(c.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                        </TableCell>
+                        <TableCell onClick={e => e.stopPropagation()}>
+                          <div className="flex gap-1">
+                            <button onClick={() => openCase(c)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => deleteCase(c.id)} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            )}
+          </>
         ) : (
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Project</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Fund</TableHead>
-                  <TableHead>Region</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Target / wk</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="w-20">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {cases.map(c => (
-                  <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
-                    <TableCell className="font-semibold">{c.project_name}</TableCell>
-                    <TableCell>{c.client_name || "—"}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{c.fund_name || "—"}</TableCell>
-                    <TableCell><Badge variant="secondary" className="text-xs">{c.region}</Badge></TableCell>
-                    <TableCell>{c.duration_weeks}w</TableCell>
-                    <TableCell className="font-semibold text-emerald-600">
-                      {c.recommendation?.target_weekly ? fmt(c.recommendation.target_weekly) : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={c.status === "final" ? "default" : "secondary"} className="text-xs capitalize">
-                        {c.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {c.created_at ? new Date(c.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
-                    </TableCell>
-                    <TableCell onClick={e => e.stopPropagation()}>
-                      <div className="flex gap-1">
-                        <button onClick={() => openCase(c)}
-                          className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => deleteCase(c.id)}
-                          className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+          /* ── PAST PROJECTS TAB ─────────────────────────────────────── */
+          <div className="space-y-4">
+            {/* Stats */}
+            <div className="grid grid-cols-4 gap-4">
+              {(() => {
+                const won = proposals.filter(p => p.outcome === "won");
+                const lost = proposals.filter(p => p.outcome === "lost");
+                const avgWon = won.length ? won.reduce((s, p) => s + p.weekly_price, 0) / won.length : 0;
+                const avgLost = lost.length ? lost.reduce((s, p) => s + p.weekly_price, 0) / lost.length : 0;
+                return [
+                  { label: "Won", value: won.length, icon: CheckCircle, cls: "text-emerald-600" },
+                  { label: "Lost", value: lost.length, icon: XCircle, cls: "text-red-500" },
+                  { label: "Avg Won /wk", value: avgWon > 0 ? fmt(avgWon) : "—", icon: TrendingUp, cls: "" },
+                  { label: "Avg Lost /wk", value: avgLost > 0 ? fmt(avgLost) : "—", icon: TrendingDown, cls: "" },
+                ].map(stat => (
+                  <Card key={stat.label} className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs text-muted-foreground uppercase font-bold mb-1">{stat.label}</div>
+                        <div className={`text-2xl font-bold ${stat.cls}`}>{typeof stat.value === "number" ? stat.value : stat.value}</div>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
+                      <stat.icon className={`w-8 h-8 ${stat.cls || "text-muted-foreground/30"} opacity-30`} />
+                    </div>
+                  </Card>
+                ));
+              })()}
+            </div>
+
+            {/* Add / Edit form */}
+            {showHistoryForm && (
+              <Card className="border-primary/30">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">{editingProposalId ? "Edit Past Project" : "Log Past Project"}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Date</Label>
+                      <Input type="date" value={historyForm.proposal_date}
+                        onChange={e => setHistoryForm(f => ({ ...f, proposal_date: e.target.value }))} className="h-9 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Project Name <span className="text-destructive">*</span></Label>
+                      <Input value={historyForm.project_name} placeholder="e.g. Cost reduction PMO"
+                        onChange={e => setHistoryForm(f => ({ ...f, project_name: e.target.value }))} className="h-9 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Client</Label>
+                      <Input value={historyForm.client_name ?? ""} placeholder="Client name"
+                        onChange={e => setHistoryForm(f => ({ ...f, client_name: e.target.value }))} className="h-9 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">PE Fund</Label>
+                      <Select value={historyForm.fund_name || "__none__"} onValueChange={v => setHistoryForm(f => ({ ...f, fund_name: v === "__none__" ? "" : v }))}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select fund…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— None —</SelectItem>
+                          {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds).map(fund => (
+                            <SelectItem key={fund} value={fund}>{fund}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Region</Label>
+                      <Select value={historyForm.region} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {REGIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">PE Owned</Label>
+                      <div className="flex gap-2">
+                        {[true, false].map(v => (
+                          <button key={String(v)} type="button"
+                            onClick={() => setHistoryForm(f => ({ ...f, pe_owned: v }))}
+                            className={`flex-1 py-1.5 rounded-md text-sm font-medium border transition-colors ${historyForm.pe_owned === v ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:bg-muted"}`}>
+                            {v ? "Yes" : "No"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Revenue Band</Label>
+                      <Select value={historyForm.revenue_band} onValueChange={v => setHistoryForm(f => ({ ...f, revenue_band: v }))}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {REVENUE_BANDS.map(rb => <SelectItem key={rb.value} value={rb.value}>{rb.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Duration (weeks)</Label>
+                      <Input type="number" min="1" value={historyForm.duration_weeks ?? ""}
+                        onChange={e => setHistoryForm(f => ({ ...f, duration_weeks: parseInt(e.target.value) || 0 }))} className="h-9 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Weekly Price (€) <span className="text-destructive">*</span></Label>
+                      <Input type="number" min="0" value={historyForm.weekly_price || ""}
+                        onChange={e => setHistoryForm(f => ({ ...f, weekly_price: parseFloat(e.target.value) || 0 }))} className="h-9 text-sm font-mono" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Outcome</Label>
+                      <div className="flex gap-2">
+                        {(["won", "lost", "pending"] as const).map(v => (
+                          <button key={v} type="button"
+                            onClick={() => setHistoryForm(f => ({ ...f, outcome: v }))}
+                            className={`flex-1 py-1.5 rounded-md text-sm font-medium border capitalize transition-colors ${
+                              historyForm.outcome === v
+                                ? v === "won" ? "bg-emerald-600 text-white border-emerald-600"
+                                  : v === "lost" ? "bg-red-500 text-white border-red-500"
+                                  : "bg-primary text-primary-foreground border-primary"
+                                : "bg-background border-border text-muted-foreground hover:bg-muted"
+                            }`}>
+                            {v}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {historyForm.outcome === "lost" && (
+                      <div className="space-y-1">
+                        <Label className="text-xs">Loss Reason</Label>
+                        <Input value={historyForm.loss_reason ?? ""} placeholder="e.g. Price too high, lost to competitor"
+                          onChange={e => setHistoryForm(f => ({ ...f, loss_reason: e.target.value }))} className="h-9 text-sm" />
+                      </div>
+                    )}
+                    <div className="col-span-3 space-y-1">
+                      <Label className="text-xs">Notes</Label>
+                      <Textarea value={historyForm.notes ?? ""} placeholder="Any context about this deal…"
+                        onChange={e => setHistoryForm(f => ({ ...f, notes: e.target.value }))}
+                        className="text-sm resize-none" rows={2} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={saveProposal} disabled={savingProposal} size="sm">
+                      {savingProposal ? "Saving…" : editingProposalId ? "Update" : "Save"}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => { setShowHistoryForm(false); setEditingProposalId(null); setHistoryForm(emptyProposal()); }}>
+                      Cancel
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Proposals table */}
+            {proposals.length === 0 && !showHistoryForm ? (
+              <Card className="py-16">
+                <CardContent className="flex flex-col items-center gap-4">
+                  <History className="w-12 h-12 text-muted-foreground/30" />
+                  <div className="text-center">
+                    <p className="font-semibold text-lg">No past projects logged yet</p>
+                    <p className="text-sm text-muted-foreground">Log won and lost deals to improve pricing recommendations</p>
+                  </div>
+                  <Button onClick={() => setShowHistoryForm(true)}><Plus className="w-4 h-4 mr-2" /> Log First Project</Button>
+                </CardContent>
+              </Card>
+            ) : proposals.length > 0 && (
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Client</TableHead>
+                      <TableHead>Fund</TableHead>
+                      <TableHead>Region</TableHead>
+                      <TableHead>Dur.</TableHead>
+                      <TableHead>Weekly price</TableHead>
+                      <TableHead>Outcome</TableHead>
+                      <TableHead className="w-20">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {proposals.map(p => (
+                      <TableRow key={p.id}>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {p.proposal_date ? new Date(p.proposal_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                        </TableCell>
+                        <TableCell className="font-semibold text-sm">{p.project_name}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{p.client_name || "—"}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{p.fund_name || "—"}</TableCell>
+                        <TableCell><Badge variant="secondary" className="text-xs">{p.region}</Badge></TableCell>
+                        <TableCell className="text-sm">{p.duration_weeks ? `${p.duration_weeks}w` : "—"}</TableCell>
+                        <TableCell className="font-semibold text-sm font-mono">{fmt(p.weekly_price)}</TableCell>
+                        <TableCell>
+                          {p.outcome === "won"
+                            ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
+                            : p.outcome === "lost"
+                            ? <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>
+                            : <Badge variant="secondary" className="text-xs">Pending</Badge>}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <button onClick={() => editProposal(p)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => deleteProposal(p.id!)} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            )}
+          </div>
         )}
       </div>
     );
@@ -839,6 +1197,77 @@ export default function PricingTool() {
                       ))}
                     </div>
                   )}
+
+                  {/* ── AI SUGGESTION ─────────────────────────────────── */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/30 px-3 py-1.5 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Brain className="w-3.5 h-3.5 text-purple-600" />
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">AI Analysis</span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2 text-purple-700 border-purple-200 hover:bg-purple-50"
+                        onClick={getAiSuggestion}
+                        disabled={loadingAi || !recommendation}
+                      >
+                        {loadingAi ? "Analysing…" : aiSuggestion ? "Re-analyse" : "Ask Claude"}
+                      </Button>
+                    </div>
+                    {!aiSuggestion && !loadingAi && (
+                      <div className="px-3 py-3 text-[10px] text-muted-foreground text-center">
+                        Click "Ask Claude" to get an AI-powered pricing recommendation based on past won/lost projects
+                      </div>
+                    )}
+                    {loadingAi && (
+                      <div className="px-3 py-3 text-[10px] text-muted-foreground text-center">
+                        <Clock className="w-4 h-4 animate-spin mx-auto mb-1 text-purple-400" />
+                        Analysing {proposals.length} past proposals…
+                      </div>
+                    )}
+                    {aiSuggestion && (
+                      <div className="px-3 py-3 space-y-2.5">
+                        {/* Suggested band */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="text-center p-2 bg-purple-50 rounded border border-purple-100">
+                            <div className="text-[10px] text-purple-700 font-bold uppercase">AI Low</div>
+                            <div className="text-base font-bold text-purple-700">{fmt(aiSuggestion.suggested_low)}</div>
+                          </div>
+                          <div className="text-center p-2 bg-purple-50 rounded border border-purple-100">
+                            <div className="text-[10px] text-purple-700 font-bold uppercase">AI High</div>
+                            <div className="text-base font-bold text-purple-700">{fmt(aiSuggestion.suggested_high)}</div>
+                          </div>
+                        </div>
+                        {/* Win probability + recommendation */}
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">
+                            Win probability: <span className="font-bold text-foreground">{aiSuggestion.win_probability_pct}%</span>
+                          </span>
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                            aiSuggestion.recommendation === "high" ? "bg-amber-100 text-amber-700"
+                            : aiSuggestion.recommendation === "low" ? "bg-muted text-muted-foreground"
+                            : "bg-emerald-100 text-emerald-700"
+                          }`}>
+                            Price at {aiSuggestion.recommendation}
+                          </span>
+                        </div>
+                        {/* Reasoning */}
+                        <p className="text-[10px] text-muted-foreground leading-relaxed border-t pt-2">{aiSuggestion.reasoning}</p>
+                        {/* Risks */}
+                        {aiSuggestion.risks?.length > 0 && (
+                          <div className="space-y-1">
+                            {aiSuggestion.risks.map((r, i) => (
+                              <div key={i} className="flex items-start gap-1.5 text-[10px] text-amber-800 bg-amber-50 rounded p-1.5">
+                                <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                                {r}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Fund history mini-table */}
                   {fundProposals.length > 0 && (
