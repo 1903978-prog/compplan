@@ -57,11 +57,20 @@ function emptyProposal(): PricingProposal {
   };
 }
 
+// Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
+const STAFFING_ROLES: { label: string; match: string; defaultDays: number; defaultCount: number }[] = [
+  { label: "ASC INT",  match: "ASC IN",      defaultDays: 5, defaultCount: 2 },
+  { label: "ASC EXT",  match: "ASC EXT",     defaultDays: 5, defaultCount: 0 },
+  { label: "EM INT",   match: "Manager INT", defaultDays: 5, defaultCount: 0 },
+  { label: "EM EXT",   match: "Manager EXT", defaultDays: 5, defaultCount: 1 },
+  { label: "Partner",  match: "Partner",     defaultDays: 1, defaultCount: 1 },
+];
+
 function emptyCase(): PricingCase {
   return {
     project_name: "", client_name: "", fund_name: "",
     region: "IT", pe_owned: true, revenue_band: "above_1b",
-    price_sensitivity: "medium", duration_weeks: 8, notes: "", status: "draft", staffing: [],
+    price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
   };
 }
 
@@ -136,21 +145,20 @@ export default function PricingTool() {
 
   // Initialise staffing from settings when opening form
   const initStaffing = (s: PricingSettings): StaffingLine[] => {
-    const defaults: Record<string, { days: number; count: number }> = {
-      "Partner":     { days: 1, count: 1 },
-      "Manager INT": { days: 5, count: 1 },
-      "ASC IN":      { days: 5, count: 2 },
-    };
-    return s.roles
-      .filter(r => r.active && defaults[r.role_name])
-      .sort((a, b) => a.sort_order - b.sort_order)
-      .map(r => ({
-        role_id: r.id,
-        role_name: r.role_name,
-        days_per_week: defaults[r.role_name].days,
-        daily_rate_used: r.default_daily_rate,
-        count: defaults[r.role_name].count,
-      }));
+    const lines: StaffingLine[] = [];
+    for (const def of STAFFING_ROLES) {
+      if (def.defaultCount === 0) continue; // only include active defaults
+      const role = s.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
+      if (!role) continue;
+      lines.push({
+        role_id: role.id,
+        role_name: def.label,
+        days_per_week: def.defaultDays,
+        daily_rate_used: role.default_daily_rate,
+        count: def.defaultCount,
+      });
+    }
+    return lines;
   };
 
   const openNewForm = () => {
@@ -846,60 +854,118 @@ export default function PricingTool() {
                 )}
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent>
               {settings ? (
-                <>
-                  {settings.roles.filter(r => r.active).sort((a, b) => a.sort_order - b.sort_order).map(role => {
-                    const line = form.staffing.find(s => s.role_id === role.id);
-                    const enabled = !!line;
-                    const weeklyRole = line ? line.days_per_week * line.daily_rate_used * line.count : 0;
+                <div className="space-y-1">
+                  {/* Header */}
+                  <div className="grid grid-cols-[120px_1fr_1fr_80px_90px] gap-2 px-2 pb-1">
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground">Role</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-center">How many</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-center">Days / wk</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-right">Rate</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-right">Weekly</span>
+                  </div>
+
+                  {STAFFING_ROLES.map(def => {
+                    const adminRole = settings.roles.find(r =>
+                      r.role_name.toLowerCase().includes(def.match.toLowerCase())
+                    );
+                    if (!adminRole) return null;
+
+                    const line = form.staffing.find(s => s.role_id === adminRole.id);
+                    const count = line?.count ?? 0;
+                    const days = line?.days_per_week ?? def.defaultDays;
+                    const rate = adminRole.default_daily_rate;
+                    const weekly = count > 0 ? count * days * rate : 0;
+                    const active = count > 0;
+
+                    const setCount = (n: number) => {
+                      const newCount = Math.max(0, Math.min(10, n));
+                      if (newCount === 0) {
+                        // Remove from staffing
+                        setForm(f => ({ ...f, staffing: f.staffing.filter(s => s.role_id !== adminRole.id) }));
+                      } else if (line) {
+                        updateStaffingLine(adminRole.id, "count", newCount);
+                      } else {
+                        // Add to staffing
+                        setForm(f => ({
+                          ...f,
+                          staffing: [...f.staffing, {
+                            role_id: adminRole.id,
+                            role_name: def.label,
+                            days_per_week: def.defaultDays,
+                            daily_rate_used: rate,
+                            count: newCount,
+                          }],
+                        }));
+                      }
+                    };
+
+                    const setDays = (d: number) => {
+                      const newDays = Math.max(0.5, Math.min(5, d));
+                      if (line) {
+                        updateStaffingLine(adminRole.id, "days_per_week", newDays);
+                      }
+                    };
+
                     return (
-                      <div key={role.id} className={`rounded-lg border p-3 transition-colors ${enabled ? "bg-primary/5 border-primary/20" : "bg-muted/20"}`}>
-                        <div className="flex items-center gap-3">
-                          <input type="checkbox" checked={enabled}
-                            onChange={() => toggleRole(role)}
-                            className="h-4 w-4 rounded" />
-                          <span className={`text-sm font-medium w-32 ${enabled ? "text-foreground" : "text-muted-foreground"}`}>
-                            {role.role_name}
+                      <div key={def.label}
+                        className={`grid grid-cols-[120px_1fr_1fr_80px_90px] gap-2 items-center rounded-lg px-2 py-2 transition-colors ${
+                          active ? "bg-primary/5 border border-primary/15" : "bg-muted/20 border border-transparent"
+                        }`}
+                      >
+                        {/* Role label */}
+                        <span className={`text-sm font-semibold ${active ? "text-foreground" : "text-muted-foreground"}`}>
+                          {def.label}
+                        </span>
+
+                        {/* Count */}
+                        <div className="flex items-center justify-center gap-1">
+                          <button type="button" onClick={() => setCount(count - 1)}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30"
+                            disabled={count === 0}>−</button>
+                          <span className={`w-6 text-center text-sm font-bold tabular-nums ${active ? "text-foreground" : "text-muted-foreground"}`}>
+                            {count}
                           </span>
-                          {enabled && line && (
-                            <>
-                              <div className="flex items-center gap-1">
-                                <Input type="number" min="0" max="7" step="0.5"
-                                  value={line.days_per_week}
-                                  onChange={e => updateStaffingLine(role.id, "days_per_week", parseFloat(e.target.value) || 0)}
-                                  className="h-7 w-16 text-xs text-center" />
-                                <span className="text-xs text-muted-foreground">d/wk</span>
-                              </div>
-                              {(role.role_name === "ASC IN" || role.role_name === "ASC EXT" || role.role_name === "BA") && (
-                                <div className="flex items-center gap-1">
-                                  <span className="text-xs text-muted-foreground">×</span>
-                                  <Input type="number" min="1" max="10" step="1"
-                                    value={line.count}
-                                    onChange={e => updateStaffingLine(role.id, "count", parseInt(e.target.value) || 1)}
-                                    className="h-7 w-14 text-xs text-center" />
-                                  <span className="text-xs text-muted-foreground">staff</span>
-                                </div>
-                              )}
-                              <span className="text-xs text-muted-foreground bg-muted/40 px-2 py-1 rounded">€{line.daily_rate_used.toLocaleString("it-IT")}/day</span>
-                              <span className="text-xs text-muted-foreground ml-auto">
-                                = <span className="font-semibold text-foreground">{fmt(weeklyRole)}/wk</span>
-                              </span>
-                            </>
-                          )}
+                          <button type="button" onClick={() => setCount(count + 1)}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center">+</button>
                         </div>
+
+                        {/* Days / wk */}
+                        <div className="flex items-center justify-center gap-1">
+                          <button type="button" onClick={() => setDays(days - 0.5)}
+                            disabled={!active || days <= 0.5}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30">−</button>
+                          <span className={`w-8 text-center text-sm tabular-nums ${active ? "text-foreground" : "text-muted-foreground/50"}`}>
+                            {active ? days : "—"}
+                          </span>
+                          <button type="button" onClick={() => setDays(days + 0.5)}
+                            disabled={!active || days >= 5}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30">+</button>
+                        </div>
+
+                        {/* Rate */}
+                        <span className={`text-xs text-right tabular-nums ${active ? "text-muted-foreground" : "text-muted-foreground/40"}`}>
+                          €{rate.toLocaleString("it-IT")}/d
+                        </span>
+
+                        {/* Weekly */}
+                        <span className={`text-sm font-semibold text-right tabular-nums ${active ? "text-foreground" : "text-muted-foreground/30"}`}>
+                          {active ? fmt(weekly) : "—"}
+                        </span>
                       </div>
                     );
                   })}
-                  {form.staffing.length > 0 && (
-                    <div className="flex items-center justify-between pt-2 border-t text-sm">
-                      <span className="text-muted-foreground">
-                        Total staffed: {form.staffing.reduce((s, l) => s + l.days_per_week * l.count, 0).toFixed(1)} days/wk
-                      </span>
-                      <span className="font-bold text-base">{fmt(baseWeeklyDisplay)}/week</span>
-                    </div>
-                  )}
-                </>
+
+                  {/* Total row */}
+                  <div className="flex items-center justify-between pt-3 border-t mt-2 px-2">
+                    <span className="text-xs text-muted-foreground">
+                      {form.staffing.reduce((s, l) => s + l.count, 0)} people ·{" "}
+                      {form.staffing.reduce((s, l) => s + l.days_per_week * l.count, 0).toFixed(1)} days/wk
+                    </span>
+                    <span className="font-bold text-base">{fmt(baseWeeklyDisplay)}/week</span>
+                  </div>
+                </div>
               ) : (
                 <div className="text-sm text-muted-foreground">Loading roles…</div>
               )}
