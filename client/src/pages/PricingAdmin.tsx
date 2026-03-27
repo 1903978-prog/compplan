@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { useToast } from "@/hooks/use-toast";
 import {
   Settings,
+  X,
   Plus,
   Info,
   Save,
