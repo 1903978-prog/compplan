@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, History, Brain, CheckCircle, XCircle, Clock,
+  Users, AlertTriangle, Eye, History, Brain, CheckCircle, XCircle, Clock, Info,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS,
