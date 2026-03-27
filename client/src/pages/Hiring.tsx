@@ -84,28 +84,30 @@ function CandidateCard({
 
   const commitName = () => {
     setEditingName(false);
-    if (nameBuf !== candidate.name) onUpdate(candidate.id, { name: nameBuf });
+    if (nameBuf !== candidate.name) onUpdate(candidate.id, { name: nameBuf, sync_locked: 1 });
   };
 
   const commitInfo = () => {
     setEditingInfo(false);
-    if (infoBuf !== candidate.info) onUpdate(candidate.id, { info: infoBuf });
+    if (infoBuf !== candidate.info) onUpdate(candidate.id, { info: infoBuf, sync_locked: 1 });
   };
 
   const isDragging = draggingId === candidate.id;
 
   return (
     <div
-      draggable
-      onDragStart={e => onDragStart(e, candidate.id)}
       onDragOver={e => onDragOver(e, candidate.id)}
       onDrop={e => onDrop(e, candidate.id)}
-      className={`group relative bg-white border rounded-lg shadow-sm transition-all select-none ${
+      className={`group relative bg-white border rounded-lg shadow-sm transition-all ${
         isDragging ? "opacity-40 scale-95 border-dashed" : "hover:shadow-md"
       }`}
     >
-      {/* Drag handle */}
-      <div className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 cursor-grab active:cursor-grabbing">
+      {/* Drag handle — drag only from here */}
+      <div
+        draggable
+        onDragStart={e => onDragStart(e, candidate.id)}
+        className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 cursor-grab active:cursor-grabbing select-none"
+      >
         <GripVertical className="w-3 h-3 text-muted-foreground" />
       </div>
 

@@ -196,8 +196,8 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
 
     if (existing) {
       if (existing.sync_locked) {
-        // User manually moved this card — update info but keep stage
-        await storage.updateHiringCandidate(existing.id, { name: cand.name, info });
+        // User manually edited this card — preserve their stage and info, only update name
+        await storage.updateHiringCandidate(existing.id, { name: cand.name });
       } else {
         await storage.updateHiringCandidate(existing.id, { name: cand.name, info, stage: cand.stage });
       }
