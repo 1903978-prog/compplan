@@ -6,6 +6,7 @@
  */
 
 import { storage } from "./storage";
+import https from "node:https";
 
 const EENDIGO_URL = "https://56.228.34.234/";
 
@@ -16,16 +17,14 @@ const EENDIGO_URL = "https://56.228.34.234/";
  * Precedence: check for the most-advanced status first.
  */
 function detectStage(rowText: string): string | null {
-  if (/hsa.?fail/i.test(rowText)) return null;              // skip
-  if (/intro.?fail/i.test(rowText)) return null;            // skip failed
+  if (/hsa.?fail/i.test(rowText)) return null;              // skip HSA failed only
   if (/cs.?rated/i.test(rowText))   return "after_csi_asc";
   if (/cs.?sent/i.test(rowText))    return "after_intro";
   if (/awaiting.?cs/i.test(rowText)) return "after_intro";
   if (/intro.?pass/i.test(rowText)) return "after_intro";
+  if (/intro.?fail/i.test(rowText)) return "potential";     // keep but in Good Potential
   if (/awaiting.?intro/i.test(rowText)) return "potential";
-  // Candidate with intro owner + high intro rating but still listed as "Awaiting Intro"
-  // → treat as after_intro if they have an intro rating
-  return "potential"; // default: passed HSA, waiting for intro
+  return "potential"; // default
 }
 
 // ─── HTML parser ──────────────────────────────────────────────────────────────
@@ -75,8 +74,8 @@ function parseCandidates(html: string): RawCandidate[] {
     if (!emailMatch) continue;
     const email = emailMatch[0];
 
-    // Skip HSA failed immediately
-    if (/hsa.?fail/i.test(rowText) || /intro.?fail/i.test(rowText)) continue;
+    // Skip HSA failed only
+    if (/hsa.?fail/i.test(rowText)) continue;
 
     const stage = detectStage(rowText);
     if (!stage) continue;
@@ -161,16 +160,20 @@ function buildInfo(c: RawCandidate): string {
 export async function syncEendigoHiring(): Promise<{ synced: number; created: number; updated: number; skipped: number; error?: string }> {
   let html: string;
   try {
-    const res = await fetch(EENDIGO_URL, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; CompPlan/1.0)",
-        "Accept": "text/html",
-      },
-      // @ts-ignore
-      signal: AbortSignal.timeout(15000),
+    html = await new Promise<string>((resolve, reject) => {
+      const req = https.get(
+        EENDIGO_URL,
+        { rejectUnauthorized: false, headers: { "User-Agent": "Mozilla/5.0 (compatible; CompPlan/1.0)", "Accept": "text/html" } },
+        (res) => {
+          if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+          let data = "";
+          res.on("data", (chunk) => { data += chunk; });
+          res.on("end", () => resolve(data));
+        }
+      );
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error("Timeout")); });
+      req.on("error", reject);
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    html = await res.text();
   } catch (err: any) {
     return { synced: 0, created: 0, updated: 0, skipped: 0, error: String(err.message ?? err) };
   }

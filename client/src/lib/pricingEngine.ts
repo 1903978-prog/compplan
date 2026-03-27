@@ -182,12 +182,11 @@ export const REGIONS = [
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
   roles: [
-    { id: "partner",      role_name: "Partner",      default_daily_rate: 7000, active: true,  sort_order: 0 },
-    { id: "manager_ext",  role_name: "Manager EXT",  default_daily_rate: 2800, active: true,  sort_order: 1 },
-    { id: "manager_int",  role_name: "Manager INT",  default_daily_rate: 2200, active: true,  sort_order: 2 },
-    { id: "asc_ext",      role_name: "ASC EXT",      default_daily_rate: 1400, active: true,  sort_order: 3 },
-    { id: "asc_in",       role_name: "ASC IN",       default_daily_rate: 1200, active: true,  sort_order: 4 },
-    { id: "ba",           role_name: "BA",            default_daily_rate: 900,  active: true,  sort_order: 5 },
+    { id: "partner",      role_name: "Partner",      default_daily_rate: 7000, active: true, sort_order: 0 },
+    { id: "manager_ext",  role_name: "Manager EXT",  default_daily_rate: 2800, active: true, sort_order: 1 },
+    { id: "manager_int",  role_name: "Manager INT",  default_daily_rate: 2200, active: true, sort_order: 2 },
+    { id: "asc_ext",      role_name: "ASC EXT",      default_daily_rate: 1400, active: true, sort_order: 3 },
+    { id: "asc_in",       role_name: "ASC IN",       default_daily_rate: 1200, active: true, sort_order: 4 },
   ],
   regions: [
     { id: "italy",        region_name: "IT",           multiplier: 1.0,  is_baseline: true  },

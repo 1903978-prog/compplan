@@ -17,6 +17,7 @@ import {
   Info,
   Save,
   Lock,
+  Trash2,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -449,15 +450,30 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                         </Button>
                       </div>
                     ) : (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        onClick={() => startEdit(role)}
-                        disabled={editingId !== null}
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </Button>
+                      <div className="flex justify-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => startEdit(role)}
+                          disabled={editingId !== null}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => {
+                            if (confirm(`Remove "${role.role_name}"?`)) {
+                              onChange(roles.filter(r => r.id !== role.id));
+                            }
+                          }}
+                          disabled={editingId !== null}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
