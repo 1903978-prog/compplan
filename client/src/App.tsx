@@ -14,7 +14,8 @@ import DaysOff from "@/pages/DaysOff";
 import Login from "@/pages/login";
 import PricingTool from "@/pages/PricingTool";
 import PricingAdmin from "@/pages/PricingAdmin";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase } from "lucide-react";
+import Hiring from "@/pages/Hiring";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -105,6 +106,14 @@ function Navigation() {
                   { href: "/pricing/admin", label: "Pricing Admin", icon: SettingsIcon },
                 ]}
               />
+              <NavDropdown
+                label="Hiring"
+                icon={UserCheck}
+                basePaths={["/hiring"]}
+                items={[
+                  { href: "/hiring", label: "Pipeline", icon: UserCheck },
+                ]}
+              />
             </div>
           </div>
           <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground">
@@ -127,6 +136,7 @@ function Router() {
       <Route path="/settings" component={Settings} />
       <Route path="/pricing" component={PricingTool} />
       <Route path="/pricing/admin" component={PricingAdmin} />
+      <Route path="/hiring" component={Hiring} />
       <Route component={NotFound} />
     </Switch>
   );

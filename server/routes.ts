@@ -335,5 +335,23 @@ Based on the historical deal data and engagement profile above, return a JSON ob
     }
   });
 
+  // ── Hiring Kanban ──────────────────────────────────────────────────────────
+  app.get("/api/hiring/candidates", requireAuth, async (_req, res) => {
+    res.json(await storage.getHiringCandidates());
+  });
+
+  app.post("/api/hiring/candidates", requireAuth, async (req, res) => {
+    res.status(201).json(await storage.createHiringCandidate(req.body));
+  });
+
+  app.put("/api/hiring/candidates/:id", requireAuth, async (req, res) => {
+    res.json(await storage.updateHiringCandidate(parseInt(req.params.id), req.body));
+  });
+
+  app.delete("/api/hiring/candidates/:id", requireAuth, async (req, res) => {
+    await storage.deleteHiringCandidate(parseInt(req.params.id));
+    res.status(204).end();
+  });
+
   return httpServer;
 }

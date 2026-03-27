@@ -283,3 +283,14 @@ export const pricingProposals = pgTable("pricing_proposals", {
   notes: text("notes"),
   created_at: text("created_at").notNull(),
 });
+
+// ─── Hiring Kanban ───────────────────────────────────────────────────────────
+
+export const hiringCandidates = pgTable("hiring_candidates", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().default(""),
+  info: text("info").notNull().default(""),
+  stage: text("stage").notNull().default("potential"),
+  sort_order: integer("sort_order").notNull().default(0),
+  created_at: text("created_at").notNull(),
+});

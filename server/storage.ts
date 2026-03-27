@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
-  pricingSettingsTable, pricingCases, pricingProposals,
+  pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
 } from "@shared/schema";
@@ -46,6 +46,12 @@ export interface IStorage {
   createPricingProposal(data: any): Promise<any>;
   updatePricingProposal(id: number, data: any): Promise<any>;
   deletePricingProposal(id: number): Promise<void>;
+
+  // Hiring
+  getHiringCandidates(): Promise<any[]>;
+  createHiringCandidate(data: any): Promise<any>;
+  updateHiringCandidate(id: number, data: any): Promise<any>;
+  deleteHiringCandidate(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -266,6 +272,25 @@ export class DatabaseStorage implements IStorage {
 
   async deletePricingProposal(id: number): Promise<void> {
     await db.delete(pricingProposals).where(eq(pricingProposals.id, id));
+  }
+
+  async getHiringCandidates(): Promise<any[]> {
+    return db.select().from(hiringCandidates).orderBy(hiringCandidates.sort_order);
+  }
+
+  async createHiringCandidate(data: any): Promise<any> {
+    const now = new Date().toISOString();
+    const rows = await db.insert(hiringCandidates).values({ ...data, created_at: now }).returning();
+    return rows[0];
+  }
+
+  async updateHiringCandidate(id: number, data: any): Promise<any> {
+    const rows = await db.update(hiringCandidates).set(data).where(eq(hiringCandidates.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteHiringCandidate(id: number): Promise<void> {
+    await db.delete(hiringCandidates).where(eq(hiringCandidates.id, id));
   }
 }
 

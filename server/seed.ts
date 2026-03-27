@@ -187,6 +187,17 @@ export async function seedDatabase() {
     )
   `);
 
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS hiring_candidates (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      info TEXT NOT NULL DEFAULT '',
+      stage TEXT NOT NULL DEFAULT 'potential',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // Fix promo_years values: DB must store years (e.g. 0.5 = 6 months).
   // If any value is < 0.1 the DB got corrupted with wrong values — reset all promo fields.
   const existingRoles = await db.select().from(roleGridEntries);
