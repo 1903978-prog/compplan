@@ -311,6 +311,8 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                   <TableCell className="text-right">
                     <Input
                       type="number"
+                      step="50"
+                      min="0"
                       value={role.default_daily_rate}
                       onChange={e => updateRole(role.id, { default_daily_rate: parseFloat(e.target.value) || 0 })}
                       className="h-8 text-sm text-right w-28 ml-auto font-mono border-0 shadow-none focus-visible:ring-1 px-1"
@@ -320,7 +322,7 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                   <TableCell className="text-right">
                     <Input
                       type="number"
-                      step="1"
+                      step="50"
                       min="0"
                       value={cost || ""}
                       placeholder="0"
