@@ -10,9 +10,6 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { useToast } from "@/hooks/use-toast";
 import {
   Settings,
-  Check,
-  X,
-  Edit2,
   Plus,
   Info,
   Save,
@@ -248,59 +245,22 @@ interface RolesTabProps {
 }
 
 function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, saving }: RolesTabProps) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editBuf, setEditBuf] = useState<Partial<PricingRole>>({});
 
-  const startEdit = (role: PricingRole) => {
-    setEditingId(role.id);
-    setEditBuf({ role_name: role.role_name, default_daily_rate: role.default_daily_rate });
-  };
+  const updateRole = (id: string, patch: Partial<PricingRole>) =>
+    onChange(roles.map(r => r.id === id ? { ...r, ...patch } : r));
 
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditBuf({});
-    // Remove new unsaved row
-    onChange(roles.filter((r) => r.id !== "__new__"));
-  };
-
-  const commitEdit = (id: string) => {
-    onChange(
-      roles.map((r) => {
-        if (r.id !== id) return r;
-        return {
-          ...r,
-          id: id === "__new__" ? crypto.randomUUID() : r.id,
-          role_name: editBuf.role_name ?? r.role_name,
-          default_daily_rate: editBuf.default_daily_rate ?? r.default_daily_rate,
-        };
-      })
-    );
-    setEditingId(null);
-    setEditBuf({});
-  };
-
-  const toggleActive = (id: string) => {
-    onChange(roles.map((r) => (r.id === id ? { ...r, active: !r.active } : r)));
-  };
+  const toggleActive = (id: string) =>
+    onChange(roles.map(r => r.id === id ? { ...r, active: !r.active } : r));
 
   const addRole = () => {
-    const newRole: PricingRole = {
-      id: "__new__",
+    onChange([...roles, {
+      id: crypto.randomUUID(),
       role_name: "",
       default_daily_rate: 1000,
       active: true,
       sort_order: roles.length + 1,
-    };
-    onChange([...roles, newRole]);
-    setEditingId("__new__");
-    setEditBuf({ role_name: "", default_daily_rate: 1000 });
+    }]);
   };
-
-  const activeRoles = roles.filter((r) => r.active);
-  const estimatedWeeklyCost = activeRoles.reduce(
-    (sum, r) => sum + r.default_daily_rate * 5,
-    0
-  );
 
   return (
     <div className="space-y-4">
@@ -310,13 +270,7 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
             Consultant Roles
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Define roles and their default daily rates (€). These are used as the base for price calculations.
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-xs text-muted-foreground">Est. weekly cost (full team, 1 person each)</p>
-          <p className="font-bold text-primary">
-            €{estimatedWeeklyCost.toLocaleString()}
+            Edit directly — all fields are always editable. Click Save when done.
           </p>
         </div>
       </div>
@@ -331,91 +285,63 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
               <TableHead className="text-right">Internal Cost (€/day)</TableHead>
               <TableHead className="text-right">Rate / Cost ×</TableHead>
               <TableHead className="text-center">Active</TableHead>
-              <TableHead className="text-center w-24">Actions</TableHead>
+              <TableHead className="text-center w-12"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {roles.map((role, idx) => {
-              const isEditing = editingId === role.id;
+              const entry = staffCosts.find(c => c.role_id === role.id);
+              const cost = entry?.daily_cost ?? 0;
+              const ratio = cost > 0 ? role.default_daily_rate / cost : null;
+              const ratioColor = ratio === null ? "" : ratio >= 5 ? "text-emerald-600" : ratio >= 3 ? "text-amber-600" : "text-red-500";
+
               return (
-                <TableRow
-                  key={role.id}
-                  className={!role.active ? "opacity-50" : undefined}
-                >
-                  <TableCell className="text-center text-xs text-muted-foreground">
-                    {idx + 1}
-                  </TableCell>
+                <TableRow key={role.id} className={!role.active ? "opacity-50" : undefined}>
+                  <TableCell className="text-center text-xs text-muted-foreground">{idx + 1}</TableCell>
+
                   <TableCell>
-                    {isEditing ? (
-                      <Input
-                        value={editBuf.role_name ?? ""}
-                        onChange={(e) =>
-                          setEditBuf((b) => ({ ...b, role_name: e.target.value }))
+                    <Input
+                      value={role.role_name}
+                      onChange={e => updateRole(role.id, { role_name: e.target.value })}
+                      className="h-8 text-sm border-0 shadow-none focus-visible:ring-1 px-1"
+                      placeholder="Role name"
+                    />
+                  </TableCell>
+
+                  <TableCell className="text-right">
+                    <Input
+                      type="number"
+                      value={role.default_daily_rate}
+                      onChange={e => updateRole(role.id, { default_daily_rate: parseFloat(e.target.value) || 0 })}
+                      className="h-8 text-sm text-right w-28 ml-auto font-mono border-0 shadow-none focus-visible:ring-1 px-1"
+                    />
+                  </TableCell>
+
+                  <TableCell className="text-right">
+                    <Input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={cost || ""}
+                      placeholder="0"
+                      onChange={e => {
+                        const val = parseFloat(e.target.value) || 0;
+                        if (entry) {
+                          onStaffCostChange(staffCosts.map(c => c.role_id === role.id ? { ...c, daily_cost: val } : c));
+                        } else {
+                          onStaffCostChange([...staffCosts, { role_id: role.id, role_name: role.role_name, daily_cost: val }]);
                         }
-                        className="h-8 text-sm"
-                        placeholder="Role name"
-                        autoFocus
-                      />
-                    ) : (
-                      <span className="font-medium text-sm">{role.role_name}</span>
-                    )}
+                      }}
+                      className="h-8 text-sm text-right w-28 ml-auto font-mono border-0 shadow-none focus-visible:ring-1 px-1"
+                    />
                   </TableCell>
+
                   <TableCell className="text-right">
-                    {isEditing ? (
-                      <Input
-                        type="number"
-                        value={editBuf.default_daily_rate ?? ""}
-                        onChange={(e) =>
-                          setEditBuf((b) => ({
-                            ...b,
-                            default_daily_rate: parseFloat(e.target.value) || 0,
-                          }))
-                        }
-                        className="h-8 text-sm text-right w-32 ml-auto"
-                      />
-                    ) : (
-                      <span className="font-mono text-sm">
-                        €{role.default_daily_rate.toLocaleString()}
-                      </span>
-                    )}
+                    {ratio !== null
+                      ? <span className={`font-bold text-sm font-mono ${ratioColor}`}>{ratio.toFixed(1)}×</span>
+                      : <span className="text-xs text-muted-foreground">—</span>}
                   </TableCell>
-                  <TableCell className="text-right">
-                    {(() => {
-                      const entry = staffCosts.find(c => c.role_id === role.id);
-                      const cost = entry?.daily_cost ?? 0;
-                      return (
-                        <Input
-                          type="number"
-                          step="1"
-                          min="0"
-                          value={cost}
-                          onChange={e => {
-                            const val = parseFloat(e.target.value) || 0;
-                            if (entry) {
-                              onStaffCostChange(staffCosts.map(c => c.role_id === role.id ? { ...c, daily_cost: val } : c));
-                            } else {
-                              onStaffCostChange([...staffCosts, { role_id: role.id, role_name: role.role_name, daily_cost: val }]);
-                            }
-                          }}
-                          className="h-8 text-sm text-right w-28 ml-auto font-mono"
-                        />
-                      );
-                    })()}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {(() => {
-                      const entry = staffCosts.find(c => c.role_id === role.id);
-                      const cost = entry?.daily_cost ?? 0;
-                      if (!cost) return <span className="text-xs text-muted-foreground">—</span>;
-                      const ratio = role.default_daily_rate / cost;
-                      const color = ratio >= 5 ? "text-emerald-600" : ratio >= 3 ? "text-amber-600" : "text-red-500";
-                      return (
-                        <span className={`font-bold text-sm font-mono ${color}`}>
-                          {ratio.toFixed(1)}×
-                        </span>
-                      );
-                    })()}
-                  </TableCell>
+
                   <TableCell className="text-center">
                     <button
                       type="button"
@@ -429,52 +355,15 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                       {role.active ? "Active" : "Inactive"}
                     </button>
                   </TableCell>
+
                   <TableCell className="text-center">
-                    {isEditing ? (
-                      <div className="flex justify-center gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
-                          onClick={() => commitEdit(role.id)}
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={cancelEdit}
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex justify-center gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7"
-                          onClick={() => startEdit(role)}
-                          disabled={editingId !== null}
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => {
-                            if (confirm(`Remove "${role.role_name}"?`)) {
-                              onChange(roles.filter(r => r.id !== role.id));
-                            }
-                          }}
-                          disabled={editingId !== null}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    )}
+                    <Button
+                      size="icon" variant="ghost"
+                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => { if (confirm(`Remove "${role.role_name}"?`)) onChange(roles.filter(r => r.id !== role.id)); }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               );
@@ -484,14 +373,8 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
       </div>
 
       <div className="flex items-center justify-between pt-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={addRole}
-          disabled={editingId !== null}
-        >
-          <Plus className="w-3.5 h-3.5 mr-1.5" />
-          Add Role
+        <Button variant="outline" size="sm" onClick={addRole}>
+          <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Role
         </Button>
         <Button onClick={onSave} disabled={saving} size="sm">
           <Save className="w-3.5 h-3.5 mr-1.5" />
