@@ -194,9 +194,14 @@ export async function seedDatabase() {
       info TEXT NOT NULL DEFAULT '',
       stage TEXT NOT NULL DEFAULT 'potential',
       sort_order INTEGER NOT NULL DEFAULT 0,
+      external_id TEXT,
+      sync_locked INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     )
   `);
+  // Add columns if upgrading from older schema
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS external_id TEXT`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS sync_locked INTEGER NOT NULL DEFAULT 0`);
 
   // Fix promo_years values: DB must store years (e.g. 0.5 = 6 months).
   // If any value is < 0.1 the DB got corrupted with wrong values — reset all promo fields.

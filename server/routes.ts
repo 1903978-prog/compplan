@@ -336,6 +336,12 @@ Based on the historical deal data and engagement profile above, return a JSON ob
   });
 
   // ── Hiring Kanban ──────────────────────────────────────────────────────────
+  app.post("/api/hiring/sync", requireAuth, async (_req, res) => {
+    const { syncEendigoHiring } = await import("./hiringSync");
+    const result = await syncEendigoHiring();
+    res.json(result);
+  });
+
   app.get("/api/hiring/candidates", requireAuth, async (_req, res) => {
     res.json(await storage.getHiringCandidates());
   });

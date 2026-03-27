@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, GripVertical, UserCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Trash2, GripVertical, UserCheck, ChevronLeft, ChevronRight, RefreshCw, Lock } from "lucide-react";
 
 // ─── Stage config ────────────────────────────────────────────────────────────
 
@@ -51,6 +51,8 @@ interface Candidate {
   info: string;
   stage: StageId;
   sort_order: number;
+  external_id?: string;
+  sync_locked?: number;
   created_at: string;
 }
 
@@ -183,9 +185,16 @@ function CandidateCard({
           </button>
         )}
 
-        {/* Date chip */}
-        <div className="text-[9px] text-muted-foreground/50 pt-0.5">
-          Added {new Date(candidate.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+        {/* Date chip + lock indicator */}
+        <div className="flex items-center gap-1.5 pt-0.5">
+          <span className="text-[9px] text-muted-foreground/50">
+            Added {new Date(candidate.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+          </span>
+          {candidate.sync_locked === 1 && (
+            <span title="Manually positioned — sync won't move this card">
+              <Lock className="w-2.5 h-2.5 text-muted-foreground/40" />
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -277,6 +286,8 @@ export default function Hiring() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [draggingId, setDraggingId] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
   const { toast } = useToast();
 
   const load = async () => {
@@ -322,8 +333,30 @@ export default function Hiring() {
     const newIdx = direction === "left" ? idx - 1 : idx + 1;
     if (newIdx < 0 || newIdx >= STAGES.length) return;
     const newStage = STAGES[newIdx].id;
-    await updateCandidate(id, { stage: newStage });
+    await updateCandidate(id, { stage: newStage, sync_locked: 1 });
     toast({ title: `Moved to ${STAGES[newIdx].label}` });
+  };
+
+  const importFromEendigo = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/hiring/sync", { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (data.error) {
+        toast({ title: "Import failed", description: data.error, variant: "destructive" });
+      } else {
+        setLastSync(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
+        toast({
+          title: `Import complete`,
+          description: `${data.created} new, ${data.updated} updated (${data.synced} total)`,
+        });
+        await load();
+      }
+    } catch {
+      toast({ title: "Import failed", variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   // ── Drag & drop ────────────────────────────────────────────────────────────
@@ -354,7 +387,10 @@ export default function Hiring() {
     const stageCandidates = candidates.filter(c => c.stage === newStage && c.id !== sourceId);
     const targetPos = stageCandidates.findIndex(c => c.id === targetId);
     const reordered = [...stageCandidates.slice(0, targetPos), source, ...stageCandidates.slice(targetPos)];
-    reordered.forEach((c, i) => updateCandidate(c.id, { stage: newStage, sort_order: i }));
+    reordered.forEach((c, i) => updateCandidate(c.id, {
+      stage: newStage, sort_order: i,
+      ...(c.id === sourceId ? { sync_locked: 1 } : {}),
+    }));
     setDraggingId(null);
   };
 
@@ -366,7 +402,7 @@ export default function Hiring() {
     if (!source || source.stage === stageId) { setDraggingId(null); return; }
 
     const maxOrder = Math.max(0, ...candidates.filter(c => c.stage === stageId).map(c => c.sort_order));
-    updateCandidate(sourceId, { stage: stageId, sort_order: maxOrder + 1 });
+    updateCandidate(sourceId, { stage: stageId, sort_order: maxOrder + 1, sync_locked: 1 });
     setDraggingId(null);
   };
 
@@ -388,12 +424,21 @@ export default function Hiring() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
-          {STAGES.map(s => (
-            <Button key={s.id} variant="outline" size="sm" className="text-xs h-8" onClick={() => addCandidate(s.id)}>
-              <Plus className="w-3 h-3 mr-1" /> {s.label}
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {STAGES.map(s => (
+              <Button key={s.id} variant="outline" size="sm" className="text-xs h-8" onClick={() => addCandidate(s.id)}>
+                <Plus className="w-3 h-3 mr-1" /> {s.label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 pl-2 border-l">
+            {lastSync && <span className="text-xs text-muted-foreground">Last import: {lastSync}</span>}
+            <Button size="sm" onClick={importFromEendigo} disabled={syncing} className="h-8">
+              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Importing…" : "Import from Eendigo"}
             </Button>
-          ))}
+          </div>
         </div>
       </div>
 

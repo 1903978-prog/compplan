@@ -292,5 +292,7 @@ export const hiringCandidates = pgTable("hiring_candidates", {
   info: text("info").notNull().default(""),
   stage: text("stage").notNull().default("potential"),
   sort_order: integer("sort_order").notNull().default(0),
+  external_id: text("external_id"),       // email from Eendigo — dedup key
+  sync_locked: integer("sync_locked").notNull().default(0), // 1 = user manually moved, don't overwrite
   created_at: text("created_at").notNull(),
 });
