@@ -15,19 +15,8 @@ import { Plus, Trash2 } from "lucide-react";
 
 const PROMO_ROLES = ["BA", "A1", "A2", "S1", "S2", "C1", "C2", "EM1"] as const;
 
-const ROLE_LABELS: Record<string, string> = {
-  "BA": "Business Analyst",
-  "A1": "Associate A1",
-  "A2": "Associate A2",
-  "S1": "Senior S1",
-  "S2": "Senior S2",
-  "C1": "Consultant C1",
-  "C2": "Consultant C2",
-  "EM1": "Engagement Manager EM1",
-};
-
 export default function Settings() {
-  const { settings, updateSettings, roleGrid } = useStore();
+  const { settings, updateSettings } = useStore();
   const { toast } = useToast();
 
   const form = useForm<AdminSettings>({
@@ -191,37 +180,26 @@ export default function Settings() {
               </div>
               <div className="space-y-3">
                 {form.watch("tests")?.map((test, index) => (
-                  <div key={test.id} className="flex gap-4 items-start p-3 border rounded-lg bg-muted/10">
+                  <div key={test.id} className="flex gap-4 items-end p-3 border rounded-lg bg-muted/10">
                     <div className="flex-1 space-y-2">
                       <Label>Test Name</Label>
                       <Input {...form.register(`tests.${index}.name`)} />
                     </div>
-                    <div className="w-52 space-y-2">
-                      <Label>Precondition for promotion to</Label>
+                    <div className="w-40 space-y-2">
+                      <Label>Required for role</Label>
                       <Select
                         value={form.watch(`tests.${index}.required_for_role`) ?? ""}
                         onValueChange={(v) => form.setValue(`tests.${index}.required_for_role`, v)}
                       >
                         <SelectTrigger className="h-9">
-                          <SelectValue placeholder="Pick level…" />
+                          <SelectValue placeholder="Pick role…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {PROMO_ROLES.map(r => {
-                            const roleName = roleGrid.find(rg => rg.role_code === r)?.role_name ?? ROLE_LABELS[r] ?? r;
-                            return (
-                              <SelectItem key={r} value={r}>
-                                <span className="font-mono font-semibold">{r}</span>
-                                <span className="ml-2 text-muted-foreground">{roleName}</span>
-                              </SelectItem>
-                            );
-                          })}
+                          {PROMO_ROLES.map(r => (
+                            <SelectItem key={r} value={r}>{r}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
-                      {form.watch(`tests.${index}.required_for_role`) && (
-                        <p className="text-[10px] text-muted-foreground italic">
-                          Must pass to be promoted to {roleGrid.find(rg => rg.role_code === form.watch(`tests.${index}.required_for_role`))?.role_name ?? ROLE_LABELS[form.watch(`tests.${index}.required_for_role`)] ?? form.watch(`tests.${index}.required_for_role`)}
-                        </p>
-                      )}
                     </div>
                     <Button 
                       type="button" 
