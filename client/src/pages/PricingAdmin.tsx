@@ -328,6 +328,7 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
               <TableHead>Role Name</TableHead>
               <TableHead className="text-right">Daily Rate (€)</TableHead>
               <TableHead className="text-right">Internal Cost (€/day)</TableHead>
+              <TableHead className="text-right">Rate / Cost ×</TableHead>
               <TableHead className="text-center">Active</TableHead>
               <TableHead className="text-center w-24">Actions</TableHead>
             </TableRow>
@@ -397,6 +398,20 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                           }}
                           className="h-8 text-sm text-right w-28 ml-auto font-mono"
                         />
+                      );
+                    })()}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {(() => {
+                      const entry = staffCosts.find(c => c.role_id === role.id);
+                      const cost = entry?.daily_cost ?? 0;
+                      if (!cost) return <span className="text-xs text-muted-foreground">—</span>;
+                      const ratio = role.default_daily_rate / cost;
+                      const color = ratio >= 5 ? "text-emerald-600" : ratio >= 3 ? "text-amber-600" : "text-red-500";
+                      return (
+                        <span className={`font-bold text-sm font-mono ${color}`}>
+                          {ratio.toFixed(1)}×
+                        </span>
                       );
                     })()}
                   </TableCell>
