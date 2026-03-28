@@ -65,6 +65,22 @@ export interface FloorRule {
   description: string;
 }
 
+export interface CompetitorTierRates {
+  Italy:  { min_weekly: number; max_weekly: number };
+  France: { min_weekly: number; max_weekly: number };
+  UK:     { min_weekly: number; max_weekly: number };
+  DACH:   { min_weekly: number; max_weekly: number };
+  US:     { min_weekly: number; max_weekly: number };
+}
+
+export interface CompetitorBenchmark {
+  tier: string;   // "tier1" | "tier2" | "big4"
+  label: string;
+  color: string;
+  rates: CompetitorTierRates;
+  sources: string[];  // source references
+}
+
 export interface PricingSettings {
   roles: PricingRole[];
   regions: PricingRegion[];
@@ -83,6 +99,7 @@ export interface PricingSettings {
   min_comparables: number;
   fund_anchor_weight: number;
   win_loss_weight: number;
+  competitor_benchmarks: CompetitorBenchmark[];
 }
 
 export interface StaffingLine {
@@ -272,6 +289,47 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     min_weekly: 30000,
     description: "Never quote below €30k/week for any EM+2 engagement in Europe",
   },
+  competitor_benchmarks: [
+    {
+      tier: "tier1",
+      label: "Tier 1 (MBB)",
+      color: "#7c3aed",
+      rates: {
+        Italy:  { min_weekly: 80000,  max_weekly: 150000 },
+        France: { min_weekly: 90000,  max_weekly: 165000 },
+        UK:     { min_weekly: 100000, max_weekly: 185000 },
+        DACH:   { min_weekly: 90000,  max_weekly: 165000 },
+        US:     { min_weekly: 120000, max_weekly: 220000 },
+      },
+      sources: ["Source Global Research Annual Survey", "Kennedy Research Consulting Fee Study"],
+    },
+    {
+      tier: "tier2",
+      label: "Tier 2 (OW, SKP, Kearney)",
+      color: "#2563eb",
+      rates: {
+        Italy:  { min_weekly: 40000, max_weekly: 85000  },
+        France: { min_weekly: 45000, max_weekly: 95000  },
+        UK:     { min_weekly: 55000, max_weekly: 115000 },
+        DACH:   { min_weekly: 50000, max_weekly: 100000 },
+        US:     { min_weekly: 70000, max_weekly: 140000 },
+      },
+      sources: ["Consultancy.eu Market Report", "ALM Intelligence Management Consulting Fee Survey"],
+    },
+    {
+      tier: "big4",
+      label: "Big 4",
+      color: "#059669",
+      rates: {
+        Italy:  { min_weekly: 18000, max_weekly: 42000 },
+        France: { min_weekly: 22000, max_weekly: 48000 },
+        UK:     { min_weekly: 28000, max_weekly: 58000 },
+        DACH:   { min_weekly: 24000, max_weekly: 52000 },
+        US:     { min_weekly: 38000, max_weekly: 72000 },
+      },
+      sources: ["ProcureEx Consulting Procurement Benchmark", "Staffing Industry Analysts Fee Survey"],
+    },
+  ],
   bracket_low_pct: 12,
   bracket_high_pct: 18,
   aggressive_threshold_pct: 20,

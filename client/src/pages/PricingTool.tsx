@@ -15,6 +15,7 @@ import {
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS,
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
+  type CompetitorBenchmark,
 } from "@/lib/pricingEngine";
 
 interface PricingCase {
@@ -1369,6 +1370,105 @@ export default function PricingTool() {
                     </div>
                     <p className="text-xs text-blue-800 leading-relaxed">{recommendation.advisory}</p>
                   </div>
+
+                  {/* ── COMPETITIVE BENCHMARK BAR ─────────────────────── */}
+                  {(() => {
+                    const benchmarks: CompetitorBenchmark[] = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
+                    if (!benchmarks?.length) return null;
+
+                    // Map case region → rate matrix key
+                    const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
+                    const matrixRegion = regionMap[form.region] ?? "Italy";
+
+                    // Determine client type from case
+                    const clientType = form.pe_owned
+                      ? "PE/LBO"
+                      : form.revenue_band === "above_1b" ? "Corporate >€1B"
+                      : form.revenue_band === "200m_1b" || form.revenue_band === "100m_200m" ? "Family PMI €200M+"
+                      : "Family PMI <€200M";
+
+                    // Our range from rate matrix
+                    const matrixRow = settings?.rate_matrix?.find(r => r.client_type === clientType);
+                    const ourCell = matrixRow?.rates?.[matrixRegion];
+
+                    // Build all ranges for scale
+                    const allMins = benchmarks.map(b => (b.rates as any)[matrixRegion]?.min_weekly ?? 0).filter(Boolean);
+                    const allMaxes = benchmarks.map(b => (b.rates as any)[matrixRegion]?.max_weekly ?? 0).filter(Boolean);
+                    if (ourCell && !ourCell.avoid) { allMins.push(ourCell.min_weekly); allMaxes.push(ourCell.max_weekly); }
+                    allMaxes.push(recommendation.target_weekly);
+
+                    const scaleMax = Math.max(...allMaxes) * 1.05;
+                    const pct = (v: number) => `${Math.min(100, (v / scaleMax) * 100).toFixed(1)}%`;
+
+                    const fmt = (v: number) => `€${Math.round(v / 1000)}k`;
+
+                    const tiers = [
+                      ...benchmarks.map(b => ({
+                        label: b.label,
+                        color: b.color,
+                        min: (b.rates as any)[matrixRegion]?.min_weekly ?? 0,
+                        max: (b.rates as any)[matrixRegion]?.max_weekly ?? 0,
+                        isOurs: false,
+                      })),
+                      ...(ourCell && !ourCell.avoid ? [{
+                        label: "Our Range (Rate Matrix)",
+                        color: "#f59e0b",
+                        min: ourCell.min_weekly,
+                        max: ourCell.max_weekly,
+                        isOurs: true,
+                      }] : []),
+                    ].filter(t => t.min > 0 || t.max > 0);
+
+                    return (
+                      <div className="border rounded-lg p-3 bg-muted/20 space-y-2.5">
+                        <div className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide flex items-center justify-between">
+                          <span>Market Benchmarks — {matrixRegion} · EM+2 project/week</span>
+                          <span className="text-[9px] normal-case font-normal">vs. your target {fmt(recommendation.target_weekly)}/wk</span>
+                        </div>
+
+                        {tiers.map((tier, i) => (
+                          <div key={i} className="space-y-0.5">
+                            <div className="flex justify-between text-[9px] text-muted-foreground">
+                              <span className={tier.isOurs ? "font-bold text-amber-700" : ""}>{tier.label}</span>
+                              <span className="font-mono">{fmt(tier.min)} – {fmt(tier.max)}</span>
+                            </div>
+                            <div className="relative h-4 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="absolute top-0 bottom-0 rounded-full opacity-30"
+                                style={{ left: pct(tier.min), right: `${100 - parseFloat(pct(tier.max))}%`, backgroundColor: tier.color }}
+                              />
+                              <div
+                                className="absolute top-0 bottom-0 rounded-full opacity-70"
+                                style={{ left: pct(tier.min), width: "2px", backgroundColor: tier.color }}
+                              />
+                              <div
+                                className="absolute top-0 bottom-0 rounded-full opacity-70"
+                                style={{ left: pct(tier.max), width: "2px", backgroundColor: tier.color }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Target price marker line */}
+                        <div className="relative h-5">
+                          <div className="absolute inset-0 border-t border-dashed border-muted-foreground/30 mt-2.5" />
+                          <div
+                            className="absolute top-0 flex flex-col items-center"
+                            style={{ left: pct(recommendation.target_weekly), transform: "translateX(-50%)" }}
+                          >
+                            <div className="w-2 h-2 rounded-full bg-foreground border-2 border-background shadow" />
+                            <span className="text-[8px] font-bold text-foreground whitespace-nowrap mt-0.5">
+                              Target {fmt(recommendation.target_weekly)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-[8px] text-muted-foreground/50 italic border-t pt-1">
+                          Estimates for an EM+2 engagement. Sources: Source Global Research, ALM Intelligence, Consultancy.eu — see Market Benchmarks in Pricing Admin.
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </CardContent>

@@ -87,6 +87,22 @@ interface FloorRule {
   description: string;
 }
 
+interface CompetitorTierRates {
+  Italy:  { min_weekly: number; max_weekly: number };
+  France: { min_weekly: number; max_weekly: number };
+  UK:     { min_weekly: number; max_weekly: number };
+  DACH:   { min_weekly: number; max_weekly: number };
+  US:     { min_weekly: number; max_weekly: number };
+}
+
+interface CompetitorBenchmark {
+  tier: string;
+  label: string;
+  color: string;
+  rates: CompetitorTierRates;
+  sources: string[];
+}
+
 interface PricingSettings {
   roles: PricingRole[];
   regions: PricingRegion[];
@@ -105,6 +121,7 @@ interface PricingSettings {
   min_comparables: number;
   fund_anchor_weight: number;
   win_loss_weight: number;
+  competitor_benchmarks: CompetitorBenchmark[];
 }
 
 // ─── Default / fallback data ─────────────────────────────────────────────────
@@ -211,6 +228,41 @@ const DEFAULT_SETTINGS: PricingSettings = {
   min_comparables: 3,
   fund_anchor_weight: 0.4,
   win_loss_weight: 0.6,
+  competitor_benchmarks: [
+    {
+      tier: "tier1", label: "Tier 1 (MBB)", color: "#7c3aed",
+      rates: {
+        Italy:  { min_weekly: 80000,  max_weekly: 150000 },
+        France: { min_weekly: 90000,  max_weekly: 165000 },
+        UK:     { min_weekly: 100000, max_weekly: 185000 },
+        DACH:   { min_weekly: 90000,  max_weekly: 165000 },
+        US:     { min_weekly: 120000, max_weekly: 220000 },
+      },
+      sources: ["Source Global Research Annual Survey", "Kennedy Research Consulting Fee Study"],
+    },
+    {
+      tier: "tier2", label: "Tier 2 (OW, SKP, Kearney)", color: "#2563eb",
+      rates: {
+        Italy:  { min_weekly: 40000, max_weekly: 85000  },
+        France: { min_weekly: 45000, max_weekly: 95000  },
+        UK:     { min_weekly: 55000, max_weekly: 115000 },
+        DACH:   { min_weekly: 50000, max_weekly: 100000 },
+        US:     { min_weekly: 70000, max_weekly: 140000 },
+      },
+      sources: ["Consultancy.eu Market Report", "ALM Intelligence Management Consulting Fee Survey"],
+    },
+    {
+      tier: "big4", label: "Big 4", color: "#059669",
+      rates: {
+        Italy:  { min_weekly: 18000, max_weekly: 42000 },
+        France: { min_weekly: 22000, max_weekly: 48000 },
+        UK:     { min_weekly: 28000, max_weekly: 58000 },
+        DACH:   { min_weekly: 24000, max_weekly: 52000 },
+        US:     { min_weekly: 38000, max_weekly: 72000 },
+      },
+      sources: ["ProcureEx Consulting Procurement Benchmark", "Staffing Industry Analysts Fee Survey"],
+    },
+  ],
 };
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -1425,7 +1477,204 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
 
 // ─── Tabs list ────────────────────────────────────────────────────────────────
 
-type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix";
+type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks";
+
+// ─── Tab: Market Benchmarks ───────────────────────────────────────────────────
+
+const BENCHMARK_REGIONS = ["Italy", "France", "UK", "DACH", "US"] as const;
+type BenchmarkRegion = typeof BENCHMARK_REGIONS[number];
+
+const SOURCE_OPTIONS = [
+  { label: "Source Global Research Annual Survey", url: "https://www.sourceglobalresearch.com" },
+  { label: "Kennedy Research / ALM Intelligence Consulting Fee Study", url: "https://www.kennedyresearch.com" },
+  { label: "Consultancy.eu European Market Report", url: "https://www.consultancy.eu" },
+  { label: "ProcureEx Consulting Procurement Benchmark", url: "https://www.procureex.com" },
+  { label: "Staffing Industry Analysts Fee Survey", url: "https://www2.staffingindustry.com" },
+  { label: "Heidrick & Struggles Leadership Consulting Survey", url: "https://www.heidrick.com" },
+];
+
+interface MarketBenchmarksTabProps {
+  settings: PricingSettings;
+  onChange: (patch: Partial<PricingSettings>) => void;
+  onSave?: () => void;
+  saving?: boolean;
+}
+
+function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBenchmarksTabProps) {
+  const benchmarks: CompetitorBenchmark[] = settings.competitor_benchmarks ?? DEFAULT_SETTINGS.competitor_benchmarks;
+  const { toast } = useToast();
+
+  const updateRate = (tierIdx: number, region: BenchmarkRegion, field: "min_weekly" | "max_weekly", val: number) => {
+    const updated = benchmarks.map((b, i) =>
+      i !== tierIdx ? b : {
+        ...b,
+        rates: { ...b.rates, [region]: { ...b.rates[region], [field]: val } },
+      }
+    );
+    onChange({ competitor_benchmarks: updated });
+  };
+
+  const updateLabel = (tierIdx: number, label: string) => {
+    onChange({ competitor_benchmarks: benchmarks.map((b, i) => i !== tierIdx ? b : { ...b, label }) });
+  };
+
+  const updateSources = (tierIdx: number, sources: string[]) => {
+    onChange({ competitor_benchmarks: benchmarks.map((b, i) => i !== tierIdx ? b : { ...b, sources }) });
+  };
+
+  const fmt = (v: number) => `€${Math.round(v / 1000)}k`;
+
+  const TIER_COLORS: Record<string, string> = {
+    tier1: "#7c3aed",
+    tier2: "#2563eb",
+    big4:  "#059669",
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="font-bold text-sm text-amber-900 mb-1">Market Benchmark Rates</div>
+        <p className="text-xs text-amber-800">
+          Estimated weekly fees for an <strong>EM+2 team</strong> (1 Engagement Manager + 2 Associates) by competitor tier and region.
+          These are market estimates — update with latest data from the sources below. Shown as a reference bar in every Pricing Case.
+        </p>
+      </div>
+
+      {/* Rate table per tier */}
+      {benchmarks.map((bench, tidx) => (
+        <div key={bench.tier} className="border rounded-lg overflow-hidden">
+          <div
+            className="px-4 py-2.5 flex items-center gap-3"
+            style={{ backgroundColor: TIER_COLORS[bench.tier] ?? "#374151" }}
+          >
+            <input
+              value={bench.label}
+              onChange={e => updateLabel(tidx, e.target.value)}
+              className="flex-1 bg-transparent text-white font-bold text-sm border-0 outline-none placeholder:text-white/50"
+            />
+          </div>
+
+          {/* Sources */}
+          <div className="px-4 py-2 bg-muted/30 border-b flex flex-wrap gap-1 items-center">
+            <span className="text-[10px] text-muted-foreground font-semibold mr-1">Sources:</span>
+            {SOURCE_OPTIONS.map(src => {
+              const active = bench.sources.includes(src.label);
+              return (
+                <button
+                  key={src.label}
+                  onClick={() => updateSources(tidx, active
+                    ? bench.sources.filter(s => s !== src.label)
+                    : [...bench.sources, src.label]
+                  )}
+                  className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${
+                    active
+                      ? "border-primary bg-primary/10 text-primary font-bold"
+                      : "border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                  title={src.url}
+                >
+                  {src.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Rate grid */}
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="text-left px-3 py-2 text-muted-foreground font-semibold">Region</th>
+                <th className="text-right px-3 py-2 text-muted-foreground font-semibold">Min /week</th>
+                <th className="text-right px-3 py-2 text-muted-foreground font-semibold">Max /week</th>
+                <th className="text-right px-3 py-2 text-muted-foreground font-semibold">Range</th>
+              </tr>
+            </thead>
+            <tbody>
+              {BENCHMARK_REGIONS.map(region => {
+                const cell = bench.rates[region];
+                return (
+                  <tr key={region} className="border-t hover:bg-muted/20">
+                    <td className="px-3 py-1.5 font-medium">{region}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      <input
+                        type="number"
+                        step={1000}
+                        value={cell.min_weekly}
+                        onChange={e => updateRate(tidx, region, "min_weekly", parseInt(e.target.value) || 0)}
+                        className="w-24 text-right border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <input
+                        type="number"
+                        step={1000}
+                        value={cell.max_weekly}
+                        onChange={e => updateRate(tidx, region, "max_weekly", parseInt(e.target.value) || 0)}
+                        className="w-24 text-right border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">
+                      {fmt(cell.min_weekly)} – {fmt(cell.max_weekly)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      {/* Visual preview bar */}
+      <div className="border rounded-lg p-4 bg-background space-y-3">
+        <div className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-1">Preview — Italy · EM+2 /week</div>
+        {(() => {
+          const region: BenchmarkRegion = "Italy";
+          const allMaxes = benchmarks.map(b => b.rates[region].max_weekly);
+          const scaleMax = Math.max(...allMaxes) * 1.05;
+          const pct = (v: number) => `${Math.min(100, (v / scaleMax) * 100).toFixed(1)}%`;
+          const fmt2 = (v: number) => `€${Math.round(v / 1000)}k`;
+          return benchmarks.map((bench, i) => {
+            const cell = bench.rates[region];
+            return (
+              <div key={i} className="space-y-0.5">
+                <div className="flex justify-between text-[9px] text-muted-foreground">
+                  <span>{bench.label}</span>
+                  <span className="font-mono">{fmt2(cell.min_weekly)} – {fmt2(cell.max_weekly)}</span>
+                </div>
+                <div className="relative h-4 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="absolute top-0 bottom-0 rounded-full opacity-40"
+                    style={{ left: pct(cell.min_weekly), right: `${100 - parseFloat(pct(cell.max_weekly))}%`, backgroundColor: TIER_COLORS[bench.tier] ?? "#374151" }}
+                  />
+                </div>
+              </div>
+            );
+          });
+        })()}
+      </div>
+
+      {/* Data sources reference */}
+      <div className="border rounded-lg p-4 space-y-2">
+        <div className="text-xs font-bold mb-2">Recommended Data Sources</div>
+        {SOURCE_OPTIONS.map(src => (
+          <div key={src.label} className="flex items-center gap-2 text-xs">
+            <span className="flex-1 text-muted-foreground">{src.label}</span>
+            <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:no-underline text-[10px]">
+              Visit →
+            </a>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={onSave} disabled={saving} className="flex items-center gap-2">
+          <Save className="w-4 h-4" /> {saving ? "Saving…" : "Save Benchmarks"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "roles", label: "Roles & Rates" },
@@ -1436,6 +1685,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "discounts_costs", label: "Discounts & Costs" },
   { id: "funds", label: "PE Funds" },
   { id: "rate_matrix", label: "Rate Matrix" },
+  { id: "market_benchmarks", label: "Market Benchmarks" },
 ];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -1631,6 +1881,9 @@ export default function PricingAdmin() {
 
           {activeTab === "rate_matrix" && (
             <RateMatrixTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
+          )}
+          {activeTab === "market_benchmarks" && (
+            <MarketBenchmarksTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
           )}
         </CardContent>
       </Card>
