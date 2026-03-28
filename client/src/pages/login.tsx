@@ -44,7 +44,7 @@ export default function Login({ onLogin }: LoginProps) {
           <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
             <Lock className="w-6 h-6 text-primary" />
           </div>
-          <CardTitle className="text-2xl">CompPlan</CardTitle>
+          <CardTitle className="text-2xl">EENDIGO OP MODEL</CardTitle>
           <p className="text-sm text-muted-foreground">Enter password to continue</p>
         </CardHeader>
         <CardContent>

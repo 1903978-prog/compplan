@@ -82,7 +82,7 @@ function Navigation() {
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold tracking-tight text-primary">
-              CompPlan <span className="text-[10px] font-normal text-muted-foreground ml-1">v24Mar</span>
+              EENDIGO OP MODEL <span className="text-[10px] font-normal text-muted-foreground ml-1">v24Mar</span>
             </h1>
             <div className="flex items-center gap-1">
               <NavDropdown

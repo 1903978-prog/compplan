@@ -51,7 +51,7 @@ async function main() {
 
   const port = parseInt(process.env.PORT || "5000");
   server.listen(port, "0.0.0.0", () => {
-    console.log(`CompPlan running on port ${port}`);
+    console.log(`Eendigo Op Model running on port ${port}`);
   });
 }
 
