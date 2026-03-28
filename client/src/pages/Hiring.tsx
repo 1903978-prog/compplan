@@ -302,9 +302,14 @@ export default function Hiring() {
   const { toast } = useToast();
 
   const load = async () => {
-    const res = await fetch("/api/hiring/candidates", { credentials: "include" });
-    if (res.ok) setCandidates(await res.json());
-    setLoading(false);
+    try {
+      const res = await fetch("/api/hiring/candidates", { credentials: "include" });
+      if (res.ok) setCandidates(await res.json());
+    } catch {
+      // network error — show empty board, don't stay stuck on loading
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);

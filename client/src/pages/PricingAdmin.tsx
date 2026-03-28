@@ -16,6 +16,8 @@ import {
   Save,
   Lock,
   Trash2,
+  Download,
+  Database,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -1516,9 +1518,29 @@ export default function PricingAdmin() {
         title="Pricing Admin"
         description="Configure pricing logic, daily rates, multipliers, and intelligence thresholds"
         actions={
-          <div className="flex items-center gap-1.5 text-muted-foreground">
-            <Settings className="w-4 h-4" />
-            <span className="text-sm hidden sm:inline">Admin Settings</span>
+          <div className="flex items-center gap-2">
+            <a
+              href="/api/admin/download-code"
+              download
+              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-border bg-background hover:bg-muted transition-colors text-foreground"
+              title="Download all source code as .tar.gz"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Code</span>
+            </a>
+            <a
+              href="/api/admin/download-backup"
+              download
+              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-border bg-background hover:bg-muted transition-colors text-foreground"
+              title="Download full data backup as .json"
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Backup</span>
+            </a>
+            <div className="flex items-center gap-1.5 text-muted-foreground pl-1 border-l">
+              <Settings className="w-4 h-4" />
+              <span className="text-sm hidden sm:inline">Admin Settings</span>
+            </div>
           </div>
         }
       />

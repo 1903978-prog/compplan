@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { insertEmployeeSchema, DEFAULT_BENCHMARK, type BenchmarkRow } from "@shared/schema";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
+import { spawn } from "child_process";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -357,6 +358,53 @@ Based on the historical deal data and engagement profile above, return a JSON ob
   app.delete("/api/hiring/candidates/:id", requireAuth, async (req, res) => {
     await storage.deleteHiringCandidate(parseInt(req.params.id));
     res.status(204).end();
+  });
+
+  // ── Admin downloads ────────────────────────────────────────────────────────
+
+  // Download all source code as tar.gz
+  app.get("/api/admin/download-code", requireAuth, (req, res) => {
+    // Project root is two levels up from server/routes.ts → project root
+    const projectRoot = process.cwd();
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/gzip");
+    res.setHeader("Content-Disposition", `attachment; filename="compplan-code-${date}.tar.gz"`);
+
+    const tar = spawn("tar", ["-czf", "-",
+      "--exclude=node_modules",
+      "--exclude=.git",
+      "--exclude=dist",
+      "client/src", "server", "shared", "package.json", "tsconfig.json", "vite.config.ts", "tailwind.config.ts"
+    ], { cwd: projectRoot });
+
+    tar.stdout.pipe(res);
+    tar.on("error", (err) => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    tar.stderr.on("data", (d) => console.error("[tar]", d.toString()));
+  });
+
+  // Download all DB content as JSON backup
+  app.get("/api/admin/download-backup", requireAuth, async (_req, res) => {
+    const [employees, settings, pricingCases, pricingProposals, hiringCandidates] = await Promise.all([
+      storage.getEmployees(),
+      storage.getPricingSettings(),
+      storage.getPricingCases(),
+      storage.getPricingProposals().catch(() => []),
+      storage.getHiringCandidates(),
+    ]);
+
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="compplan-backup-${date}.json"`);
+    res.json({
+      exportedAt: new Date().toISOString(),
+      employees,
+      pricingSettings: settings,
+      pricingCases,
+      pricingProposals,
+      hiringCandidates,
+    });
   });
 
   return httpServer;
