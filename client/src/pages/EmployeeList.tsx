@@ -557,6 +557,65 @@ export default function EmployeeList() {
                               )}
                             </Card>
 
+                            <Card className="p-4 bg-background">
+                              {(() => {
+                                const tests = settings.tests ?? [];
+                                const scores = tests
+                                  .map(t => emp.completed_tests?.find(ct => ct.id === t.id)?.score)
+                                  .filter((s): s is number => s != null && s !== undefined);
+                                const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+                                return (
+                                  <>
+                                    <div className="flex justify-between items-center mb-3">
+                                      <h4 className="font-bold text-sm">Test Scores</h4>
+                                      {avg !== null && (
+                                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${avg >= 70 ? "bg-emerald-100 text-emerald-700" : avg >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-600"}`}>
+                                          Avg {avg.toFixed(0)}%
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="space-y-2">
+                                      {tests.length === 0 && (
+                                        <p className="text-xs text-muted-foreground italic">No tests configured in Settings.</p>
+                                      )}
+                                      {tests.map(test => {
+                                        const existing = emp.completed_tests?.find(ct => ct.id === test.id);
+                                        const score = existing?.score ?? null;
+                                        const scoreColor = score === null ? "" : score >= 70 ? "text-emerald-600" : score >= 50 ? "text-amber-600" : "text-red-500";
+                                        return (
+                                          <div key={test.id} className="flex items-center gap-2 text-xs">
+                                            <span className="flex-1 text-muted-foreground truncate">{test.name}</span>
+                                            {test.required_for_role && (
+                                              <span className="text-[9px] font-mono bg-muted px-1 py-0.5 rounded text-muted-foreground">{test.required_for_role}</span>
+                                            )}
+                                            <span className={`font-bold w-10 text-right font-mono ${score === null ? "text-muted-foreground/40 italic font-normal" : scoreColor}`}>
+                                              {score === null ? "NA" : `${score}%`}
+                                            </span>
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              max={100}
+                                              placeholder="NA"
+                                              defaultValue={score ?? ""}
+                                              className="w-16 text-xs border rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-1 focus:ring-primary"
+                                              onBlur={async (e) => {
+                                                const raw = e.target.value.trim();
+                                                const val = raw === "" ? null : Math.min(100, Math.max(0, parseFloat(raw)));
+                                                if (isNaN(val as number) && val !== null) return;
+                                                const updated = (emp.completed_tests ?? []).filter(t => t.id !== test.id);
+                                                if (val !== null) updated.push({ id: test.id, score: val });
+                                                await updateEmployee(emp.id, { ...emp, completed_tests: updated });
+                                              }}
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            </Card>
+
                             <Collapsible className="border rounded-lg p-3 bg-background">
                               <CollapsibleTrigger className="flex items-center gap-2 w-full text-xs font-bold hover:text-primary transition-colors">
                                 <Info className="w-3 h-3" />
