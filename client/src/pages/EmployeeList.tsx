@@ -8,7 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload, History, TrendingUp, CheckCircle2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload, History, TrendingUp, CheckCircle2, Sparkles, ClipboardPaste, X } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { SalaryHistoryDialog } from "@/components/SalaryHistoryDialog";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -129,6 +130,15 @@ const ROLE_RANK: Record<string, number> = {
   "INT": 1
 };
 
+interface ParsedEmployeeData {
+  employee_id: string | null;
+  employee_name: string;
+  tests: { id: string; name: string; score: number | null }[];
+  days_off: { days: number; start_date: string | null; end_date: string | null; note: string }[];
+  monthly_rating: { month: string; score: number } | null;
+  unrecognized: string;
+}
+
 export default function EmployeeList() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
@@ -138,6 +148,105 @@ export default function EmployeeList() {
   const [historyEmployee, setHistoryEmployee] = useState<EmployeeInput | null>(null);
   const [scheduleRaiseEmployee, setScheduleRaiseEmployee] = useState<EmployeeInput | null>(null);
   const { toast } = useToast();
+
+  // ── Smart Paste ────────────────────────────────────────────────────────────
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [preview, setPreview] = useState<ParsedEmployeeData | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  const handleParse = async () => {
+    if (!pasteText.trim()) return;
+    setParsing(true);
+    setPreview(null);
+    try {
+      const res = await fetch("/api/ai/parse-employee-data", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: pasteText,
+          employees: employees.map(e => ({ id: e.id, name: e.name })),
+          tests: (settings.tests ?? []).map(t => ({ id: t.id, name: t.name })),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setPreview(data);
+    } catch (err: any) {
+      toast({ title: "Parse failed", description: err.message, variant: "destructive" });
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleApplyPreview = async () => {
+    if (!preview) return;
+    setApplying(true);
+    try {
+      const emp = preview.employee_id ? employees.find(e => e.id === preview.employee_id) : null;
+      if (!emp) {
+        toast({ title: "Employee not found", description: `Could not match "${preview.employee_name}" to any employee.`, variant: "destructive" });
+        return;
+      }
+
+      let updated = { ...emp };
+
+      // Apply test scores
+      if (preview.tests.length > 0) {
+        const newTests = [...(emp.completed_tests ?? [])];
+        for (const t of preview.tests) {
+          const idx = newTests.findIndex(ct => ct.id === t.id);
+          if (t.score !== null) {
+            if (idx >= 0) newTests[idx] = { id: t.id, score: t.score };
+            else newTests.push({ id: t.id, score: t.score });
+          }
+        }
+        updated.completed_tests = newTests;
+      }
+
+      // Apply monthly rating
+      if (preview.monthly_rating) {
+        const ratings = [...(emp.monthly_ratings ?? [])];
+        const idx = ratings.findIndex(r => r.month === preview.monthly_rating!.month);
+        if (idx >= 0) ratings[idx] = preview.monthly_rating;
+        else ratings.push(preview.monthly_rating);
+        updated.monthly_ratings = ratings;
+      }
+
+      await updateEmployee(emp.id, updated);
+
+      // Apply days off entries
+      for (const d of preview.days_off) {
+        await fetch("/api/days-off", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employee_id: emp.id,
+            type: "taken",
+            year: new Date().getFullYear(),
+            days: d.days,
+            start_date: d.start_date,
+            end_date: d.end_date,
+            note: d.note || "Smart paste",
+          }),
+        });
+      }
+
+      const parts = [];
+      if (preview.tests.length) parts.push(`${preview.tests.length} test score${preview.tests.length !== 1 ? "s" : ""}`);
+      if (preview.days_off.length) parts.push(`${preview.days_off.reduce((s, d) => s + d.days, 0)} day${preview.days_off.reduce((s, d) => s + d.days, 0) !== 1 ? "s" : ""} off`);
+      if (preview.monthly_rating) parts.push(`rating for ${preview.monthly_rating.month}`);
+      toast({ title: `Applied to ${emp.name}`, description: parts.join(", ") || "No changes detected." });
+      setPasteText("");
+      setPreview(null);
+      setPasteOpen(false);
+    } finally {
+      setApplying(false);
+    }
+  };
 
   const handleApplyRaise = async (emp: EmployeeInput) => {
     if (!emp.pending_salary_gross || !emp.pending_salary_date) return;
@@ -237,6 +346,10 @@ export default function EmployeeList() {
         description="Manage your team members and their current compensation details."
         actions={
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPasteOpen(v => !v)}>
+              <ClipboardPaste className="w-4 h-4 mr-2" />
+              Smart Paste
+            </Button>
             <label>
               <Button variant="outline" size="sm" asChild>
                 <span className="cursor-pointer">
@@ -253,6 +366,101 @@ export default function EmployeeList() {
           </div>
         }
       />
+
+      {/* Smart Paste panel */}
+      {pasteOpen && (
+        <Card className="border-primary/30 bg-primary/5 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-primary" />
+              <span className="font-semibold text-sm">Smart Paste</span>
+              <span className="text-xs text-muted-foreground">Paste any text with employee info — test results, days off, ratings — and AI will extract & apply it.</span>
+            </div>
+            <button onClick={() => { setPasteOpen(false); setPreview(null); setPasteText(""); }}>
+              <X className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+            </button>
+          </div>
+
+          <Textarea
+            placeholder={`e.g. "Defne passed the Green Belt with 90%. She took 3 days off from March 10 to 12. Monthly rating: 8.5"`}
+            value={pasteText}
+            onChange={e => { setPasteText(e.target.value); setPreview(null); }}
+            rows={3}
+            className="bg-background resize-none"
+          />
+
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={handleParse} disabled={parsing || !pasteText.trim()}>
+              {parsing ? <><Sparkles className="w-3.5 h-3.5 mr-1.5 animate-pulse" />Parsing…</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" />Parse</>}
+            </Button>
+            {preview && !parsing && (
+              <Button size="sm" variant="default" onClick={handleApplyPreview} disabled={applying || !preview.employee_id}>
+                {applying ? "Applying…" : "Apply"}
+              </Button>
+            )}
+          </div>
+
+          {/* Preview */}
+          {preview && !parsing && (
+            <div className="bg-background border rounded-lg p-3 space-y-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Employee:</span>
+                {preview.employee_id ? (
+                  <span className="font-bold text-primary">{employees.find(e => e.id === preview.employee_id)?.name ?? preview.employee_name}</span>
+                ) : (
+                  <span className="text-destructive font-semibold">"{preview.employee_name}" — not matched. Check spelling.</span>
+                )}
+              </div>
+
+              {preview.tests.length > 0 && (
+                <div>
+                  <div className="text-muted-foreground font-semibold mb-1">Tests:</div>
+                  {preview.tests.map((t, i) => (
+                    <div key={i} className="flex items-center gap-2 pl-2">
+                      <span className="w-2 h-2 rounded-full bg-primary/40 shrink-0" />
+                      <span>{t.name}</span>
+                      <span className={`font-bold ml-auto ${t.score === null ? "text-muted-foreground" : t.score >= 70 ? "text-emerald-600" : t.score >= 50 ? "text-amber-600" : "text-red-500"}`}>
+                        {t.score === null ? "passed" : `${t.score}%`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {preview.days_off.length > 0 && (
+                <div>
+                  <div className="text-muted-foreground font-semibold mb-1">Days Off:</div>
+                  {preview.days_off.map((d, i) => (
+                    <div key={i} className="flex items-center gap-2 pl-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                      <span>{d.days}d {d.start_date ? `(${d.start_date}${d.end_date ? ` → ${d.end_date}` : ""})` : ""}</span>
+                      {d.note && <span className="text-muted-foreground">— {d.note}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {preview.monthly_rating && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground font-semibold">Rating:</span>
+                  <span className="font-bold text-primary">{preview.monthly_rating.score}/10</span>
+                  <span className="text-muted-foreground">for {preview.monthly_rating.month}</span>
+                </div>
+              )}
+
+              {!preview.tests.length && !preview.days_off.length && !preview.monthly_rating && (
+                <div className="text-muted-foreground italic">Nothing recognised. Try rephrasing.</div>
+              )}
+
+              {preview.unrecognized && (
+                <div className="text-muted-foreground border-t pt-2 mt-1">
+                  <span className="font-semibold">Unrecognized: </span>{preview.unrecognized}
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card className="border-border">
         <div className="p-4 border-b flex items-center gap-4">

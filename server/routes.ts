@@ -360,6 +360,66 @@ Based on the historical deal data and engagement profile above, return a JSON ob
     res.status(204).end();
   });
 
+  // ── AI Smart Paste ─────────────────────────────────────────────────────────
+
+  app.post("/api/ai/parse-employee-data", requireAuth, async (req, res) => {
+    const { text, employees, tests } = req.body as {
+      text: string;
+      employees: { id: string; name: string }[];
+      tests: { id: string; name: string }[];
+    };
+
+    const anthropic = new Anthropic();
+    const today = new Date().toISOString().slice(0, 10);
+    const year = new Date().getFullYear();
+
+    const prompt = `You are an HR data extraction assistant. Extract structured employee data from the pasted text.
+
+Today: ${today}. Current year: ${year}.
+
+Known employees:
+${employees.map(e => `  - "${e.name}" (id: ${e.id})`).join("\n")}
+
+Known tests (with their IDs):
+${tests.map(t => `  - "${t.name}" (id: ${t.id})`).join("\n")}
+
+Pasted text:
+"""
+${text}
+"""
+
+Return ONLY a valid JSON object (no markdown, no explanation):
+{
+  "employee_id": "<id from the list above, or null if not identified>",
+  "employee_name": "<name as found in text>",
+  "tests": [{"id": "<test id>", "name": "<test name>", "score": <0-100 number or null if passed/failed only>}],
+  "days_off": [{"days": <number>, "start_date": "<YYYY-MM-DD or null>", "end_date": "<YYYY-MM-DD or null>", "note": "<description>"}],
+  "monthly_rating": {"month": "<YYYY-MM>", "score": <1-10 number>} or null,
+  "unrecognized": "<any info that could not be mapped>"
+}
+
+Rules:
+- Match employee name case-insensitively to the known list
+- Match test names case-insensitively; "passed" without score means score=100, "failed"=0
+- Days off: infer count and dates from context; year defaults to ${year}
+- Monthly rating: only if explicitly mentioned as a performance score/rating 1-10
+- Return empty arrays [] when nothing found, not null`;
+
+    try {
+      const message = await anthropic.messages.create({
+        model: "claude-opus-4-6",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const raw = (message.content[0] as { type: string; text: string }).text.trim();
+      const parsed = JSON.parse(raw);
+      res.json(parsed);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Parse failed" });
+    }
+  });
+
   // ── Admin downloads ────────────────────────────────────────────────────────
 
   // Download all source code as tar.gz
