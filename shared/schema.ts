@@ -21,7 +21,10 @@ export type Test = z.infer<typeof testSchema>;
 
 export const completedTestSchema = z.object({
   id: z.string(),
-  score: z.number().min(0).max(100).nullable().optional(),
+  score: z.preprocess(
+    v => (v === "" || v === undefined) ? null : (typeof v === "string" ? Number(v) : v),
+    z.number().min(0).max(100).nullable().optional()
+  ),
 });
 export type CompletedTest = z.infer<typeof completedTestSchema>;
 

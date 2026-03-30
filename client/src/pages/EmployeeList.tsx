@@ -1445,8 +1445,9 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
         </DialogHeader>
 
         <form onSubmit={form.handleSubmit(onSubmit, (errors) => {
-          const failing = Object.keys(errors);
-          toast({ title: "Cannot save — validation failed", description: failing.join(", "), variant: "destructive" });
+          const details = Object.entries(errors).map(([k, v]) => `${k}: ${(v as any)?.message || (v as any)?.type || JSON.stringify(v)}`);
+          console.error("Form validation errors:", errors);
+          toast({ title: "Cannot save — validation failed", description: details.join("; "), variant: "destructive" });
         })} className="space-y-6 mt-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
