@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { roleGridEntries, appSettings, employees } from "@shared/schema";
 import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 const SEED_EMPLOYEES = [
   {
@@ -83,10 +84,27 @@ const SEED_EMPLOYEES = [
     monthly_ratings: [],
     completed_tests: [],
   },
+  {
+    id: "emp-cosmin",
+    name: "Cosmin Bunescu",
+    date_of_birth: "1990-01-01",
+    current_role_code: "ADMIN",
+    hire_date: "2024-01-01",
+    last_promo_date: null,
+    tenure_before_years: 0,
+    current_gross_fixed_year: 24000,
+    meal_voucher_daily: 0,
+    months_paid: 12,
+    current_bonus_pct: 0,
+    performance_score: 7,
+    monthly_ratings: [],
+    completed_tests: [],
+  },
 ];
 
 const DEFAULT_ROLE_GRID = [
-  { role_code: "INT", role_name: "Intern",               next_role_code: "BA",  promo_years_fast: 0.25, promo_years_normal: 0.5,  promo_years_slow: 0.75, ral_min_k: 10,   ral_max_k: 12,   gross_fixed_min_month: 850,  gross_fixed_max_month: 1275, bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12, sort_order: 0 },
+  { role_code: "ADMIN", role_name: "Admin",               next_role_code: null,  promo_years_fast: 0,    promo_years_normal: 0,    promo_years_slow: 0,    ral_min_k: 0,    ral_max_k: 0,    gross_fixed_min_month: 0,    gross_fixed_max_month: 0,    bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12, sort_order: -1 },
+  { role_code: "INT",   role_name: "Intern",               next_role_code: "BA",  promo_years_fast: 0.25, promo_years_normal: 0.5,  promo_years_slow: 0.75, ral_min_k: 10,   ral_max_k: 12,   gross_fixed_min_month: 850,  gross_fixed_max_month: 1275, bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12, sort_order: 0 },
   { role_code: "BA",  role_name: "Business Analyst",     next_role_code: "A1",  promo_years_fast: 0.75, promo_years_normal: 1.0,  promo_years_slow: 1.5,  ral_min_k: 16.3, ral_max_k: 27.3, gross_fixed_min_month: 1600, gross_fixed_max_month: 2400, bonus_pct: 0,  meal_voucher_eur_per_day: 8, months_paid: 12, sort_order: 1 },
   { role_code: "A1",  role_name: "Associate 1",          next_role_code: "A2",  promo_years_fast: 0.5,  promo_years_normal: 0.75, promo_years_slow: 1.0,  ral_min_k: 19.7, ral_max_k: 23.5, gross_fixed_min_month: 1872, gross_fixed_max_month: 2153, bonus_pct: 10, meal_voucher_eur_per_day: 8, months_paid: 12, sort_order: 2 },
   { role_code: "A2",  role_name: "Associate 2",          next_role_code: "S1",  promo_years_fast: 0.5,  promo_years_normal: 0.75, promo_years_slow: 1.0,  ral_min_k: 24.7, ral_max_k: 30.4, gross_fixed_min_month: 2059, gross_fixed_max_month: 2368, bonus_pct: 10, meal_voucher_eur_per_day: 8, months_paid: 13, sort_order: 3 },
@@ -199,9 +217,30 @@ export async function seedDatabase() {
       created_at TEXT NOT NULL
     )
   `);
+  // Employee tasks table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS employee_tasks (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      delegated_to TEXT NOT NULL,
+      deadline TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // Add columns if upgrading from older schema
   await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS external_id TEXT`);
   await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS sync_locked INTEGER NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS extended_inputs JSONB`);
+
+  // New employee columns
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS university_grade REAL`);
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS university_grade_type TEXT`);
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS promotion_discussion_notes TEXT`);
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS onboarding_ratings JSONB DEFAULT '[]'`);
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS yearly_reviews JSONB DEFAULT '[]'`);
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS comex_areas JSONB DEFAULT '{}'`);
 
   // Fix promo_years values: DB must store years (e.g. 0.5 = 6 months).
   // If any value is < 0.1 the DB got corrupted with wrong values — reset all promo fields.
@@ -237,6 +276,41 @@ export async function seedDatabase() {
     await db.insert(employees).values(SEED_EMPLOYEES);
     console.log(`Seeded ${SEED_EMPLOYEES.length} employees`);
   }
+
+  // Seed Defne salary history (idempotent — only if no entries exist for her)
+  const defneHistory = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-defne'`);
+  const defneCount = (defneHistory.rows[0] as any).cnt;
+  if (parseInt(defneCount) === 0) {
+    await db.execute(sql`INSERT INTO salary_history (employee_id, effective_date, role_code, gross_fixed_year, months_paid, note) VALUES
+      ('emp-defne', '2023-06-08', 'BA',  15120, 12, 'Hire'),
+      ('emp-defne', '2023-10-01', 'A1',  29280, 12, 'Promotion to A1'),
+      ('emp-defne', '2024-03-01', 'A2',  34307, 13, 'Promotion to A2'),
+      ('emp-defne', '2025-10-01', 'S1',  36387, 13, 'Promotion to S1')`);
+    console.log("Seeded Defne salary history");
+  }
+
+  // Seed Malika salary history (idempotent)
+  const malikaHistory = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-malika'`);
+  const malikaCount = (malikaHistory.rows[0] as any).cnt;
+  if (parseInt(malikaCount) === 0) {
+    await db.execute(sql`INSERT INTO salary_history (employee_id, effective_date, role_code, gross_fixed_year, months_paid, note) VALUES
+      ('emp-malika', '2024-09-01', 'BA', 26136, 12, 'Hire'),
+      ('emp-malika', '2025-10-01', 'A1', 28788, 12, 'Promotion to A1')`);
+    console.log("Seeded Malika salary history");
+  }
+
+  // Update DOBs for known employees (Alessandro, Gabriele, Tiani)
+  await db.execute(sql`UPDATE employees SET date_of_birth = '2001-04-08' WHERE name ILIKE '%alessandro%' AND date_of_birth = '2001-01-01'`);
+  await db.execute(sql`UPDATE employees SET date_of_birth = '2005-06-08' WHERE name ILIKE '%gabriele%' AND date_of_birth = '2001-01-01'`);
+  await db.execute(sql`UPDATE employees SET date_of_birth = '1994-12-11' WHERE name ILIKE '%tiani%' AND date_of_birth != '1994-12-11'`);
+
+  // Seed Alessandro onboarding ratings W1-W3
+  await db.execute(sql`
+    UPDATE employees
+    SET onboarding_ratings = '[{"week":1,"score":91},{"week":2,"score":91},{"week":3,"score":95}]'::jsonb
+    WHERE name ILIKE '%alessandro%'
+      AND (onboarding_ratings IS NULL OR onboarding_ratings = '[]'::jsonb)
+  `);
 
   // Seed settings if empty
   const existingSettings = await db.select().from(appSettings);

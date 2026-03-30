@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useStore } from "@/hooks/use-store";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -8,19 +8,108 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload, History, TrendingUp, CheckCircle2, Sparkles, ClipboardPaste, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Info, ChevronDown, ChevronRight, Upload, History, TrendingUp, CheckCircle2, Sparkles, ClipboardPaste, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { SalaryHistoryDialog } from "@/components/SalaryHistoryDialog";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { employeeInputSchema, type EmployeeInput, type CompletedTest } from "@shared/schema";
+import { employeeInputSchema, type EmployeeInput, type CompletedTest, type EmployeeTask, type YearlyReview, COMEX_AREAS } from "@shared/schema";
 import { v4 as uuidv4 } from "uuid";
 import { useToast } from "@/hooks/use-toast";
 import { calculateEmployeeMetrics, grossToRal } from "@/lib/calculations";
-import { format, parseISO, addMonths, subMonths } from "date-fns";
+import { format, parseISO, addMonths, subMonths, differenceInWeeks } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
+
+function SalaryChart({ employeeId, hireDate }: { employeeId: string; hireDate: string }) {
+  const [history, setHistory] = useState<any[]>([]);
+  useEffect(() => {
+    fetch(`/api/salary-history/${employeeId}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((data: any[]) => {
+        if (Array.isArray(data)) setHistory(data.sort((a, b) => a.effective_date.localeCompare(b.effective_date)));
+      })
+      .catch(() => {});
+  }, [employeeId]);
+
+  if (history.length === 0) return <div className="text-xs text-muted-foreground italic py-2">No salary history data.</div>;
+
+  const today = new Date().toISOString().slice(0, 10);
+  interface Pt { date: string; grossMonth: number; bonusPct: number; roleCode: string }
+  const pts: Pt[] = history.map(h => ({
+    date: h.effective_date,
+    grossMonth: Math.round(h.gross_fixed_year / (h.months_paid ?? 12)),
+    bonusPct: h.bonus_pct ?? 0,
+    roleCode: h.role_code ?? "",
+  }));
+  if (pts.length > 0) pts.push({ ...pts[pts.length - 1], date: today });
+
+  const W = 560, H = 110, pad = { top: 8, right: 16, bottom: 28, left: 52 };
+  const iW = W - pad.left - pad.right, iH = H - pad.top - pad.bottom;
+  const t0 = new Date(pts[0].date).getTime(), t1 = new Date(pts[pts.length - 1].date).getTime();
+  const xOf = (d: string) => t1 === t0 ? 0 : ((new Date(d).getTime() - t0) / (t1 - t0)) * iW;
+  const gVals = pts.map(p => p.grossMonth);
+  const gMin = Math.min(...gVals) * 0.9, gMax = Math.max(...gVals) * 1.1;
+  const yG = (v: number) => iH - ((v - gMin) / (gMax - gMin || 1)) * iH;
+  const bMax = Math.max(...pts.map(p => p.bonusPct), 1);
+  const yB = (v: number) => iH - (v / bMax) * iH;
+
+  const mkPath = (points: Pt[], yFn: (v: number) => number, key: "grossMonth" | "bonusPct") =>
+    points.map((p, i) => {
+      const x = xOf(p.date).toFixed(1), y = yFn(p[key]).toFixed(1);
+      return i === 0 ? `M${x},${y}` : `H${x} V${y}`;
+    }).join(" ");
+
+  const grossPath = mkPath(pts, yG, "grossMonth");
+  const bonusPath = mkPath(pts, yB, "bonusPct");
+  const gTicks = [gMin, (gMin + gMax) / 2, gMax];
+  const startYr = new Date(pts[0].date).getFullYear(), endYr = new Date(today).getFullYear();
+  const yrTicks: { x: number; label: string }[] = [];
+  for (let yr = startYr; yr <= endYr + 1; yr++) {
+    const d = `${yr}-01-01`;
+    if (d >= pts[0].date && d <= today) yrTicks.push({ x: xOf(d), label: String(yr) });
+  }
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+      <g transform={`translate(${pad.left},${pad.top})`}>
+        {gTicks.map((v, i) => <line key={i} x1={0} y1={yG(v)} x2={iW} y2={yG(v)} stroke="#e5e7eb" strokeWidth={0.5} />)}
+        <path d={grossPath} fill="none" stroke="#3b82f6" strokeWidth={2} />
+        {history.map((h, i) => (
+          <circle key={i} cx={xOf(h.effective_date)} cy={yG(Math.round(h.gross_fixed_year / (h.months_paid ?? 12)))} r={3} fill="#3b82f6" />
+        ))}
+        {bMax > 0 && <path d={bonusPath} fill="none" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 2" />}
+        <line x1={0} y1={0} x2={0} y2={iH} stroke="#d1d5db" strokeWidth={1} />
+        {gTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={-3} y1={yG(v)} x2={0} y2={yG(v)} stroke="#9ca3af" strokeWidth={1} />
+            <text x={-6} y={yG(v) + 4} textAnchor="end" fontSize={8} fill="#6b7280">€{Math.round(v / 1000)}k</text>
+          </g>
+        ))}
+        <line x1={0} y1={iH} x2={iW} y2={iH} stroke="#d1d5db" strokeWidth={1} />
+        {yrTicks.map((t, i) => (
+          <g key={i}>
+            <line x1={t.x} y1={iH} x2={t.x} y2={iH + 4} stroke="#9ca3af" strokeWidth={1} />
+            <text x={t.x} y={iH + 14} textAnchor="middle" fontSize={8} fill="#6b7280">{t.label}</text>
+          </g>
+        ))}
+        {history.map((h, i) => h.role_code ? (
+          <g key={i}>
+            <line x1={xOf(h.effective_date)} y1={0} x2={xOf(h.effective_date)} y2={iH} stroke="#e5e7eb" strokeWidth={0.5} strokeDasharray="3 2" />
+            <text x={xOf(h.effective_date) + 3} y={14} fontSize={7} fill="#9ca3af">{h.role_code}</text>
+          </g>
+        ) : null)}
+        <g transform={`translate(${iW - 88}, 2)`}>
+          <line x1={0} y1={4} x2={10} y2={4} stroke="#3b82f6" strokeWidth={2} />
+          <text x={13} y={8} fontSize={7} fill="#3b82f6">Monthly Gross</text>
+          <line x1={0} y1={14} x2={10} y2={14} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 2" />
+          <text x={13} y={18} fontSize={7} fill="#ef4444">Bonus %</text>
+        </g>
+      </g>
+    </svg>
+  );
+}
 
 function BandPosition({ metrics }: { metrics: any }) {
   const renderLine = (label: string, min: number, max: number, val: number, noNextRole: boolean, showMarker: boolean, tooltip: React.ReactNode) => {
@@ -74,6 +163,9 @@ function BandPosition({ metrics }: { metrics: any }) {
   if (!annualNow) {
     return <div className="text-[10px] text-muted-foreground italic">Missing salary</div>;
   }
+  if (metrics.current_min === 0 && metrics.current_max === 0) {
+    return <div className="text-[10px]"><span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">Admin</span></div>;
+  }
 
   return (
     <div className="flex flex-col gap-1 py-1 w-[160px]">
@@ -118,6 +210,7 @@ function BandPosition({ metrics }: { metrics: any }) {
 }
 
 const ROLE_RANK: Record<string, number> = {
+  "ADMIN": 11,
   "EM2": 10,
   "EM1": 9,
   "C2": 8,
@@ -142,12 +235,53 @@ interface ParsedEmployeeData {
 export default function EmployeeList() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
+  const [mainTab, setMainTab] = useState<"employees" | "tdl">("employees");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedSection, setExpandedSection] = useState<Record<string, string>>({});
   const [historyEmployee, setHistoryEmployee] = useState<EmployeeInput | null>(null);
   const [scheduleRaiseEmployee, setScheduleRaiseEmployee] = useState<EmployeeInput | null>(null);
   const { toast } = useToast();
+
+  // ── TDL state ─────────────────────────────────────────────────────────────
+  const [tasks, setTasks] = useState<EmployeeTask[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskAssignee, setNewTaskAssignee] = useState("");
+  const [newTaskDeadline, setNewTaskDeadline] = useState("");
+
+  useEffect(() => {
+    fetch("/api/employee-tasks", { credentials: "include" })
+      .then(r => r.json()).then(setTasks).catch(() => {});
+  }, []);
+
+  const addTask = async () => {
+    if (!newTaskTitle.trim() || !newTaskAssignee) return;
+    const res = await fetch("/api/employee-tasks", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newTaskTitle, delegated_to: newTaskAssignee, deadline: newTaskDeadline || null, status: "pending" }),
+    });
+    const t = await res.json();
+    setTasks(prev => [...prev, t]);
+    setNewTaskTitle(""); setNewTaskDeadline("");
+  };
+
+  const toggleTask = async (task: EmployeeTask) => {
+    const next = task.status === "done" ? "pending" : "done";
+    const res = await fetch(`/api/employee-tasks/${task.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: next }),
+    });
+    const updated = await res.json();
+    setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+  };
+
+  const deleteTask = async (id: number) => {
+    await fetch(`/api/employee-tasks/${id}`, { method: "DELETE", credentials: "include" });
+    setTasks(prev => prev.filter(t => t.id !== id));
+  };
 
   // ── Smart Paste ────────────────────────────────────────────────────────────
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -463,19 +597,116 @@ export default function EmployeeList() {
       )}
 
       <Card className="border-border">
-        <div className="p-4 border-b flex items-center gap-4">
-             <div className="relative flex-1 max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input 
-                    placeholder="Filter by name..." 
-                    className="pl-9"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                />
+        <div className="p-3 border-b flex items-center gap-4 flex-wrap">
+          <div className="flex rounded-lg border overflow-hidden text-sm">
+            <button
+              onClick={() => setMainTab("employees")}
+              className={`px-4 py-1.5 font-medium transition-colors ${mainTab === "employees" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+            >
+              Employees
+            </button>
+            <button
+              onClick={() => setMainTab("tdl")}
+              className={`px-4 py-1.5 font-medium transition-colors flex items-center gap-1.5 ${mainTab === "tdl" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+            >
+              <ListTodo className="w-3.5 h-3.5" />
+              TDL
+              {tasks.filter(t => t.status === "pending").length > 0 && (
+                <span className={`text-[10px] rounded-full px-1.5 font-bold ${mainTab === "tdl" ? "bg-white/30 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
+                  {tasks.filter(t => t.status === "pending").length}
+                </span>
+              )}
+            </button>
+          </div>
+          {mainTab === "employees" && (
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Filter by name..."
+                className="pl-9"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
+          )}
         </div>
 
-        <Table>
+        {mainTab === "tdl" && (
+          <div>
+            {/* Add task form */}
+            <div className="p-4 border-b bg-muted/10">
+              <div className="flex gap-3 items-end flex-wrap">
+                <div className="flex-1 min-w-[200px]">
+                  <Label className="text-xs mb-1 block">Task</Label>
+                  <Input
+                    placeholder="Describe the task..."
+                    value={newTaskTitle}
+                    onChange={e => setNewTaskTitle(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") addTask(); }}
+                  />
+                </div>
+                <div className="min-w-[160px]">
+                  <Label className="text-xs mb-1 block">Delegate to</Label>
+                  <Select value={newTaskAssignee} onValueChange={setNewTaskAssignee}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select person..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {employees.map(e => <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-[140px]">
+                  <Label className="text-xs mb-1 block">Deadline</Label>
+                  <Input type="date" value={newTaskDeadline} onChange={e => setNewTaskDeadline(e.target.value)} />
+                </div>
+                <Button onClick={addTask} disabled={!newTaskTitle.trim() || !newTaskAssignee}>
+                  <Plus className="w-4 h-4 mr-2" />Add Task
+                </Button>
+              </div>
+            </div>
+            {/* Task list */}
+            <div className="divide-y">
+              {tasks.length === 0 && (
+                <div className="p-10 text-center text-muted-foreground text-sm">No tasks yet. Add one above.</div>
+              )}
+              {tasks.map(task => {
+                const isOverdue = task.deadline && task.deadline < new Date().toISOString().slice(0, 10) && task.status === "pending";
+                return (
+                  <div key={task.id} className={`flex items-center gap-3 p-3 group hover:bg-muted/30 transition-colors ${task.status === "done" ? "opacity-60" : ""}`}>
+                    <button onClick={() => toggleTask(task)} className="shrink-0">
+                      {task.status === "done"
+                        ? <Check className="w-5 h-5 text-emerald-500" />
+                        : <div className="w-5 h-5 rounded border-2 border-muted-foreground/40 hover:border-primary transition-colors" />
+                      }
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-sm ${task.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>{task.title}</div>
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="text-xs text-muted-foreground">→ <span className="font-medium">{task.delegated_to}</span></span>
+                        {task.deadline && (
+                          <span className={`text-xs flex items-center gap-1 ${isOverdue ? "text-destructive font-bold" : "text-muted-foreground"}`}>
+                            <Clock className="w-3 h-3" />
+                            {format(parseISO(task.deadline), "dd/MM/yy")}
+                            {isOverdue && " — OVERDUE"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => deleteTask(task.id)}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {mainTab === "employees" && <Table>
           <TableHeader>
             <TableRow>
               <TableHead className="w-10"></TableHead>
@@ -513,7 +744,11 @@ export default function EmployeeList() {
                     </TableCell>
                     <TableCell className="font-medium">
                       <div className="flex flex-col gap-0.5">
-                        <span>{emp.name}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setHistoryEmployee(emp); }}
+                          className="text-left font-medium hover:text-primary hover:underline transition-colors w-fit"
+                          title="View salary history"
+                        >{emp.name}</button>
                         {emp.pending_salary_date && emp.pending_salary_gross && (() => {
                           const today = new Date().toISOString().slice(0, 10);
                           const isDue = emp.pending_salary_date <= today;
@@ -843,6 +1078,203 @@ export default function EmployeeList() {
                               </CollapsibleContent>
                             </Collapsible>
                           </div>
+
+                          {/* ── Full-width sections ──────────────────────────── */}
+                          <div className="md:col-span-2 space-y-4">
+
+                            {/* Salary History Chart */}
+                            <Card className="p-4 bg-background">
+                              <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
+                                <TrendingUp className="w-4 h-4 text-primary" />
+                                Salary History
+                              </h4>
+                              <SalaryChart employeeId={emp.id} hireDate={emp.hire_date} />
+                            </Card>
+
+                            {/* Personal Info + Onboarding */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <Card className="p-4 bg-background">
+                                <h4 className="font-bold text-sm mb-3">Personal Info</h4>
+                                <div className="space-y-2 text-xs">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-muted-foreground w-24 shrink-0">Date of Birth:</span>
+                                    <span>{emp.date_of_birth ? format(parseISO(emp.date_of_birth), "dd/MM/yyyy") : "—"}</span>
+                                    <span className="text-muted-foreground">({metrics.age} yrs)</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-muted-foreground w-24 shrink-0">Uni Grade:</span>
+                                    <select
+                                      value={(emp as any).university_grade_type ?? "110"}
+                                      onChange={async e => await updateEmployee(emp.id, { ...emp, university_grade_type: e.target.value as "110" | "GPA" } as any)}
+                                      className="text-xs border rounded px-1 py-0.5 bg-background"
+                                    >
+                                      <option value="110">x/110</option>
+                                      <option value="GPA">GPA</option>
+                                    </select>
+                                    <input
+                                      type="number"
+                                      step={(emp as any).university_grade_type === "GPA" ? "0.01" : "1"}
+                                      min={0}
+                                      max={(emp as any).university_grade_type === "GPA" ? 4 : 110}
+                                      placeholder="—"
+                                      defaultValue={(emp as any).university_grade ?? ""}
+                                      onBlur={async e => {
+                                        const v = e.target.value === "" ? null : parseFloat(e.target.value);
+                                        await updateEmployee(emp.id, { ...emp, university_grade: v } as any);
+                                      }}
+                                      className="w-16 text-xs border rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                    {(emp as any).university_grade != null && (
+                                      <span className="font-semibold text-foreground">
+                                        {(emp as any).university_grade}{(emp as any).university_grade_type === "GPA" ? " GPA" : "/110"}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </Card>
+
+                              <Card className="p-4 bg-background">
+                                <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
+                                  <Calendar className="w-4 h-4" />
+                                  Onboarding Ratings (W1–W8)
+                                </h4>
+                                <div className="grid grid-cols-4 gap-2">
+                                  {Array.from({ length: 8 }, (_, i) => {
+                                    const weekNum = i + 1;
+                                    const dueDate = new Date(emp.hire_date);
+                                    dueDate.setDate(dueDate.getDate() + weekNum * 7);
+                                    const isPast = new Date() >= dueDate;
+                                    const rating = ((emp as any).onboarding_ratings ?? []).find((r: any) => r.week === weekNum);
+                                    const hasScore = rating?.score != null;
+                                    const isLate = isPast && !hasScore;
+                                    return (
+                                      <div key={weekNum} className={`p-2 rounded border text-center ${hasScore ? "border-emerald-200 bg-emerald-50" : isLate ? "border-red-200 bg-red-50" : "border-border bg-background"}`}>
+                                        <div className="text-[9px] font-bold uppercase text-muted-foreground">W{weekNum}</div>
+                                        <input
+                                          type="number" min={0} max={100} placeholder="—"
+                                          defaultValue={rating?.score ?? ""}
+                                          onBlur={async e => {
+                                            const v = e.target.value === "" ? null : Math.min(100, Math.max(0, parseFloat(e.target.value)));
+                                            const updated = ((emp as any).onboarding_ratings ?? []).filter((r: any) => r.week !== weekNum);
+                                            if (v !== null) updated.push({ week: weekNum, score: v });
+                                            await updateEmployee(emp.id, { ...emp, onboarding_ratings: updated } as any);
+                                          }}
+                                          className="w-full text-xs border-0 bg-transparent text-center font-bold focus:outline-none py-0.5"
+                                        />
+                                        <div className={`text-[8px] font-bold mt-0.5 ${hasScore ? "text-emerald-600" : isLate ? "text-red-500" : "text-muted-foreground"}`}>
+                                          {hasScore ? `${rating!.score}% ✓` : isLate ? "LATE" : format(dueDate, "dd/MM")}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </Card>
+                            </div>
+
+                            {/* Promotion Discussion */}
+                            <Card className="p-4 bg-background">
+                              <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
+                                <MessageSquare className="w-4 h-4 text-primary" />
+                                Promotion Discussion Notes
+                              </h4>
+                              <Textarea
+                                placeholder={"1. Long-term career intent: Where do you see yourself in 3–5 years and why?\n2. Role readiness: What projects have shown you're ready for the next level?"}
+                                defaultValue={(emp as any).promotion_discussion_notes ?? ""}
+                                onBlur={async e => {
+                                  const v = e.target.value;
+                                  if (v !== ((emp as any).promotion_discussion_notes ?? "")) {
+                                    await updateEmployee(emp.id, { ...emp, promotion_discussion_notes: v } as any);
+                                  }
+                                }}
+                                rows={4}
+                                className="text-xs resize-none"
+                              />
+                            </Card>
+
+                            {/* Yearly Reviews */}
+                            <Card className="p-4 bg-background">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="font-bold text-sm flex items-center gap-2">
+                                  <BookOpen className="w-4 h-4 text-primary" />
+                                  Yearly Reviews
+                                </h4>
+                                <Button size="sm" variant="outline" onClick={async () => {
+                                  const yr = new Date().getFullYear();
+                                  const existing = (emp as any).yearly_reviews ?? [];
+                                  if (existing.find((r: any) => r.year === yr)) return;
+                                  await updateEmployee(emp.id, { ...emp, yearly_reviews: [...existing, { year: yr, summary: "", dev_plan: "" }] } as any);
+                                }}>
+                                  <Plus className="w-3 h-3 mr-1" />Add Year
+                                </Button>
+                              </div>
+                              {((emp as any).yearly_reviews ?? []).length === 0 && (
+                                <p className="text-xs text-muted-foreground italic">No yearly reviews yet.</p>
+                              )}
+                              <div className="space-y-4">
+                                {((emp as any).yearly_reviews ?? []).sort((a: any, b: any) => b.year - a.year).map((rev: any) => (
+                                  <div key={rev.year} className="border rounded-lg p-3 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-bold">{rev.year}</span>
+                                      <button onClick={async () => {
+                                        const updated = ((emp as any).yearly_reviews ?? []).filter((r: any) => r.year !== rev.year);
+                                        await updateEmployee(emp.id, { ...emp, yearly_reviews: updated } as any);
+                                      }} className="text-muted-foreground hover:text-destructive"><X className="w-3.5 h-3.5" /></button>
+                                    </div>
+                                    <div>
+                                      <Label className="text-[10px] uppercase text-muted-foreground font-bold tracking-wide">Discussion Summary</Label>
+                                      <Textarea
+                                        placeholder="Paste discussion summary..."
+                                        defaultValue={rev.summary}
+                                        onBlur={async e => {
+                                          const updated = ((emp as any).yearly_reviews ?? []).map((r: any) => r.year === rev.year ? { ...r, summary: e.target.value } : r);
+                                          await updateEmployee(emp.id, { ...emp, yearly_reviews: updated } as any);
+                                        }}
+                                        rows={3} className="text-xs mt-1 resize-none"
+                                      />
+                                    </div>
+                                    <div>
+                                      <Label className="text-[10px] uppercase text-muted-foreground font-bold tracking-wide">Development Plan</Label>
+                                      <Textarea
+                                        placeholder="Paste development plan..."
+                                        defaultValue={rev.dev_plan}
+                                        onBlur={async e => {
+                                          const updated = ((emp as any).yearly_reviews ?? []).map((r: any) => r.year === rev.year ? { ...r, dev_plan: e.target.value } : r);
+                                          await updateEmployee(emp.id, { ...emp, yearly_reviews: updated } as any);
+                                        }}
+                                        rows={3} className="text-xs mt-1 resize-none"
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </Card>
+
+                            {/* Competency Areas */}
+                            <Card className="p-4 bg-background">
+                              <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
+                                <Grid3X3 className="w-4 h-4 text-primary" />
+                                Competency Areas
+                              </h4>
+                              <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                                {COMEX_AREAS.map(area => {
+                                  const checked = ((emp as any).comex_areas as Record<string, boolean> | null)?.[area] ?? false;
+                                  return (
+                                    <button
+                                      key={area}
+                                      onClick={async () => {
+                                        const current = ((emp as any).comex_areas as Record<string, boolean> | null) ?? {};
+                                        await updateEmployee(emp.id, { ...emp, comex_areas: { ...current, [area]: !checked } } as any);
+                                      }}
+                                      className={`px-2 py-1.5 rounded text-xs font-medium border transition-colors text-left ${checked ? "bg-primary/10 border-primary/50 text-primary font-bold" : "border-border text-muted-foreground hover:border-primary/30 hover:text-foreground"}`}
+                                    >
+                                      {checked && "✓ "}{area}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </Card>
+
+                          </div>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -858,7 +1290,7 @@ export default function EmployeeList() {
                 </TableRow>
             )}
           </TableBody>
-        </Table>
+        </Table>}
       </Card>
 
       <EmployeeDialog
@@ -937,7 +1369,16 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
         month,
         score: existingMap.has(month) ? existingMap.get(month)! : null as any,
       }));
-      form.reset({ ...base, monthly_ratings: ratings.filter(r => r.score != null) });
+      form.reset({
+        ...base,
+        monthly_ratings: ratings.filter(r => r.score != null),
+        onboarding_ratings: (base as any).onboarding_ratings ?? [],
+        yearly_reviews: (base as any).yearly_reviews ?? [],
+        comex_areas: (base as any).comex_areas ?? {},
+        promotion_discussion_notes: (base as any).promotion_discussion_notes ?? null,
+        university_grade: (base as any).university_grade ?? null,
+        university_grade_type: (base as any).university_grade_type ?? null,
+      });
       setRatings12(ratings);
     }
   }, [open, editingId, editingEmployee, form]);
@@ -1002,7 +1443,10 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
           <DialogTitle>{editingId ? "Edit Employee" : "Add New Employee"}</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
+        <form onSubmit={form.handleSubmit(onSubmit, (errors) => {
+          const failing = Object.keys(errors);
+          toast({ title: "Cannot save — validation failed", description: failing.join(", "), variant: "destructive" });
+        })} className="space-y-6 mt-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Full Name</Label>

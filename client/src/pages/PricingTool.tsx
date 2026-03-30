@@ -13,9 +13,10 @@ import {
   Users, AlertTriangle, Eye, History, Brain, CheckCircle, XCircle, Clock, Info,
 } from "lucide-react";
 import {
-  calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS,
+  calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS,
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
-  type CompetitorBenchmark,
+  type CompetitorBenchmark, type ProjectType, type CompetitiveIntensity, type CompetitorType,
+  type OwnershipType, type StrategicIntent, type ProcurementInvolvement,
 } from "@/lib/pricingEngine";
 
 interface PricingCase {
@@ -34,6 +35,17 @@ interface PricingCase {
   recommendation?: PricingRecommendation | null;
   case_discounts?: { id: string; name: string; pct: number; enabled: boolean }[];
   created_at?: string;
+  // Deal context (new — 7-layer engine)
+  project_type?: ProjectType | null;
+  sector?: string | null;
+  ebitda_margin_pct?: number | null;
+  commercial_maturity?: number | null;
+  urgency?: number | null;
+  competitive_intensity?: CompetitiveIntensity | null;
+  competitor_type?: CompetitorType | null;
+  ownership_type?: OwnershipType | null;
+  strategic_intent?: StrategicIntent | null;
+  procurement_involvement?: ProcurementInvolvement | null;
 }
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
@@ -72,6 +84,10 @@ function emptyCase(): PricingCase {
     project_name: "", client_name: "", fund_name: "",
     region: "IT", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
+    project_type: null, sector: null, ebitda_margin_pct: null,
+    commercial_maturity: null, urgency: null, competitive_intensity: null,
+    competitor_type: null, ownership_type: null, strategic_intent: null,
+    procurement_involvement: null,
   };
 }
 
@@ -112,6 +128,7 @@ export default function PricingTool() {
     recommendation: string; risks: string[]; reasoning: string;
   } | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
+  const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
 
   const loadAll = async () => {
     setLoading(true);
@@ -289,9 +306,22 @@ export default function PricingTool() {
       duration_weeks: form.duration_weeks,
       fund_name: form.fund_name || null,
       staffing: activeStaffing,
+      project_type: form.project_type ?? null,
+      sector: form.sector ?? null,
+      ebitda_margin_pct: form.ebitda_margin_pct ?? null,
+      commercial_maturity: form.commercial_maturity ?? null,
+      urgency: form.urgency ?? null,
+      competitive_intensity: form.competitive_intensity ?? null,
+      competitor_type: form.competitor_type ?? null,
+      ownership_type: form.ownership_type ?? null,
+      strategic_intent: form.strategic_intent ?? null,
+      procurement_involvement: form.procurement_involvement ?? null,
     }, settings, proposals);
   }, [form.region, form.pe_owned, form.revenue_band, form.price_sensitivity,
-      form.duration_weeks, form.fund_name, form.staffing, settings, proposals]);
+      form.duration_weeks, form.fund_name, form.staffing, settings, proposals,
+      form.project_type, form.sector, form.ebitda_margin_pct, form.commercial_maturity,
+      form.urgency, form.competitive_intensity, form.competitor_type, form.ownership_type,
+      form.strategic_intent, form.procurement_involvement]);
 
   const handleSave = async (status: "draft" | "final") => {
     if (!form.project_name.trim()) { toast({ title: "Project name is required", variant: "destructive" }); return; }
@@ -349,7 +379,18 @@ export default function PricingTool() {
     }
   };
 
-  const baseWeeklyDisplay = form.staffing.reduce((s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0);
+  // Compute weekly total only from visible STAFFING_ROLES (avoids phantom entries from old saves)
+  const baseWeeklyDisplay = settings
+    ? STAFFING_ROLES.reduce((acc, def) => {
+        const role = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
+        if (!role) return acc;
+        const line = form.staffing.find(s => s.role_id === role.id);
+        const count = line?.count ?? 0;
+        const days = line?.days_per_week ?? def.defaultDays;
+        const rate = line?.daily_rate_used ?? role.default_daily_rate;
+        return acc + count * days * rate;
+      }, 0)
+    : form.staffing.reduce((s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0);
 
   const totalWeeklyCost = useMemo(() => {
     if (!settings) return 0;
@@ -843,6 +884,192 @@ export default function PricingTool() {
             </CardContent>
           </Card>
 
+          {/* SECTION A2: Deal Context */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Deal Context &amp; Value Drivers</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {/* Project type */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Project Type</Label>
+                  <Select value={form.project_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, project_type: v === "__none__" ? null : v as ProjectType }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="diagnostic">Diagnostic</SelectItem>
+                      <SelectItem value="implementation">Implementation</SelectItem>
+                      <SelectItem value="transformation">Transformation</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Sector */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Sector</Label>
+                  <Select value={form.sector ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, sector: v === "__none__" ? null : v }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      {SECTORS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* EBITDA margin */}
+                {(() => {
+                  const SECTOR_EBITDA_DEFAULTS: Record<string, number> = {
+                    "Industrial / Manufacturing": 10, "Pharma / Healthcare": 17,
+                    "Software / SaaS": 22, "Consumer / Retail": 9,
+                    "Energy / Utilities": 18, "Business Services": 14,
+                    "Financial Services": 22, "Other": 12,
+                  };
+                  const suggested = form.sector ? SECTOR_EBITDA_DEFAULTS[form.sector] ?? null : null;
+                  const isUsingSuggested = suggested !== null && form.ebitda_margin_pct === null;
+                  return (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Client EBITDA Margin (%)</Label>
+                        {suggested !== null && form.ebitda_margin_pct === null && (
+                          <button type="button"
+                            onClick={() => setForm(f => ({ ...f, ebitda_margin_pct: suggested }))}
+                            className="text-[9px] text-blue-600 hover:text-blue-800 underline">
+                            Use sector default ({suggested}%)
+                          </button>
+                        )}
+                      </div>
+                      <Input type="number" min="0" max="100" step="1"
+                        placeholder={suggested ? `Sector default: ${suggested}%` : "e.g. 15"}
+                        value={form.ebitda_margin_pct ?? ""}
+                        onChange={e => setForm(f => ({ ...f, ebitda_margin_pct: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
+                      {isUsingSuggested && (
+                        <div className="text-[9px] text-muted-foreground italic">
+                          Click "Use sector default" to activate value-based pricing
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                {/* Strategic intent */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Strategic Intent</Label>
+                  <Select value={form.strategic_intent ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, strategic_intent: v === "__none__" ? null : v as StrategicIntent }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="enter">Enter — new client (beachhead −15%)</SelectItem>
+                      <SelectItem value="expand">Expand — existing relationship</SelectItem>
+                      <SelectItem value="harvest">Harvest — optimise margin (+15%)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Competitive intensity */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Competitive Intensity</Label>
+                  <Select value={form.competitive_intensity ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitive_intensity: v === "__none__" ? null : v as CompetitiveIntensity }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="sole_source">Sole source (+15%)</SelectItem>
+                      <SelectItem value="limited">Limited (+5%)</SelectItem>
+                      <SelectItem value="competitive">Competitive (neutral)</SelectItem>
+                      <SelectItem value="crowded">Crowded (−15%)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Competitor type */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Main Competitor</Label>
+                  <Select value={form.competitor_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitor_type: v === "__none__" ? null : v as CompetitorType }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="boutiques">Boutiques (−5%)</SelectItem>
+                      <SelectItem value="tier2">Tier 2 (neutral)</SelectItem>
+                      <SelectItem value="mbb">MBB (+15%)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Ownership type */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Ownership Type</Label>
+                  <Select value={form.ownership_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, ownership_type: v === "__none__" ? null : v as OwnershipType }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="pe">PE-owned</SelectItem>
+                      <SelectItem value="corporate">Corporate</SelectItem>
+                      <SelectItem value="founder">Founder-led (−15%)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Procurement */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Procurement Involvement</Label>
+                  <Select value={form.procurement_involvement ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, procurement_involvement: v === "__none__" ? null : v as ProcurementInvolvement }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="light">Light (−5%)</SelectItem>
+                      <SelectItem value="heavy">Heavy (−15%)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Maturity / urgency sliders */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Commercial Maturity</Label>
+                    <span className="text-xs font-bold text-muted-foreground">{form.commercial_maturity ?? "—"}/5</span>
+                  </div>
+                  <input type="range" min="1" max="5" step="1"
+                    value={form.commercial_maturity ?? 3}
+                    onChange={e => setForm(f => ({ ...f, commercial_maturity: parseInt(e.target.value) }))}
+                    className="w-full h-1.5 rounded accent-primary cursor-pointer" />
+                  <div className="flex justify-between text-[9px] text-muted-foreground">
+                    <span>Naive</span><span>Sophisticated</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Urgency</Label>
+                    <span className="text-xs font-bold text-muted-foreground">{form.urgency ?? "—"}/5</span>
+                  </div>
+                  <input type="range" min="1" max="5" step="1"
+                    value={form.urgency ?? 3}
+                    onChange={e => setForm(f => ({ ...f, urgency: parseInt(e.target.value) }))}
+                    className="w-full h-1.5 rounded accent-primary cursor-pointer" />
+                  <div className="flex justify-between text-[9px] text-muted-foreground">
+                    <span>Low</span><span>Critical</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Live value anchor preview */}
+              {recommendation?.value_anchor_weekly != null && (
+                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase text-emerald-700 tracking-wide">Value Anchor (L0)</span>
+                    <span className="text-xs font-bold text-emerald-800 font-mono">
+                      {fmt(recommendation.value_anchor_weekly)}/wk
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-emerald-700">
+                    EBITDA uplift {recommendation.ebitda_uplift != null ? fmt(recommendation.ebitda_uplift) : "—"}
+                    {" "}× {form.project_type ? `${form.project_type} capture rate` : "capture rate"}
+                    {" "}÷ {form.duration_weeks}w
+                    {recommendation.ebitda_improvement_pct != null && (
+                      <span className="ml-1 opacity-70">(+{recommendation.ebitda_improvement_pct.toFixed(1)} EBITDA pts expected)</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* SECTION B: Staffing */}
           <Card>
             <CardHeader className="pb-3">
@@ -958,20 +1185,118 @@ export default function PricingTool() {
                     );
                   })}
 
-                  {/* Total row */}
-                  <div className="flex items-center justify-between pt-3 border-t mt-2 px-2">
-                    <span className="text-xs text-muted-foreground">
-                      {form.staffing.reduce((s, l) => s + l.count, 0)} people ·{" "}
-                      {form.staffing.reduce((s, l) => s + l.days_per_week * l.count, 0).toFixed(1)} days/wk
-                    </span>
-                    <span className="font-bold text-base">{fmt(baseWeeklyDisplay)}/week</span>
-                  </div>
+                  {/* Total row — computed from visible STAFFING_ROLES to avoid phantom entries */}
+                  {(() => {
+                    const t = STAFFING_ROLES.reduce((acc, def) => {
+                      const role = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
+                      if (!role) return acc;
+                      const line = form.staffing.find(s => s.role_id === role.id);
+                      const count = line?.count ?? 0;
+                      const days = line?.days_per_week ?? def.defaultDays;
+                      const rate = line?.daily_rate_used ?? role.default_daily_rate;
+                      return { people: acc.people + count, days: acc.days + count * days, weekly: acc.weekly + count * days * rate };
+                    }, { people: 0, days: 0, weekly: 0 });
+                    return (
+                      <div className="flex items-center justify-between pt-3 border-t mt-2 px-2">
+                        <span className="text-xs text-muted-foreground">
+                          {t.people} people · {t.days.toFixed(1)} days/wk
+                        </span>
+                        <span className="font-bold text-base">{fmt(t.weekly)}/week</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground">Loading roles…</div>
               )}
             </CardContent>
           </Card>
+
+          {/* ── MARKET BENCHMARK CHART ────────────────────────────── */}
+          {(() => {
+            const benchmarks: CompetitorBenchmark[] = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
+            if (!benchmarks?.length) return null;
+            const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
+            const matrixRegion = regionMap[form.region] ?? null;
+            if (!matrixRegion) return null;
+            const clientType = form.pe_owned
+              ? "PE/LBO"
+              : form.revenue_band === "above_1b" ? "Corporate >€1B"
+              : form.revenue_band === "200m_1b" || form.revenue_band === "100m_200m" ? "Family PMI €200M+"
+              : "Family PMI <€200M";
+            const matrixRow = settings?.rate_matrix?.find(r => r.client_type === clientType);
+            const ourCell = matrixRow?.rates?.[matrixRegion];
+            const allMaxes = benchmarks.map(b => (b.rates as any)[matrixRegion]?.max_weekly ?? 0).filter(Boolean);
+            if (ourCell && !ourCell.avoid) allMaxes.push(ourCell.max_weekly);
+            const targetPrice = recommendation ? recommendation.target_weekly + manualDelta : null;
+            if (targetPrice) allMaxes.push(targetPrice);
+            const scaleMax = Math.max(...allMaxes, 1) * 1.08;
+            const pct = (v: number) => `${Math.min(100, (v / scaleMax) * 100).toFixed(1)}%`;
+            const fmtK = (v: number) => `€${Math.round(v / 1000)}k`;
+            const tiers = [
+              ...benchmarks.map(b => ({
+                label: b.label, color: b.color,
+                min: (b.rates as any)[matrixRegion]?.min_weekly ?? 0,
+                max: (b.rates as any)[matrixRegion]?.max_weekly ?? 0,
+                isOurs: false,
+              })),
+              ...(ourCell && !ourCell.avoid ? [{
+                label: "Our Range (Rate Matrix)", color: "#f59e0b",
+                min: ourCell.min_weekly, max: ourCell.max_weekly, isOurs: true,
+              }] : []),
+            ].filter(t => t.max > 0);
+            return (
+              <div className="border rounded-lg p-4 bg-muted/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase text-muted-foreground tracking-wide">
+                    Market Benchmarks — {matrixRegion} · {clientType}
+                  </span>
+                  {targetPrice && (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      Your target: <span className="font-bold text-foreground">{fmtK(targetPrice)}</span>/wk
+                    </span>
+                  )}
+                </div>
+                {tiers.map((tier, i) => {
+                  const mid = (tier.min + tier.max) / 2;
+                  return (
+                    <div key={i} className="space-y-1">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span className={tier.isOurs ? "font-bold text-amber-700" : ""}>{tier.label}</span>
+                        <span className="font-mono text-[11px]">{fmtK(tier.min)} – <span className="opacity-60">avg {fmtK(mid)}</span> – {fmtK(tier.max)}</span>
+                      </div>
+                      <div className="relative h-5 bg-muted rounded-full overflow-hidden">
+                        <div className="absolute top-0 bottom-0 rounded-full opacity-35"
+                          style={{ left: pct(tier.min), right: `${100 - parseFloat(pct(tier.max))}%`, backgroundColor: tier.color }} />
+                        <div className="absolute top-0 bottom-0 w-0.5 opacity-70"
+                          style={{ left: pct(tier.min), backgroundColor: tier.color }} />
+                        <div className="absolute top-0 bottom-0 w-0.5 opacity-70"
+                          style={{ left: pct(tier.max), backgroundColor: tier.color }} />
+                        <div className="absolute top-0 bottom-0 opacity-50"
+                          style={{ left: pct(mid), width: "1px", backgroundColor: tier.color }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Target price marker */}
+                {targetPrice && (
+                  <div className="relative h-6 mt-1">
+                    <div className="absolute inset-x-0 top-3 border-t border-dashed border-muted-foreground/25" />
+                    <div className="absolute top-0 flex flex-col items-center"
+                      style={{ left: pct(targetPrice), transform: "translateX(-50%)" }}>
+                      <div className="w-2.5 h-2.5 rounded-full bg-foreground border-2 border-background shadow" />
+                      <span className="text-[9px] font-bold text-foreground whitespace-nowrap mt-0.5">
+                        Target {fmtK(targetPrice)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <div className="text-[9px] text-muted-foreground/50 italic border-t pt-1.5">
+                  EM+2 weekly rates. Sources: Source Global Research, ALM Intelligence, Consultancy.eu.
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Save buttons */}
           <div className="flex gap-3 pt-2">
@@ -1004,17 +1329,79 @@ export default function PricingTool() {
               ) : (
                 <div className="space-y-3">
 
-                  {/* ── BASELINE ─────────────────────────────────────────── */}
-                  <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                        Baseline rate
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">IT · PE · &gt;€1B · Medium</span>
+                  {/* ── DUAL PRICE DISPLAY: Benchmark vs Value-Based ────── */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Benchmark Price */}
+                    <div className="rounded-lg border-2 border-primary/40 bg-primary/5 px-3 py-2.5">
+                      <div className="text-[9px] font-bold uppercase tracking-wide text-primary mb-1">
+                        Benchmark Price
+                      </div>
+                      <div className="text-xl font-bold text-primary leading-none">
+                        {fmt(recommendation.target_weekly + manualDelta)}
+                      </div>
+                      <div className="text-[9px] text-muted-foreground mt-0.5">/week · market-based</div>
+                      <div className="text-[9px] text-muted-foreground mt-1 leading-tight">
+                        Base {fmt(recommendation.base_weekly)} → layers applied
+                      </div>
                     </div>
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-xl font-bold">{fmt(recommendation.base_weekly)}</span>
-                      <span className="text-xs text-muted-foreground">/week</span>
+                    {/* Value-Based Price */}
+                    <div className={`rounded-lg border-2 px-3 py-2.5 ${
+                      recommendation.value_anchor_weekly != null
+                        ? "border-emerald-300 bg-emerald-50"
+                        : "border-dashed border-muted bg-muted/10"
+                    }`}>
+                      <div className={`text-[9px] font-bold uppercase tracking-wide mb-1 ${
+                        recommendation.value_anchor_weekly != null ? "text-emerald-700" : "text-muted-foreground"
+                      }`}>
+                        Value-Based Price
+                      </div>
+                      {recommendation.value_anchor_weekly != null ? (
+                        <>
+                          <div className="text-xl font-bold text-emerald-700 leading-none">
+                            {fmt(recommendation.value_anchor_weekly)}
+                          </div>
+                          <div className="text-[9px] text-emerald-600 mt-0.5">/week · EBITDA-anchored</div>
+                          <div className="text-[9px] text-emerald-600 mt-1 leading-tight">
+                            {recommendation.ebitda_improvement_pct != null
+                              ? `+${recommendation.ebitda_improvement_pct.toFixed(1)} EBITDA pts`
+                              : "EBITDA impact"}
+                            {" × "}{form.project_type ?? "capture"} rate
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-sm font-medium text-muted-foreground/60 leading-none mt-1">—</div>
+                          <div className="text-[9px] text-muted-foreground mt-1 leading-tight">
+                            Add sector + EBITDA margin + project type to unlock
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── MANUAL PRICE ADJUSTMENT SLIDER ───────────────────── */}
+                  <div className="rounded-lg border px-3 py-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Manual adjustment</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setManualDelta(d => d - 500)}
+                          className="w-6 h-6 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted transition-colors">−</button>
+                        <span className={`text-sm font-mono font-bold w-20 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                          {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
+                        </span>
+                        <button onClick={() => setManualDelta(d => d + 500)}
+                          className="w-6 h-6 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted transition-colors">+</button>
+                        {manualDelta !== 0 && (
+                          <button onClick={() => setManualDelta(0)}
+                            className="text-[10px] text-muted-foreground hover:text-foreground ml-1 underline">reset</button>
+                        )}
+                      </div>
+                    </div>
+                    <input type="range" min={-20000} max={20000} step={500} value={manualDelta}
+                      onChange={e => setManualDelta(Number(e.target.value))}
+                      className="w-full h-1.5 rounded accent-primary cursor-pointer" />
+                    <div className="flex justify-between text-[9px] text-muted-foreground">
+                      <span>−€20k</span><span>0</span><span>+€20k</span>
                     </div>
                   </div>
 
@@ -1106,55 +1493,45 @@ export default function PricingTool() {
                     );
                   })()}
 
-                  {/* ── ADJUSTED PRICE ───────────────────────────────────── */}
-                  <div className="rounded-lg border-2 border-primary/30 bg-primary/5 px-3 py-2.5">
-                    <div className="text-[10px] font-bold uppercase tracking-wide text-primary mb-0.5">
-                      Adjusted price
-                    </div>
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-2xl font-bold text-primary">{fmt(recommendation.sensitivity_adjusted)}</span>
-                      <span className="text-xs text-muted-foreground">/week</span>
-                    </div>
-                    {form.duration_weeks > 0 && (
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        = {fmt(recommendation.sensitivity_adjusted * form.duration_weeks)} over {form.duration_weeks}w
-                      </div>
-                    )}
-                  </div>
 
                   {/* ── RECOMMENDATION BRACKET ───────────────────────────── */}
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
-                      Negotiation range
-                      {(recommendation.history_anchor || recommendation.comparable_wins.length > 0) && (
-                        <span className="ml-1 font-normal normal-case">(blended with historical data)</span>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <div className="text-center p-2.5 bg-muted/30 rounded-lg">
-                        <div className="text-[10px] text-muted-foreground uppercase font-bold">Low</div>
-                        <div className="text-base font-bold text-muted-foreground">{fmt(recommendation.low_weekly)}</div>
-                        <div className="text-[10px] text-muted-foreground">/week</div>
-                      </div>
-                      <div className="text-center p-2.5 bg-primary/10 rounded-lg border border-primary/20">
-                        <div className="text-[10px] text-primary uppercase font-bold">Target</div>
-                        <div className="text-xl font-bold text-primary">{fmt(recommendation.target_weekly)}</div>
-                        <div className="text-[10px] text-muted-foreground">/week</div>
-                      </div>
-                      <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-100">
-                        <div className="text-[10px] text-amber-700 uppercase font-bold">High</div>
-                        <div className="text-base font-bold text-amber-600">{fmt(recommendation.high_weekly)}</div>
-                        <div className="text-[10px] text-muted-foreground">/week</div>
-                      </div>
-                    </div>
+                  {(() => {
+                    const d = manualDelta;
+                    return (
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
+                          Negotiation range
+                          {(recommendation.history_anchor || recommendation.comparable_wins.length > 0) && (
+                            <span className="ml-1 font-normal normal-case">(blended with historical data)</span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <div className="text-center p-2.5 bg-muted/30 rounded-lg">
+                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Low</div>
+                            <div className="text-base font-bold text-muted-foreground">{fmt(recommendation.low_weekly + d)}</div>
+                            <div className="text-[10px] text-muted-foreground">/week</div>
+                          </div>
+                          <div className="text-center p-2.5 bg-primary/10 rounded-lg border border-primary/20">
+                            <div className="text-[10px] text-primary uppercase font-bold">Target</div>
+                            <div className="text-xl font-bold text-primary">{fmt(recommendation.target_weekly + d)}</div>
+                            <div className="text-[10px] text-muted-foreground">/week</div>
+                          </div>
+                          <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-100">
+                            <div className="text-[10px] text-amber-700 uppercase font-bold">High</div>
+                            <div className="text-base font-bold text-amber-600">{fmt(recommendation.high_weekly + d)}</div>
+                            <div className="text-[10px] text-muted-foreground">/week</div>
+                          </div>
+                        </div>
 
-                    {/* fund anchor note */}
-                    {recommendation.history_anchor && (
-                      <div className="text-[10px] text-blue-600 mt-1 px-0.5">
-                        Fund anchor ({recommendation.fund_proposals_count} prior proposals): {fmt(recommendation.history_anchor)}/wk blended in
+                        {/* fund anchor note */}
+                        {recommendation.history_anchor && (
+                          <div className="text-[10px] text-blue-600 mt-1 px-0.5">
+                            Fund anchor ({recommendation.fund_proposals_count} prior proposals): {fmt(recommendation.history_anchor)}/wk blended in
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    );
+                  })()}
 
                   {/* Posture + confidence */}
                   <div className="flex items-center justify-between text-xs px-0.5">
@@ -1164,12 +1541,71 @@ export default function PricingTool() {
                     </span>
                   </div>
 
+                  {/* ── WIN PROBABILITY + MARGIN + COST FLOOR ────────────── */}
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <div className="text-center rounded-lg bg-muted/30 px-2 py-2">
+                      <div className="text-[9px] uppercase font-bold text-muted-foreground">Win Prob</div>
+                      <div className={`text-base font-bold mt-0.5 ${recommendation.win_probability != null && recommendation.win_probability >= 0.5 ? "text-emerald-600" : "text-amber-600"}`}>
+                        {recommendation.win_probability != null ? `${Math.round(recommendation.win_probability * 100)}%` : "—"}
+                      </div>
+                      {recommendation.win_probability != null && (
+                        <div className="mt-1 h-1 bg-muted rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${recommendation.win_probability >= 0.5 ? "bg-emerald-500" : "bg-amber-500"}`}
+                            style={{ width: `${recommendation.win_probability * 100}%` }} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-center rounded-lg bg-muted/30 px-2 py-2">
+                      <div className="text-[9px] uppercase font-bold text-muted-foreground">Exp. Margin</div>
+                      <div className="text-base font-bold text-emerald-600 mt-0.5">
+                        {recommendation.expected_margin_pct != null && recommendation.expected_margin_pct > 0
+                          ? `${recommendation.expected_margin_pct.toFixed(0)}%` : "—"}
+                      </div>
+                    </div>
+                    <div className="text-center rounded-lg bg-muted/30 px-2 py-2">
+                      <div className="text-[9px] uppercase font-bold text-muted-foreground">Cost Floor</div>
+                      <div className="text-xs font-bold mt-0.5 text-muted-foreground">
+                        {recommendation.cost_floor_weekly > 0 ? fmt(recommendation.cost_floor_weekly) : "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── LAYER TRACE ──────────────────────────────────────── */}
+                  {recommendation.layer_trace.length > 0 && (
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                        Pricing Layers
+                      </div>
+                      <div className="divide-y">
+                        {recommendation.layer_trace.map((lt, i) => (
+                          <div key={i} className="px-3 py-1.5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-muted text-muted-foreground font-mono">{lt.layer}</span>
+                                <span className="text-xs font-medium">{lt.label}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {lt.layer !== "OUT" && lt.delta_pct !== 0 && (
+                                  <span className={`text-[9px] font-mono font-bold px-1 py-0.5 rounded ${lt.delta_pct > 0 ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                                    {lt.delta_pct > 0 ? "+" : ""}{lt.delta_pct.toFixed(0)}%
+                                  </span>
+                                )}
+                                <span className="text-xs font-semibold font-mono">{fmt(lt.value)}</span>
+                              </div>
+                            </div>
+                            {lt.note && <p className="text-[9px] text-muted-foreground mt-0.5 leading-relaxed">{lt.note}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Totals row */}
                   {form.duration_weeks > 0 && (
                     <div className="grid grid-cols-3 gap-1 text-[10px] text-center text-muted-foreground bg-muted/20 rounded p-2">
-                      <div>Low total<br /><span className="font-semibold text-foreground text-xs">{fmt(recommendation.low_total)}</span></div>
-                      <div className="border-x">Target total<br /><span className="font-bold text-primary text-xs">{fmt(recommendation.target_total)}</span></div>
-                      <div>High total<br /><span className="font-semibold text-amber-600 text-xs">{fmt(recommendation.high_total)}</span></div>
+                      <div>Low total<br /><span className="font-semibold text-foreground text-xs">{fmt(recommendation.low_total + manualDelta * form.duration_weeks)}</span></div>
+                      <div className="border-x">Target total<br /><span className="font-bold text-primary text-xs">{fmt(recommendation.target_total + manualDelta * form.duration_weeks)}</span></div>
+                      <div>High total<br /><span className="font-semibold text-amber-600 text-xs">{fmt(recommendation.high_total + manualDelta * form.duration_weeks)}</span></div>
                     </div>
                   )}
 
@@ -1371,104 +1807,6 @@ export default function PricingTool() {
                     <p className="text-xs text-blue-800 leading-relaxed">{recommendation.advisory}</p>
                   </div>
 
-                  {/* ── COMPETITIVE BENCHMARK BAR ─────────────────────── */}
-                  {(() => {
-                    const benchmarks: CompetitorBenchmark[] = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
-                    if (!benchmarks?.length) return null;
-
-                    // Map case region → rate matrix key
-                    const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
-                    const matrixRegion = regionMap[form.region] ?? "Italy";
-
-                    // Determine client type from case
-                    const clientType = form.pe_owned
-                      ? "PE/LBO"
-                      : form.revenue_band === "above_1b" ? "Corporate >€1B"
-                      : form.revenue_band === "200m_1b" || form.revenue_band === "100m_200m" ? "Family PMI €200M+"
-                      : "Family PMI <€200M";
-
-                    // Our range from rate matrix
-                    const matrixRow = settings?.rate_matrix?.find(r => r.client_type === clientType);
-                    const ourCell = matrixRow?.rates?.[matrixRegion];
-
-                    // Build all ranges for scale
-                    const allMins = benchmarks.map(b => (b.rates as any)[matrixRegion]?.min_weekly ?? 0).filter(Boolean);
-                    const allMaxes = benchmarks.map(b => (b.rates as any)[matrixRegion]?.max_weekly ?? 0).filter(Boolean);
-                    if (ourCell && !ourCell.avoid) { allMins.push(ourCell.min_weekly); allMaxes.push(ourCell.max_weekly); }
-                    allMaxes.push(recommendation.target_weekly);
-
-                    const scaleMax = Math.max(...allMaxes) * 1.05;
-                    const pct = (v: number) => `${Math.min(100, (v / scaleMax) * 100).toFixed(1)}%`;
-
-                    const fmt = (v: number) => `€${Math.round(v / 1000)}k`;
-
-                    const tiers = [
-                      ...benchmarks.map(b => ({
-                        label: b.label,
-                        color: b.color,
-                        min: (b.rates as any)[matrixRegion]?.min_weekly ?? 0,
-                        max: (b.rates as any)[matrixRegion]?.max_weekly ?? 0,
-                        isOurs: false,
-                      })),
-                      ...(ourCell && !ourCell.avoid ? [{
-                        label: "Our Range (Rate Matrix)",
-                        color: "#f59e0b",
-                        min: ourCell.min_weekly,
-                        max: ourCell.max_weekly,
-                        isOurs: true,
-                      }] : []),
-                    ].filter(t => t.min > 0 || t.max > 0);
-
-                    return (
-                      <div className="border rounded-lg p-3 bg-muted/20 space-y-2.5">
-                        <div className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide flex items-center justify-between">
-                          <span>Market Benchmarks — {matrixRegion} · EM+2 project/week</span>
-                          <span className="text-[9px] normal-case font-normal">vs. your target {fmt(recommendation.target_weekly)}/wk</span>
-                        </div>
-
-                        {tiers.map((tier, i) => (
-                          <div key={i} className="space-y-0.5">
-                            <div className="flex justify-between text-[9px] text-muted-foreground">
-                              <span className={tier.isOurs ? "font-bold text-amber-700" : ""}>{tier.label}</span>
-                              <span className="font-mono">{fmt(tier.min)} – {fmt(tier.max)}</span>
-                            </div>
-                            <div className="relative h-4 bg-muted rounded-full overflow-hidden">
-                              <div
-                                className="absolute top-0 bottom-0 rounded-full opacity-30"
-                                style={{ left: pct(tier.min), right: `${100 - parseFloat(pct(tier.max))}%`, backgroundColor: tier.color }}
-                              />
-                              <div
-                                className="absolute top-0 bottom-0 rounded-full opacity-70"
-                                style={{ left: pct(tier.min), width: "2px", backgroundColor: tier.color }}
-                              />
-                              <div
-                                className="absolute top-0 bottom-0 rounded-full opacity-70"
-                                style={{ left: pct(tier.max), width: "2px", backgroundColor: tier.color }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* Target price marker line */}
-                        <div className="relative h-5">
-                          <div className="absolute inset-0 border-t border-dashed border-muted-foreground/30 mt-2.5" />
-                          <div
-                            className="absolute top-0 flex flex-col items-center"
-                            style={{ left: pct(recommendation.target_weekly), transform: "translateX(-50%)" }}
-                          >
-                            <div className="w-2 h-2 rounded-full bg-foreground border-2 border-background shadow" />
-                            <span className="text-[8px] font-bold text-foreground whitespace-nowrap mt-0.5">
-                              Target {fmt(recommendation.target_weekly)}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="text-[8px] text-muted-foreground/50 italic border-t pt-1">
-                          Estimates for an EM+2 engagement. Sources: Source Global Research, ALM Intelligence, Consultancy.eu — see Market Benchmarks in Pricing Admin.
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
               )}
             </CardContent>

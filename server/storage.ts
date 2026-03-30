@@ -2,9 +2,10 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
-  pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates,
+  pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
+  type EmployeeTask,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -291,6 +292,26 @@ export class DatabaseStorage implements IStorage {
 
   async deleteHiringCandidate(id: number): Promise<void> {
     await db.delete(hiringCandidates).where(eq(hiringCandidates.id, id));
+  }
+
+  // ── Employee Tasks (TDL) ──────────────────────────────────────────────────
+  async getEmployeeTasks(): Promise<EmployeeTask[]> {
+    return db.select().from(employeeTasks).orderBy(employeeTasks.created_at) as Promise<EmployeeTask[]>;
+  }
+
+  async createEmployeeTask(data: Omit<EmployeeTask, "id">): Promise<EmployeeTask> {
+    const now = new Date().toISOString();
+    const rows = await db.insert(employeeTasks).values({ ...data, created_at: now }).returning();
+    return rows[0] as EmployeeTask;
+  }
+
+  async updateEmployeeTask(id: number, data: Partial<EmployeeTask>): Promise<EmployeeTask> {
+    const rows = await db.update(employeeTasks).set(data).where(eq(employeeTasks.id, id)).returning();
+    return rows[0] as EmployeeTask;
+  }
+
+  async deleteEmployeeTask(id: number): Promise<void> {
+    await db.delete(employeeTasks).where(eq(employeeTasks.id, id));
   }
 }
 

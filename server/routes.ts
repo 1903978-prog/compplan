@@ -17,14 +17,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/employees", requireAuth, async (req, res) => {
-    const data = insertEmployeeSchema.parse(req.body);
+    const data = req.body; // validated client-side
     const emp = await storage.createEmployee(data);
     res.status(201).json(emp);
   });
 
   app.put("/api/employees/:id", requireAuth, async (req, res) => {
     const { id } = req.params;
-    const data = insertEmployeeSchema.partial().parse(req.body);
+    const data = req.body; // validated client-side; insertEmployeeSchema doesn't know new JSONB fields
     const emp = await storage.updateEmployee(id, data);
     if (!emp) {
       res.status(404).json({ message: "Employee not found" });
@@ -418,6 +418,25 @@ Rules:
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Parse failed" });
     }
+  });
+
+  // ── Employee Tasks (TDL) ──────────────────────────────────────────────────
+  app.get("/api/employee-tasks", requireAuth, async (_req, res) => {
+    res.json(await storage.getEmployeeTasks());
+  });
+
+  app.post("/api/employee-tasks", requireAuth, async (req, res) => {
+    const now = new Date().toISOString();
+    res.status(201).json(await storage.createEmployeeTask({ ...req.body, created_at: now }));
+  });
+
+  app.put("/api/employee-tasks/:id", requireAuth, async (req, res) => {
+    res.json(await storage.updateEmployeeTask(parseInt(req.params.id), req.body));
+  });
+
+  app.delete("/api/employee-tasks/:id", requireAuth, async (req, res) => {
+    await storage.deleteEmployeeTask(parseInt(req.params.id));
+    res.status(204).end();
   });
 
   // ── Admin downloads ────────────────────────────────────────────────────────

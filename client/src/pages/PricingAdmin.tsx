@@ -358,7 +358,7 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                     <Input
                       value={role.role_name}
                       onChange={e => updateRole(role.id, { role_name: e.target.value })}
-                      className="h-8 text-sm border-0 shadow-none focus-visible:ring-1 px-1"
+                      className="h-9 text-sm border-0 shadow-none focus-visible:ring-1 px-1"
                       placeholder="Role name"
                     />
                   </TableCell>
@@ -370,7 +370,7 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                       min="0"
                       value={role.default_daily_rate}
                       onChange={e => updateRole(role.id, { default_daily_rate: parseFloat(e.target.value) || 0 })}
-                      className="h-8 text-sm text-right w-28 ml-auto font-mono border-0 shadow-none focus-visible:ring-1 px-1"
+                      className="h-9 text-sm text-right w-28 ml-auto font-mono border-0 shadow-none focus-visible:ring-1 px-1"
                     />
                   </TableCell>
 
@@ -389,7 +389,7 @@ function RolesTab({ roles, onChange, staffCosts, onStaffCostChange, onSave, savi
                           onStaffCostChange([...staffCosts, { role_id: role.id, role_name: role.role_name, daily_cost: val }]);
                         }
                       }}
-                      className="h-8 text-sm text-right w-28 ml-auto font-mono border-0 shadow-none focus-visible:ring-1 px-1"
+                      className="h-9 text-sm text-right w-28 ml-auto font-mono border-0 shadow-none focus-visible:ring-1 px-1"
                     />
                   </TableCell>
 
@@ -506,7 +506,7 @@ function RegionsTab({ regions, onChange, onSave, saving }: RegionsTabProps) {
                         onChange={(e) =>
                           updateMultiplier(region.id, parseFloat(e.target.value) || 1)
                         }
-                        className="h-8 text-sm text-center w-24 mx-auto font-mono"
+                        className="h-9 text-sm text-center w-24 mx-auto font-mono"
                       />
                     )}
                   </TableCell>
@@ -633,7 +633,7 @@ function ClientMultipliersTab({
                         onChange={(e) =>
                           updateOwnership(item.value, parseFloat(e.target.value) || 1)
                         }
-                        className="h-8 text-sm text-center w-24 mx-auto font-mono"
+                        className="h-9 text-sm text-center w-24 mx-auto font-mono"
                       />
                     )}
                   </TableCell>
@@ -691,7 +691,7 @@ function ClientMultipliersTab({
                         onChange={(e) =>
                           updateRevenueBand(item.value, parseFloat(e.target.value) || 1)
                         }
-                        className="h-8 text-sm text-center w-24 mx-auto font-mono"
+                        className="h-9 text-sm text-center w-24 mx-auto font-mono"
                       />
                     )}
                   </TableCell>
@@ -795,7 +795,7 @@ function SensitivityTab({ multipliers, onChange, onSave, saving }: SensitivityTa
                       onChange={(e) =>
                         updateMultiplier(item.value, parseFloat(e.target.value) || 1)
                       }
-                      className="h-8 text-sm text-center w-24 mx-auto font-mono"
+                      className="h-9 text-sm text-center w-24 mx-auto font-mono"
                     />
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
@@ -1124,7 +1124,7 @@ function DiscountsAndCostsTab({ settings, onChange, onSave, saving }: DiscountsA
                     <Input
                       value={d.name}
                       onChange={e => updateDiscount(d.id, "name", e.target.value)}
-                      className="h-8 text-sm"
+                      className="h-9 text-sm"
                     />
                   </TableCell>
                   <TableCell className="text-center">
@@ -1136,7 +1136,7 @@ function DiscountsAndCostsTab({ settings, onChange, onSave, saving }: DiscountsA
                         max="100"
                         value={d.default_pct}
                         onChange={e => updateDiscount(d.id, "default_pct", parseFloat(e.target.value) || 0)}
-                        className="h-8 text-sm text-center w-24 font-mono pr-6"
+                        className="h-9 text-sm text-center w-24 font-mono pr-6"
                       />
                       <span className="absolute right-2 text-muted-foreground text-sm">%</span>
                     </div>
@@ -1213,7 +1213,7 @@ function DiscountsAndCostsTab({ settings, onChange, onSave, saving }: DiscountsA
                         min="0"
                         value={c.daily_cost}
                         onChange={e => updateStaffCost(c.role_id, parseFloat(e.target.value) || 0)}
-                        className="h-8 text-sm text-right w-28 font-mono pl-6"
+                        className="h-9 text-sm text-right w-28 font-mono pl-6"
                       />
                     </div>
                   </TableCell>
@@ -1390,7 +1390,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
                           </button>
                         </div>
                       ) : (
-                        <div className="flex flex-col gap-1 min-w-[80px]">
+                        <div className="flex flex-col gap-1 min-w-[110px]">
                           <div className="flex items-center gap-1">
                             <span className="text-xs text-muted-foreground w-5">Min</span>
                             <Input
@@ -1399,7 +1399,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
                               min="0"
                               value={cell.min_weekly}
                               onChange={(e) => updateCell(rowIdx, region, "min_weekly", parseInt(e.target.value) || 0)}
-                              className="h-7 text-xs text-center font-mono w-20 px-1"
+                              className="h-8 text-xs text-center font-mono w-24 px-1"
                             />
                           </div>
                           <div className="flex items-center gap-1">
@@ -1410,7 +1410,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
                               min="0"
                               value={cell.max_weekly}
                               onChange={(e) => updateCell(rowIdx, region, "max_weekly", parseInt(e.target.value) || 0)}
-                              className="h-7 text-xs text-center font-mono w-20 px-1"
+                              className="h-8 text-xs text-center font-mono w-24 px-1"
                             />
                           </div>
                           <button
@@ -1636,17 +1636,25 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
           const fmt2 = (v: number) => `€${Math.round(v / 1000)}k`;
           return benchmarks.map((bench, i) => {
             const cell = bench.rates[region];
+            const mid = (cell.min_weekly + cell.max_weekly) / 2;
+            const color = TIER_COLORS[bench.tier] ?? "#374151";
             return (
               <div key={i} className="space-y-0.5">
                 <div className="flex justify-between text-[9px] text-muted-foreground">
                   <span>{bench.label}</span>
-                  <span className="font-mono">{fmt2(cell.min_weekly)} – {fmt2(cell.max_weekly)}</span>
+                  <span className="font-mono">{fmt2(cell.min_weekly)} – <span className="opacity-60">avg {fmt2(mid)}</span> – {fmt2(cell.max_weekly)}</span>
                 </div>
                 <div className="relative h-4 bg-muted rounded-full overflow-hidden">
                   <div
                     className="absolute top-0 bottom-0 rounded-full opacity-40"
-                    style={{ left: pct(cell.min_weekly), right: `${100 - parseFloat(pct(cell.max_weekly))}%`, backgroundColor: TIER_COLORS[bench.tier] ?? "#374151" }}
+                    style={{ left: pct(cell.min_weekly), right: `${100 - parseFloat(pct(cell.max_weekly))}%`, backgroundColor: color }}
                   />
+                  <div className="absolute top-0 bottom-0 w-0.5 opacity-70"
+                    style={{ left: pct(cell.min_weekly), backgroundColor: color }} />
+                  <div className="absolute top-0 bottom-0 w-0.5 opacity-70"
+                    style={{ left: pct(cell.max_weekly), backgroundColor: color }} />
+                  <div className="absolute top-0 bottom-0 opacity-50"
+                    style={{ left: pct(mid), width: "1px", backgroundColor: color }} />
                 </div>
               </div>
             );
@@ -1763,7 +1771,7 @@ export default function PricingAdmin() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       <PageHeader
         title="Pricing Admin"
         description="Configure pricing logic, daily rates, multipliers, and intelligence thresholds"

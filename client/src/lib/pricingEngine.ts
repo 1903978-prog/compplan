@@ -38,8 +38,8 @@ export interface SensitivityMultiplier {
 export interface PricingDiscount {
   id: string;
   name: string;
-  default_pct: number;  // default percentage (0–100)
-  active: boolean;      // whether it appears by default on new cases
+  default_pct: number;
+  active: boolean;
 }
 
 export interface StaffCostEntry {
@@ -57,7 +57,7 @@ export interface RateMatrixCell {
 
 export interface RateMatrixRow {
   client_type: string;
-  rates: Record<string, RateMatrixCell>; // keyed by region name
+  rates: Record<string, RateMatrixCell>;
 }
 
 export interface FloorRule {
@@ -74,11 +74,11 @@ export interface CompetitorTierRates {
 }
 
 export interface CompetitorBenchmark {
-  tier: string;   // "tier1" | "tier2" | "big4"
+  tier: string;
   label: string;
   color: string;
   rates: CompetitorTierRates;
-  sources: string[];  // source references
+  sources: string[];
 }
 
 export interface PricingSettings {
@@ -87,7 +87,7 @@ export interface PricingSettings {
   ownership_multipliers: OwnershipMultiplier[];
   revenue_band_multipliers: RevenueBandMultiplier[];
   sensitivity_multipliers: SensitivityMultiplier[];
-  funds: string[];  // configurable PE fund names
+  funds: string[];
   discounts: PricingDiscount[];
   staff_costs: StaffCostEntry[];
   rate_matrix: RateMatrixRow[];
@@ -111,7 +111,37 @@ export interface StaffingLine {
   count: number;
 }
 
+// ── New types for upgraded engine ─────────────────────────────────────────────
+
+export type ProjectType = "diagnostic" | "implementation" | "transformation";
+export type CompetitiveIntensity = "sole_source" | "limited" | "competitive" | "crowded";
+export type CompetitorType = "none" | "boutiques" | "tier2" | "mbb";
+export type OwnershipType = "pe" | "corporate" | "founder";
+export type StrategicIntent = "enter" | "expand" | "harvest";
+export type ProcurementInvolvement = "none" | "light" | "heavy";
+
+export const SECTORS = [
+  "Industrial / Manufacturing",
+  "Pharma / Healthcare",
+  "Software / SaaS",
+  "Consumer / Retail",
+  "Energy / Utilities",
+  "Business Services",
+  "Financial Services",
+  "Other",
+] as const;
+export type Sector = typeof SECTORS[number];
+
+export interface LayerTrace {
+  layer: string;
+  label: string;
+  value: number;
+  delta_pct: number;
+  note: string;
+}
+
 export interface PricingCaseInput {
+  // Existing fields
   region: string;
   pe_owned: boolean;
   revenue_band: string;
@@ -119,6 +149,18 @@ export interface PricingCaseInput {
   duration_weeks: number;
   fund_name?: string | null;
   staffing: StaffingLine[];
+
+  // New fields (optional for backward compat)
+  project_type?: ProjectType | null;
+  sector?: string | null;
+  ebitda_margin_pct?: number | null;       // e.g. 15 for 15%
+  commercial_maturity?: number | null;     // 1–5
+  urgency?: number | null;                 // 1–5
+  competitive_intensity?: CompetitiveIntensity | null;
+  competitor_type?: CompetitorType | null;
+  ownership_type?: OwnershipType | null;
+  strategic_intent?: StrategicIntent | null;
+  procurement_involvement?: ProcurementInvolvement | null;
 }
 
 export interface PricingProposal {
@@ -141,6 +183,7 @@ export interface PricingProposal {
 }
 
 export interface PricingRecommendation {
+  // Existing fields (preserved for backward compat)
   base_weekly: number;
   geo_multiplier: number;
   geo_adjusted: number;
@@ -174,11 +217,19 @@ export interface PricingRecommendation {
   drivers: string[];
   warnings: string[];
   advisory: string;
+
+  // New fields from upgraded engine
+  value_anchor_weekly: number | null;
+  cost_floor_weekly: number;
+  ebitda_uplift: number | null;
+  ebitda_improvement_pct: number | null;
+  win_probability: number | null;
+  expected_margin_pct: number | null;
+  ev_optimized_weekly: number | null;
+  layer_trace: LayerTrace[];
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 export const REVENUE_BANDS = [
   { value: "below_100m", label: "Below €100M" },
@@ -188,14 +239,43 @@ export const REVENUE_BANDS = [
 ];
 
 export const REGIONS = [
-  "IT",
-  "FR",
-  "DE",
-  "UK",
-  "US",
-  "Asia",
-  "Middle East",
+  "IT", "FR", "DE", "UK", "US", "Asia", "Middle East",
 ];
+
+// Revenue midpoints for EBITDA calculation (€M)
+const REVENUE_MIDPOINTS: Record<string, number> = {
+  below_100m: 50,
+  "100m_200m": 150,
+  "200m_1b": 500,
+  above_1b: 1500,
+};
+
+// Sector EBITDA improvement table: [low_maturity_mid_pct, mid_maturity_pct, high_maturity_pct]
+// Values represent expected EBITDA improvement points achievable
+const EBITDA_IMPROVEMENT_TABLE: Record<string, [number, number, number]> = {
+  "Industrial / Manufacturing": [4.5, 3.0, 1.5],
+  "Pharma / Healthcare":        [3.5, 2.0, 1.5],
+  "Software / SaaS":            [7.5, 4.5, 3.0],
+  "Consumer / Retail":          [6.0, 3.5, 2.0],
+  "Energy / Utilities":         [4.0, 2.5, 1.5],
+  "Business Services":          [7.0, 4.5, 3.0],
+  "Financial Services":         [5.0, 3.0, 2.0],
+  "Other":                      [4.0, 2.5, 1.5],
+};
+
+// Capture rates by project type
+const CAPTURE_RATES: Record<string, number> = {
+  diagnostic:      0.04,   // 3–5% → use 4%
+  implementation:  0.11,   // 8–15% → use 11%
+  transformation:  0.20,   // 15–25% → use 20%
+};
+
+// Overhead and minimum margin for cost floor
+const OVERHEAD_PCT    = 0.15;   // 15% overhead on delivery cost
+const MIN_MARGIN_PCT  = 0.25;   // 25% minimum margin above cost+overhead
+
+// Time decay constant for fund history weighting (per month)
+const DECAY_LAMBDA = 0.08;
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
   roles: [
@@ -215,25 +295,25 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { id: "middle_east",  region_name: "Middle East",  multiplier: 1.20, is_baseline: false },
   ],
   ownership_multipliers: [
-    { value: "pe", label: "Private Equity owned", multiplier: 1.0, is_baseline: true },
-    { value: "non_pe", label: "Non PE-owned", multiplier: 0.85, is_baseline: false },
+    { value: "pe",     label: "Private Equity owned", multiplier: 1.0,  is_baseline: true  },
+    { value: "non_pe", label: "Non PE-owned",         multiplier: 0.85, is_baseline: false },
   ],
   revenue_band_multipliers: [
-    { value: "below_100m", label: "Below €100M", multiplier: 0.75, is_baseline: false },
-    { value: "100m_200m", label: "€100M – €200M", multiplier: 0.85, is_baseline: false },
-    { value: "200m_1b", label: "€200M – €1B", multiplier: 0.92, is_baseline: false },
-    { value: "above_1b", label: "Above €1B", multiplier: 1.0, is_baseline: true },
+    { value: "below_100m", label: "Below €100M",    multiplier: 0.75, is_baseline: false },
+    { value: "100m_200m",  label: "€100M – €200M",  multiplier: 0.85, is_baseline: false },
+    { value: "200m_1b",    label: "€200M – €1B",    multiplier: 0.92, is_baseline: false },
+    { value: "above_1b",   label: "Above €1B",       multiplier: 1.0,  is_baseline: true  },
   ],
   sensitivity_multipliers: [
-    { value: "low", label: "Low sensitivity", multiplier: 1.10 },
+    { value: "low",    label: "Low sensitivity",    multiplier: 1.10 },
     { value: "medium", label: "Medium sensitivity", multiplier: 1.00 },
-    { value: "high", label: "High sensitivity", multiplier: 0.90 },
+    { value: "high",   label: "High sensitivity",   multiplier: 0.90 },
   ],
   funds: ["CARLYLE", "BAIN CAP", "KPS", "ADVENT", "CVC"],
   discounts: [
-    { id: "oneoff", name: "One-off discount", default_pct: 0, active: true },
-    { id: "prompt_payment", name: "Prompt payment discount", default_pct: 3, active: true },
-    { id: "rebate", name: "Rebate", default_pct: 2, active: false },
+    { id: "oneoff",          name: "One-off discount",        default_pct: 0, active: true  },
+    { id: "prompt_payment",  name: "Prompt payment discount", default_pct: 3, active: true  },
+    { id: "rebate",          name: "Rebate",                  default_pct: 2, active: false },
   ],
   staff_costs: [
     { role_id: "partner",     role_name: "Partner",     daily_cost: 0    },
@@ -271,7 +351,7 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
         France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
         UK:     { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
         DACH:   { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
-        US:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+        US:     { min_weekly: 0,     max_weekly: 0,     note: "", avoid: true  },
       },
     },
     {
@@ -279,9 +359,9 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
       rates: {
         Italy:  { min_weekly: 10000, max_weekly: 15000, note: "", avoid: false },
         France: { min_weekly: 12000, max_weekly: 16000, note: "", avoid: false },
-        UK:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
-        DACH:   { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
-        US:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+        UK:     { min_weekly: 0,     max_weekly: 0,     note: "", avoid: true  },
+        DACH:   { min_weekly: 0,     max_weekly: 0,     note: "", avoid: true  },
+        US:     { min_weekly: 0,     max_weekly: 0,     note: "", avoid: true  },
       },
     },
   ],
@@ -339,9 +419,7 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
   win_loss_weight: 0.20,
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function mean(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -353,169 +431,565 @@ function roundTo500(value: number): number {
 }
 
 function formatCurrency(value: number): string {
-  return "€" + value.toLocaleString("en-US");
+  return "€" + Math.round(value).toLocaleString("en-US");
 }
 
-// ---------------------------------------------------------------------------
-// Main export
-// ---------------------------------------------------------------------------
+function sigmoid(a: number, x: number): number {
+  return 1 / (1 + Math.exp(a * x));
+}
+
+// ── L0: Value Anchor ─────────────────────────────────────────────────────────
+
+function computeValueAnchor(input: PricingCaseInput): {
+  value_anchor_weekly: number | null;
+  ebitda_uplift: number | null;
+  ebitda_improvement_pct: number | null;
+} {
+  const { sector, ebitda_margin_pct, revenue_band, commercial_maturity, urgency, project_type, duration_weeks } = input;
+
+  if (!sector || ebitda_margin_pct == null || !project_type || !duration_weeks) {
+    return { value_anchor_weekly: null, ebitda_uplift: null, ebitda_improvement_pct: null };
+  }
+
+  // Get sector improvement range [low_mat, mid_mat, high_mat]
+  const sectorKey = sector in EBITDA_IMPROVEMENT_TABLE ? sector : "Other";
+  const [low_mat, mid_mat, high_mat] = EBITDA_IMPROVEMENT_TABLE[sectorKey];
+
+  // Select by maturity band
+  const mat = commercial_maturity ?? 3;
+  let base_improvement = mat <= 2 ? low_mat : mat >= 4 ? high_mat : mid_mat;
+
+  // Adjust by urgency
+  const urg = urgency ?? 3;
+  const urgency_mult = urg >= 4 ? 1.35 : urg <= 2 ? 0.80 : 1.0;
+  const ebitda_improvement_pct = base_improvement * urgency_mult;
+
+  // Revenue estimate
+  const revenue_m = REVENUE_MIDPOINTS[revenue_band] ?? 500;
+  const ebitda_m = revenue_m * (ebitda_margin_pct / 100);
+  const ebitda_uplift_m = ebitda_m * (ebitda_improvement_pct / 100);
+  const ebitda_uplift = ebitda_uplift_m * 1_000_000;
+
+  // Capture rate by project type
+  const capture_rate = CAPTURE_RATES[project_type] ?? 0.11;
+
+  // Weekly value anchor
+  const value_anchor_weekly = (ebitda_uplift * capture_rate) / duration_weeks;
+
+  return { value_anchor_weekly, ebitda_uplift, ebitda_improvement_pct };
+}
+
+// ── L1: Cost Floor ────────────────────────────────────────────────────────────
+
+function computeCostFloor(input: PricingCaseInput, settings: PricingSettings): number {
+  let delivery_cost_weekly = 0;
+  for (const line of input.staffing) {
+    const costEntry = settings.staff_costs.find(c => c.role_id === line.role_id);
+    const daily_cost = costEntry?.daily_cost ?? 0;
+    delivery_cost_weekly += line.days_per_week * daily_cost * line.count;
+  }
+  // Apply overhead and minimum margin
+  const cost_floor = delivery_cost_weekly * (1 + OVERHEAD_PCT) * (1 + MIN_MARGIN_PCT);
+  // Also enforce the absolute floor rule
+  return Math.max(cost_floor, settings.floor_rule.min_weekly * 0.5); // floor rule applies as absolute minimum only for explicit engagement floors
+}
+
+// ── L2: Market Layer ──────────────────────────────────────────────────────────
+
+function computeMarketAdjustments(input: PricingCaseInput): {
+  geo_mult: number;
+  competitive_adj: number;
+  competitor_adj: number;
+  interaction_adj: number;
+  market_notes: string[];
+} {
+  const notes: string[] = [];
+
+  // Geo: returned separately (uses settings), hardcode defaults here for layer trace
+  // (actual geo_mult comes from settings in main function)
+  const geo_mult = 1.0; // placeholder; overridden in main
+
+  // Competitive intensity adjustment (additive %)
+  let competitive_adj = 0;
+  switch (input.competitive_intensity) {
+    case "sole_source":  competitive_adj = 0.15;  notes.push("Sole source: +15% premium"); break;
+    case "limited":      competitive_adj = 0.05;  notes.push("Limited competition: +5%"); break;
+    case "competitive":  competitive_adj = 0.0;   break;
+    case "crowded":      competitive_adj = -0.15; notes.push("Crowded market: −15%"); break;
+  }
+
+  // Competitor type adjustment
+  let competitor_adj = 0;
+  switch (input.competitor_type) {
+    case "boutiques": competitor_adj = -0.05; notes.push("Boutique competition: −5%"); break;
+    case "tier2":     competitor_adj = 0.0;   break;
+    case "mbb":       competitor_adj = 0.15;  notes.push("MBB present validates premium: +15%"); break;
+  }
+
+  // Interaction effects (rule table)
+  let interaction_adj = 0;
+  const isUS   = input.region === "US";
+  const isIT   = input.region === "IT";
+  const isME   = input.region === "Middle East";
+  const isPE   = input.pe_owned || input.ownership_type === "pe";
+  const isBig  = input.revenue_band === "above_1b";
+  const isSmall = input.revenue_band === "below_100m";
+
+  if (isUS && isPE && isBig) {
+    interaction_adj += 0.10;
+    notes.push("US × PE × >€1B premium: +10%");
+  }
+  if (isME && isPE) {
+    interaction_adj += 0.08;
+    notes.push("Middle East × PE premium: +8%");
+  }
+  if (isIT && !isPE && isSmall) {
+    interaction_adj -= 0.08;
+    notes.push("IT × non-PE × small company: −8%");
+  }
+
+  return { geo_mult, competitive_adj, competitor_adj, interaction_adj, market_notes: notes };
+}
+
+// ── L3: Client Layer ──────────────────────────────────────────────────────────
+
+function computeClientAdjustments(input: PricingCaseInput): {
+  ownership_adj: number;
+  maturity_urgency_adj: number;
+  procurement_adj: number;
+  sensitivity_adj: number;
+  client_notes: string[];
+} {
+  const notes: string[] = [];
+
+  // Ownership type (overrides pe_owned boolean if provided)
+  let ownership_adj = 0;
+  const owType = input.ownership_type ?? (input.pe_owned ? "pe" : "corporate");
+  switch (owType) {
+    case "pe":        ownership_adj = 0.0;   break;
+    case "corporate": ownership_adj = (input.revenue_band === "above_1b") ? 0.0 : -0.10; break;
+    case "founder":   ownership_adj = -0.15; notes.push("Founder-led: −15%"); break;
+  }
+  if (owType === "corporate" && input.revenue_band !== "above_1b") notes.push("Corporate non-enterprise: −10%");
+
+  // Maturity × urgency interaction
+  const mat = input.commercial_maturity ?? 3;
+  const urg = input.urgency ?? 3;
+  let maturity_urgency_adj = 0;
+  if (mat <= 2 && urg >= 4) {
+    maturity_urgency_adj = 0.15;
+    notes.push("Low maturity + high urgency (need help urgently): +15%");
+  } else if (mat <= 2 && urg <= 2) {
+    maturity_urgency_adj = 0.05;
+    notes.push("Low maturity + low urgency: +5%");
+  } else if (mat >= 4 && urg >= 4) {
+    maturity_urgency_adj = 0.05;
+    notes.push("Sophisticated + urgent client: +5%");
+  } else if (mat >= 4 && urg <= 2) {
+    maturity_urgency_adj = -0.10;
+    notes.push("Sophisticated + non-urgent (price-aware): −10%");
+  }
+
+  // Procurement
+  let procurement_adj = 0;
+  switch (input.procurement_involvement) {
+    case "none":  procurement_adj = 0.0;   break;
+    case "light": procurement_adj = -0.05; notes.push("Light procurement: −5%"); break;
+    case "heavy": procurement_adj = -0.15; notes.push("Heavy procurement: −15%"); break;
+  }
+
+  // Sensitivity (asymmetric)
+  let sensitivity_adj = 0;
+  switch (input.price_sensitivity) {
+    case "low":    sensitivity_adj = 0.15;  notes.push("Low price sensitivity: +15%"); break;
+    case "medium": sensitivity_adj = 0.0;   break;
+    case "high":   sensitivity_adj = -0.25; notes.push("High price sensitivity: −25%"); break;
+  }
+
+  return { ownership_adj, maturity_urgency_adj, procurement_adj, sensitivity_adj, client_notes: notes };
+}
+
+// ── L4: Historical Intelligence (time-decayed) ────────────────────────────────
+
+function computeHistoricalAnchor(
+  input: PricingCaseInput,
+  historicalProposals: PricingProposal[],
+  settings: PricingSettings,
+): {
+  fund_proposals_count: number;
+  fund_avg_weekly: number | null;
+  fund_recent_weekly: number | null;
+  fund_min_weekly: number | null;
+  fund_max_weekly: number | null;
+  fund_win_rate: number | null;
+  history_anchor: number | null;
+  history_adjustment_pct: number | null;
+  comparable_wins: PricingProposal[];
+  comparable_losses: PricingProposal[];
+  comparable_avg_win_weekly: number | null;
+  comparable_avg_loss_weekly: number | null;
+} {
+  const inputFund = input.fund_name?.trim().toLowerCase() ?? null;
+  const today = Date.now();
+
+  // Fund proposals with time-decay weighting
+  const fundProposals = inputFund
+    ? historicalProposals
+        .filter(p => p.fund_name?.trim().toLowerCase() === inputFund)
+        .sort((a, b) => new Date(b.proposal_date).getTime() - new Date(a.proposal_date).getTime())
+    : [];
+
+  const fund_proposals_count = fundProposals.length;
+
+  // Time-decayed weighted average
+  let weightedSum = 0;
+  let weightTotal = 0;
+  for (const p of fundProposals) {
+    const age_months = (today - new Date(p.proposal_date).getTime()) / (1000 * 60 * 60 * 24 * 30);
+    const time_weight = Math.exp(-DECAY_LAMBDA * age_months);
+    const outcome_weight = p.outcome === "won" ? 1.0 : 0.5;
+    const w = time_weight * outcome_weight;
+    weightedSum += p.weekly_price * w;
+    weightTotal += w;
+  }
+  const history_anchor = weightTotal > 0 && fund_proposals_count >= 2
+    ? weightedSum / weightTotal
+    : null;
+
+  const fundPrices = fundProposals.map(p => p.weekly_price);
+  const fund_avg_weekly = mean(fundPrices);
+  const fund_recent_weekly = mean(fundPrices.slice(0, 3));
+  const fund_min_weekly = fundPrices.length > 0 ? Math.min(...fundPrices) : null;
+  const fund_max_weekly = fundPrices.length > 0 ? Math.max(...fundPrices) : null;
+
+  const fundWon  = fundProposals.filter(p => p.outcome === "won").length;
+  const fundLost = fundProposals.filter(p => p.outcome === "lost").length;
+  const fund_win_rate = fundWon + fundLost > 0 ? fundWon / (fundWon + fundLost) : null;
+
+  // Comparables scoring
+  const scoredProposals = historicalProposals.map(p => {
+    let score = 0;
+    if (inputFund && p.fund_name?.trim().toLowerCase() === inputFund) score += 40;
+    if (p.region.toLowerCase() === input.region.toLowerCase()) score += 25;
+    if (p.pe_owned === input.pe_owned) score += 15;
+    if (p.revenue_band === input.revenue_band) score += 20;
+    return { proposal: p, score };
+  });
+
+  const comparables = scoredProposals
+    .filter(s => s.score >= 25)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
+    .map(s => s.proposal);
+
+  const comparable_wins   = comparables.filter(p => p.outcome === "won");
+  const comparable_losses = comparables.filter(p => p.outcome === "lost");
+  const comparable_avg_win_weekly  = mean(comparable_wins.map(p => p.weekly_price));
+  const comparable_avg_loss_weekly = mean(comparable_losses.map(p => p.weekly_price));
+
+  return {
+    fund_proposals_count,
+    fund_avg_weekly,
+    fund_recent_weekly,
+    fund_min_weekly,
+    fund_max_weekly,
+    fund_win_rate,
+    history_anchor,
+    history_adjustment_pct: null, // computed later
+    comparable_wins,
+    comparable_losses,
+    comparable_avg_win_weekly,
+    comparable_avg_loss_weekly,
+  };
+}
+
+// ── L6: EV Optimization ───────────────────────────────────────────────────────
+
+function evOptimize(
+  base_price: number,
+  cost_floor: number,
+  reference_price: number | null,
+  comparable_wins: PricingProposal[],
+  comparable_losses: PricingProposal[],
+): {
+  ev_price: number;
+  win_probability: number;
+  expected_margin_pct: number;
+} {
+  // Reference for sigmoid center: avg win comparable, or provided reference, or base_price
+  const ref = reference_price
+    ?? (comparable_wins.length > 0 ? mean(comparable_wins.map(p => p.weekly_price))! : base_price);
+
+  // Slope: steeper if we have loss data showing price sensitivity
+  // If avg_loss > avg_win (common), price elasticity is clear
+  const avg_win  = comparable_wins.length  > 0 ? mean(comparable_wins.map(p => p.weekly_price))!  : null;
+  const avg_loss = comparable_losses.length > 0 ? mean(comparable_losses.map(p => p.weekly_price))! : null;
+  let a = 0.00004; // default slope (reasonable for €20k–€100k range)
+  if (avg_win && avg_loss && avg_loss > avg_win) {
+    // Calibrate: P(win_at_avg_win) ≈ 0.65, P(win_at_avg_loss) ≈ 0.35
+    // 0.65 = 1/(1+exp(a*(avg_win - ref))) → but we keep it simple
+    a = 0.00006;
+  }
+
+  // Search grid: from cost_floor to base_price * 1.5, step 500
+  const lo = Math.max(cost_floor, base_price * 0.65);
+  const hi = base_price * 1.5;
+  let best_ev = -Infinity;
+  let best_price = base_price;
+
+  for (let price = lo; price <= hi; price += 500) {
+    const p_win = sigmoid(a, price - ref);
+    const margin = price - cost_floor;
+    const ev = p_win * margin;
+    if (ev > best_ev) {
+      best_ev = ev;
+      best_price = price;
+    }
+  }
+
+  const win_probability = sigmoid(a, best_price - ref);
+  const expected_margin_pct = cost_floor > 0
+    ? ((best_price - cost_floor) / best_price) * 100
+    : 0;
+
+  return { ev_price: roundTo500(best_price), win_probability, expected_margin_pct };
+}
+
+// ── Main export ────────────────────────────────────────────────────────────────
 
 export function calculatePricing(
   input: PricingCaseInput,
   settings: PricingSettings,
   historicalProposals: PricingProposal[]
 ): PricingRecommendation {
-  // -------------------------------------------------------------------------
-  // LAYER 1: base_weekly
-  // -------------------------------------------------------------------------
-  const base_weekly = input.staffing.reduce((sum, line) => {
-    return sum + line.days_per_week * line.daily_rate_used * line.count;
-  }, 0);
 
-  // -------------------------------------------------------------------------
-  // LAYER 2: geo
-  // -------------------------------------------------------------------------
-  const geoRegion = settings.regions.find(
-    (r) => r.region_name.toLowerCase() === input.region.toLowerCase()
+  const layer_trace: LayerTrace[] = [];
+
+  // ── L1: Cost Floor ────────────────────────────────────────────────────────
+  const cost_floor_weekly = computeCostFloor(input, settings);
+
+  // ── Base staffing rate ────────────────────────────────────────────────────
+  const base_weekly = input.staffing.reduce((sum, line) =>
+    sum + line.days_per_week * line.daily_rate_used * line.count, 0);
+
+  layer_trace.push({
+    layer: "L1",
+    label: "Staffing Base",
+    value: base_weekly,
+    delta_pct: 0,
+    note: `Rate-card build-up from ${input.staffing.length} role(s). Cost floor: ${formatCurrency(cost_floor_weekly)}/wk`,
+  });
+
+  // ── L0: Value Anchor ─────────────────────────────────────────────────────
+  const { value_anchor_weekly, ebitda_uplift, ebitda_improvement_pct } = computeValueAnchor(input);
+
+  if (value_anchor_weekly !== null) {
+    layer_trace.push({
+      layer: "L0",
+      label: "Value Anchor",
+      value: value_anchor_weekly,
+      delta_pct: base_weekly > 0 ? ((value_anchor_weekly - base_weekly) / base_weekly) * 100 : 0,
+      note: `EBITDA uplift ${formatCurrency(ebitda_uplift ?? 0)} × ${((CAPTURE_RATES[input.project_type!] ?? 0.11) * 100).toFixed(0)}% capture / ${input.duration_weeks}w`,
+    });
+  }
+
+  // Blend value anchor with staffing base (60/40 if anchor available)
+  let working_price = base_weekly;
+  if (value_anchor_weekly !== null && base_weekly > 0) {
+    working_price = 0.6 * base_weekly + 0.4 * value_anchor_weekly;
+  } else if (value_anchor_weekly !== null) {
+    working_price = value_anchor_weekly;
+  }
+
+  // ── Geo multiplier (from settings) ───────────────────────────────────────
+  const geoRegion = settings.regions.find(r =>
+    r.region_name.toLowerCase() === input.region.toLowerCase()
   );
   const geo_multiplier = geoRegion?.multiplier ?? 1.0;
-  const geo_adjusted = base_weekly * geo_multiplier;
+  const geo_adjusted = base_weekly * geo_multiplier; // keep for backward compat
 
-  // -------------------------------------------------------------------------
-  // LAYER 3: ownership
-  // -------------------------------------------------------------------------
+  layer_trace.push({
+    layer: "L2",
+    label: `Geography (${input.region})`,
+    value: working_price * geo_multiplier,
+    delta_pct: (geo_multiplier - 1) * 100,
+    note: `Regional multiplier ×${geo_multiplier}`,
+  });
+
+  // ── L2: Market adjustments (competitive context) ──────────────────────────
+  const { competitive_adj, competitor_adj, interaction_adj, market_notes } = computeMarketAdjustments(input);
+  const total_market_adj = competitive_adj + competitor_adj + interaction_adj;
+  const after_market = working_price * geo_multiplier * (1 + total_market_adj);
+
+  if (Math.abs(total_market_adj) > 0.001) {
+    layer_trace.push({
+      layer: "L2",
+      label: "Market Context",
+      value: after_market,
+      delta_pct: total_market_adj * 100,
+      note: market_notes.join("; ") || "No market adjustment",
+    });
+  }
+
+  // ── L3: Client adjustments ────────────────────────────────────────────────
+  const { ownership_adj, maturity_urgency_adj, procurement_adj, sensitivity_adj, client_notes } =
+    computeClientAdjustments(input);
+  const total_client_adj = ownership_adj + maturity_urgency_adj + procurement_adj + sensitivity_adj;
+  const after_client = after_market * (1 + total_client_adj);
+
+  // Backward compat multipliers
   const ownershipKey = input.pe_owned ? "pe" : "non_pe";
-  const ownershipEntry = settings.ownership_multipliers.find(
-    (o) => o.value === ownershipKey
-  );
+  const ownershipEntry = settings.ownership_multipliers.find(o => o.value === ownershipKey);
   const ownership_multiplier = ownershipEntry?.multiplier ?? 1.0;
   const ownership_adjusted = geo_adjusted * ownership_multiplier;
 
-  // -------------------------------------------------------------------------
-  // LAYER 4: size (revenue band)
-  // -------------------------------------------------------------------------
-  const sizeEntry = settings.revenue_band_multipliers.find(
-    (s) => s.value === input.revenue_band
-  );
+  const sizeEntry = settings.revenue_band_multipliers.find(s => s.value === input.revenue_band);
   const size_multiplier = sizeEntry?.multiplier ?? 1.0;
   const size_adjusted = ownership_adjusted * size_multiplier;
 
-  // -------------------------------------------------------------------------
-  // LAYER 5: price sensitivity
-  // -------------------------------------------------------------------------
-  const sensitivityEntry = settings.sensitivity_multipliers.find(
-    (s) => s.value === input.price_sensitivity
-  );
+  const sensitivityEntry = settings.sensitivity_multipliers.find(s => s.value === input.price_sensitivity);
   const sensitivity_multiplier = sensitivityEntry?.multiplier ?? 1.0;
   const sensitivity_adjusted = size_adjusted * sensitivity_multiplier;
 
-  // -------------------------------------------------------------------------
-  // LAYER 6: fund history
-  // -------------------------------------------------------------------------
-  const inputFund = input.fund_name?.trim().toLowerCase() ?? null;
-
-  const fundProposals = inputFund
-    ? historicalProposals
-        .filter(
-          (p) =>
-            p.fund_name &&
-            p.fund_name.trim().toLowerCase() === inputFund
-        )
-        .sort(
-          (a, b) =>
-            new Date(b.proposal_date).getTime() -
-            new Date(a.proposal_date).getTime()
-        )
-    : [];
-
-  const fund_proposals_count = fundProposals.length;
-  const fundPrices = fundProposals.map((p) => p.weekly_price);
-
-  const fund_avg_weekly = mean(fundPrices);
-  const fund_recent_weekly = mean(fundPrices.slice(0, 3));
-  const fund_min_weekly = fundPrices.length > 0 ? Math.min(...fundPrices) : null;
-  const fund_max_weekly = fundPrices.length > 0 ? Math.max(...fundPrices) : null;
-
-  const fundWon = fundProposals.filter((p) => p.outcome === "won").length;
-  const fundLost = fundProposals.filter((p) => p.outcome === "lost").length;
-  const fund_win_rate =
-    fundWon + fundLost > 0 ? fundWon / (fundWon + fundLost) : null;
-
-  let history_anchor: number | null = null;
-  if (fund_proposals_count >= 2 && fund_recent_weekly !== null && fund_avg_weekly !== null) {
-    history_anchor = 0.6 * fund_recent_weekly + 0.4 * fund_avg_weekly;
+  if (Math.abs(total_client_adj) > 0.001) {
+    layer_trace.push({
+      layer: "L3",
+      label: "Client Profile",
+      value: after_client,
+      delta_pct: total_client_adj * 100,
+      note: client_notes.join("; ") || "Standard client profile",
+    });
   }
 
-  const history_adjustment_pct: number | null =
-    history_anchor !== null
-      ? ((sensitivity_adjusted - history_anchor) / history_anchor) * 100
-      : null;
+  // Ensure cost floor
+  const after_floor = Math.max(after_client, cost_floor_weekly);
+  if (after_floor > after_client) {
+    layer_trace.push({
+      layer: "L1",
+      label: "Cost Floor Applied",
+      value: after_floor,
+      delta_pct: ((after_floor - after_client) / after_client) * 100,
+      note: `Price raised to cost floor ${formatCurrency(cost_floor_weekly)}/wk`,
+    });
+  }
 
-  // -------------------------------------------------------------------------
-  // LAYER 7: comparables
-  // -------------------------------------------------------------------------
-  const scoredProposals = historicalProposals.map((p) => {
-    let score = 0;
-    if (
-      inputFund &&
-      p.fund_name &&
-      p.fund_name.trim().toLowerCase() === inputFund
-    ) {
-      score += 40;
-    }
-    if (p.region.toLowerCase() === input.region.toLowerCase()) {
-      score += 25;
-    }
-    if (p.pe_owned === input.pe_owned) {
-      score += 15;
-    }
-    if (p.revenue_band === input.revenue_band) {
-      score += 20;
-    }
-    return { proposal: p, score };
-  });
+  // ── L4: Historical Intelligence ────────────────────────────────────────────
+  const histResult = computeHistoricalAnchor(input, historicalProposals, settings);
+  const {
+    fund_proposals_count, fund_avg_weekly, fund_recent_weekly,
+    fund_min_weekly, fund_max_weekly, fund_win_rate,
+    history_anchor, comparable_wins, comparable_losses,
+    comparable_avg_win_weekly, comparable_avg_loss_weekly,
+  } = histResult;
 
-  const comparables = scoredProposals
-    .filter((s) => s.score >= 25)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 8)
-    .map((s) => s.proposal);
-
-  const comparable_wins = comparables.filter((p) => p.outcome === "won");
-  const comparable_losses = comparables.filter((p) => p.outcome === "lost");
-
-  const comparable_avg_win_weekly = mean(comparable_wins.map((p) => p.weekly_price));
-  const comparable_avg_loss_weekly = mean(comparable_losses.map((p) => p.weekly_price));
-
-  // -------------------------------------------------------------------------
-  // FINAL TARGET CALCULATION
-  // -------------------------------------------------------------------------
-  let adjusted = sensitivity_adjusted;
-
+  let after_history = after_floor;
   if (history_anchor !== null && fund_proposals_count >= 2) {
-    const blend_weight = settings.fund_anchor_weight;
-    adjusted = adjusted * (1 - blend_weight) + history_anchor * blend_weight;
+    const blend = settings.fund_anchor_weight;
+    after_history = after_floor * (1 - blend) + history_anchor * blend;
+    layer_trace.push({
+      layer: "L4",
+      label: "Fund History",
+      value: after_history,
+      delta_pct: ((after_history - after_floor) / after_floor) * 100,
+      note: `${fund_proposals_count} prior proposals blended (time-decayed, outcome-weighted) at ${(blend * 100).toFixed(0)}%`,
+    });
   }
 
-  if (
-    comparable_avg_win_weekly !== null &&
-    comparable_wins.length >= settings.min_comparables
-  ) {
-    const wl_weight = settings.win_loss_weight;
-    adjusted = adjusted * (1 - wl_weight) + comparable_avg_win_weekly * wl_weight;
+  if (comparable_avg_win_weekly !== null && comparable_wins.length >= settings.min_comparables) {
+    const wl = settings.win_loss_weight;
+    after_history = after_history * (1 - wl) + comparable_avg_win_weekly * wl;
+    layer_trace.push({
+      layer: "L4",
+      label: "Win/Loss Comparables",
+      value: after_history,
+      delta_pct: comparable_avg_win_weekly !== null
+        ? ((comparable_avg_win_weekly - after_history) / after_history) * 100 : 0,
+      note: `${comparable_wins.length} comparable wins avg ${formatCurrency(comparable_avg_win_weekly ?? 0)} blended at ${(wl * 100).toFixed(0)}%`,
+    });
   }
 
-  const target_weekly = roundTo500(adjusted);
-  const low_weekly = Math.round((target_weekly * (1 - settings.bracket_low_pct / 100)) / 500) * 500;
+  const history_adjustment_pct = history_anchor !== null
+    ? ((after_history - history_anchor) / history_anchor) * 100 : null;
+
+  // ── L5: Strategic Intent ─────────────────────────────────────────────────
+  let strategic_adj = 0;
+  let intent_note = "";
+  switch (input.strategic_intent) {
+    case "enter":   strategic_adj = -0.15; intent_note = "Enter new client: −15% (beachhead)"; break;
+    case "expand":  strategic_adj = 0.0;   intent_note = "Expand existing relationship: neutral"; break;
+    case "harvest": strategic_adj = 0.15;  intent_note = "Harvest: +15% (optimise margin)"; break;
+  }
+
+  const after_intent = after_history * (1 + strategic_adj);
+  if (Math.abs(strategic_adj) > 0.001) {
+    layer_trace.push({
+      layer: "L5",
+      label: "Strategic Intent",
+      value: after_intent,
+      delta_pct: strategic_adj * 100,
+      note: intent_note,
+    });
+  }
+
+  // ── L6: EV Optimization ─────────────────────────────────────────────────
+  // Reference price: average comparable win or rate matrix target
+  const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
+  const matrixRegion = regionMap[input.region] ?? "Italy";
+  const clientType = input.pe_owned
+    ? "PE/LBO"
+    : input.revenue_band === "above_1b" ? "Corporate >€1B"
+    : (input.revenue_band === "200m_1b" || input.revenue_band === "100m_200m") ? "Family PMI €200M+"
+    : "Family PMI <€200M";
+  const matrixRow = settings.rate_matrix?.find(r => r.client_type === clientType);
+  const matrixCell = matrixRow?.rates?.[matrixRegion];
+  const matrix_reference = matrixCell && !matrixCell.avoid
+    ? (matrixCell.min_weekly + matrixCell.max_weekly) / 2
+    : null;
+
+  const reference_for_ev = comparable_avg_win_weekly ?? matrix_reference;
+  const { ev_price, win_probability, expected_margin_pct } = evOptimize(
+    after_intent,
+    cost_floor_weekly,
+    reference_for_ev,
+    comparable_wins,
+    comparable_losses,
+  );
+
+  // Blend EV price with L5 result (don't let optimizer drift too far)
+  const max_ev_drift = 0.15; // max 15% shift from L5 price
+  const clamped_ev = Math.max(
+    after_intent * (1 - max_ev_drift),
+    Math.min(after_intent * (1 + max_ev_drift), ev_price)
+  );
+
+  if (Math.abs(clamped_ev - after_intent) > 500) {
+    layer_trace.push({
+      layer: "L6",
+      label: "EV Optimization",
+      value: clamped_ev,
+      delta_pct: ((clamped_ev - after_intent) / after_intent) * 100,
+      note: `EV-maximizing price (P(win)=${(win_probability * 100).toFixed(0)}%, margin=${expected_margin_pct.toFixed(0)}%)`,
+    });
+  }
+
+  // ── Final price ──────────────────────────────────────────────────────────
+  const target_weekly = roundTo500(clamped_ev);
+  const low_weekly  = Math.round((target_weekly * (1 - settings.bracket_low_pct / 100)) / 500) * 500;
   const high_weekly = Math.round((target_weekly * (1 + settings.bracket_high_pct / 100)) / 500) * 500;
 
-  const low_total = low_weekly * input.duration_weeks;
+  const low_total    = low_weekly    * input.duration_weeks;
   const target_total = target_weekly * input.duration_weeks;
-  const high_total = high_weekly * input.duration_weeks;
+  const high_total   = high_weekly   * input.duration_weeks;
 
-  // -------------------------------------------------------------------------
-  // POSTURE
-  // -------------------------------------------------------------------------
+  layer_trace.push({
+    layer: "OUT",
+    label: "Final Target",
+    value: target_weekly,
+    delta_pct: base_weekly > 0 ? ((target_weekly - base_weekly) / base_weekly) * 100 : 0,
+    note: `Range: ${formatCurrency(low_weekly)} – ${formatCurrency(high_weekly)}/wk`,
+  });
+
+  // ── Posture ──────────────────────────────────────────────────────────────
   let posture: "Defensive" | "Balanced" | "Assertive";
   if (target_weekly < sensitivity_adjusted * 0.95) {
     posture = "Defensive";
@@ -525,139 +999,73 @@ export function calculatePricing(
     posture = "Balanced";
   }
 
-  // -------------------------------------------------------------------------
-  // CONFIDENCE
-  // -------------------------------------------------------------------------
-  let confidence = 0.4;
-  if (fund_proposals_count >= 3) confidence += 0.2;
-  if (comparable_wins.length >= 2) confidence += 0.1;
-  if (comparable_losses.length >= 2) confidence += 0.1;
-  if (fund_proposals_count >= 5) confidence += 0.1;
+  // ── Confidence ───────────────────────────────────────────────────────────
+  let confidence = 0.35;
+  if (fund_proposals_count >= 3)  confidence += 0.15;
+  if (fund_proposals_count >= 5)  confidence += 0.10;
+  if (comparable_wins.length >= 2)  confidence += 0.10;
+  if (comparable_losses.length >= 2) confidence += 0.05;
+  if (value_anchor_weekly !== null) confidence += 0.10; // value anchor adds confidence
+  if (input.competitive_intensity && input.competitor_type) confidence += 0.05; // market context
+  if (input.commercial_maturity && input.urgency) confidence += 0.05;
   confidence = Math.min(confidence, 1.0);
 
   let confidence_label: "Low" | "Medium" | "High";
-  if (confidence < 0.5) {
-    confidence_label = "Low";
-  } else if (confidence < 0.75) {
-    confidence_label = "Medium";
-  } else {
-    confidence_label = "High";
-  }
+  if (confidence < 0.5)       confidence_label = "Low";
+  else if (confidence < 0.75) confidence_label = "Medium";
+  else                         confidence_label = "High";
 
-  // -------------------------------------------------------------------------
-  // DRIVERS
-  // -------------------------------------------------------------------------
+  // ── Drivers ─────────────────────────────────────────────────────────────
   const drivers: string[] = [];
 
-  // Staffing summary
   const staffingDesc = input.staffing
-    .map((line) => {
+    .map(line => {
       const label = line.resource_label || line.role_name;
-      const countStr = line.count > 1 ? `${line.count}x ` : "";
+      const countStr = line.count > 1 ? `${line.count}× ` : "";
       return `${countStr}${label} (${line.days_per_week}d/wk @ €${line.daily_rate_used.toLocaleString("en-US")}/day)`;
     })
     .join(", ");
-  drivers.push(
-    `Staffing: ${staffingDesc} → base weekly fee ${formatCurrency(base_weekly)}`
-  );
+  drivers.push(`Staffing: ${staffingDesc} → base ${formatCurrency(base_weekly)}/wk`);
 
-  // Geo multiplier
+  if (value_anchor_weekly !== null) {
+    const captureRate = CAPTURE_RATES[input.project_type!] ?? 0.11;
+    drivers.push(
+      `Value anchor: estimated EBITDA uplift ${formatCurrency(ebitda_uplift ?? 0)} × ${(captureRate * 100).toFixed(0)}% capture / ${input.duration_weeks}w = ${formatCurrency(value_anchor_weekly)}/wk`
+    );
+  }
+
   if (geo_multiplier !== 1.0) {
-    const pct = ((geo_multiplier - 1) * 100).toFixed(0);
-    const sign = geo_multiplier > 1 ? "+" : "";
-    drivers.push(
-      `Geography (${input.region}): ${sign}${pct}% regional adjustment (×${geo_multiplier}) → ${formatCurrency(geo_adjusted)}`
-    );
+    drivers.push(`Geography (${input.region}): ×${geo_multiplier} regional adjustment`);
   }
 
-  // Ownership multiplier
-  if (ownership_multiplier !== 1.0) {
-    const pct = ((ownership_multiplier - 1) * 100).toFixed(0);
-    const sign = ownership_multiplier > 1 ? "+" : "";
-    const ownerLabel = input.pe_owned ? "PE-owned" : "Non PE-owned";
-    drivers.push(
-      `Ownership (${ownerLabel}): ${sign}${pct}% adjustment (×${ownership_multiplier}) → ${formatCurrency(ownership_adjusted)}`
-    );
+  if (total_market_adj !== 0) {
+    drivers.push(`Market context: ${market_notes.join(", ")} (${total_market_adj > 0 ? "+" : ""}${(total_market_adj * 100).toFixed(0)}%)`);
   }
 
-  // Size multiplier
-  if (size_multiplier !== 1.0) {
-    const pct = ((size_multiplier - 1) * 100).toFixed(0);
-    const sign = size_multiplier > 1 ? "+" : "";
-    const bandLabel =
-      REVENUE_BANDS.find((b) => b.value === input.revenue_band)?.label ??
-      input.revenue_band;
-    drivers.push(
-      `Revenue band (${bandLabel}): ${sign}${pct}% size adjustment (×${size_multiplier}) → ${formatCurrency(size_adjusted)}`
-    );
+  if (total_client_adj !== 0) {
+    drivers.push(`Client profile: ${client_notes.join(", ")} (${total_client_adj > 0 ? "+" : ""}${(total_client_adj * 100).toFixed(0)}%)`);
   }
 
-  // Sensitivity multiplier
-  if (sensitivity_multiplier !== 1.0) {
-    const pct = ((sensitivity_multiplier - 1) * 100).toFixed(0);
-    const sign = sensitivity_multiplier > 1 ? "+" : "";
-    const sensLabel =
-      settings.sensitivity_multipliers.find(
-        (s) => s.value === input.price_sensitivity
-      )?.label ?? input.price_sensitivity;
-    drivers.push(
-      `Price sensitivity (${sensLabel}): ${sign}${pct}% adjustment (×${sensitivity_multiplier}) → ${formatCurrency(sensitivity_adjusted)}`
-    );
+  if (history_anchor !== null && fund_proposals_count > 0 && input.fund_name) {
+    const winRateStr = fund_win_rate !== null ? ` — ${(fund_win_rate * 100).toFixed(0)}% win rate` : "";
+    drivers.push(`Fund history (${input.fund_name}): ${fund_proposals_count} proposals, time-decayed anchor ${formatCurrency(Math.round(history_anchor))}/wk${winRateStr}`);
   }
 
-  // Fund history
-  if (fund_proposals_count > 0 && input.fund_name) {
-    const winRateStr =
-      fund_win_rate !== null ? ` — ${(fund_win_rate * 100).toFixed(0)}% win rate` : "";
-    const anchorStr =
-      history_anchor !== null
-        ? ` — history anchor ${formatCurrency(Math.round(history_anchor))}`
-        : "";
-    drivers.push(
-      `Fund history (${input.fund_name}): ${fund_proposals_count} prior proposal${fund_proposals_count !== 1 ? "s" : ""}, avg ${formatCurrency(Math.round(fund_avg_weekly ?? 0))}${winRateStr}${anchorStr}`
-    );
+  if (input.strategic_intent && Math.abs(strategic_adj) > 0) {
+    drivers.push(`Strategic intent: ${intent_note}`);
   }
 
-  // Comparables
-  if (comparables.length > 0) {
-    const winStr =
-      comparable_avg_win_weekly !== null
-        ? `, avg win ${formatCurrency(Math.round(comparable_avg_win_weekly))}`
-        : "";
-    const lossStr =
-      comparable_avg_loss_weekly !== null
-        ? `, avg loss ${formatCurrency(Math.round(comparable_avg_loss_weekly))}`
-        : "";
-    drivers.push(
-      `Comparables: ${comparable_wins.length} win${comparable_wins.length !== 1 ? "s" : ""} and ${comparable_losses.length} loss${comparable_losses.length !== 1 ? "es" : ""} from ${comparables.length} similar deals${winStr}${lossStr}`
-    );
-  }
+  drivers.push(`EV optimization: P(win) ${(win_probability * 100).toFixed(0)}% at target, expected margin ${expected_margin_pct.toFixed(0)}%`);
 
-  // -------------------------------------------------------------------------
-  // WARNINGS
-  // -------------------------------------------------------------------------
+  // ── Warnings ─────────────────────────────────────────────────────────────
   const warnings: string[] = [];
 
-  if (
-    history_adjustment_pct !== null &&
-    history_adjustment_pct > settings.aggressive_threshold_pct
-  ) {
-    const pctStr = history_adjustment_pct.toFixed(1);
-    const fundLabel = input.fund_name ?? "this fund";
-    warnings.push(
-      `⚠ Target is ${pctStr}% above historical average for ${fundLabel} — historically leads to losses`
-    );
+  if (history_adjustment_pct !== null && history_adjustment_pct > settings.aggressive_threshold_pct) {
+    warnings.push(`⚠ Target is ${history_adjustment_pct.toFixed(1)}% above historical average for ${input.fund_name ?? "this fund"}`);
   }
 
-  if (
-    history_adjustment_pct !== null &&
-    history_adjustment_pct < -settings.conservative_threshold_pct
-  ) {
-    const pctStr = Math.abs(history_adjustment_pct).toFixed(1);
-    const fundLabel = input.fund_name ?? "this fund";
-    warnings.push(
-      `⚠ Target is ${pctStr}% below historical average for ${fundLabel} — may leave money on the table`
-    );
+  if (history_adjustment_pct !== null && history_adjustment_pct < -settings.conservative_threshold_pct) {
+    warnings.push(`⚠ Target is ${Math.abs(history_adjustment_pct).toFixed(1)}% below historical average — may leave money on the table`);
   }
 
   if (fund_proposals_count === 0 && input.fund_name) {
@@ -665,54 +1073,48 @@ export function calculatePricing(
   }
 
   if (comparable_wins.length < settings.min_comparables) {
-    warnings.push(
-      `ℹ Limited comparable wins (${comparable_wins.length}) — recommendation has lower confidence`
-    );
+    warnings.push(`ℹ Limited comparable wins (${comparable_wins.length}) — recommendation has lower confidence`);
   }
 
-  if (
-    comparable_avg_loss_weekly !== null &&
-    target_weekly >= comparable_avg_loss_weekly
-  ) {
-    warnings.push(
-      `⚠ Target (${formatCurrency(target_weekly)}) is at or above the average lost price (${formatCurrency(Math.round(comparable_avg_loss_weekly))}) for comparable deals`
-    );
+  if (comparable_avg_loss_weekly !== null && target_weekly >= comparable_avg_loss_weekly) {
+    warnings.push(`⚠ Target (${formatCurrency(target_weekly)}) is at or above the average lost price (${formatCurrency(Math.round(comparable_avg_loss_weekly))}) for comparable deals`);
   }
 
-  // -------------------------------------------------------------------------
-  // ADVISORY
-  // -------------------------------------------------------------------------
-  const postureDesc =
-    posture === "Defensive"
-      ? "a conservative posture to maximise win probability"
-      : posture === "Assertive"
-      ? "an assertive posture reflecting strong market positioning"
-      : "a balanced posture between competitiveness and value capture";
+  if (win_probability < 0.35) {
+    warnings.push(`⚠ Low estimated win probability (${(win_probability * 100).toFixed(0)}%) — consider a more competitive price`);
+  }
 
-  const historyContext =
-    fund_proposals_count >= 2 && history_anchor !== null
-      ? ` Historical data from ${fund_proposals_count} prior ${input.fund_name ? `${input.fund_name} ` : ""}proposal${fund_proposals_count !== 1 ? "s" : ""} anchors the recommendation at ${formatCurrency(Math.round(history_anchor))}/week, blended at ${(settings.fund_anchor_weight * 100).toFixed(0)}%.`
-      : fund_proposals_count > 0
-      ? ` There is ${fund_proposals_count} prior proposal on record for this fund, though insufficient history for anchoring.`
-      : input.fund_name
-      ? ` No prior proposals were found for ${input.fund_name}, so the recommendation relies solely on rate-card adjustments and market comparables.`
-      : "";
+  if (value_anchor_weekly !== null && value_anchor_weekly > target_weekly * 2) {
+    warnings.push(`ℹ Value anchor (${formatCurrency(Math.round(value_anchor_weekly))}/wk) is much higher than target — significant value left uncaptured`);
+  }
 
-  const confidenceContext =
-    confidence_label === "High"
-      ? "supported by sufficient comparable data"
-      : confidence_label === "Medium"
-      ? "with moderate confidence given available data"
-      : "with low confidence due to limited historical data";
+  // ── Advisory ─────────────────────────────────────────────────────────────
+  const postureDesc = posture === "Defensive"
+    ? "a conservative posture to maximise win probability"
+    : posture === "Assertive"
+    ? "an assertive posture reflecting strong market positioning"
+    : "a balanced posture between competitiveness and value capture";
+
+  const valueContext = value_anchor_weekly !== null
+    ? ` The value-based anchor (${formatCurrency(Math.round(value_anchor_weekly))}/wk) reflects estimated EBITDA impact of ${formatCurrency(ebitda_uplift ?? 0)}.`
+    : "";
+
+  const historyContext = fund_proposals_count >= 2 && history_anchor !== null
+    ? ` Historical data from ${fund_proposals_count} prior ${input.fund_name ? `${input.fund_name} ` : ""}proposals anchors at ${formatCurrency(Math.round(history_anchor))}/wk (time-decayed, outcome-weighted).`
+    : fund_proposals_count > 0
+    ? ` There is ${fund_proposals_count} prior proposal on record for this fund.`
+    : input.fund_name
+    ? ` No prior proposals found for ${input.fund_name}.`
+    : "";
 
   const advisory =
-    `This ${input.duration_weeks}-week engagement is priced at ${formatCurrency(target_weekly)}/week (${formatCurrency(target_total)} total), reflecting ${postureDesc}.` +
-    `${historyContext}` +
-    ` The recommendation carries ${confidence_label.toLowerCase()} confidence (${(confidence * 100).toFixed(0)}%), ${confidenceContext}; the negotiation range of ${formatCurrency(low_weekly)}–${formatCurrency(high_weekly)}/week should be used to guide client conversations.`;
+    `This ${input.duration_weeks}-week engagement is priced at ${formatCurrency(target_weekly)}/wk (${formatCurrency(target_total)} total), reflecting ${postureDesc}.` +
+    valueContext + historyContext +
+    ` EV-optimized at P(win)=${(win_probability * 100).toFixed(0)}%, expected margin ${expected_margin_pct.toFixed(0)}%. ` +
+    `Confidence: ${confidence_label.toLowerCase()} (${(confidence * 100).toFixed(0)}%). ` +
+    `Negotiation range: ${formatCurrency(low_weekly)}–${formatCurrency(high_weekly)}/wk.`;
 
-  // -------------------------------------------------------------------------
-  // Return
-  // -------------------------------------------------------------------------
+  // ── Return ───────────────────────────────────────────────────────────────
   return {
     base_weekly,
     geo_multiplier,
@@ -747,5 +1149,14 @@ export function calculatePricing(
     drivers,
     warnings,
     advisory,
+    // New fields
+    value_anchor_weekly,
+    cost_floor_weekly,
+    ebitda_uplift,
+    ebitda_improvement_pct,
+    win_probability,
+    expected_margin_pct,
+    ev_optimized_weekly: ev_price,
+    layer_trace,
   };
 }

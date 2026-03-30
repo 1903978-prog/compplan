@@ -83,6 +83,27 @@ export const adminSettingsSchema = z.object({
 });
 export type AdminSettings = z.infer<typeof adminSettingsSchema>;
 
+export const onboardingWeekSchema = z.object({
+  week: z.number(),          // 1-8
+  score: z.number().min(0).max(100).nullable(),
+});
+export type OnboardingWeek = z.infer<typeof onboardingWeekSchema>;
+
+export const yearlyReviewSchema = z.object({
+  year: z.number(),
+  summary: z.string().default(""),
+  dev_plan: z.string().default(""),
+});
+export type YearlyReview = z.infer<typeof yearlyReviewSchema>;
+
+export const comexAreaSchema = z.record(z.string(), z.boolean());
+export type ComexAreas = z.infer<typeof comexAreaSchema>;
+
+export const COMEX_AREAS = [
+  "Diagnostic", "Org Design", "Org Sizing", "SFE", "CapDB",
+  "Incentives", "War Rooms", "List Pricing", "GTN",
+] as const;
+
 export const employeeInputSchema = z.object({
   id: z.string(),
   name: z.string().min(1, "Name is required"),
@@ -94,13 +115,20 @@ export const employeeInputSchema = z.object({
   current_gross_fixed_year: z.number(),
   meal_voucher_daily: z.number().min(0),
   months_paid: z.number().refine((v) => v === 12 || v === 13),
-  current_bonus_pct: z.number().min(0).max(30),
-  performance_score: z.number().min(1).max(10),
+  current_bonus_pct: z.number().min(0).max(30).default(0),
+  performance_score: z.number().min(1).max(10).nullable().optional(),
   monthly_ratings: z.array(monthlyRatingSchema).default([]),
   completed_tests: z.array(completedTestSchema).default([]),
   promo_increase_override: z.number().min(0).max(100).nullable().optional(),
   pending_salary_gross: z.number().nullable().optional(),
   pending_salary_date: z.string().nullable().optional(),
+  // New fields
+  university_grade: z.number().nullable().optional(),        // e.g. 108 or 3.8
+  university_grade_type: z.enum(["110", "GPA"]).nullable().optional(),
+  promotion_discussion_notes: z.string().nullable().optional(),
+  onboarding_ratings: z.preprocess(v => v ?? [], z.array(onboardingWeekSchema)),
+  yearly_reviews: z.preprocess(v => v ?? [], z.array(yearlyReviewSchema)),
+  comex_areas: z.preprocess(v => v ?? {}, comexAreaSchema),
 });
 export type EmployeeInput = z.infer<typeof employeeInputSchema>;
 
@@ -141,6 +169,12 @@ export const employees = pgTable("employees", {
   promo_increase_override: real("promo_increase_override"),
   pending_salary_gross: real("pending_salary_gross"),
   pending_salary_date: text("pending_salary_date"),
+  university_grade: real("university_grade"),
+  university_grade_type: text("university_grade_type"),
+  promotion_discussion_notes: text("promotion_discussion_notes"),
+  onboarding_ratings: jsonb("onboarding_ratings").$type<OnboardingWeek[]>().default([]),
+  yearly_reviews: jsonb("yearly_reviews").$type<YearlyReview[]>().default([]),
+  comex_areas: jsonb("comex_areas").$type<ComexAreas>().default({}),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
@@ -281,6 +315,27 @@ export const pricingProposals = pgTable("pricing_proposals", {
   outcome: text("outcome").notNull().default("pending"),
   loss_reason: text("loss_reason"),
   notes: text("notes"),
+  created_at: text("created_at").notNull(),
+});
+
+// ─── Employee Tasks (TDL) ────────────────────────────────────────────────────
+
+export const employeeTaskSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().min(1),
+  delegated_to: z.string(),   // employee id
+  deadline: z.string().nullable().optional(),
+  status: z.enum(["pending", "done"]).default("pending"),
+  created_at: z.string(),
+});
+export type EmployeeTask = z.infer<typeof employeeTaskSchema>;
+
+export const employeeTasks = pgTable("employee_tasks", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  delegated_to: text("delegated_to").notNull(),
+  deadline: text("deadline"),
+  status: text("status").notNull().default("pending"),
   created_at: text("created_at").notNull(),
 });
 
