@@ -1372,6 +1372,7 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
       form.reset({
         ...base,
         monthly_ratings: ratings.filter(r => r.score != null),
+        completed_tests: base.completed_tests ?? [],
         onboarding_ratings: (base as any).onboarding_ratings ?? [],
         yearly_reviews: (base as any).yearly_reviews ?? [],
         comex_areas: (base as any).comex_areas ?? {},
