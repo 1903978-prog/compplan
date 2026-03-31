@@ -673,6 +673,27 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     setRatings12(ratings);
   }, [employee.id]);
 
+  // Auto-mark Onboarding test as completed with avg of weekly ratings
+  useEffect(() => {
+    const onboardingTest = settings.tests?.find(t => t.name.toLowerCase() === "onboarding");
+    if (!onboardingTest) return;
+    const weeklyScores = ((employee as any).onboarding_ratings ?? [])
+      .filter((r: any) => r.score != null).map((r: any) => r.score as number);
+    if (weeklyScores.length === 0) return;
+    const avg = Math.round(weeklyScores.reduce((a, b) => a + b, 0) / weeklyScores.length);
+    const current: CompletedTest[] = form.getValues("completed_tests") || [];
+    const idx = current.findIndex(ct => ct.id === onboardingTest.id);
+    if (idx >= 0) {
+      if (current[idx].score !== avg) {
+        const updated = [...current];
+        updated[idx] = { id: onboardingTest.id, score: avg };
+        form.setValue("completed_tests", updated);
+      }
+    } else {
+      form.setValue("completed_tests", [...current, { id: onboardingTest.id, score: avg }]);
+    }
+  }, [employee.id, (employee as any).onboarding_ratings]);
+
   const updateRating12 = (month: string, score: number | null) => {
     const updated = ratings12.map(r => r.month === month ? { ...r, score } : r);
     setRatings12(updated);
@@ -1030,9 +1051,13 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                   const completedTests: CompletedTest[] = form.watch("completed_tests") || [];
                   const entry = completedTests.find(ct => ct.id === test.id);
                   const isChecked = !!entry;
+                  // Onboarding test is auto-managed from weekly ratings
+                  const isOnboardingAuto = test.name.toLowerCase() === "onboarding" &&
+                    ((employee as any).onboarding_ratings ?? []).filter((r: any) => r.score != null).length > 0;
                   return (
                     <div key={test.id} className={`flex items-center gap-2 p-2 rounded-lg border ${isChecked ? 'bg-primary/5 border-primary/20' : 'bg-muted/10'}`}>
                       <input type="checkbox" id={`detail-test-${test.id}`} checked={isChecked}
+                        disabled={isOnboardingAuto}
                         onChange={(e) => {
                           const current: CompletedTest[] = form.getValues("completed_tests") || [];
                           if (e.target.checked) {
@@ -1043,11 +1068,16 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                         }}
                         className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                       />
-                      <Label htmlFor={`detail-test-${test.id}`} className="text-sm font-normal cursor-pointer flex-1">{test.name}</Label>
+                      <Label htmlFor={`detail-test-${test.id}`} className="text-sm font-normal cursor-pointer flex-1">
+                        {test.name}
+                        {isOnboardingAuto && <span className="text-[9px] text-muted-foreground ml-1">(auto from W1-W8)</span>}
+                      </Label>
                       {isChecked && (
                         <Input type="number" min="0" max="100" placeholder="Score" className="h-7 w-20 text-xs"
                           value={entry?.score ?? ""}
+                          readOnly={isOnboardingAuto}
                           onChange={(e) => {
+                            if (isOnboardingAuto) return;
                             const current: CompletedTest[] = [...(form.getValues("completed_tests") || [])];
                             const idx = current.findIndex(ct => ct.id === test.id);
                             if (idx !== -1) {
