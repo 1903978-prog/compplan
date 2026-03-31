@@ -4,6 +4,20 @@ import { DEFAULT_ROLE_GRID, DEFAULT_ADMIN_SETTINGS } from "@/lib/calculations";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 
+/** Sanitize employee JSONB fields that may come as wrong types from the DB */
+function sanitizeEmployee(e: any): EmployeeInput {
+  return {
+    ...e,
+    completed_tests: Array.isArray(e.completed_tests)
+      ? e.completed_tests.map((t: any) => typeof t === 'string' ? { id: t, score: null } : t)
+      : [],
+    monthly_ratings: Array.isArray(e.monthly_ratings) ? e.monthly_ratings : [],
+    onboarding_ratings: Array.isArray(e.onboarding_ratings) ? e.onboarding_ratings : [],
+    yearly_reviews: Array.isArray(e.yearly_reviews) ? e.yearly_reviews : [],
+    comex_areas: e.comex_areas && typeof e.comex_areas === 'object' && !Array.isArray(e.comex_areas) ? e.comex_areas : {},
+  };
+}
+
 interface AppState {
   employees: EmployeeInput[];
   roleGrid: RoleGridRow[];
@@ -40,7 +54,7 @@ export const useStore = create<AppState>()((set, get) => ({
         settingsRes.json(),
       ]);
       set({
-        employees: empsData as EmployeeInput[],
+        employees: (empsData as any[]).map(sanitizeEmployee),
         roleGrid: gridData as RoleGridRow[],
         settings: settingsData as AdminSettings,
         isLoaded: true,
@@ -53,7 +67,7 @@ export const useStore = create<AppState>()((set, get) => ({
 
   addEmployee: async (employee) => {
     const res = await apiRequest("POST", "/api/employees", employee);
-    const created = await res.json() as EmployeeInput;
+    const created = sanitizeEmployee(await res.json());
     set((s) => ({ employees: [...s.employees, created] }));
   },
 
@@ -62,7 +76,7 @@ export const useStore = create<AppState>()((set, get) => ({
     if (!existing) return;
     const merged = { ...existing, ...updates };
     const res = await apiRequest("PUT", `/api/employees/${id}`, merged);
-    const updated = await res.json() as EmployeeInput;
+    const updated = sanitizeEmployee(await res.json());
     set((s) => ({
       employees: s.employees.map((e) => (e.id === id ? updated : e)),
     }));

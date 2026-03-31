@@ -1065,11 +1065,18 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
         </Button>
       </div>
 
-      <form onSubmit={form.handleSubmit(onSubmit, (errors) => {
-        const details = Object.entries(errors).map(([k, v]) => `${k}: ${(v as any)?.message || (v as any)?.type || JSON.stringify(v)}`);
-        console.error("Form validation errors:", errors);
-        toast({ title: "Cannot save — validation failed", description: details.join("; "), variant: "destructive" });
-      })} className="space-y-6">
+      <form onSubmit={(e) => {
+        // Sanitize completed_tests before zodResolver validation
+        const ct = form.getValues("completed_tests");
+        if (Array.isArray(ct)) {
+          form.setValue("completed_tests", ct.map((t: any) => typeof t === 'string' ? { id: t, score: null } : t));
+        }
+        form.handleSubmit(onSubmit, (errors) => {
+          const details = Object.entries(errors).map(([k, v]) => `${k}: ${(v as any)?.message || (v as any)?.type || JSON.stringify(v)}`);
+          console.error("Form validation errors:", errors);
+          toast({ title: "Cannot save — validation failed", description: details.join("; "), variant: "destructive" });
+        })(e);
+      }} className="space-y-6">
 
         {/* Employee header */}
         <Card className="p-4">
