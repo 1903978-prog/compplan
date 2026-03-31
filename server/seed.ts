@@ -8,11 +8,11 @@ const SEED_EMPLOYEES = [
     id: "emp-defne",
     name: "Defne",
     date_of_birth: "2001-01-01",
-    current_role_code: "S1",
+    current_role_code: "A2",
     hire_date: "2023-06",
-    last_promo_date: "2025-09-21",
+    last_promo_date: "2024-03-01",
     tenure_before_years: 0.5,
-    current_gross_fixed_year: 33358,
+    current_gross_fixed_year: 36387,
     meal_voucher_daily: 8,
     months_paid: 13,
     current_bonus_pct: 15,
@@ -290,6 +290,20 @@ export async function seedDatabase() {
     console.log(`Seeded ${SEED_EMPLOYEES.length} employees`);
   }
 
+  // Fix Defne: she is A2, not S1 — correct role and salary history
+  await db.execute(sql`
+    UPDATE employees
+    SET current_role_code = 'A2',
+        last_promo_date = '2024-03-01',
+        current_gross_fixed_year = 36387
+    WHERE id = 'emp-defne' AND current_role_code = 'S1'
+  `);
+  await db.execute(sql`
+    UPDATE salary_history
+    SET role_code = 'A2', effective_date = '2025-09-01', note = 'Salary increase'
+    WHERE employee_id = 'emp-defne' AND role_code = 'S1'
+  `);
+
   // Seed Defne salary history (idempotent — only if no entries exist for her)
   const defneHistory = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-defne'`);
   const defneCount = (defneHistory.rows[0] as any).cnt;
@@ -298,7 +312,7 @@ export async function seedDatabase() {
       ('emp-defne', '2023-06-08', 'BA',  15120, 12, 'Hire'),
       ('emp-defne', '2023-10-01', 'A1',  29280, 12, 'Promotion to A1'),
       ('emp-defne', '2024-03-01', 'A2',  34307, 13, 'Promotion to A2'),
-      ('emp-defne', '2025-10-01', 'S1',  36387, 13, 'Promotion to S1')`);
+      ('emp-defne', '2025-09-01', 'A2',  36387, 13, 'Salary increase')`);
     console.log("Seeded Defne salary history");
   }
 
