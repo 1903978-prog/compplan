@@ -304,6 +304,18 @@ export async function seedDatabase() {
     WHERE employee_id = 'emp-defne' AND role_code = 'S1'
   `);
 
+  // Ensure Defne has BA and A1 salary history entries (may be missing if DB was seeded before these were added)
+  const defneBaCount = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-defne' AND role_code = 'BA'`);
+  if (parseInt((defneBaCount.rows[0] as any).cnt) === 0) {
+    await db.execute(sql`INSERT INTO salary_history (employee_id, effective_date, role_code, gross_fixed_year, months_paid, note) VALUES
+      ('emp-defne', '2023-06-08', 'BA', 15120, 12, 'Hire')`);
+  }
+  const defneA1Count = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-defne' AND role_code = 'A1'`);
+  if (parseInt((defneA1Count.rows[0] as any).cnt) === 0) {
+    await db.execute(sql`INSERT INTO salary_history (employee_id, effective_date, role_code, gross_fixed_year, months_paid, note) VALUES
+      ('emp-defne', '2023-10-01', 'A1', 29280, 12, 'Promotion to A1')`);
+  }
+
   // Seed Defne salary history (idempotent — only if no entries exist for her)
   const defneHistory = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-defne'`);
   const defneCount = (defneHistory.rows[0] as any).cnt;

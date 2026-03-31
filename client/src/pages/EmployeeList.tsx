@@ -21,7 +21,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
 
-function SalaryChart({ employeeId, hireDate }: { employeeId: string; hireDate: string }) {
+function SalaryChart({ employeeId, hireDate, refreshKey }: { employeeId: string; hireDate: string; refreshKey?: number }) {
   const [history, setHistory] = useState<any[]>([]);
   useEffect(() => {
     fetch(`/api/salary-history/${employeeId}`, { credentials: "include" })
@@ -30,7 +30,7 @@ function SalaryChart({ employeeId, hireDate }: { employeeId: string; hireDate: s
         if (Array.isArray(data)) setHistory(data.sort((a, b) => a.effective_date.localeCompare(b.effective_date)));
       })
       .catch(() => {});
-  }, [employeeId]);
+  }, [employeeId, refreshKey]);
 
   if (history.length === 0) return <div className="text-xs text-muted-foreground italic py-2">No salary history data.</div>;
 
@@ -650,6 +650,7 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
 
   const [ratings12, setRatings12] = useState<{ month: string; score: number | null }[]>(initialRatings12);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [salaryRefreshKey, setSalaryRefreshKey] = useState(0);
 
   // Reset form when employee changes
   useEffect(() => {
@@ -682,11 +683,18 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     setSaveState("saving");
     try {
       const prevGross = employee.current_gross_fixed_year;
+      const prevRole = employee.current_role_code;
       const grossChanged = prevGross !== data.current_gross_fixed_year;
+      const roleChanged = prevRole !== data.current_role_code;
 
       await updateEmployee(employee.id, data);
 
-      if (grossChanged) {
+      if (grossChanged || roleChanged) {
+        const note = roleChanged && grossChanged
+          ? `Promotion to ${data.current_role_code}`
+          : roleChanged
+          ? `Role change to ${data.current_role_code}`
+          : "Salary update";
         await fetch("/api/salary-history", {
           method: "POST",
           credentials: "include",
@@ -699,11 +707,12 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
             months_paid: data.months_paid,
             bonus_pct: data.current_bonus_pct,
             meal_voucher_daily: data.meal_voucher_daily,
-            note: "Salary update",
+            note,
           }),
         });
       }
 
+      if (grossChanged || roleChanged) setSalaryRefreshKey(k => k + 1);
       setSaveState("saved");
       setTimeout(() => setSaveState("idle"), 1500);
       toast({ title: "Employee saved" });
@@ -748,7 +757,7 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     }
   };
 
-  useEffect(() => { loadSalaryHistory(); }, [employee.id]);
+  useEffect(() => { loadSalaryHistory(); }, [employee.id, salaryRefreshKey]);
 
   const MONTHS_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const HIST_YEARS = Array.from({ length: new Date().getFullYear() - 2022 + 3 }, (_, i) => 2023 + i);
@@ -1301,7 +1310,7 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
             <TrendingUp className="w-4 h-4 text-primary" />
             Salary History Chart
           </h4>
-          <SalaryChart employeeId={emp.id} hireDate={emp.hire_date} />
+          <SalaryChart employeeId={emp.id} hireDate={emp.hire_date} refreshKey={salaryRefreshKey} />
         </Card>
 
         {/* Salary History Table (inline) */}
