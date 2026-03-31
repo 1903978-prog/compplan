@@ -7,8 +7,44 @@
 
 import { storage } from "./storage";
 import https from "node:https";
+import http from "node:http";
+import { URL } from "node:url";
 
 const EENDIGO_URL = "https://56.228.34.234/";
+
+// Stage ordering: higher = more advanced
+const STAGE_ORDER: Record<string, number> = {
+  potential: 0,
+  after_intro: 1,
+  after_csi_asc: 2,
+  after_csi_lm: 3,
+};
+
+/** Fetch a URL following up to maxRedirects redirects */
+function fetchWithRedirects(url: string, maxRedirects: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const lib = parsedUrl.protocol === "https:" ? https : http;
+    const req = lib.get(
+      url,
+      { rejectUnauthorized: false, headers: { "User-Agent": "Mozilla/5.0 (compatible; CompPlan/1.0)", "Accept": "text/html" } },
+      (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          if (maxRedirects <= 0) { reject(new Error("Too many redirects")); return; }
+          const next = new URL(res.headers.location, url).toString();
+          fetchWithRedirects(next, maxRedirects - 1).then(resolve, reject);
+          return;
+        }
+        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => resolve(data));
+      }
+    );
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error("Timeout")); });
+    req.on("error", reject);
+  });
+}
 
 // ─── Stage mapping ────────────────────────────────────────────────────────────
 
@@ -155,25 +191,46 @@ function buildInfo(c: RawCandidate): string {
   return lines.join("\n");
 }
 
+/** Merge new info into existing info, adding new lines that aren't already present */
+function mergeInfo(existingInfo: string, newInfo: string): string {
+  const existingLines = new Set(existingInfo.split("\n").map(l => l.trim()).filter(Boolean));
+  const newLines = newInfo.split("\n").map(l => l.trim()).filter(Boolean);
+  const toAdd: string[] = [];
+  for (const line of newLines) {
+    // Check if any existing line contains the same key data (before the first value)
+    const isNew = ![...existingLines].some(existing => {
+      // Same line exactly
+      if (existing === line) return true;
+      // Same prefix (e.g. "Logic 68.2%" vs "Logic 70.1%" — update the value)
+      const existKey = existing.split(/[\d%]/)[0].trim();
+      const newKey = line.split(/[\d%]/)[0].trim();
+      return existKey.length > 3 && existKey === newKey;
+    });
+    if (isNew) toAdd.push(line);
+  }
+  // Update existing lines where the key matches but value changed
+  let merged = existingInfo;
+  for (const line of newLines) {
+    const newKey = line.split(/[\d%]/)[0].trim();
+    if (newKey.length <= 3) continue;
+    const existingLine = [...existingLines].find(e => {
+      const eKey = e.split(/[\d%]/)[0].trim();
+      return eKey === newKey && e !== line;
+    });
+    if (existingLine) {
+      merged = merged.replace(existingLine, line);
+    }
+  }
+  if (toAdd.length) merged = merged + "\n" + toAdd.join("\n");
+  return merged.trim();
+}
+
 // ─── Public sync function ─────────────────────────────────────────────────────
 
 export async function syncEendigoHiring(): Promise<{ synced: number; created: number; updated: number; skipped: number; error?: string }> {
   let html: string;
   try {
-    html = await new Promise<string>((resolve, reject) => {
-      const req = https.get(
-        EENDIGO_URL,
-        { rejectUnauthorized: false, headers: { "User-Agent": "Mozilla/5.0 (compatible; CompPlan/1.0)", "Accept": "text/html" } },
-        (res) => {
-          if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
-          let data = "";
-          res.on("data", (chunk) => { data += chunk; });
-          res.on("end", () => resolve(data));
-        }
-      );
-      req.setTimeout(15000, () => { req.destroy(); reject(new Error("Timeout")); });
-      req.on("error", reject);
-    });
+    html = await fetchWithRedirects(EENDIGO_URL, 5);
   } catch (err: any) {
     return { synced: 0, created: 0, updated: 0, skipped: 0, error: String(err.message ?? err) };
   }
@@ -196,10 +253,17 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
 
     if (existing) {
       if (existing.sync_locked) {
-        // User manually edited this card — preserve their stage and info, only update name
-        await storage.updateHiringCandidate(existing.id, { name: cand.name });
+        // User manually moved — only advance stage if new is further, always merge info
+        const currentOrder = STAGE_ORDER[existing.stage] ?? 0;
+        const newOrder = STAGE_ORDER[cand.stage] ?? 0;
+        const advancedStage = newOrder > currentOrder ? cand.stage : existing.stage;
+        // Merge info: append new data that isn't already present
+        const mergedInfo = mergeInfo(existing.info, info);
+        await storage.updateHiringCandidate(existing.id, { name: cand.name || existing.name, info: mergedInfo, stage: advancedStage });
       } else {
-        await storage.updateHiringCandidate(existing.id, { name: cand.name, info, stage: cand.stage });
+        // Not locked — update everything, but still merge info to preserve history
+        const mergedInfo = mergeInfo(existing.info, info);
+        await storage.updateHiringCandidate(existing.id, { name: cand.name || existing.name, info: mergedInfo, stage: cand.stage });
       }
       updated++;
     } else {
