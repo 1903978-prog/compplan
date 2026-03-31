@@ -256,7 +256,9 @@ Return ONLY valid JSON array, no explanation:`;
 
   // ── AI Pricing Suggestion ──────────────────────────────────────────────────
   app.post("/api/pricing/ai-suggest", requireAuth, async (req, res) => {
-    const anthropic = new Anthropic();
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) { res.status(503).json({ error: "ANTHROPIC_API_KEY not set on server" }); return; }
+    const anthropic = new Anthropic({ apiKey });
     const { currentCase, proposals } = req.body as {
       currentCase: {
         region: string;
@@ -376,7 +378,9 @@ Based on the historical deal data and engagement profile above, return a JSON ob
       tests: { id: string; name: string }[];
     };
 
-    const anthropic = new Anthropic();
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) { res.status(503).json({ error: "ANTHROPIC_API_KEY not set on server" }); return; }
+    const anthropic = new Anthropic({ apiKey });
     const today = new Date().toISOString().slice(0, 10);
     const year = new Date().getFullYear();
 
