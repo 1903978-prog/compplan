@@ -7,6 +7,12 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { spawn } from "child_process";
 
+function safeInt(val: string): number {
+  const n = parseInt(val, 10);
+  if (isNaN(n)) throw Object.assign(new Error("Invalid ID"), { status: 400 });
+  return n;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
@@ -164,18 +170,19 @@ Return ONLY valid JSON array, no explanation:`;
   });
 
   app.patch("/api/salary-history/:id", requireAuth, async (req, res) => {
-    const entry = await storage.updateSalaryHistoryEntry(parseInt(req.params.id), req.body);
+    const entry = await storage.updateSalaryHistoryEntry(safeInt(req.params.id), req.body);
     res.json(entry);
   });
 
   app.delete("/api/salary-history/:id", requireAuth, async (req, res) => {
-    await storage.deleteSalaryHistoryEntry(parseInt(req.params.id));
+    await storage.deleteSalaryHistoryEntry(safeInt(req.params.id));
     res.status(204).end();
   });
 
   // ── Days Off ───────────────────────────────────────────────────────────────
   app.get("/api/days-off", requireAuth, async (req, res) => {
-    const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+    const yearRaw = req.query.year as string | undefined;
+    const year = yearRaw ? safeInt(yearRaw) : undefined;
     const entries = await storage.getDaysOff(year);
     res.json(entries);
   });
@@ -186,7 +193,7 @@ Return ONLY valid JSON array, no explanation:`;
   });
 
   app.delete("/api/days-off/:id", requireAuth, async (req, res) => {
-    await storage.deleteDaysOff(parseInt(req.params.id));
+    await storage.deleteDaysOff(safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -207,7 +214,7 @@ Return ONLY valid JSON array, no explanation:`;
   });
 
   app.get("/api/pricing/cases/:id", requireAuth, async (req, res) => {
-    const c = await storage.getPricingCase(parseInt(req.params.id));
+    const c = await storage.getPricingCase(safeInt(req.params.id));
     if (!c) { res.status(404).json({ message: "Not found" }); return; }
     res.json(c);
   });
@@ -218,12 +225,12 @@ Return ONLY valid JSON array, no explanation:`;
   });
 
   app.put("/api/pricing/cases/:id", requireAuth, async (req, res) => {
-    const c = await storage.updatePricingCase(parseInt(req.params.id), req.body);
+    const c = await storage.updatePricingCase(safeInt(req.params.id), req.body);
     res.json(c);
   });
 
   app.delete("/api/pricing/cases/:id", requireAuth, async (req, res) => {
-    await storage.deletePricingCase(parseInt(req.params.id));
+    await storage.deletePricingCase(safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -238,12 +245,12 @@ Return ONLY valid JSON array, no explanation:`;
   });
 
   app.put("/api/pricing/proposals/:id", requireAuth, async (req, res) => {
-    const p = await storage.updatePricingProposal(parseInt(req.params.id), req.body);
+    const p = await storage.updatePricingProposal(safeInt(req.params.id), req.body);
     res.json(p);
   });
 
   app.delete("/api/pricing/proposals/:id", requireAuth, async (req, res) => {
-    await storage.deletePricingProposal(parseInt(req.params.id));
+    await storage.deletePricingProposal(safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -352,11 +359,11 @@ Based on the historical deal data and engagement profile above, return a JSON ob
   });
 
   app.put("/api/hiring/candidates/:id", requireAuth, async (req, res) => {
-    res.json(await storage.updateHiringCandidate(parseInt(req.params.id), req.body));
+    res.json(await storage.updateHiringCandidate(safeInt(req.params.id), req.body));
   });
 
   app.delete("/api/hiring/candidates/:id", requireAuth, async (req, res) => {
-    await storage.deleteHiringCandidate(parseInt(req.params.id));
+    await storage.deleteHiringCandidate(safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -431,11 +438,11 @@ Rules:
   });
 
   app.put("/api/employee-tasks/:id", requireAuth, async (req, res) => {
-    res.json(await storage.updateEmployeeTask(parseInt(req.params.id), req.body));
+    res.json(await storage.updateEmployeeTask(safeInt(req.params.id), req.body));
   });
 
   app.delete("/api/employee-tasks/:id", requireAuth, async (req, res) => {
-    await storage.deleteEmployeeTask(parseInt(req.params.id));
+    await storage.deleteEmployeeTask(safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -484,6 +491,15 @@ Rules:
       pricingProposals,
       hiringCandidates,
     });
+  });
+
+  // Global error handler — catches unhandled route errors
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    const status = err.status ?? 500;
+    console.error(`[API Error] ${status}:`, err.message || err);
+    if (!res.headersSent) {
+      res.status(status).json({ error: err.message || "Internal server error" });
+    }
   });
 
   return httpServer;

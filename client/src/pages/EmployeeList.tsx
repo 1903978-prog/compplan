@@ -264,7 +264,7 @@ export default function EmployeeList() {
     });
     const t = await res.json();
     setTasks(prev => [...prev, t]);
-    setNewTaskTitle(""); setNewTaskDeadline("");
+    setNewTaskTitle(""); setNewTaskAssignee(""); setNewTaskDeadline("");
   };
 
   const toggleTask = async (task: EmployeeTask) => {

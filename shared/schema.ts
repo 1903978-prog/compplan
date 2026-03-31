@@ -72,7 +72,7 @@ export const adminSettingsSchema = z.object({
   window_tolerance_days: z.number().default(21),
   track_fast_threshold: z.number().default(8.5),
   track_slow_threshold: z.number().default(7.0),
-  tests: z.array(testSchema).default([
+  tests: z.preprocess(v => v ?? [], z.array(testSchema).default([
     { id: "1", name: "Onboarding",              required_for_role: "BA"  },
     { id: "2", name: "Project zero",             required_for_role: "BA"  },
     { id: "3", name: "Policies",                 required_for_role: "BA"  },
@@ -80,8 +80,8 @@ export const adminSettingsSchema = z.object({
     { id: "5", name: "White belt",               required_for_role: "A2"  },
     { id: "6", name: "Consulting foundations",   required_for_role: "S1"  },
     { id: "7", name: "Green belt",               required_for_role: "C1"  },
-  ]),
-  benchmark_data: z.array(benchmarkRowSchema).default(DEFAULT_BENCHMARK),
+  ])),
+  benchmark_data: z.preprocess(v => v ?? DEFAULT_BENCHMARK, z.array(benchmarkRowSchema)),
   benchmark_updated_at: z.string().nullable().default(null),
 });
 export type AdminSettings = z.infer<typeof adminSettingsSchema>;

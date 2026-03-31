@@ -138,6 +138,7 @@ export default function PricingTool() {
         fetch("/api/pricing/cases", { credentials: "include" }),
         fetch("/api/pricing/proposals", { credentials: "include" }),
       ]);
+      if (!sRes.ok || !cRes.ok || !pRes.ok) throw new Error("Failed to load pricing data");
       const sData = await sRes.json();
       const cData = await cRes.json();
       const pData = await pRes.json();

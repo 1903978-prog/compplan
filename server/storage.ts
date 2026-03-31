@@ -232,7 +232,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPricingCases(): Promise<any[]> {
-    return db.select().from(pricingCases).orderBy(pricingCases.id);
+    return await db.select().from(pricingCases).orderBy(pricingCases.id);
   }
 
   async getPricingCase(id: number): Promise<any | undefined> {
@@ -257,7 +257,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPricingProposals(): Promise<any[]> {
-    return db.select().from(pricingProposals).orderBy(pricingProposals.proposal_date);
+    return await db.select().from(pricingProposals).orderBy(pricingProposals.proposal_date);
   }
 
   async createPricingProposal(data: any): Promise<any> {
@@ -276,7 +276,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getHiringCandidates(): Promise<any[]> {
-    return db.select().from(hiringCandidates).orderBy(hiringCandidates.sort_order);
+    return await db.select().from(hiringCandidates).orderBy(hiringCandidates.sort_order);
   }
 
   async createHiringCandidate(data: any): Promise<any> {
@@ -296,7 +296,8 @@ export class DatabaseStorage implements IStorage {
 
   // ── Employee Tasks (TDL) ──────────────────────────────────────────────────
   async getEmployeeTasks(): Promise<EmployeeTask[]> {
-    return db.select().from(employeeTasks).orderBy(employeeTasks.created_at) as Promise<EmployeeTask[]>;
+    const rows = await db.select().from(employeeTasks).orderBy(employeeTasks.created_at);
+    return rows as EmployeeTask[];
   }
 
   async createEmployeeTask(data: Omit<EmployeeTask, "id">): Promise<EmployeeTask> {
