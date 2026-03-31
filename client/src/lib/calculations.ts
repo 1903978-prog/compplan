@@ -238,11 +238,8 @@ export const calculateEmployeeMetrics = (
         future_gross_month = bandMinMonth;
         policy_applied = "Raised to role minimum band";
     } else if (increaseTarget >= bandMaxMonth) {
-        const fivePercentIncrease = gross_month * 1.05;
-        future_gross_month = Math.max(bandMaxMonth, fivePercentIncrease);
-        policy_applied = fivePercentIncrease > bandMaxMonth
-          ? "Exceeded band max: applied minimum 5% promotion increase"
-          : "Capped at role maximum band";
+        future_gross_month = increaseTarget;
+        policy_applied = `⚠ +${effectiveIncreasePct.toFixed(1)}% increase exceeds role band maximum`;
     } else {
         future_gross_month = increaseTarget;
         policy_applied = `+${effectiveIncreasePct.toFixed(1)}% promotion increase`;
