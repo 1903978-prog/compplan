@@ -325,7 +325,7 @@ export default function EmployeeList() {
 
       // Apply test scores
       if (preview.tests.length > 0) {
-        const newTests = [...(emp.completed_tests ?? [])];
+        const newTests = [...(emp.completed_tests ?? [])].map((t: any) => typeof t === 'string' ? { id: t, score: null } : t);
         for (const t of preview.tests) {
           const idx = newTests.findIndex(ct => ct.id === t.id);
           if (t.score !== null) {
@@ -844,7 +844,7 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     defaultValues: {
       ...employee,
       monthly_ratings: initialRatings12.filter(r => r.score != null),
-      completed_tests: employee.completed_tests ?? [],
+      completed_tests: (employee.completed_tests ?? []).map((t: any) => typeof t === 'string' ? { id: t, score: null } : t),
       onboarding_ratings: (employee as any).onboarding_ratings ?? [],
       yearly_reviews: (employee as any).yearly_reviews ?? [],
       comex_areas: (employee as any).comex_areas ?? {},
@@ -867,7 +867,7 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     form.reset({
       ...employee,
       monthly_ratings: ratings.filter(r => r.score != null),
-      completed_tests: employee.completed_tests ?? [],
+      completed_tests: (employee.completed_tests ?? []).map((t: any) => typeof t === 'string' ? { id: t, score: null } : t),
       onboarding_ratings: (employee as any).onboarding_ratings ?? [],
       yearly_reviews: (employee as any).yearly_reviews ?? [],
       comex_areas: (employee as any).comex_areas ?? {},
@@ -1957,7 +1957,7 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
       form.reset({
         ...base,
         monthly_ratings: ratings.filter(r => r.score != null),
-        completed_tests: base.completed_tests ?? [],
+        completed_tests: (base.completed_tests ?? []).map((t: any) => typeof t === 'string' ? { id: t, score: null } : t),
         onboarding_ratings: (base as any).onboarding_ratings ?? [],
         yearly_reviews: (base as any).yearly_reviews ?? [],
         comex_areas: (base as any).comex_areas ?? {},

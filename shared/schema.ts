@@ -121,7 +121,13 @@ export const employeeInputSchema = z.object({
   current_bonus_pct: z.number().min(0).max(30).default(0),
   performance_score: z.number().min(1).max(10).nullable().optional(),
   monthly_ratings: z.preprocess(v => v ?? [], z.array(monthlyRatingSchema)),
-  completed_tests: z.preprocess(v => v ?? [], z.array(completedTestSchema)),
+  completed_tests: z.preprocess(
+    v => {
+      if (!v || !Array.isArray(v)) return [];
+      return v.map((item: any) => typeof item === 'string' ? { id: item, score: null } : item);
+    },
+    z.array(completedTestSchema)
+  ),
   promo_increase_override: z.number().min(0).max(100).nullable().optional(),
   pending_salary_gross: z.number().nullable().optional(),
   pending_salary_date: z.string().nullable().optional(),
