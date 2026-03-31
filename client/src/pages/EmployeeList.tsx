@@ -1556,10 +1556,21 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
           </Card>
 
           <Card className="p-4 bg-background">
-            <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              Onboarding Ratings (W1-W8)
-            </h4>
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="font-bold text-sm flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                Onboarding Ratings (W1-W8)
+              </h4>
+              {(() => {
+                const scores = ((emp as any).onboarding_ratings ?? []).filter((r: any) => r.score != null).map((r: any) => r.score);
+                const avg = scores.length > 0 ? scores.reduce((a: number, b: number) => a + b, 0) / scores.length : null;
+                return avg !== null ? (
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${avg >= 80 ? "bg-emerald-100 text-emerald-700" : avg >= 60 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-600"}`}>
+                    Avg {avg.toFixed(0)}%
+                  </span>
+                ) : null;
+              })()}
+            </div>
             <div className="grid grid-cols-4 gap-2">
               {Array.from({ length: 8 }, (_, i) => {
                 const weekNum = i + 1;

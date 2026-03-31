@@ -127,6 +127,16 @@ export const calculateEmployeeMetrics = (
     performance_score = employee.performance_score;
   }
 
+  // 1c. Onboarding score: average of W1-W8 weekly ratings, fallback to manual performance_score
+  let onboarding_score: number | null = null;
+  const onboardingRatings = (employee as any).onboarding_ratings ?? [];
+  if (onboardingRatings.length > 0) {
+    const scores = onboardingRatings.filter((r: any) => r.score != null).map((r: any) => r.score);
+    if (scores.length > 0) {
+      onboarding_score = Math.round((scores.reduce((a: number, b: number) => a + b, 0) / scores.length) * 10) / 10;
+    }
+  }
+
   // 2. Determine Track based on Performance Score
   let recommended_track: "Fast" | "Normal" | "Slow" | "No promotion" = "No promotion";
 
@@ -274,6 +284,7 @@ export const calculateEmployeeMetrics = (
     policy_applied,
     age,
     performance_score,
+    onboarding_score,
     totalTenure,
     hireTenure,
     tracks,
