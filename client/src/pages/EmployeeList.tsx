@@ -1232,7 +1232,14 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
               {(() => {
                 const tests = settings.tests ?? [];
                 const scores = tests
-                  .map(t => emp.completed_tests?.find(ct => ct.id === t.id)?.score)
+                  .map(t => {
+                    const manual = emp.completed_tests?.find(ct => ct.id === t.id)?.score;
+                    if (t.name.toLowerCase() === "onboarding") {
+                      const ws = ((emp as any).onboarding_ratings ?? []).filter((r: any) => r.score != null).map((r: any) => r.score);
+                      if (ws.length > 0) return Math.round(ws.reduce((a: number, b: number) => a + b, 0) / ws.length);
+                    }
+                    return manual;
+                  })
                   .filter((s): s is number => s != null && s !== undefined);
                 const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
                 return (
@@ -1251,7 +1258,14 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                       )}
                       {tests.map(test => {
                         const existing = emp.completed_tests?.find(ct => ct.id === test.id);
-                        const score = existing?.score ?? null;
+                        // For "Onboarding" test, auto-calculate from weekly ratings if available
+                        let score = existing?.score ?? null;
+                        if (test.name.toLowerCase() === "onboarding") {
+                          const weeklyScores = ((emp as any).onboarding_ratings ?? []).filter((r: any) => r.score != null).map((r: any) => r.score);
+                          if (weeklyScores.length > 0) {
+                            score = Math.round(weeklyScores.reduce((a: number, b: number) => a + b, 0) / weeklyScores.length);
+                          }
+                        }
                         const scoreColor = score === null ? "" : score >= 70 ? "text-emerald-600" : score >= 50 ? "text-amber-600" : "text-red-500";
                         return (
                           <div key={test.id} className="flex items-center gap-2 text-xs">
