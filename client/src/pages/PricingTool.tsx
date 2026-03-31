@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, History, Brain, CheckCircle, XCircle, Clock, Info,
+  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS,
@@ -123,11 +123,6 @@ export default function PricingTool() {
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
   const [showHistoryForm, setShowHistoryForm] = useState(false);
   const [savingProposal, setSavingProposal] = useState(false);
-  const [aiSuggestion, setAiSuggestion] = useState<{
-    suggested_low: number; suggested_high: number; win_probability_pct: number;
-    recommendation: string; risks: string[]; reasoning: string;
-  } | null>(null);
-  const [loadingAi, setLoadingAi] = useState(false);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
 
   const loadAll = async () => {
@@ -258,40 +253,6 @@ export default function PricingTool() {
     if (!confirm("Delete this past proposal?")) return;
     await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
     loadAll();
-  };
-
-  const getAiSuggestion = async () => {
-    if (!recommendation) return;
-    setLoadingAi(true);
-    setAiSuggestion(null);
-    try {
-      const res = await fetch("/api/pricing/ai-suggest", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          currentCase: {
-            region: form.region,
-            pe_owned: form.pe_owned,
-            revenue_band: form.revenue_band,
-            price_sensitivity: form.price_sensitivity,
-            duration_weeks: form.duration_weeks,
-            staffing: form.staffing,
-            fund_name: form.fund_name || null,
-            engineBaseline: recommendation.base_weekly,
-            engineLow: recommendation.low_weekly,
-            engineTarget: recommendation.target_weekly,
-            engineHigh: recommendation.high_weekly,
-          },
-          proposals,
-        }),
-      });
-      if (!res.ok) throw new Error("Request failed");
-      setAiSuggestion(await res.json());
-    } catch {
-      toast({ title: "AI analysis failed", variant: "destructive" });
-    } finally {
-      setLoadingAi(false);
-    }
   };
 
   // Live recommendation
@@ -1701,77 +1662,6 @@ export default function PricingTool() {
                       ))}
                     </div>
                   )}
-
-                  {/* ── AI SUGGESTION ─────────────────────────────────── */}
-                  <div className="border rounded-lg overflow-hidden">
-                    <div className="bg-muted/30 px-3 py-1.5 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <Brain className="w-3.5 h-3.5 text-purple-600" />
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">AI Analysis</span>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 text-[10px] px-2 text-purple-700 border-purple-200 hover:bg-purple-50"
-                        onClick={getAiSuggestion}
-                        disabled={loadingAi || !recommendation}
-                      >
-                        {loadingAi ? "Analysing…" : aiSuggestion ? "Re-analyse" : "Ask Claude"}
-                      </Button>
-                    </div>
-                    {!aiSuggestion && !loadingAi && (
-                      <div className="px-3 py-3 text-[10px] text-muted-foreground text-center">
-                        Click "Ask Claude" to get an AI-powered pricing recommendation based on past won/lost projects
-                      </div>
-                    )}
-                    {loadingAi && (
-                      <div className="px-3 py-3 text-[10px] text-muted-foreground text-center">
-                        <Clock className="w-4 h-4 animate-spin mx-auto mb-1 text-purple-400" />
-                        Analysing {proposals.length} past proposals…
-                      </div>
-                    )}
-                    {aiSuggestion && (
-                      <div className="px-3 py-3 space-y-2.5">
-                        {/* Suggested band */}
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="text-center p-2 bg-purple-50 rounded border border-purple-100">
-                            <div className="text-[10px] text-purple-700 font-bold uppercase">AI Low</div>
-                            <div className="text-base font-bold text-purple-700">{fmt(aiSuggestion.suggested_low)}</div>
-                          </div>
-                          <div className="text-center p-2 bg-purple-50 rounded border border-purple-100">
-                            <div className="text-[10px] text-purple-700 font-bold uppercase">AI High</div>
-                            <div className="text-base font-bold text-purple-700">{fmt(aiSuggestion.suggested_high)}</div>
-                          </div>
-                        </div>
-                        {/* Win probability + recommendation */}
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">
-                            Win probability: <span className="font-bold text-foreground">{aiSuggestion.win_probability_pct}%</span>
-                          </span>
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                            aiSuggestion.recommendation === "high" ? "bg-amber-100 text-amber-700"
-                            : aiSuggestion.recommendation === "low" ? "bg-muted text-muted-foreground"
-                            : "bg-emerald-100 text-emerald-700"
-                          }`}>
-                            Price at {aiSuggestion.recommendation}
-                          </span>
-                        </div>
-                        {/* Reasoning */}
-                        <p className="text-[10px] text-muted-foreground leading-relaxed border-t pt-2">{aiSuggestion.reasoning}</p>
-                        {/* Risks */}
-                        {aiSuggestion.risks?.length > 0 && (
-                          <div className="space-y-1">
-                            {aiSuggestion.risks.map((r, i) => (
-                              <div key={i} className="flex items-start gap-1.5 text-[10px] text-amber-800 bg-amber-50 rounded p-1.5">
-                                <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
-                                {r}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
 
                   {/* Fund history mini-table */}
                   {fundProposals.length > 0 && (

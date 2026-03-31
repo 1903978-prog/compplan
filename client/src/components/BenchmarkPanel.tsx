@@ -32,22 +32,7 @@ export function BenchmarkPanel({ open, onClose }: { open: boolean; onClose: () =
   const updatedAt = (settings as any)?.benchmark_updated_at;
 
   const handleRefresh = async () => {
-    setLoading(true);
-    setProposed(null);
-    setChanges([]);
-    setApproved(new Set());
-    try {
-      const res = await apiRequest("POST", "/api/benchmark/refresh");
-      const data = await res.json();
-      if (data.error) { toast({ title: "Refresh failed", description: data.error, variant: "destructive" }); return; }
-      setProposed(data.proposed);
-      setChanges(data.changes);
-      if (data.changes.length === 0) toast({ title: "No changes found — data is up to date" });
-    } catch (err) {
-      toast({ title: "Refresh failed", description: String(err), variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+    toast({ title: "AI refresh disabled", description: "Edit benchmark values manually in the table below." });
   };
 
   const changeKey = (c: Change) => `${c.tenure_years}-${c.field}`;
