@@ -325,6 +325,14 @@ export async function seedDatabase() {
       AND (onboarding_ratings IS NULL OR onboarding_ratings = '[]'::jsonb)
   `);
 
+  // Seed Edoardo onboarding ratings W1-W8
+  await db.execute(sql`
+    UPDATE employees
+    SET onboarding_ratings = '[{"week":1,"score":76},{"week":2,"score":91},{"week":3,"score":89},{"week":4,"score":79},{"week":5,"score":83},{"week":6,"score":89},{"week":7,"score":87},{"week":8,"score":91}]'::jsonb
+    WHERE name ILIKE '%edoardo%'
+      AND (onboarding_ratings IS NULL OR onboarding_ratings = '[]'::jsonb)
+  `);
+
   // Seed settings if empty
   const existingSettings = await db.select().from(appSettings);
   if (existingSettings.length === 0) {
