@@ -855,7 +855,7 @@ export default function PricingTool() {
               <div className="grid grid-cols-2 gap-3">
                 {/* Project type */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Project Type</Label>
+                  <Label className="text-xs">Project Type <span className="text-muted-foreground/50 font-normal">(L0)</span></Label>
                   <Select value={form.project_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, project_type: v === "__none__" ? null : v as ProjectType }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
@@ -868,7 +868,7 @@ export default function PricingTool() {
                 </div>
                 {/* Sector */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Sector</Label>
+                  <Label className="text-xs">Sector <span className="text-muted-foreground/50 font-normal">(L0)</span></Label>
                   <Select value={form.sector ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, sector: v === "__none__" ? null : v }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
@@ -890,7 +890,7 @@ export default function PricingTool() {
                   return (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
-                        <Label className="text-xs">Client EBITDA Margin (%)</Label>
+                        <Label className="text-xs">Client EBITDA Margin (%) <span className="text-muted-foreground/50 font-normal">(L0)</span></Label>
                         {suggested !== null && form.ebitda_margin_pct === null && (
                           <button type="button"
                             onClick={() => setForm(f => ({ ...f, ebitda_margin_pct: suggested }))}
@@ -913,7 +913,7 @@ export default function PricingTool() {
                 })()}
                 {/* Strategic intent */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Strategic Intent</Label>
+                  <Label className="text-xs">Strategic Intent <span className="text-muted-foreground/50 font-normal">(L5)</span></Label>
                   <Select value={form.strategic_intent ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, strategic_intent: v === "__none__" ? null : v as StrategicIntent }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
@@ -926,7 +926,7 @@ export default function PricingTool() {
                 </div>
                 {/* Competitive intensity */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Competitive Intensity</Label>
+                  <Label className="text-xs">Competitive Intensity <span className="text-muted-foreground/50 font-normal">(L2)</span></Label>
                   <Select value={form.competitive_intensity ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitive_intensity: v === "__none__" ? null : v as CompetitiveIntensity }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
@@ -940,7 +940,7 @@ export default function PricingTool() {
                 </div>
                 {/* Competitor type */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Main Competitor</Label>
+                  <Label className="text-xs">Main Competitor <span className="text-muted-foreground/50 font-normal">(L2)</span></Label>
                   <Select value={form.competitor_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitor_type: v === "__none__" ? null : v as CompetitorType }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
@@ -954,7 +954,7 @@ export default function PricingTool() {
                 </div>
                 {/* Ownership type */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Ownership Type</Label>
+                  <Label className="text-xs">Ownership Type <span className="text-muted-foreground/50 font-normal">(L3)</span></Label>
                   <Select value={form.ownership_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, ownership_type: v === "__none__" ? null : v as OwnershipType }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
@@ -967,7 +967,7 @@ export default function PricingTool() {
                 </div>
                 {/* Procurement */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Procurement Involvement</Label>
+                  <Label className="text-xs">Procurement Involvement <span className="text-muted-foreground/50 font-normal">(L3)</span></Label>
                   <Select value={form.procurement_involvement ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, procurement_involvement: v === "__none__" ? null : v as ProcurementInvolvement }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
@@ -984,7 +984,7 @@ export default function PricingTool() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs">Commercial Maturity</Label>
+                    <Label className="text-xs">Commercial Maturity <span className="text-muted-foreground/50 font-normal">(L3)</span></Label>
                     <span className="text-xs font-bold text-muted-foreground">{form.commercial_maturity ?? "—"}/5</span>
                   </div>
                   <input type="range" min="1" max="5" step="1"
@@ -997,7 +997,7 @@ export default function PricingTool() {
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs">Urgency</Label>
+                    <Label className="text-xs">Urgency <span className="text-muted-foreground/50 font-normal">(L3)</span></Label>
                     <span className="text-xs font-bold text-muted-foreground">{form.urgency ?? "—"}/5</span>
                   </div>
                   <input type="range" min="1" max="5" step="1"
