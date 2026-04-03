@@ -8,7 +8,7 @@ import { RoleGridRow } from "@shared/schema";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { BenchmarkPanel } from "@/components/BenchmarkPanel";
-import { BarChart2 } from "lucide-react";
+import { BarChart2, Plus, Trash2 } from "lucide-react";
 
 // Lookup table: [ral_k, gross_piva_eur] - sorted by gross ascending for interpolation
 const RAL_TABLE: [number, number][] = [
@@ -141,7 +141,39 @@ export default function RoleGridPage() {
     setHasChanges(true);
   };
 
+  const handleAddRole = () => {
+    const last = gridState[gridState.length - 1];
+    const newRole: RoleGridRow = {
+      role_code: "",
+      role_name: "",
+      next_role_code: null,
+      promo_years_fast: last?.promo_years_fast ?? 1,
+      promo_years_normal: last?.promo_years_normal ?? 1.5,
+      promo_years_slow: last?.promo_years_slow ?? 2,
+      ral_min_k: last?.ral_min_k ?? 20,
+      ral_max_k: last?.ral_max_k ?? 25,
+      gross_fixed_min_month: last?.gross_fixed_min_month ?? 1500,
+      gross_fixed_max_month: last?.gross_fixed_max_month ?? 2000,
+      bonus_pct: last?.bonus_pct ?? 0,
+      meal_voucher_eur_per_day: last?.meal_voucher_eur_per_day ?? 8,
+      months_paid: last?.months_paid ?? 13,
+    };
+    setGridState([...gridState, newRole]);
+    setHasChanges(true);
+  };
+
+  const handleDeleteRole = (index: number) => {
+    const newGrid = gridState.filter((_, i) => i !== index);
+    setGridState(newGrid);
+    setHasChanges(true);
+  };
+
   const handleSave = async () => {
+    const empty = gridState.find(r => !r.role_code.trim() || !r.role_name.trim());
+    if (empty) {
+      toast({ title: "Role code and name are required", variant: "destructive" });
+      return;
+    }
     await updateRoleGrid(gridState);
     setHasChanges(false);
     toast({ title: "Role Grid configuration saved" });
@@ -154,6 +186,10 @@ export default function RoleGridPage() {
         description="Define role progression paths, salary bands, and promotion timing."
         actions={
           <div className="flex gap-2">
+            <Button variant="outline" onClick={handleAddRole}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Role
+            </Button>
             <Button variant="outline" onClick={() => setShowBenchmark(true)}>
               <BarChart2 className="w-4 h-4 mr-2" />
               Benchmark
@@ -173,6 +209,7 @@ export default function RoleGridPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
+                <TableHead className="w-[40px]"></TableHead>
                 <TableHead className="w-[80px]">Code</TableHead>
                 <TableHead className="min-w-[150px]">Role Name</TableHead>
                 <TableHead>Next Role</TableHead>
@@ -208,8 +245,22 @@ export default function RoleGridPage() {
                 });
                 return gridState.map((row, index) => (
                 <TableRow key={row.role_code}>
-                  <TableCell className="font-medium bg-muted/10">{row.role_code}</TableCell>
-                  <TableCell>{row.role_name}</TableCell>
+                  <TableCell className="p-1">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDeleteRole(index)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TableCell>
+                  <TableCell className="font-medium bg-muted/10">
+                    <Input value={row.role_code}
+                      onChange={(e) => handleCellChange(index, "role_code", e.target.value)}
+                      className="h-8 w-20 font-medium" placeholder="e.g. A1" />
+                  </TableCell>
+                  <TableCell>
+                    <Input value={row.role_name}
+                      onChange={(e) => handleCellChange(index, "role_name", e.target.value)}
+                      className="h-8 min-w-[140px]" placeholder="Role name" />
+                  </TableCell>
                   <TableCell>
                       <Input
                         value={row.next_role_code || ""}

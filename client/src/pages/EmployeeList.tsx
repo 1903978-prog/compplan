@@ -924,6 +924,10 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                 })()}
               </div>
             </div>
+            <Button type="submit" disabled={saveState !== "idle"} size="sm"
+              className={`shadow-lg ${saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : "shadow-primary/20"}`}>
+              {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save"}
+            </Button>
           </div>
         </Card>
 
