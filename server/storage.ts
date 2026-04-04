@@ -3,10 +3,11 @@ import { db } from "./db";
 import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
-  performanceIssues,
+  performanceIssues, timeTrackingTopics, timeTrackingEntries,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
+  type TimeTrackingTopic, type TimeTrackingEntry,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -334,6 +335,45 @@ export class DatabaseStorage implements IStorage {
 
   async deletePerformanceIssue(id: number): Promise<void> {
     await db.delete(performanceIssues).where(eq(performanceIssues.id, id));
+  }
+
+  // ── Time Tracking ─────────────────────────────────────────────────────────
+  async getTimeTrackingTopics(): Promise<TimeTrackingTopic[]> {
+    const rows = await db.select().from(timeTrackingTopics).orderBy(timeTrackingTopics.sort_order);
+    return rows as TimeTrackingTopic[];
+  }
+
+  async createTimeTrackingTopic(data: Omit<TimeTrackingTopic, "id">): Promise<TimeTrackingTopic> {
+    const rows = await db.insert(timeTrackingTopics).values(data).returning();
+    return rows[0] as TimeTrackingTopic;
+  }
+
+  async updateTimeTrackingTopic(id: number, data: Partial<TimeTrackingTopic>): Promise<TimeTrackingTopic> {
+    const rows = await db.update(timeTrackingTopics).set(data).where(eq(timeTrackingTopics.id, id)).returning();
+    return rows[0] as TimeTrackingTopic;
+  }
+
+  async deleteTimeTrackingTopic(id: number): Promise<void> {
+    await db.delete(timeTrackingTopics).where(eq(timeTrackingTopics.id, id));
+  }
+
+  async getTimeTrackingEntries(): Promise<TimeTrackingEntry[]> {
+    const rows = await db.select().from(timeTrackingEntries).orderBy(timeTrackingEntries.start_time);
+    return rows as TimeTrackingEntry[];
+  }
+
+  async createTimeTrackingEntry(data: Omit<TimeTrackingEntry, "id">): Promise<TimeTrackingEntry> {
+    const rows = await db.insert(timeTrackingEntries).values(data).returning();
+    return rows[0] as TimeTrackingEntry;
+  }
+
+  async updateTimeTrackingEntry(id: number, data: Partial<TimeTrackingEntry>): Promise<TimeTrackingEntry> {
+    const rows = await db.update(timeTrackingEntries).set(data).where(eq(timeTrackingEntries.id, id)).returning();
+    return rows[0] as TimeTrackingEntry;
+  }
+
+  async deleteTimeTrackingEntry(id: number): Promise<void> {
+    await db.delete(timeTrackingEntries).where(eq(timeTrackingEntries.id, id));
   }
 }
 

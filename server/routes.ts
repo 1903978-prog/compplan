@@ -252,6 +252,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Time Tracking ─────────────────────────────────────────────────────────
+  app.get("/api/time-tracking/topics", requireAuth, async (_req, res) => {
+    res.json(await storage.getTimeTrackingTopics());
+  });
+
+  app.post("/api/time-tracking/topics", requireAuth, async (req, res) => {
+    res.status(201).json(await storage.createTimeTrackingTopic(req.body));
+  });
+
+  app.put("/api/time-tracking/topics/:id", requireAuth, async (req, res) => {
+    res.json(await storage.updateTimeTrackingTopic(safeInt(req.params.id), req.body));
+  });
+
+  app.delete("/api/time-tracking/topics/:id", requireAuth, async (req, res) => {
+    await storage.deleteTimeTrackingTopic(safeInt(req.params.id));
+    res.status(204).end();
+  });
+
+  app.get("/api/time-tracking/entries", requireAuth, async (_req, res) => {
+    res.json(await storage.getTimeTrackingEntries());
+  });
+
+  app.post("/api/time-tracking/entries", requireAuth, async (req, res) => {
+    res.status(201).json(await storage.createTimeTrackingEntry(req.body));
+  });
+
+  app.put("/api/time-tracking/entries/:id", requireAuth, async (req, res) => {
+    res.json(await storage.updateTimeTrackingEntry(safeInt(req.params.id), req.body));
+  });
+
+  app.delete("/api/time-tracking/entries/:id", requireAuth, async (req, res) => {
+    await storage.deleteTimeTrackingEntry(safeInt(req.params.id));
+    res.status(204).end();
+  });
+
   // ── Admin downloads ────────────────────────────────────────────────────────
 
   // Download all source code as tar.gz

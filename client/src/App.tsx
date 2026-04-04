@@ -15,7 +15,8 @@ import Login from "@/pages/login";
 import PricingTool from "@/pages/PricingTool";
 import PricingAdmin from "@/pages/PricingAdmin";
 import Hiring from "@/pages/Hiring";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck } from "lucide-react";
+import TimeTracker from "@/pages/TimeTracker";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -88,12 +89,13 @@ function Navigation() {
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
-                basePaths={["/", "/employees", "/roles", "/days-off", "/settings"]}
+                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker"]}
                 items={[
                   { href: "/", label: "Dashboard", icon: LayoutDashboard },
                   { href: "/employees", label: "Employees", icon: Users },
                   { href: "/roles", label: "Role Grid", icon: Grid3X3 },
                   { href: "/days-off", label: "Days Off", icon: CalendarDays },
+                  { href: "/time-tracker", label: "Time Tracker", icon: Timer },
                   { href: "/settings", label: "Settings", icon: SettingsIcon },
                 ]}
               />
@@ -136,6 +138,7 @@ function Router() {
       <Route path="/settings" component={Settings} />
       <Route path="/pricing" component={PricingTool} />
       <Route path="/pricing/admin" component={PricingAdmin} />
+      <Route path="/time-tracker" component={TimeTracker} />
       <Route path="/hiring" component={Hiring} />
       <Route component={NotFound} />
     </Switch>

@@ -378,6 +378,38 @@ export const performanceIssues = pgTable("performance_issues", {
   created_at: text("created_at").notNull(),
 });
 
+// ─── Time Tracking ──────────────────────────────────────────────────────────
+
+export const timeTrackingTopicSchema = z.object({
+  id: z.number().optional(),
+  name: z.string().min(1),
+  sort_order: z.number().default(0),
+});
+export type TimeTrackingTopic = z.infer<typeof timeTrackingTopicSchema>;
+
+export const timeTrackingTopics = pgTable("time_tracking_topics", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  sort_order: integer("sort_order").notNull().default(0),
+});
+
+export const timeTrackingEntrySchema = z.object({
+  id: z.number().optional(),
+  topic_id: z.number(),
+  topic_name: z.string(),
+  start_time: z.string(),            // ISO datetime
+  end_time: z.string().nullable(),    // null = still running
+});
+export type TimeTrackingEntry = z.infer<typeof timeTrackingEntrySchema>;
+
+export const timeTrackingEntries = pgTable("time_tracking_entries", {
+  id: serial("id").primaryKey(),
+  topic_id: integer("topic_id").notNull(),
+  topic_name: text("topic_name").notNull(),
+  start_time: text("start_time").notNull(),
+  end_time: text("end_time"),
+});
+
 // ─── Hiring Kanban ───────────────────────────────────────────────────────────
 
 export const hiringCandidates = pgTable("hiring_candidates", {

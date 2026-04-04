@@ -255,6 +255,33 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS procurement_involvement TEXT`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS case_discounts JSONB`);
 
+  // Time tracking tables
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS time_tracking_topics (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS time_tracking_entries (
+      id SERIAL PRIMARY KEY,
+      topic_id INTEGER NOT NULL,
+      topic_name TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT
+    )
+  `);
+
+  // Seed default topics if empty
+  const topicCount = await db.execute(sql`SELECT COUNT(*) as c FROM time_tracking_topics`);
+  if (Number((topicCount as any).rows?.[0]?.c ?? 0) === 0) {
+    const defaults = ["ADMIN", "Hunting", "Project", "Hiring", "Cosmin"];
+    for (let i = 0; i < defaults.length; i++) {
+      await db.execute(sql`INSERT INTO time_tracking_topics (name, sort_order) VALUES (${defaults[i]}, ${i})`);
+    }
+  }
+
   // Performance issues table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS performance_issues (
