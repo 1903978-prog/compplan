@@ -966,6 +966,16 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
   const [histFormVoucher, setHistFormVoucher] = useState<number>(employee.meal_voucher_daily ?? 0);
   const [histFormNote, setHistFormNote] = useState("");
 
+  // Editing existing salary history entry
+  const [editHistId, setEditHistId] = useState<number | null>(null);
+  const [editHistDate, setEditHistDate] = useState("");
+  const [editHistRole, setEditHistRole] = useState("");
+  const [editHistGross, setEditHistGross] = useState(0);
+  const [editHistMonths, setEditHistMonths] = useState(13);
+  const [editHistBonus, setEditHistBonus] = useState(0);
+  const [editHistVoucher, setEditHistVoucher] = useState(0);
+  const [editHistNote, setEditHistNote] = useState("");
+
   const loadSalaryHistory = async () => {
     setHistoryLoading(true);
     try {
@@ -1022,6 +1032,41 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
       toast({ title: "Entry deleted" });
     } catch {
       toast({ title: "Failed to delete", variant: "destructive" });
+    }
+  };
+
+  const startEditHist = (entry: any) => {
+    setEditHistId(entry.id);
+    setEditHistDate(entry.effective_date);
+    setEditHistRole(entry.role_code || "");
+    setEditHistGross(entry.gross_fixed_year);
+    setEditHistMonths(entry.months_paid ?? 13);
+    setEditHistBonus(entry.bonus_pct ?? 0);
+    setEditHistVoucher(entry.meal_voucher_daily ?? 0);
+    setEditHistNote(entry.note ?? "");
+  };
+
+  const saveEditHist = async () => {
+    if (!editHistId) return;
+    try {
+      await fetch(`/api/salary-history/${editHistId}`, {
+        method: "PATCH", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          effective_date: editHistDate,
+          role_code: editHistRole,
+          gross_fixed_year: editHistGross,
+          months_paid: editHistMonths,
+          bonus_pct: editHistBonus,
+          meal_voucher_daily: editHistVoucher,
+          note: editHistNote,
+        }),
+      });
+      await loadSalaryHistory();
+      setEditHistId(null);
+      toast({ title: "Entry updated" });
+    } catch {
+      toast({ title: "Failed to update", variant: "destructive" });
     }
   };
 
@@ -1669,6 +1714,8 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                   ? { d: displayGross - prevGrossForDelta, pct: ((displayGross - prevGrossForDelta) / prevGrossForDelta) * 100 }
                   : null;
 
+                const isEditingThis = editHistId === entry.id;
+
                 return (
                   <div key={entry.id} className={`rounded-lg border p-3 ${isScheduled ? "border-amber-300 bg-amber-50/50" : isCurrent ? "border-primary/40 bg-primary/5" : "bg-background"}`}>
                     {isScheduled && (
@@ -1677,52 +1724,116 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                         Scheduled — pending until effective date
                       </div>
                     )}
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold">
-                            {fmtDate(entry.effective_date)}{" -> "}
-                            {endDate
-                              ? <span className="text-muted-foreground font-normal">{fmtDate(endDate)}</span>
-                              : <span className="text-primary font-semibold">ongoing</span>}
-                          </span>
-                          {displayRole && <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{displayRole}</span>}
+
+                    {isEditingThis ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Effective Date</Label>
+                            <Input type="date" className="h-8 text-sm" value={editHistDate}
+                              onChange={e => setEditHistDate(e.target.value)} />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Role</Label>
+                            <Select value={editHistRole} onValueChange={setEditHistRole}>
+                              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {roleGrid.map(r => <SelectItem key={r.role_code} value={r.role_code}><span className="font-mono font-semibold">{r.role_code}</span> <span className="ml-1 text-muted-foreground">{r.role_name}</span></SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Yearly Gross (€)</Label>
+                            <Input type="number" className="h-8 text-sm" value={editHistGross}
+                              onChange={e => setEditHistGross(parseFloat(e.target.value) || 0)} />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Months Paid</Label>
+                            <Select value={String(editHistMonths)} onValueChange={v => setEditHistMonths(parseInt(v))}>
+                              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="12">12</SelectItem>
+                                <SelectItem value="13">13</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Bonus %</Label>
+                            <Input type="number" min="0" max="100" className="h-8 text-sm" value={editHistBonus}
+                              onChange={e => setEditHistBonus(parseFloat(e.target.value) || 0)} />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Meal Voucher (€/day)</Label>
+                            <Input type="number" min="0" step="0.5" className="h-8 text-sm" value={editHistVoucher}
+                              onChange={e => setEditHistVoucher(parseFloat(e.target.value) || 0)} />
+                          </div>
+                          <div className="col-span-2 space-y-1">
+                            <Label className="text-xs">Note</Label>
+                            <Input className="h-8 text-sm" value={editHistNote}
+                              onChange={e => setEditHistNote(e.target.value)} placeholder="e.g. Promotion, Annual review..." />
+                          </div>
                         </div>
-                        {entry.note && <div className="text-xs text-muted-foreground italic mt-0.5">{entry.note}</div>}
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" size="sm" variant="ghost" onClick={() => setEditHistId(null)}>Cancel</Button>
+                          <Button type="button" size="sm" onClick={saveEditHist}>Save</Button>
+                        </div>
                       </div>
-                      <button type="button" onClick={() => handleDeleteHistoryEntry(entry.id!)}
-                        className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-4 gap-2 text-xs">
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase">Yearly Gross</div>
-                        <div className="font-bold text-sm">€{displayGross.toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase">Monthly</div>
-                        <div className="font-semibold">€{Math.round(monthlyGross).toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase">RAL</div>
-                        <div className="font-semibold">€{Math.round(ral * 1000).toLocaleString()}</div>
-                      </div>
-                      <div className="flex flex-col gap-0.5">
-                        {displayBonus != null && (
-                          <div><span className="text-[10px] text-muted-foreground uppercase">Bonus </span><span className="font-semibold">{displayBonus}%</span></div>
+                    ) : (
+                      <>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex-1 cursor-pointer" onClick={() => startEditHist(entry)}>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-bold">
+                                {fmtDate(entry.effective_date)}{" -> "}
+                                {endDate
+                                  ? <span className="text-muted-foreground font-normal">{fmtDate(endDate)}</span>
+                                  : <span className="text-primary font-semibold">ongoing</span>}
+                              </span>
+                              {displayRole && <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono">{displayRole}</span>}
+                            </div>
+                            {entry.note && <div className="text-xs text-muted-foreground italic mt-0.5">{entry.note}</div>}
+                          </div>
+                          <div className="flex gap-1 flex-shrink-0">
+                            <button type="button" onClick={() => startEditHist(entry)}
+                              className="text-muted-foreground hover:text-primary transition-colors">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button type="button" onClick={() => handleDeleteHistoryEntry(entry.id!)}
+                              className="text-muted-foreground hover:text-destructive transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2 text-xs cursor-pointer" onClick={() => startEditHist(entry)}>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground uppercase">Yearly Gross</div>
+                            <div className="font-bold text-sm">€{displayGross.toLocaleString()}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground uppercase">Monthly</div>
+                            <div className="font-semibold">€{Math.round(monthlyGross).toLocaleString()}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground uppercase">RAL</div>
+                            <div className="font-semibold">€{Math.round(ral * 1000).toLocaleString()}</div>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            {displayBonus != null && (
+                              <div><span className="text-[10px] text-muted-foreground uppercase">Bonus </span><span className="font-semibold">{displayBonus}%</span></div>
+                            )}
+                            {displayVoucher != null && displayVoucher > 0 && (
+                              <div><span className="text-[10px] text-muted-foreground uppercase">Voucher </span><span className="font-semibold">€{displayVoucher}/d</span></div>
+                            )}
+                          </div>
+                        </div>
+                        {delta && (
+                          <div className={`mt-2 pt-2 border-t flex items-center gap-1.5 text-xs font-semibold ${delta.d > 0 ? "text-emerald-600" : delta.d < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                            {delta.d > 0 ? <TrendingUp className="w-3 h-3" /> : delta.d < 0 ? <span className="w-3 h-3 inline-block text-center">-</span> : null}
+                            {delta.d > 0 ? "+" : ""}{delta.d.toLocaleString()} €/yr vs previous
+                            ({delta.d > 0 ? "+" : ""}{delta.pct.toFixed(1)}%)
+                          </div>
                         )}
-                        {displayVoucher != null && displayVoucher > 0 && (
-                          <div><span className="text-[10px] text-muted-foreground uppercase">Voucher </span><span className="font-semibold">€{displayVoucher}/d</span></div>
-                        )}
-                      </div>
-                    </div>
-                    {delta && (
-                      <div className={`mt-2 pt-2 border-t flex items-center gap-1.5 text-xs font-semibold ${delta.d > 0 ? "text-emerald-600" : delta.d < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                        {delta.d > 0 ? <TrendingUp className="w-3 h-3" /> : delta.d < 0 ? <span className="w-3 h-3 inline-block text-center">-</span> : null}
-                        {delta.d > 0 ? "+" : ""}{delta.d.toLocaleString()} €/yr vs previous
-                        ({delta.d > 0 ? "+" : ""}{delta.pct.toFixed(1)}%)
-                      </div>
+                      </>
                     )}
                   </div>
                 );
