@@ -237,6 +237,10 @@ export default function EmployeeList() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState("");
   const [newTaskDeadline, setNewTaskDeadline] = useState("");
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [editTaskTitle, setEditTaskTitle] = useState("");
+  const [editTaskAssignee, setEditTaskAssignee] = useState("");
+  const [editTaskDeadline, setEditTaskDeadline] = useState("");
 
   useEffect(() => {
     fetch("/api/employee-tasks", { credentials: "include" })
@@ -270,6 +274,27 @@ export default function EmployeeList() {
     await fetch(`/api/employee-tasks/${id}`, { method: "DELETE", credentials: "include" });
     setTasks(prev => prev.filter(t => t.id !== id));
   };
+
+  const startEditTask = (task: EmployeeTask) => {
+    setEditingTaskId(task.id);
+    setEditTaskTitle(task.title);
+    setEditTaskAssignee(task.delegated_to);
+    setEditTaskDeadline(task.deadline ?? "");
+  };
+
+  const saveEditTask = async () => {
+    if (!editingTaskId || !editTaskTitle.trim() || !editTaskAssignee) return;
+    const res = await fetch(`/api/employee-tasks/${editingTaskId}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: editTaskTitle, delegated_to: editTaskAssignee, deadline: editTaskDeadline || null }),
+    });
+    const updated = await res.json();
+    setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+    setEditingTaskId(null);
+  };
+
+  const cancelEditTask = () => setEditingTaskId(null);
 
   const handleApplyRaise = async (emp: EmployeeInput) => {
     if (!emp.pending_salary_gross || !emp.pending_salary_date) return;
@@ -456,6 +481,7 @@ export default function EmployeeList() {
               )}
               {tasks.map(task => {
                 const isOverdue = task.deadline && task.deadline < new Date().toISOString().slice(0, 10) && task.status === "pending";
+                const isEditing = editingTaskId === task.id;
                 return (
                   <div key={task.id} className={`flex items-center gap-3 p-3 group hover:bg-muted/30 transition-colors ${task.status === "done" ? "opacity-60" : ""}`}>
                     <button onClick={() => toggleTask(task)} className="shrink-0">
@@ -464,19 +490,42 @@ export default function EmployeeList() {
                         : <div className="w-5 h-5 rounded border-2 border-muted-foreground/40 hover:border-primary transition-colors" />
                       }
                     </button>
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-sm ${task.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>{task.title}</div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs text-muted-foreground">→ <span className="font-medium">{task.delegated_to}</span></span>
-                        {task.deadline && (
-                          <span className={`text-xs flex items-center gap-1 ${isOverdue ? "text-destructive font-bold" : "text-muted-foreground"}`}>
-                            <Clock className="w-3 h-3" />
-                            {format(parseISO(task.deadline), "dd/MM/yy")}
-                            {isOverdue && " — OVERDUE"}
-                          </span>
-                        )}
+                    {isEditing ? (
+                      <div className="flex-1 flex gap-2 items-center flex-wrap">
+                        <Input className="h-8 flex-1 min-w-[180px]" value={editTaskTitle}
+                          onChange={e => setEditTaskTitle(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") saveEditTask(); if (e.key === "Escape") cancelEditTask(); }}
+                          autoFocus />
+                        <Select value={editTaskAssignee} onValueChange={setEditTaskAssignee}>
+                          <SelectTrigger className="h-8 w-[140px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {employees.map(e => <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Input type="date" className="h-8 w-[140px]" value={editTaskDeadline}
+                          onChange={e => setEditTaskDeadline(e.target.value)} />
+                        <Button size="sm" variant="ghost" className="h-8 px-2 text-emerald-600 hover:text-emerald-700" onClick={saveEditTask}>
+                          <Check className="w-4 h-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-2 text-muted-foreground" onClick={cancelEditTask}>
+                          <X className="w-4 h-4" />
+                        </Button>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => startEditTask(task)}>
+                        <div className={`text-sm ${task.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>{task.title}</div>
+                        <div className="flex items-center gap-3 mt-0.5">
+                          <span className="text-xs text-muted-foreground">→ <span className="font-medium">{task.delegated_to}</span></span>
+                          {task.deadline && (
+                            <span className={`text-xs flex items-center gap-1 ${isOverdue ? "text-destructive font-bold" : "text-muted-foreground"}`}>
+                              <Clock className="w-3 h-3" />
+                              {format(parseISO(task.deadline), "dd/MM/yy")}
+                              {isOverdue && " — OVERDUE"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <button
                       onClick={() => deleteTask(task.id)}
                       className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
