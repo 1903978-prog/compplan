@@ -19,6 +19,7 @@ const RAL_TABLE: [number, number][] = [
 ];
 
 export function grossToRal(grossAnnual: number): number {
+  if (!grossAnnual || grossAnnual <= 0) return 0;
   if (grossAnnual <= RAL_TABLE[0][1]) return RAL_TABLE[0][0];
   if (grossAnnual >= RAL_TABLE[RAL_TABLE.length - 1][1]) return RAL_TABLE[RAL_TABLE.length - 1][0];
   for (let i = 0; i < RAL_TABLE.length - 1; i++) {

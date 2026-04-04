@@ -360,15 +360,18 @@ export default function EmployeeList() {
   };
 
   const filteredEmployees = useMemo(() => {
+    // Build dynamic rank from roleGrid order (last = highest rank)
+    const dynamicRank: Record<string, number> = {};
+    roleGrid.forEach((r, i) => { dynamicRank[r.role_code] = i + 1; });
     return employees
       .filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
       .sort((a, b) => {
-        const rankA = ROLE_RANK[a.current_role_code] || 0;
-        const rankB = ROLE_RANK[b.current_role_code] || 0;
+        const rankA = dynamicRank[a.current_role_code] || 0;
+        const rankB = dynamicRank[b.current_role_code] || 0;
         if (rankA !== rankB) return rankB - rankA;
         return a.name.localeCompare(b.name);
       });
-  }, [employees, search]);
+  }, [employees, search, roleGrid]);
 
   const MONTHS_PAID_BY_ROLE: Record<string, number> = { INT: 12, BA: 12, A1: 12, A2: 13, S1: 13, S2: 13, C1: 13, C2: 13, EM1: 13, EM2: 13 };
   const MIN_GROSS_BY_ROLE: Record<string, number> = { INT: 16000, BA: 24600, A1: 28788, A2: 31187, S1: 33358, S2: 35035, C1: 36777, C2: 41197, EM1: 48204, EM2: 50609 };
