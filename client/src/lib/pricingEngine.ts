@@ -91,7 +91,7 @@ export interface PricingSettings {
   discounts: PricingDiscount[];
   staff_costs: StaffCostEntry[];
   rate_matrix: RateMatrixRow[];
-  floor_rule: FloorRule;
+  floor_rule?: FloorRule; // deprecated — kept optional for backward compat
   bracket_low_pct: number;
   bracket_high_pct: number;
   aggressive_threshold_pct: number;
@@ -324,8 +324,9 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { role_id: "ba",          role_name: "BA",           daily_cost: 150  },
   ],
   rate_matrix: [
+    // ── PE clients (4 revenue bands) ──
     {
-      client_type: "PE/LBO",
+      client_type: "PE >€1B",
       rates: {
         Italy:  { min_weekly: 30000, max_weekly: 34000, note: "", avoid: false },
         France: { min_weekly: 32000, max_weekly: 36000, note: "", avoid: false },
@@ -335,17 +336,38 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
       },
     },
     {
-      client_type: "Corporate >€1B",
+      client_type: "PE €200M-€1B",
       rates: {
-        Italy:  { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
-        France: { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
-        UK:     { min_weekly: 28000, max_weekly: 35000, note: "", avoid: false },
-        DACH:   { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
-        US:     { min_weekly: 35000, max_weekly: 44000, note: "", avoid: false },
+        Italy:  { min_weekly: 26000, max_weekly: 32000, note: "", avoid: false },
+        France: { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
+        UK:     { min_weekly: 32000, max_weekly: 38000, note: "", avoid: false },
+        DACH:   { min_weekly: 30000, max_weekly: 36000, note: "", avoid: false },
+        US:     { min_weekly: 38000, max_weekly: 46000, note: "", avoid: false },
       },
     },
     {
-      client_type: "Family PMI €200M+",
+      client_type: "PE €100M-€200M",
+      rates: {
+        Italy:  { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        France: { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
+        UK:     { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
+        DACH:   { min_weekly: 26000, max_weekly: 32000, note: "", avoid: false },
+        US:     { min_weekly: 34000, max_weekly: 42000, note: "", avoid: false },
+      },
+    },
+    {
+      client_type: "PE <€100M",
+      rates: {
+        Italy:  { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
+        France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
+        UK:     { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
+        DACH:   { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        US:     { min_weekly: 28000, max_weekly: 36000, note: "", avoid: false },
+      },
+    },
+    // ── Family / Corporate clients (3 revenue bands) ──
+    {
+      client_type: "Family >€200M",
       rates: {
         Italy:  { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
         France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
@@ -355,7 +377,17 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
       },
     },
     {
-      client_type: "Family PMI <€200M",
+      client_type: "Family €100M-€200M",
+      rates: {
+        Italy:  { min_weekly: 14000, max_weekly: 20000, note: "", avoid: false },
+        France: { min_weekly: 16000, max_weekly: 22000, note: "", avoid: false },
+        UK:     { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
+        DACH:   { min_weekly: 16000, max_weekly: 22000, note: "", avoid: false },
+        US:     { min_weekly: 0,     max_weekly: 0,     note: "", avoid: true  },
+      },
+    },
+    {
+      client_type: "Family <€100M",
       rates: {
         Italy:  { min_weekly: 10000, max_weekly: 15000, note: "", avoid: false },
         France: { min_weekly: 12000, max_weekly: 16000, note: "", avoid: false },
@@ -365,10 +397,6 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
       },
     },
   ],
-  floor_rule: {
-    min_weekly: 30000,
-    description: "Never quote below €30k/week for any EM+2 engagement in Europe",
-  },
   competitor_benchmarks: [
     {
       tier: "tier1",
@@ -434,6 +462,16 @@ function formatCurrency(value: number): string {
   return "€" + Math.round(value).toLocaleString("en-US");
 }
 
+export function getCurrencyForRegion(region: string): { symbol: string; code: string } {
+  if (region === "US") return { symbol: "$", code: "USD" };
+  return { symbol: "€", code: "EUR" };
+}
+
+export function formatWithCurrency(value: number, region: string): string {
+  const { symbol } = getCurrencyForRegion(region);
+  return symbol + Math.round(value).toLocaleString("it-IT");
+}
+
 function sigmoid(a: number, x: number): number {
   return 1 / (1 + Math.exp(a * x));
 }
@@ -490,8 +528,7 @@ function computeCostFloor(input: PricingCaseInput, settings: PricingSettings): n
   }
   // Apply overhead and minimum margin
   const cost_floor = delivery_cost_weekly * (1 + OVERHEAD_PCT) * (1 + MIN_MARGIN_PCT);
-  // Also enforce the absolute floor rule
-  return Math.max(cost_floor, settings.floor_rule.min_weekly * 0.5); // floor rule applies as absolute minimum only for explicit engagement floors
+  return cost_floor;
 }
 
 // ── L2: Market Layer ──────────────────────────────────────────────────────────
@@ -936,10 +973,13 @@ export function calculatePricing(
   const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
   const matrixRegion = regionMap[input.region] ?? "Italy";
   const clientType = input.pe_owned
-    ? "PE/LBO"
-    : input.revenue_band === "above_1b" ? "Corporate >€1B"
-    : (input.revenue_band === "200m_1b" || input.revenue_band === "100m_200m") ? "Family PMI €200M+"
-    : "Family PMI <€200M";
+    ? (input.revenue_band === "above_1b" ? "PE >€1B"
+      : input.revenue_band === "200m_1b" ? "PE €200M-€1B"
+      : input.revenue_band === "100m_200m" ? "PE €100M-€200M"
+      : "PE <€100M")
+    : (input.revenue_band === "above_1b" || input.revenue_band === "200m_1b" ? "Family >€200M"
+      : input.revenue_band === "100m_200m" ? "Family €100M-€200M"
+      : "Family <€100M");
   const matrixRow = settings.rate_matrix?.find(r => r.client_type === clientType);
   const matrixCell = matrixRow?.rates?.[matrixRegion];
   const matrix_reference = matrixCell && !matrixCell.avoid

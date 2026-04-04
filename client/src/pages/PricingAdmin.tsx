@@ -113,7 +113,7 @@ interface PricingSettings {
   discounts: PricingDiscount[];
   staff_costs: StaffCostEntry[];
   rate_matrix: RateMatrixRow[];
-  floor_rule: FloorRule;
+  floor_rule?: FloorRule; // deprecated — kept optional for backward compat
   bracket_low_pct: number;
   bracket_high_pct: number;
   aggressive_threshold_pct: number;
@@ -176,8 +176,9 @@ const DEFAULT_SETTINGS: PricingSettings = {
     { role_id: "counsel",   role_name: "Counsel / Expert", daily_cost: 1500 },
   ],
   rate_matrix: [
+    // ── PE clients (4 revenue bands) ──
     {
-      client_type: "PE/LBO",
+      client_type: "PE >€1B",
       rates: {
         Italy:  { min_weekly: 30000, max_weekly: 34000, note: "", avoid: false },
         France: { min_weekly: 32000, max_weekly: 36000, note: "", avoid: false },
@@ -187,17 +188,38 @@ const DEFAULT_SETTINGS: PricingSettings = {
       },
     },
     {
-      client_type: "Corporate >€1B",
+      client_type: "PE €200M-€1B",
       rates: {
-        Italy:  { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
-        France: { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
-        UK:     { min_weekly: 28000, max_weekly: 35000, note: "", avoid: false },
-        DACH:   { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
-        US:     { min_weekly: 35000, max_weekly: 44000, note: "", avoid: false },
+        Italy:  { min_weekly: 26000, max_weekly: 32000, note: "", avoid: false },
+        France: { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
+        UK:     { min_weekly: 32000, max_weekly: 38000, note: "", avoid: false },
+        DACH:   { min_weekly: 30000, max_weekly: 36000, note: "", avoid: false },
+        US:     { min_weekly: 38000, max_weekly: 46000, note: "", avoid: false },
       },
     },
     {
-      client_type: "Family PMI €200M+",
+      client_type: "PE €100M-€200M",
+      rates: {
+        Italy:  { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        France: { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
+        UK:     { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
+        DACH:   { min_weekly: 26000, max_weekly: 32000, note: "", avoid: false },
+        US:     { min_weekly: 34000, max_weekly: 42000, note: "", avoid: false },
+      },
+    },
+    {
+      client_type: "PE <€100M",
+      rates: {
+        Italy:  { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
+        France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
+        UK:     { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
+        DACH:   { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        US:     { min_weekly: 28000, max_weekly: 36000, note: "", avoid: false },
+      },
+    },
+    // ── Family / Corporate clients (3 revenue bands) ──
+    {
+      client_type: "Family >€200M",
       rates: {
         Italy:  { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
         France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
@@ -207,7 +229,17 @@ const DEFAULT_SETTINGS: PricingSettings = {
       },
     },
     {
-      client_type: "Family PMI <€200M",
+      client_type: "Family €100M-€200M",
+      rates: {
+        Italy:  { min_weekly: 14000, max_weekly: 20000, note: "", avoid: false },
+        France: { min_weekly: 16000, max_weekly: 22000, note: "", avoid: false },
+        UK:     { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
+        DACH:   { min_weekly: 16000, max_weekly: 22000, note: "", avoid: false },
+        US:     { min_weekly: 0, max_weekly: 0, note: "", avoid: true },
+      },
+    },
+    {
+      client_type: "Family <€100M",
       rates: {
         Italy:  { min_weekly: 10000, max_weekly: 15000, note: "", avoid: false },
         France: { min_weekly: 12000, max_weekly: 16000, note: "", avoid: false },
@@ -217,10 +249,6 @@ const DEFAULT_SETTINGS: PricingSettings = {
       },
     },
   ],
-  floor_rule: {
-    min_weekly: 30000,
-    description: "Never quote below €30k/week for any EM+2 engagement in Europe",
-  },
   bracket_low_pct: 10,
   bracket_high_pct: 15,
   aggressive_threshold_pct: 20,
@@ -1329,7 +1357,6 @@ interface RateMatrixTabProps {
 
 function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProps) {
   const matrix: RateMatrixRow[] = settings.rate_matrix ?? [];
-  const floorRule: FloorRule = settings.floor_rule ?? { min_weekly: 30000, description: "" };
 
   const updateCell = (rowIdx: number, region: string, field: keyof RateMatrixCell, value: number | boolean | string) => {
     const newMatrix = matrix.map((row, i) => {
@@ -1345,19 +1372,12 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
     onChange({ rate_matrix: newMatrix });
   };
 
-  const updateFloorRule = (field: keyof FloorRule, value: number | string) => {
-    onChange({ floor_rule: { ...floorRule, [field]: value } });
-  };
+  const peRows = matrix.filter(r => r.client_type.startsWith("PE"));
+  const familyRows = matrix.filter(r => !r.client_type.startsWith("PE"));
 
-  return (
-    <div className="space-y-5">
-      <div>
-        <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Fee Strategy Matrix</h3>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Weekly rate reference ranges (€k) by client type and market. Used as a sanity-check overlay on computed prices.
-        </p>
-      </div>
-
+  const renderMatrixTable = (rows: RateMatrixRow[], title: string, colorClass: string) => (
+    <div className="space-y-3">
+      <div className={`text-sm font-bold ${colorClass}`}>{title}</div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
@@ -1371,99 +1391,82 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
             </tr>
           </thead>
           <tbody>
-            {matrix.map((row, rowIdx) => (
-              <tr key={row.client_type} className="border-t">
-                <td className="py-3 pr-4 font-medium text-sm align-top">{row.client_type}</td>
-                {RATE_MATRIX_REGIONS.map((region) => {
-                  const cell: RateMatrixCell = row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
-                  return (
-                    <td key={region} className="py-2 px-2 align-top">
-                      {cell.avoid ? (
-                        <div className="flex flex-col items-center gap-1">
-                          <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100 text-xs">AVOID</Badge>
-                          <button
-                            type="button"
-                            onClick={() => updateCell(rowIdx, region, "avoid", false)}
-                            className="text-xs text-muted-foreground hover:text-foreground underline"
-                          >
-                            set range
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-1 min-w-[110px]">
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-muted-foreground w-5">Min</span>
-                            <Input
-                              type="number"
-                              step="1000"
-                              min="0"
-                              value={cell.min_weekly}
-                              onChange={(e) => updateCell(rowIdx, region, "min_weekly", parseInt(e.target.value) || 0)}
-                              className="h-8 text-xs text-center font-mono w-24 px-1"
-                            />
+            {rows.map((row) => {
+              const rowIdx = matrix.indexOf(row);
+              return (
+                <tr key={row.client_type} className="border-t">
+                  <td className="py-3 pr-4 font-medium text-sm align-top">{row.client_type}</td>
+                  {RATE_MATRIX_REGIONS.map((region) => {
+                    const cell: RateMatrixCell = row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
+                    return (
+                      <td key={region} className="py-2 px-2 align-top">
+                        {cell.avoid ? (
+                          <div className="flex flex-col items-center gap-1">
+                            <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100 text-xs">AVOID</Badge>
+                            <button
+                              type="button"
+                              onClick={() => updateCell(rowIdx, region, "avoid", false)}
+                              className="text-xs text-muted-foreground hover:text-foreground underline"
+                            >
+                              set range
+                            </button>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-muted-foreground w-5">Max</span>
-                            <Input
-                              type="number"
-                              step="1000"
-                              min="0"
-                              value={cell.max_weekly}
-                              onChange={(e) => updateCell(rowIdx, region, "max_weekly", parseInt(e.target.value) || 0)}
-                              className="h-8 text-xs text-center font-mono w-24 px-1"
-                            />
+                        ) : (
+                          <div className="flex flex-col gap-1 min-w-[110px]">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground w-5">Min</span>
+                              <Input
+                                type="number"
+                                step="1000"
+                                min="0"
+                                value={cell.min_weekly}
+                                onChange={(e) => updateCell(rowIdx, region, "min_weekly", parseInt(e.target.value) || 0)}
+                                className="h-8 text-xs text-center font-mono w-24 px-1"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground w-5">Max</span>
+                              <Input
+                                type="number"
+                                step="1000"
+                                min="0"
+                                value={cell.max_weekly}
+                                onChange={(e) => updateCell(rowIdx, region, "max_weekly", parseInt(e.target.value) || 0)}
+                                className="h-8 text-xs text-center font-mono w-24 px-1"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => updateCell(rowIdx, region, "avoid", true)}
+                              className="text-xs text-muted-foreground hover:text-red-600 underline text-left"
+                            >
+                              mark avoid
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => updateCell(rowIdx, region, "avoid", true)}
-                            className="text-xs text-muted-foreground hover:text-red-600 underline text-left"
-                          >
-                            mark avoid
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
 
-      {/* Floor Rule */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Global Floor Rule</CardTitle>
-          <CardDescription className="text-xs">
-            Minimum weekly rate that must never be undercut, regardless of the calculation output.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label className="text-sm">Floor price (€/week)</Label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">€</span>
-              <Input
-                type="number"
-                step="1000"
-                min="0"
-                value={floorRule.min_weekly}
-                onChange={(e) => updateFloorRule("min_weekly", parseInt(e.target.value) || 0)}
-                className="pl-7 font-mono"
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-sm">Description / Scope</Label>
-            <Input
-              value={floorRule.description}
-              onChange={(e) => updateFloorRule("description", e.target.value)}
-              placeholder="e.g. Never quote below €30k/week for EM+2 in Europe"
-            />
-          </div>
-        </CardContent>
-      </Card>
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Fee Strategy Matrix</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Weekly rate reference ranges by client type and market. Split into PE and Family/Corporate matrices. Used as a sanity-check overlay on computed prices.
+        </p>
+      </div>
+
+      {renderMatrixTable(peRows, "PE Fee Matrix", "text-primary")}
+      {renderMatrixTable(familyRows, "Family / Corporate Fee Matrix", "text-amber-700")}
 
       <div className="flex justify-end pt-2">
         <Button onClick={onSave} disabled={saving} size="sm">

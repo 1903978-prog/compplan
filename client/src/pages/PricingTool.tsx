@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS,
+  getCurrencyForRegion, formatWithCurrency,
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
   type CompetitorBenchmark, type ProjectType, type CompetitiveIntensity, type CompetitorType,
   type OwnershipType, type StrategicIntent, type ProcurementInvolvement,
@@ -46,6 +47,9 @@ interface PricingCase {
   ownership_type?: OwnershipType | null;
   strategic_intent?: StrategicIntent | null;
   procurement_involvement?: ProcurementInvolvement | null;
+  // Value-based pricing fields
+  target_roi?: number | null;
+  max_fees_ebitda_pct?: number | null;
 }
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
@@ -88,6 +92,7 @@ function emptyCase(): PricingCase {
     commercial_maturity: null, urgency: null, competitive_intensity: null,
     competitor_type: null, ownership_type: null, strategic_intent: null,
     procurement_involvement: null,
+    target_roi: 10, max_fees_ebitda_pct: 3,
   };
 }
 
@@ -118,7 +123,7 @@ export default function PricingTool() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
-  const [mainTab, setMainTab] = useState<"cases" | "history">("cases");
+  const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
   const [showHistoryForm, setShowHistoryForm] = useState(false);
@@ -403,18 +408,19 @@ export default function PricingTool() {
             <Button onClick={openNewForm} disabled={loading}>
               <Plus className="w-4 h-4 mr-2" /> New Pricing Case
             </Button>
-          ) : (
+          ) : mainTab === "history" ? (
             <Button onClick={() => { setHistoryForm(emptyProposal()); setEditingProposalId(null); setShowHistoryForm(true); }}>
               <Plus className="w-4 h-4 mr-2" /> Log Past Project
             </Button>
-          )}
+          ) : null}
         </div>
 
         {/* Tab navigation */}
         <div className="flex gap-1 border-b">
           {([
-            { id: "cases" as const, label: "Pricing Cases", icon: DollarSign },
-            { id: "history" as const, label: "Past Projects", icon: History },
+            { id: "cases" as const, label: "Pricing Cases", icon: DollarSign, count: cases.length },
+            { id: "history" as const, label: "Past Projects", icon: History, count: proposals.length },
+            { id: "winloss" as const, label: "Win-Loss", icon: TrendingUp, count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
           ]).map(tab => (
             <button
               key={tab.id}
@@ -428,7 +434,7 @@ export default function PricingTool() {
               <tab.icon className="w-4 h-4" />
               {tab.label}
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
-                {tab.id === "cases" ? cases.length : proposals.length}
+                {tab.count}
               </span>
             </button>
           ))}
@@ -575,11 +581,14 @@ export default function PricingTool() {
                         onChange={e => setHistoryForm(f => ({ ...f, client_name: e.target.value }))} className="h-9 text-sm" />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">PE Fund</Label>
-                      <Select value={historyForm.fund_name || "__none__"} onValueChange={v => setHistoryForm(f => ({ ...f, fund_name: v === "__none__" ? "" : v }))}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select fund…" /></SelectTrigger>
+                      <Label className="text-xs">PE Owner</Label>
+                      <Select value={historyForm.fund_name || "__none__"} onValueChange={v => {
+                        const isPE = v !== "__none__";
+                        setHistoryForm(f => ({ ...f, fund_name: isPE ? v : "", pe_owned: isPE }));
+                      }}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select PE owner…" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">— None —</SelectItem>
+                          <SelectItem value="__none__">-- None (Family owned) --</SelectItem>
                           {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds).map(fund => (
                             <SelectItem key={fund} value={fund}>{fund}</SelectItem>
                           ))}
@@ -594,18 +603,6 @@ export default function PricingTool() {
                           {REGIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">PE Owned</Label>
-                      <div className="flex gap-2">
-                        {[true, false].map(v => (
-                          <button key={String(v)} type="button"
-                            onClick={() => setHistoryForm(f => ({ ...f, pe_owned: v }))}
-                            className={`flex-1 py-1.5 rounded-md text-sm font-medium border transition-colors ${historyForm.pe_owned === v ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:bg-muted"}`}>
-                            {v ? "Yes" : "No"}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Revenue Band</Label>
@@ -735,6 +732,164 @@ export default function PricingTool() {
             )}
           </div>
         )}
+
+        {/* ── WIN-LOSS ANALYSIS TAB ──────────────────────────────── */}
+        {mainTab === "winloss" && (
+          <div className="space-y-6">
+            {(() => {
+              const wonProposals = proposals.filter(p => p.outcome === "won");
+              const lostProposals = proposals.filter(p => p.outcome === "lost");
+
+              // Group by region
+              const allRegions = [...new Set(proposals.map(p => p.region))].sort();
+
+              if (wonProposals.length === 0 && lostProposals.length === 0) {
+                return (
+                  <Card className="py-16">
+                    <CardContent className="flex flex-col items-center gap-4">
+                      <TrendingUp className="w-12 h-12 text-muted-foreground/30" />
+                      <div className="text-center">
+                        <p className="font-semibold text-lg">No win/loss data available</p>
+                        <p className="text-sm text-muted-foreground">Log past projects with outcomes to see win-loss analysis</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              }
+
+              return (
+                <>
+                  {/* Summary stats */}
+                  <div className="grid grid-cols-4 gap-4">
+                    {(() => {
+                      const avgWon = wonProposals.length ? wonProposals.reduce((s, p) => s + p.weekly_price, 0) / wonProposals.length : 0;
+                      const avgLost = lostProposals.length ? lostProposals.reduce((s, p) => s + p.weekly_price, 0) / lostProposals.length : 0;
+                      const winRate = (wonProposals.length + lostProposals.length) > 0
+                        ? (wonProposals.length / (wonProposals.length + lostProposals.length) * 100) : 0;
+                      return [
+                        { label: "Won", value: wonProposals.length, cls: "text-emerald-600" },
+                        { label: "Lost", value: lostProposals.length, cls: "text-red-500" },
+                        { label: "Win Rate", value: `${winRate.toFixed(0)}%`, cls: "" },
+                        { label: "Avg Won vs Lost", value: avgWon > 0 && avgLost > 0 ? `${((avgLost - avgWon) / avgWon * 100).toFixed(0)}% gap` : "--", cls: "" },
+                      ].map(stat => (
+                        <Card key={stat.label} className="p-4">
+                          <div className="text-xs text-muted-foreground uppercase font-bold mb-1">{stat.label}</div>
+                          <div className={`text-2xl font-bold ${stat.cls}`}>{stat.value}</div>
+                        </Card>
+                      ));
+                    })()}
+                  </div>
+
+                  {/* Scatter plot per region */}
+                  {allRegions.map(region => {
+                    const regionWon = wonProposals.filter(p => p.region === region);
+                    const regionLost = lostProposals.filter(p => p.region === region);
+                    if (regionWon.length === 0 && regionLost.length === 0) return null;
+
+                    const allPrices = [...regionWon, ...regionLost].map(p => p.weekly_price);
+                    const minPrice = Math.min(...allPrices);
+                    const maxPrice = Math.max(...allPrices);
+                    const range = maxPrice - minPrice || 1;
+                    const padding = range * 0.1;
+                    const scaleMin = Math.max(0, minPrice - padding);
+                    const scaleMax = maxPrice + padding;
+                    const scaleRange = scaleMax - scaleMin || 1;
+
+                    const suggestedMin = regionWon.length > 0 ? Math.min(...regionWon.map(p => p.weekly_price)) : null;
+                    const suggestedMax = regionWon.length > 0 ? Math.max(...regionWon.map(p => p.weekly_price)) : null;
+                    const avgWon = regionWon.length > 0 ? regionWon.reduce((s, p) => s + p.weekly_price, 0) / regionWon.length : null;
+                    const avgLost = regionLost.length > 0 ? regionLost.reduce((s, p) => s + p.weekly_price, 0) / regionLost.length : null;
+
+                    const cSym = getCurrencyForRegion(region).symbol;
+                    const fmtR = (n: number) => `${cSym}${Math.round(n / 1000)}k`;
+
+                    return (
+                      <Card key={region}>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            {region}
+                            <Badge variant="secondary" className="text-xs">{regionWon.length + regionLost.length} deals</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          {/* SVG scatter */}
+                          <div className="relative">
+                            <svg viewBox="0 0 600 120" className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+                              {/* Background */}
+                              <rect x="40" y="10" width="540" height="80" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="1" rx="4" />
+
+                              {/* Suggested range */}
+                              {suggestedMin != null && suggestedMax != null && (
+                                <rect
+                                  x={40 + ((suggestedMin - scaleMin) / scaleRange) * 540}
+                                  y="10" width={Math.max(4, ((suggestedMax - suggestedMin) / scaleRange) * 540)}
+                                  height="80" fill="#dcfce7" opacity="0.6"
+                                />
+                              )}
+
+                              {/* Won dots (blue) */}
+                              {regionWon.map((p, i) => {
+                                const x = 40 + ((p.weekly_price - scaleMin) / scaleRange) * 540;
+                                const y = 30 + (i % 4) * 15;
+                                return <circle key={`w${i}`} cx={x} cy={y} r="5" fill="#3b82f6" opacity="0.8">
+                                  <title>Won: {fmtR(p.weekly_price)} - {p.project_name}</title>
+                                </circle>;
+                              })}
+
+                              {/* Lost dots (red) */}
+                              {regionLost.map((p, i) => {
+                                const x = 40 + ((p.weekly_price - scaleMin) / scaleRange) * 540;
+                                const y = 55 + (i % 4) * 15;
+                                return <circle key={`l${i}`} cx={x} cy={y} r="5" fill="#ef4444" opacity="0.8">
+                                  <title>Lost: {fmtR(p.weekly_price)} - {p.project_name}</title>
+                                </circle>;
+                              })}
+
+                              {/* Avg markers */}
+                              {avgWon != null && (
+                                <line x1={40 + ((avgWon - scaleMin) / scaleRange) * 540} y1="10"
+                                  x2={40 + ((avgWon - scaleMin) / scaleRange) * 540} y2="90"
+                                  stroke="#3b82f6" strokeWidth="2" strokeDasharray="4,4" />
+                              )}
+                              {avgLost != null && (
+                                <line x1={40 + ((avgLost - scaleMin) / scaleRange) * 540} y1="10"
+                                  x2={40 + ((avgLost - scaleMin) / scaleRange) * 540} y2="90"
+                                  stroke="#ef4444" strokeWidth="2" strokeDasharray="4,4" />
+                              )}
+
+                              {/* Scale labels */}
+                              <text x="40" y="108" fontSize="10" fill="#94a3b8">{fmtR(scaleMin)}</text>
+                              <text x="580" y="108" fontSize="10" fill="#94a3b8" textAnchor="end">{fmtR(scaleMax)}</text>
+                              <text x="310" y="108" fontSize="10" fill="#94a3b8" textAnchor="middle">{fmtR((scaleMin + scaleMax) / 2)}</text>
+                            </svg>
+                          </div>
+
+                          {/* Legend */}
+                          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                            <div className="flex items-center gap-1">
+                              <div className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Won
+                              {avgWon != null && <span className="font-mono text-blue-600 ml-1">(avg {fmtR(avgWon)})</span>}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2.5 h-2.5 rounded-full bg-red-500" /> Lost
+                              {avgLost != null && <span className="font-mono text-red-600 ml-1">(avg {fmtR(avgLost)})</span>}
+                            </div>
+                            {suggestedMin != null && suggestedMax != null && (
+                              <div className="flex items-center gap-1">
+                                <div className="w-3 h-2.5 bg-emerald-200 rounded-sm" />
+                                Suggested: {fmtR(suggestedMin)} - {fmtR(suggestedMax)}
+                              </div>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </>
+              );
+            })()}
+          </div>
+        )}
       </div>
     );
   }
@@ -776,11 +931,14 @@ export default function PricingTool() {
                     placeholder="Client name" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">PE Fund / Shareholder</Label>
-                  <Select value={form.fund_name || "__none__"} onValueChange={v => setForm(f => ({ ...f, fund_name: v === "__none__" ? "" : v }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select fund…" /></SelectTrigger>
+                  <Label className="text-xs">PE Owner</Label>
+                  <Select value={form.fund_name || "__none__"} onValueChange={v => {
+                    const isPE = v !== "__none__";
+                    setForm(f => ({ ...f, fund_name: isPE ? v : "", pe_owned: isPE }));
+                  }}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select PE owner…" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">— None / Unknown —</SelectItem>
+                      <SelectItem value="__none__">-- None (Family owned) --</SelectItem>
                       {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds).map(fund => (
                         <SelectItem key={fund} value={fund}>{fund}</SelectItem>
                       ))}
@@ -795,20 +953,6 @@ export default function PricingTool() {
                       {REGIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">PE Owned</Label>
-                  <div className="flex gap-2">
-                    {[true, false].map(v => (
-                      <button key={String(v)}
-                        onClick={() => setForm(f => ({ ...f, pe_owned: v }))}
-                        className={`flex-1 py-1.5 rounded-md text-sm font-medium border transition-colors ${
-                          form.pe_owned === v ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:bg-muted"
-                        }`}>
-                        {v ? "Yes" : "No"}
-                      </button>
-                    ))}
-                  </div>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Revenue Band</Label>
@@ -952,19 +1096,6 @@ export default function PricingTool() {
                     </SelectContent>
                   </Select>
                 </div>
-                {/* Ownership type */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Ownership Type <span className="text-muted-foreground/50 font-normal">(L3)</span></Label>
-                  <Select value={form.ownership_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, ownership_type: v === "__none__" ? null : v as OwnershipType }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">— Not set —</SelectItem>
-                      <SelectItem value="pe">PE-owned</SelectItem>
-                      <SelectItem value="corporate">Corporate</SelectItem>
-                      <SelectItem value="founder">Founder-led (−15%)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
                 {/* Procurement */}
                 <div className="space-y-1">
                   <Label className="text-xs">Procurement Involvement <span className="text-muted-foreground/50 font-normal">(L3)</span></Label>
@@ -1010,23 +1141,10 @@ export default function PricingTool() {
                 </div>
               </div>
 
-              {/* Live value anchor preview */}
+              {/* Value anchor hint */}
               {recommendation?.value_anchor_weekly != null && (
-                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase text-emerald-700 tracking-wide">Value Anchor (L0)</span>
-                    <span className="text-xs font-bold text-emerald-800 font-mono">
-                      {fmt(recommendation.value_anchor_weekly)}/wk
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-emerald-700">
-                    EBITDA uplift {recommendation.ebitda_uplift != null ? fmt(recommendation.ebitda_uplift) : "—"}
-                    {" "}× {form.project_type ? `${form.project_type} capture rate` : "capture rate"}
-                    {" "}÷ {form.duration_weeks}w
-                    {recommendation.ebitda_improvement_pct != null && (
-                      <span className="ml-1 opacity-70">(+{recommendation.ebitda_improvement_pct.toFixed(1)} EBITDA pts expected)</span>
-                    )}
-                  </div>
+                <div className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                  Value anchor active: {fmt(recommendation.value_anchor_weekly)}/wk — see Value-Based Pricing section below
                 </div>
               )}
             </CardContent>
@@ -1182,10 +1300,13 @@ export default function PricingTool() {
             const matrixRegion = regionMap[form.region] ?? null;
             if (!matrixRegion) return null;
             const clientType = form.pe_owned
-              ? "PE/LBO"
-              : form.revenue_band === "above_1b" ? "Corporate >€1B"
-              : form.revenue_band === "200m_1b" || form.revenue_band === "100m_200m" ? "Family PMI €200M+"
-              : "Family PMI <€200M";
+              ? (form.revenue_band === "above_1b" ? "PE >€1B"
+                : form.revenue_band === "200m_1b" ? "PE €200M-€1B"
+                : form.revenue_band === "100m_200m" ? "PE €100M-€200M"
+                : "PE <€100M")
+              : (form.revenue_band === "above_1b" || form.revenue_band === "200m_1b" ? "Family >€200M"
+                : form.revenue_band === "100m_200m" ? "Family €100M-€200M"
+                : "Family <€100M");
             const matrixRow = settings?.rate_matrix?.find(r => r.client_type === clientType);
             const ourCell = matrixRow?.rates?.[matrixRegion];
             const allMaxes = benchmarks.map(b => (b.rates as any)[matrixRegion]?.max_weekly ?? 0).filter(Boolean);
@@ -1194,7 +1315,8 @@ export default function PricingTool() {
             if (targetPrice) allMaxes.push(targetPrice);
             const scaleMax = Math.max(...allMaxes, 1) * 1.08;
             const pct = (v: number) => `${Math.min(100, (v / scaleMax) * 100).toFixed(1)}%`;
-            const fmtK = (v: number) => `€${Math.round(v / 1000)}k`;
+            const cSym = getCurrencyForRegion(form.region).symbol;
+            const fmtK = (v: number) => `${cSym}${Math.round(v / 1000)}k`;
             const tiers = [
               ...benchmarks.map(b => ({
                 label: b.label, color: b.color,
@@ -1257,6 +1379,111 @@ export default function PricingTool() {
                   EM+2 weekly rates. Sources: Source Global Research, ALM Intelligence, Consultancy.eu.
                 </div>
               </div>
+            );
+          })()}
+
+          {/* ── VALUE-BASED PRICING SECTION ────────────────────── */}
+          {(() => {
+            const cur = getCurrencyForRegion(form.region);
+            const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
+            const ebitda_margin = form.ebitda_margin_pct ?? 0;
+            const ebitda_improvement = recommendation?.ebitda_improvement_pct ?? 0;
+            const REVENUE_MIDPOINTS: Record<string, number> = {
+              below_100m: 50, "100m_200m": 150, "200m_1b": 500, above_1b: 1500,
+            };
+            const revenue_m = REVENUE_MIDPOINTS[form.revenue_band] ?? 500;
+            const targetRoi = form.target_roi ?? 10;
+            const maxFeesPct = form.max_fees_ebitda_pct ?? 3;
+
+            // EBITDA generated over 3 years cumulated
+            const ebitda_generated_3y = revenue_m * 1_000_000 * (ebitda_margin / 100) * (ebitda_improvement / 100) * 3;
+            const professional_fees = targetRoi > 0 ? ebitda_generated_3y / targetRoi : 0;
+            const fees_per_week = form.duration_weeks > 0 ? professional_fees / form.duration_weeks : 0;
+
+            // Constraint: fees <= max_fees_ebitda_pct% of EBITDA
+            const annual_ebitda = revenue_m * 1_000_000 * (ebitda_margin / 100);
+            const max_fees_from_ebitda = annual_ebitda * (maxFeesPct / 100);
+
+            // Get rate matrix min/max for constraint
+            const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
+            const matrixRegion = regionMap[form.region] ?? "Italy";
+            const clientType = form.pe_owned
+              ? (form.revenue_band === "above_1b" ? "PE >€1B"
+                : form.revenue_band === "200m_1b" ? "PE €200M-€1B"
+                : form.revenue_band === "100m_200m" ? "PE €100M-€200M"
+                : "PE <€100M")
+              : (form.revenue_band === "above_1b" || form.revenue_band === "200m_1b" ? "Family >€200M"
+                : form.revenue_band === "100m_200m" ? "Family €100M-€200M"
+                : "Family <€100M");
+            const matrixRow = settings?.rate_matrix?.find(r => r.client_type === clientType);
+            const matrixCell = matrixRow?.rates?.[matrixRegion];
+            const min_fee_weekly = matrixCell && !matrixCell.avoid ? matrixCell.min_weekly : 0;
+            const max_fee_weekly = matrixCell && !matrixCell.avoid ? matrixCell.max_weekly : Infinity;
+
+            // Apply constraints
+            let constrained_fees_total = Math.min(professional_fees, max_fees_from_ebitda);
+            let constrained_per_week = form.duration_weeks > 0 ? constrained_fees_total / form.duration_weeks : 0;
+            if (min_fee_weekly > 0) constrained_per_week = Math.max(constrained_per_week, min_fee_weekly);
+            if (max_fee_weekly < Infinity) constrained_per_week = Math.min(constrained_per_week, max_fee_weekly);
+            constrained_fees_total = constrained_per_week * form.duration_weeks;
+
+            const fees_as_pct_ebitda = annual_ebitda > 0 ? (constrained_fees_total / annual_ebitda) * 100 : 0;
+
+            const hasData = ebitda_margin > 0 && ebitda_improvement > 0 && form.duration_weeks > 0;
+
+            return (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Value-Based Pricing (ROI Logic)</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Target ROI (x)</Label>
+                      <Input type="number" min="1" max="100" step="1"
+                        value={form.target_roi ?? 10}
+                        onChange={e => setForm(f => ({ ...f, target_roi: parseFloat(e.target.value) || 10 }))} />
+                      <div className="text-[9px] text-muted-foreground">Fees = EBITDA generated / ROI target</div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Max fees as % of EBITDA</Label>
+                      <Input type="number" min="0.5" max="20" step="0.5"
+                        value={form.max_fees_ebitda_pct ?? 3}
+                        onChange={e => setForm(f => ({ ...f, max_fees_ebitda_pct: parseFloat(e.target.value) || 3 }))} />
+                      <div className="text-[9px] text-muted-foreground">Hard cap on total fees vs annual EBITDA</div>
+                    </div>
+                  </div>
+
+                  {hasData ? (
+                    <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 space-y-2">
+                      <div className="text-[10px] font-bold uppercase text-emerald-700 tracking-wide">Value-Based Fee Calculation</div>
+                      <div className="text-xs text-emerald-800 space-y-1">
+                        <div>Revenue estimate: {fmtC(revenue_m * 1_000_000)} | EBITDA margin: {ebitda_margin}% | Improvement: +{ebitda_improvement.toFixed(1)} pts</div>
+                        <div>EBITDA generated (3yr cumulated): <span className="font-bold">{fmtC(ebitda_generated_3y)}</span></div>
+                        <div>Professional fees (EBITDA / {targetRoi}x ROI): <span className="font-bold">{fmtC(professional_fees)}</span></div>
+                        <div>Fees per week (/ {form.duration_weeks}w): <span className="font-bold">{fmtC(fees_per_week)}</span></div>
+                      </div>
+                      <div className="border-t border-emerald-300 pt-2 space-y-1">
+                        <div className="text-xs text-emerald-800">
+                          Constrained fees/week: <span className="font-bold text-lg">{fmtC(constrained_per_week)}</span>
+                        </div>
+                        <div className="text-xs text-emerald-800">
+                          Total fees: <span className="font-bold">{fmtC(constrained_fees_total)}</span> | Fees as % of EBITDA: <span className="font-bold">{fees_as_pct_ebitda.toFixed(1)}%</span>
+                        </div>
+                        {matrixCell && !matrixCell.avoid && (
+                          <div className="text-[10px] text-emerald-700">
+                            Rate matrix range ({clientType}, {matrixRegion}): {fmtC(min_fee_weekly)} - {fmtC(max_fee_weekly)}/wk
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground italic bg-muted/30 rounded p-2">
+                      Fill in EBITDA margin, sector (for improvement estimate), and duration to see value-based pricing
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             );
           })()}
 
