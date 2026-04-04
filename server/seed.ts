@@ -255,6 +255,17 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS procurement_involvement TEXT`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS case_discounts JSONB`);
 
+  // Performance issues table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS performance_issues (
+      id SERIAL PRIMARY KEY,
+      employee_name TEXT NOT NULL,
+      date TEXT NOT NULL,
+      note TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // Fix promo_years values: DB must store years (e.g. 0.5 = 6 months).
   // If any value is < 0.1 the DB got corrupted with wrong values — reset all promo fields.
   const existingRoles = await db.select().from(roleGridEntries);

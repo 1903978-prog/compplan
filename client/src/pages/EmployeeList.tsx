@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock } from "lucide-react";
+import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -226,7 +226,7 @@ const ROLE_RANK: Record<string, number> = {
 export default function EmployeeList() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
-  const [mainTab, setMainTab] = useState<"employees" | "tdl">("employees");
+  const [mainTab, setMainTab] = useState<"employees" | "tdl" | "performance">("employees");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
@@ -241,6 +241,16 @@ export default function EmployeeList() {
   const [editTaskTitle, setEditTaskTitle] = useState("");
   const [editTaskAssignee, setEditTaskAssignee] = useState("");
   const [editTaskDeadline, setEditTaskDeadline] = useState("");
+
+  // ── Performance Issues state ──────────────────────────────────────────────
+  const [perfIssues, setPerfIssues] = useState<any[]>([]);
+  const [newPerfEmployee, setNewPerfEmployee] = useState("");
+  const [newPerfDate, setNewPerfDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [newPerfNote, setNewPerfNote] = useState("");
+  const [editingPerfId, setEditingPerfId] = useState<number | null>(null);
+  const [editPerfEmployee, setEditPerfEmployee] = useState("");
+  const [editPerfDate, setEditPerfDate] = useState("");
+  const [editPerfNote, setEditPerfNote] = useState("");
 
   useEffect(() => {
     fetch("/api/employee-tasks", { credentials: "include" })
@@ -295,6 +305,48 @@ export default function EmployeeList() {
   };
 
   const cancelEditTask = () => setEditingTaskId(null);
+
+  // ── Performance Issues CRUD ───────────────────────────────────────────────
+  useEffect(() => {
+    fetch("/api/performance-issues", { credentials: "include" })
+      .then(r => r.json()).then(setPerfIssues).catch(() => {});
+  }, []);
+
+  const addPerfIssue = async () => {
+    if (!newPerfNote.trim() || !newPerfEmployee) return;
+    const res = await fetch("/api/performance-issues", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ employee_name: newPerfEmployee, date: newPerfDate, note: newPerfNote }),
+    });
+    const issue = await res.json();
+    setPerfIssues(prev => [...prev, issue]);
+    setNewPerfNote(""); setNewPerfEmployee(""); setNewPerfDate(new Date().toISOString().slice(0, 10));
+  };
+
+  const startEditPerf = (issue: any) => {
+    setEditingPerfId(issue.id);
+    setEditPerfEmployee(issue.employee_name);
+    setEditPerfDate(issue.date);
+    setEditPerfNote(issue.note);
+  };
+
+  const saveEditPerf = async () => {
+    if (!editingPerfId || !editPerfNote.trim() || !editPerfEmployee) return;
+    const res = await fetch(`/api/performance-issues/${editingPerfId}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ employee_name: editPerfEmployee, date: editPerfDate, note: editPerfNote }),
+    });
+    const updated = await res.json();
+    setPerfIssues(prev => prev.map(i => i.id === updated.id ? updated : i));
+    setEditingPerfId(null);
+  };
+
+  const deletePerfIssue = async (id: number) => {
+    await fetch(`/api/performance-issues/${id}`, { method: "DELETE", credentials: "include" });
+    setPerfIssues(prev => prev.filter(i => i.id !== id));
+  };
 
   const handleApplyRaise = async (emp: EmployeeInput) => {
     if (!emp.pending_salary_gross || !emp.pending_salary_date) return;
@@ -426,6 +478,18 @@ export default function EmployeeList() {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setMainTab("performance")}
+              className={`px-4 py-1.5 font-medium transition-colors flex items-center gap-1.5 ${mainTab === "performance" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Performance
+              {perfIssues.length > 0 && (
+                <span className={`text-[10px] rounded-full px-1.5 font-bold ${mainTab === "performance" ? "bg-white/30 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
+                  {perfIssues.length}
+                </span>
+              )}
+            </button>
           </div>
           {mainTab === "employees" && (
             <div className="relative flex-1 max-w-sm">
@@ -529,6 +593,91 @@ export default function EmployeeList() {
                     <button
                       onClick={() => deleteTask(task.id)}
                       className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {mainTab === "performance" && (
+          <div>
+            {/* Add issue form */}
+            <div className="p-4 border-b bg-muted/10">
+              <div className="flex gap-3 items-end flex-wrap">
+                <div className="min-w-[160px]">
+                  <Label className="text-xs mb-1 block">Employee</Label>
+                  <Select value={newPerfEmployee} onValueChange={setNewPerfEmployee}>
+                    <SelectTrigger><SelectValue placeholder="Select employee..." /></SelectTrigger>
+                    <SelectContent>
+                      {employees.map(e => <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-[140px]">
+                  <Label className="text-xs mb-1 block">Date</Label>
+                  <Input type="date" value={newPerfDate} onChange={e => setNewPerfDate(e.target.value)} />
+                </div>
+                <div className="flex-1 min-w-[250px]">
+                  <Label className="text-xs mb-1 block">Note</Label>
+                  <Input
+                    placeholder="Describe the issue observed..."
+                    value={newPerfNote}
+                    onChange={e => setNewPerfNote(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") addPerfIssue(); }}
+                  />
+                </div>
+                <Button onClick={addPerfIssue} disabled={!newPerfNote.trim() || !newPerfEmployee}>
+                  <Plus className="w-4 h-4 mr-2" />Log Issue
+                </Button>
+              </div>
+            </div>
+            {/* Issues list */}
+            <div className="divide-y">
+              {perfIssues.length === 0 && (
+                <div className="p-10 text-center text-muted-foreground text-sm">No performance issues logged yet.</div>
+              )}
+              {[...perfIssues].sort((a, b) => b.date.localeCompare(a.date)).map(issue => {
+                const isEditing = editingPerfId === issue.id;
+                return (
+                  <div key={issue.id} className="flex items-start gap-3 p-3 group hover:bg-muted/30 transition-colors">
+                    <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                    {isEditing ? (
+                      <div className="flex-1 flex gap-2 items-center flex-wrap">
+                        <Select value={editPerfEmployee} onValueChange={setEditPerfEmployee}>
+                          <SelectTrigger className="h-8 w-[140px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {employees.map(e => <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Input type="date" className="h-8 w-[140px]" value={editPerfDate}
+                          onChange={e => setEditPerfDate(e.target.value)} />
+                        <Input className="h-8 flex-1 min-w-[200px]" value={editPerfNote}
+                          onChange={e => setEditPerfNote(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") saveEditPerf(); if (e.key === "Escape") setEditingPerfId(null); }}
+                          autoFocus />
+                        <Button size="sm" variant="ghost" className="h-8 px-2 text-emerald-600" onClick={saveEditPerf}>
+                          <Check className="w-4 h-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-2 text-muted-foreground" onClick={() => setEditingPerfId(null)}>
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => startEditPerf(issue)}>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-sm font-semibold">{issue.employee_name}</span>
+                          <span className="text-xs text-muted-foreground">{format(parseISO(issue.date), "dd/MM/yy")}</span>
+                        </div>
+                        <div className="text-sm text-muted-foreground">{issue.note}</div>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => deletePerfIssue(issue.id)}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5"
                     >
                       <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
                     </button>

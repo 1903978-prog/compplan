@@ -233,6 +233,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Performance Issues ─────────────────────────────────────────────────────
+  app.get("/api/performance-issues", requireAuth, async (_req, res) => {
+    res.json(await storage.getPerformanceIssues());
+  });
+
+  app.post("/api/performance-issues", requireAuth, async (req, res) => {
+    const now = new Date().toISOString();
+    res.status(201).json(await storage.createPerformanceIssue({ ...req.body, created_at: now }));
+  });
+
+  app.put("/api/performance-issues/:id", requireAuth, async (req, res) => {
+    res.json(await storage.updatePerformanceIssue(safeInt(req.params.id), req.body));
+  });
+
+  app.delete("/api/performance-issues/:id", requireAuth, async (req, res) => {
+    await storage.deletePerformanceIssue(safeInt(req.params.id));
+    res.status(204).end();
+  });
+
   // ── Admin downloads ────────────────────────────────────────────────────────
 
   // Download all source code as tar.gz

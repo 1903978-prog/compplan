@@ -359,6 +359,25 @@ export const employeeTasks = pgTable("employee_tasks", {
   created_at: text("created_at").notNull(),
 });
 
+// ─── Performance Issues ─────────────────────────────────────────────────────
+
+export const performanceIssueSchema = z.object({
+  id: z.number().optional(),
+  employee_name: z.string(),
+  date: z.string(),
+  note: z.string().min(1),
+  created_at: z.string(),
+});
+export type PerformanceIssue = z.infer<typeof performanceIssueSchema>;
+
+export const performanceIssues = pgTable("performance_issues", {
+  id: serial("id").primaryKey(),
+  employee_name: text("employee_name").notNull(),
+  date: text("date").notNull(),
+  note: text("note").notNull(),
+  created_at: text("created_at").notNull(),
+});
+
 // ─── Hiring Kanban ───────────────────────────────────────────────────────────
 
 export const hiringCandidates = pgTable("hiring_candidates", {

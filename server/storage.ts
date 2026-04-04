@@ -3,9 +3,10 @@ import { db } from "./db";
 import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
+  performanceIssues,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
-  type EmployeeTask,
+  type EmployeeTask, type PerformanceIssue,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -313,6 +314,26 @@ export class DatabaseStorage implements IStorage {
 
   async deleteEmployeeTask(id: number): Promise<void> {
     await db.delete(employeeTasks).where(eq(employeeTasks.id, id));
+  }
+
+  // ── Performance Issues ────────────────────────────────────────────────────
+  async getPerformanceIssues(): Promise<PerformanceIssue[]> {
+    const rows = await db.select().from(performanceIssues).orderBy(performanceIssues.date);
+    return rows as PerformanceIssue[];
+  }
+
+  async createPerformanceIssue(data: Omit<PerformanceIssue, "id">): Promise<PerformanceIssue> {
+    const rows = await db.insert(performanceIssues).values(data).returning();
+    return rows[0] as PerformanceIssue;
+  }
+
+  async updatePerformanceIssue(id: number, data: Partial<PerformanceIssue>): Promise<PerformanceIssue> {
+    const rows = await db.update(performanceIssues).set(data).where(eq(performanceIssues.id, id)).returning();
+    return rows[0] as PerformanceIssue;
+  }
+
+  async deletePerformanceIssue(id: number): Promise<void> {
+    await db.delete(performanceIssues).where(eq(performanceIssues.id, id));
   }
 }
 
