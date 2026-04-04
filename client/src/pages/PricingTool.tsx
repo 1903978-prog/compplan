@@ -1382,29 +1382,12 @@ export default function PricingTool() {
             );
           })()}
 
-          {/* ── VALUE-BASED PRICING SECTION ────────────────────── */}
+          {/* ── VALUE-BASED FEE CALCULATOR ────────────────────── */}
           {(() => {
             const cur = getCurrencyForRegion(form.region);
             const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
-            const ebitda_margin = form.ebitda_margin_pct ?? 0;
-            const ebitda_improvement = recommendation?.ebitda_improvement_pct ?? 0;
-            const REVENUE_MIDPOINTS: Record<string, number> = {
-              below_100m: 50, "100m_200m": 150, "200m_1b": 500, above_1b: 1500,
-            };
-            const revenue_m = REVENUE_MIDPOINTS[form.revenue_band] ?? 500;
-            const targetRoi = form.target_roi ?? 10;
-            const maxFeesPct = form.max_fees_ebitda_pct ?? 3;
 
-            // EBITDA generated over 3 years cumulated
-            const ebitda_generated_3y = revenue_m * 1_000_000 * (ebitda_margin / 100) * (ebitda_improvement / 100) * 3;
-            const professional_fees = targetRoi > 0 ? ebitda_generated_3y / targetRoi : 0;
-            const fees_per_week = form.duration_weeks > 0 ? professional_fees / form.duration_weeks : 0;
-
-            // Constraint: fees <= max_fees_ebitda_pct% of EBITDA
-            const annual_ebitda = revenue_m * 1_000_000 * (ebitda_margin / 100);
-            const max_fees_from_ebitda = annual_ebitda * (maxFeesPct / 100);
-
-            // Get rate matrix min/max for constraint
+            // Get rate matrix min/max for constraints
             const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
             const matrixRegion = regionMap[form.region] ?? "Italy";
             const clientType = form.pe_owned
@@ -1420,66 +1403,216 @@ export default function PricingTool() {
             const min_fee_weekly = matrixCell && !matrixCell.avoid ? matrixCell.min_weekly : 0;
             const max_fee_weekly = matrixCell && !matrixCell.avoid ? matrixCell.max_weekly : Infinity;
 
-            // Apply constraints
-            let constrained_fees_total = Math.min(professional_fees, max_fees_from_ebitda);
-            let constrained_per_week = form.duration_weeks > 0 ? constrained_fees_total / form.duration_weeks : 0;
-            if (min_fee_weekly > 0) constrained_per_week = Math.max(constrained_per_week, min_fee_weekly);
-            if (max_fee_weekly < Infinity) constrained_per_week = Math.min(constrained_per_week, max_fee_weekly);
-            constrained_fees_total = constrained_per_week * form.duration_weeks;
+            // INPUTS
+            const current_ebitda = (form as any).vbp_current_ebitda ?? 0;
+            const incremental_ebitda = (form as any).vbp_incremental_ebitda ?? 0;
+            const project_duration_weeks = form.duration_weeks || 12;
+            const target_roi_multiple = (form as any).vbp_target_roi ?? 10;
+            const probability_of_success = (form as any).vbp_probability ?? 0.7;
+            const attribution_factor = (form as any).vbp_attribution ?? 0.6;
+            const cost_floor_weekly = recommendation?.cost_floor_weekly ?? 0;
 
-            const fees_as_pct_ebitda = annual_ebitda > 0 ? (constrained_fees_total / annual_ebitda) * 100 : 0;
+            // CALCULATIONS
+            const risk_adjusted_value = incremental_ebitda * probability_of_success;
+            const attributable_value = risk_adjusted_value * attribution_factor;
+            const max_project_fee = target_roi_multiple > 0 ? attributable_value / target_roi_multiple : 0;
+            const weekly_fee = project_duration_weeks > 0 ? max_project_fee / project_duration_weeks : 0;
+            const implied_client_roi = max_project_fee > 0 ? incremental_ebitda / max_project_fee : 0;
 
-            const hasData = ebitda_margin > 0 && ebitda_improvement > 0 && form.duration_weeks > 0;
+            // Apply rate matrix constraints
+            let constrained_weekly = weekly_fee;
+            if (min_fee_weekly > 0) constrained_weekly = Math.max(constrained_weekly, min_fee_weekly);
+            if (max_fee_weekly < Infinity) constrained_weekly = Math.min(constrained_weekly, max_fee_weekly);
+            const constrained_total = constrained_weekly * project_duration_weeks;
+            const constrained_implied_roi = constrained_total > 0 ? incremental_ebitda / constrained_total : 0;
+
+            // 3 pricing options
+            const base_weekly = constrained_weekly;
+            const ambitious_weekly = Math.min(constrained_weekly * 1.2, max_fee_weekly < Infinity ? max_fee_weekly : constrained_weekly * 1.2);
+            const aggressive_weekly = Math.min(constrained_weekly * 1.4, max_fee_weekly < Infinity ? max_fee_weekly : constrained_weekly * 1.4);
+
+            // CHECKS
+            const warnings: string[] = [];
+            if (incremental_ebitda > 0 && implied_client_roi > 0 && implied_client_roi < target_roi_multiple)
+              warnings.push(`Implied ROI (${implied_client_roi.toFixed(1)}x) < target ROI (${target_roi_multiple}x)`);
+            if (cost_floor_weekly > 0 && weekly_fee > 0 && weekly_fee < cost_floor_weekly)
+              warnings.push(`Weekly fee (${fmtC(weekly_fee)}) < delivery cost floor (${fmtC(cost_floor_weekly)})`);
+            if (incremental_ebitda > 0 && max_project_fee > 0 && incremental_ebitda < 5 * max_project_fee)
+              warnings.push("Low-impact warning: incremental EBITDA < 5x project fee");
+
+            // Effort-based comparison
+            const effort_weekly = recommendation ? recommendation.target_weekly + manualDelta : null;
+            const delta_vs_effort = effort_weekly && constrained_weekly > 0 ? constrained_weekly - effort_weekly : null;
+
+            const hasData = incremental_ebitda > 0 && project_duration_weeks > 0;
 
             return (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Value-Based Pricing (ROI Logic)</CardTitle>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-emerald-600" />
+                    Value-Based Fee Calculator
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Fees are derived from the incremental EBITDA your project creates for the client, risk-adjusted and
+                    divided by a target ROI multiple. This ensures the client pays a fraction of the value received.
+                  </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
+                  {/* INPUTS */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <div className="space-y-1">
-                      <Label className="text-xs">Target ROI (x)</Label>
-                      <Input type="number" min="1" max="100" step="1"
-                        value={form.target_roi ?? 10}
-                        onChange={e => setForm(f => ({ ...f, target_roi: parseFloat(e.target.value) || 10 }))} />
-                      <div className="text-[9px] text-muted-foreground">Fees = EBITDA generated / ROI target</div>
+                      <Label className="text-xs">Current EBITDA ({cur.symbol})</Label>
+                      <Input type="number" min="0" step="100000"
+                        value={current_ebitda || ""}
+                        onChange={e => setForm(f => ({ ...f, vbp_current_ebitda: parseFloat(e.target.value) || 0 } as any))} />
+                      <div className="text-[9px] text-muted-foreground">Client's current annual EBITDA</div>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">Max fees as % of EBITDA</Label>
-                      <Input type="number" min="0.5" max="20" step="0.5"
-                        value={form.max_fees_ebitda_pct ?? 3}
-                        onChange={e => setForm(f => ({ ...f, max_fees_ebitda_pct: parseFloat(e.target.value) || 3 }))} />
-                      <div className="text-[9px] text-muted-foreground">Hard cap on total fees vs annual EBITDA</div>
+                      <Label className="text-xs">Incremental EBITDA ({cur.symbol})</Label>
+                      <Input type="number" min="0" step="100000"
+                        value={incremental_ebitda || ""}
+                        onChange={e => setForm(f => ({ ...f, vbp_incremental_ebitda: parseFloat(e.target.value) || 0 } as any))} />
+                      <div className="text-[9px] text-muted-foreground">Expected EBITDA uplift from project</div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Duration (weeks)</Label>
+                      <Input type="number" min="1" max="104"
+                        value={project_duration_weeks}
+                        onChange={e => setForm(f => ({ ...f, duration_weeks: parseInt(e.target.value) || 12 }))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Target ROI multiple</Label>
+                      <Input type="number" min="1" max="100" step="1"
+                        value={target_roi_multiple}
+                        onChange={e => setForm(f => ({ ...f, vbp_target_roi: parseFloat(e.target.value) || 10 } as any))} />
+                      <div className="text-[9px] text-muted-foreground">Client gets {target_roi_multiple}x return on fees</div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Probability of success</Label>
+                      <Input type="number" min="0.1" max="1" step="0.05"
+                        value={probability_of_success}
+                        onChange={e => setForm(f => ({ ...f, vbp_probability: parseFloat(e.target.value) || 0.7 } as any))} />
+                      <div className="text-[9px] text-muted-foreground">Likelihood outcomes are achieved</div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Attribution factor</Label>
+                      <Input type="number" min="0.1" max="1" step="0.05"
+                        value={attribution_factor}
+                        onChange={e => setForm(f => ({ ...f, vbp_attribution: parseFloat(e.target.value) || 0.6 } as any))} />
+                      <div className="text-[9px] text-muted-foreground">Share of value attributable to project</div>
                     </div>
                   </div>
 
                   {hasData ? (
-                    <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 space-y-2">
-                      <div className="text-[10px] font-bold uppercase text-emerald-700 tracking-wide">Value-Based Fee Calculation</div>
-                      <div className="text-xs text-emerald-800 space-y-1">
-                        <div>Revenue estimate: {fmtC(revenue_m * 1_000_000)} | EBITDA margin: {ebitda_margin}% | Improvement: +{ebitda_improvement.toFixed(1)} pts</div>
-                        <div>EBITDA generated (3yr cumulated): <span className="font-bold">{fmtC(ebitda_generated_3y)}</span></div>
-                        <div>Professional fees (EBITDA / {targetRoi}x ROI): <span className="font-bold">{fmtC(professional_fees)}</span></div>
-                        <div>Fees per week (/ {form.duration_weeks}w): <span className="font-bold">{fmtC(fees_per_week)}</span></div>
-                      </div>
-                      <div className="border-t border-emerald-300 pt-2 space-y-1">
-                        <div className="text-xs text-emerald-800">
-                          Constrained fees/week: <span className="font-bold text-lg">{fmtC(constrained_per_week)}</span>
+                    <>
+                      {/* CALCULATION STEPS */}
+                      <div className="rounded-lg bg-slate-50 border p-3 space-y-1.5">
+                        <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wide mb-2">Calculation Steps</div>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
+                          <span className="text-muted-foreground">1. Risk-adjusted value = {fmtC(incremental_ebitda)} × {probability_of_success}</span>
+                          <span className="font-mono font-semibold text-right">{fmtC(risk_adjusted_value)}</span>
+                          <span className="text-muted-foreground">2. Attributable value = {fmtC(risk_adjusted_value)} × {attribution_factor}</span>
+                          <span className="font-mono font-semibold text-right">{fmtC(attributable_value)}</span>
+                          <span className="text-muted-foreground">3. Max project fee = {fmtC(attributable_value)} / {target_roi_multiple}x</span>
+                          <span className="font-mono font-semibold text-right">{fmtC(max_project_fee)}</span>
+                          <span className="text-muted-foreground">4. Weekly fee = {fmtC(max_project_fee)} / {project_duration_weeks}w</span>
+                          <span className="font-mono font-semibold text-right">{fmtC(weekly_fee)}</span>
                         </div>
-                        <div className="text-xs text-emerald-800">
-                          Total fees: <span className="font-bold">{fmtC(constrained_fees_total)}</span> | Fees as % of EBITDA: <span className="font-bold">{fees_as_pct_ebitda.toFixed(1)}%</span>
+                      </div>
+
+                      {/* RESULT */}
+                      <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-4 space-y-3">
+                        <div className="text-[10px] font-bold uppercase text-emerald-700 tracking-wide">Result</div>
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                          <div>
+                            <div className="text-[10px] text-emerald-600 uppercase">Max Project Fee</div>
+                            <div className="text-lg font-bold text-emerald-800">{fmtC(constrained_total)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-emerald-600 uppercase">Weekly Fee</div>
+                            <div className="text-lg font-bold text-emerald-800">{fmtC(constrained_weekly)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-emerald-600 uppercase">Implied Client ROI</div>
+                            <div className="text-lg font-bold text-emerald-800">{constrained_implied_roi.toFixed(1)}x</div>
+                          </div>
                         </div>
                         {matrixCell && !matrixCell.avoid && (
-                          <div className="text-[10px] text-emerald-700">
-                            Rate matrix range ({clientType}, {matrixRegion}): {fmtC(min_fee_weekly)} - {fmtC(max_fee_weekly)}/wk
+                          <div className="text-[10px] text-emerald-700 border-t border-emerald-200 pt-2">
+                            Rate matrix ({clientType}, {matrixRegion}): {fmtC(min_fee_weekly)} – {fmtC(max_fee_weekly)}/wk
+                            {weekly_fee !== constrained_weekly && <span className="font-semibold ml-1">(constrained)</span>}
                           </div>
                         )}
                       </div>
-                    </div>
+
+                      {/* 3 PRICING OPTIONS */}
+                      <div className="rounded-lg border p-3">
+                        <div className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide mb-2">Pricing Options</div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="rounded-lg bg-blue-50 border border-blue-200 p-2 text-center">
+                            <div className="text-[9px] font-bold text-blue-600 uppercase">Base</div>
+                            <div className="font-bold text-blue-800">{fmtC(base_weekly)}<span className="text-[9px] font-normal">/wk</span></div>
+                            <div className="text-[9px] text-blue-600">Total {fmtC(base_weekly * project_duration_weeks)}</div>
+                            <div className="text-[9px] text-blue-500">ROI {(incremental_ebitda / (base_weekly * project_duration_weeks || 1)).toFixed(1)}x</div>
+                          </div>
+                          <div className="rounded-lg bg-amber-50 border border-amber-200 p-2 text-center">
+                            <div className="text-[9px] font-bold text-amber-600 uppercase">Ambitious (+20%)</div>
+                            <div className="font-bold text-amber-800">{fmtC(ambitious_weekly)}<span className="text-[9px] font-normal">/wk</span></div>
+                            <div className="text-[9px] text-amber-600">Total {fmtC(ambitious_weekly * project_duration_weeks)}</div>
+                            <div className="text-[9px] text-amber-500">ROI {(incremental_ebitda / (ambitious_weekly * project_duration_weeks || 1)).toFixed(1)}x</div>
+                          </div>
+                          <div className="rounded-lg bg-orange-50 border border-orange-200 p-2 text-center">
+                            <div className="text-[9px] font-bold text-orange-600 uppercase">Aggressive (+40%)</div>
+                            <div className="font-bold text-orange-800">{fmtC(aggressive_weekly)}<span className="text-[9px] font-normal">/wk</span></div>
+                            <div className="text-[9px] text-orange-600">Total {fmtC(aggressive_weekly * project_duration_weeks)}</div>
+                            <div className="text-[9px] text-orange-500">ROI {(incremental_ebitda / (aggressive_weekly * project_duration_weeks || 1)).toFixed(1)}x</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* COMPARISON VS EFFORT-BASED */}
+                      {effort_weekly != null && effort_weekly > 0 && (
+                        <div className="rounded-lg border p-3">
+                          <div className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide mb-2">Value vs Effort-Based Comparison</div>
+                          <div className="grid grid-cols-3 gap-3 text-center text-xs">
+                            <div>
+                              <div className="text-[9px] text-muted-foreground uppercase">Effort-Based</div>
+                              <div className="font-bold text-primary">{fmtC(effort_weekly)}/wk</div>
+                            </div>
+                            <div>
+                              <div className="text-[9px] text-muted-foreground uppercase">Value-Based</div>
+                              <div className="font-bold text-emerald-700">{fmtC(constrained_weekly)}/wk</div>
+                            </div>
+                            <div>
+                              <div className="text-[9px] text-muted-foreground uppercase">Delta</div>
+                              <div className={`font-bold ${delta_vs_effort && delta_vs_effort > 0 ? "text-emerald-600" : "text-red-500"}`}>
+                                {delta_vs_effort != null ? `${delta_vs_effort > 0 ? "+" : ""}${fmtC(delta_vs_effort)}` : "—"}
+                                {delta_vs_effort != null && effort_weekly > 0 && (
+                                  <span className="text-[9px] font-normal ml-1">({delta_vs_effort > 0 ? "+" : ""}{((delta_vs_effort / effort_weekly) * 100).toFixed(0)}%)</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* WARNINGS */}
+                      {warnings.length > 0 && (
+                        <div className="space-y-1">
+                          {warnings.map((w, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                              {w}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   ) : (
-                    <div className="text-xs text-muted-foreground italic bg-muted/30 rounded p-2">
-                      Fill in EBITDA margin, sector (for improvement estimate), and duration to see value-based pricing
+                    <div className="text-xs text-muted-foreground italic bg-muted/30 rounded p-3">
+                      Enter incremental EBITDA and duration to calculate value-based fees.
+                      The formula: <span className="font-mono">weekly_fee = (incremental_EBITDA × probability × attribution) / (ROI × weeks)</span>
                     </div>
                   )}
                 </CardContent>
