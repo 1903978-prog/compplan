@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil } from "lucide-react";
+import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1149,12 +1149,12 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
         await onSubmit(result.data);
       }} className="space-y-6">
 
-        {/* Employee header */}
-        <Card className="p-4">
+        {/* Employee header — sticky */}
+        <Card className="p-4 sticky top-16 z-40 shadow-md">
           <div className="flex items-center gap-4">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <h2 className="text-xl font-bold">{emp.name}</h2>
-              <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground flex-wrap">
                 <span className="bg-secondary px-2 py-0.5 rounded text-xs font-mono font-semibold">{emp.current_role_code}</span>
                 {emp.date_of_birth && <span>Born {format(parseISO(emp.date_of_birth), "dd/MM/yyyy")}</span>}
                 <span>Hired {emp.hire_date}</span>
@@ -1170,10 +1170,19 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                 })()}
               </div>
             </div>
-            <Button type="submit" disabled={saveState !== "idle"} size="sm"
-              className={`shadow-lg ${saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : "shadow-primary/20"}`}>
-              {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save"}
-            </Button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button type="button" variant="outline" size="sm" onClick={() => {
+                loadSalaryHistory();
+                setSalaryRefreshKey(k => k + 1);
+                toast({ title: "Refreshed" });
+              }}>
+                <RefreshCw className="w-4 h-4" />
+              </Button>
+              <Button type="submit" disabled={saveState !== "idle"} size="sm"
+                className={`shadow-lg ${saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : "shadow-primary/20"}`}>
+                {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save"}
+              </Button>
+            </div>
           </div>
         </Card>
 
