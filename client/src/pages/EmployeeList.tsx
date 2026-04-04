@@ -1139,6 +1139,16 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
         e.preventDefault();
         // Bypass zodResolver — use manual safeParse so z.preprocess always runs
         const raw = form.getValues();
+        // Merge in latest inline-updated fields from employee prop (store)
+        // to prevent stale form values overwriting inline changes
+        raw.promo_increase_override = employee.promo_increase_override;
+        raw.completed_tests = employee.completed_tests;
+        raw.onboarding_ratings = (employee as any).onboarding_ratings;
+        raw.yearly_reviews = (employee as any).yearly_reviews;
+        raw.comex_areas = (employee as any).comex_areas;
+        raw.university_grade = (employee as any).university_grade;
+        raw.university_grade_type = (employee as any).university_grade_type;
+        raw.promotion_discussion_notes = (employee as any).promotion_discussion_notes;
         const result = employeeInputSchema.safeParse(raw);
         if (!result.success) {
           const details = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`);
@@ -1486,7 +1496,10 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                         onClick={async () => {
                           const cur = emp.promo_increase_override ?? settings.min_promo_increase_pct;
                           const next = Math.round((cur - 0.5) * 10) / 10;
-                          if (next >= 0) await updateEmployee(emp.id, { ...emp, promo_increase_override: next });
+                          if (next >= 0) {
+                            form.setValue("promo_increase_override", next);
+                            await updateEmployee(emp.id, { ...emp, promo_increase_override: next });
+                          }
                         }}>
                         <ChevronLeft className="h-3 w-3" />
                       </button>
@@ -1498,7 +1511,10 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                         onClick={async () => {
                           const cur = emp.promo_increase_override ?? settings.min_promo_increase_pct;
                           const next = Math.round((cur + 0.5) * 10) / 10;
-                          if (next <= 100) await updateEmployee(emp.id, { ...emp, promo_increase_override: next });
+                          if (next <= 100) {
+                            form.setValue("promo_increase_override", next);
+                            await updateEmployee(emp.id, { ...emp, promo_increase_override: next });
+                          }
                         }}>
                         <ChevronRightIcon className="h-3 w-3" />
                       </button>
@@ -1507,7 +1523,10 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                   {emp.promo_increase_override != null && (
                     <div className="flex justify-end">
                       <button type="button" className="text-[10px] text-muted-foreground hover:text-destructive underline"
-                        onClick={async () => await updateEmployee(emp.id, { ...emp, promo_increase_override: null })}>
+                        onClick={async () => {
+                          form.setValue("promo_increase_override", null);
+                          await updateEmployee(emp.id, { ...emp, promo_increase_override: null });
+                        }}>
                         Reset to global ({settings.min_promo_increase_pct}%)
                       </button>
                     </div>
