@@ -389,6 +389,87 @@ export async function seedDatabase() {
     ON CONFLICT (slide_id) DO NOTHING
   `);
 
+  // Deck template config table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS deck_template_configs (
+      id SERIAL PRIMARY KEY,
+      palette JSONB NOT NULL DEFAULT '{}',
+      typography JSONB NOT NULL DEFAULT '{}',
+      format_a_desc TEXT NOT NULL DEFAULT '',
+      format_b_desc TEXT NOT NULL DEFAULT '',
+      footer_left TEXT NOT NULL DEFAULT '',
+      footer_right TEXT NOT NULL DEFAULT '',
+      system_prompt TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  // Seed default deck template (idempotent)
+  const dtCount = await db.execute(sql`SELECT COUNT(*) as c FROM deck_template_configs`);
+  if (Number((dtCount as any).rows?.[0]?.c ?? 0) === 0) {
+    await db.execute(sql`
+      INSERT INTO deck_template_configs (palette, typography, format_a_desc, format_b_desc, footer_left, footer_right, system_prompt, updated_at)
+      VALUES (
+        '{"C_TRACKER":"535353","C_TITLE":"1A6571","C_HEADER":"1A6571","C_BORDER":"16C3CF","C_BODY":"535353","C_WHITE":"FFFFFF","C_SUBHEAD":"16C3CF","C_BGROW":"F0F9FA"}'::jsonb,
+        '{"tracker":"Arial 7pt #535353 NOT bold","title":"Arial 20pt #1A6571 Bold","headers":"Arial 11pt #1A6571 Bold","bullets":"Arial 8.5pt #535353","footer":"Arial 7pt #535353","eendigo":"Arial 7pt #1A6571 (footer right)","page_num":"Arial 7pt #535353 (footer right)"}'::jsonb,
+        'FORMAT A: 3-COLUMN WITH ROW BANDS (training / cert / prereq)
+
+Blocks support: header, training[], certificate[], prereq[] (Format A)
+Set USE_ROW_BANDS = true to use this format.',
+        'FORMAT B: PLAIN 3-COLUMN BULLETS
+
+Blocks support: header, bullets[] (Format B)
+Set USE_ROW_BANDS = false to use this format.',
+        'Notes and source',
+        'Eendigo',
+        'You are a senior strategy consultant (McKinsey / BCG level) preparing one executive PowerPoint slide using the Eendigo consulting template.
+PptxGenJS — 16:9
+
+HOW TO USE:
+1. Fill in SLIDE_TITLE and TRACKER
+2. Edit blocks[] with your headers + bullets
+3. Run: node eendigo_template.js
+4. Output: eendigo_slide.pptx
+
+PALETTE (DO NOT CHANGE)
+C_TRACKER = "535353"
+C_TITLE = "1A6571"
+C_HEADER = "1A6571"
+C_BORDER = "16C3CF"
+C_BODY = "535353"
+C_WHITE = "FFFFFF"
+C_SUBHEAD = "16C3CF"
+C_BGROW = "F0F9FA"
+
+TYPOGRAPHY (DO NOT CHANGE)
+TRACKER: Arial 7pt #535353 NOT bold
+Title: Arial 20pt #1A6571 Bold
+Headers: Arial 11pt #1A6571 Bold
+Bullets: Arial 8.5pt #535353
+Footer: Arial 7pt #535353
+Eendigo: Arial 7pt #1A6571 (footer right)
+Page num: Arial 7pt #535353 (footer right)
+
+SLIDE_TITLE = "Insert your insight headline here — quantified takeaway for executives"
+
+FORMAT A: 3-COLUMN WITH ROW BANDS (training / cert / prereq)
+FORMAT B: PLAIN 3-COLUMN BULLETS
+
+Set USE_ROW_BANDS = true or false to switch formats.
+
+Blocks support: header, training[], certificate[], prereq[] (Format A)
+Or: header, bullets[] (Format B)
+
+Optional INSIGHT_BAR for bottom callout.
+Footer left: "Notes and source"
+Output: eendigo_slide.pptx
+
+Run with: node eendigo_template.js',
+        ${new Date().toISOString()}
+      )
+    `);
+  }
+
   // Performance issues table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS performance_issues (

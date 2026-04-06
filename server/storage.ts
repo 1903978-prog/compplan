@@ -4,13 +4,14 @@ import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   performanceIssues, timeTrackingTopics, timeTrackingEntries,
-  proposals, proposalTemplates, slideMethodologyConfigs,
+  proposals, proposalTemplates, slideMethodologyConfigs, deckTemplateConfigs,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
   type TimeTrackingTopic, type TimeTrackingEntry,
   type Proposal, type ProposalTemplate,
   type SlideMethodologyConfig,
+  type DeckTemplateConfig,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -445,6 +446,26 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteSlideMethodologyConfig(slideId: string): Promise<void> {
     await db.delete(slideMethodologyConfigs).where(eq(slideMethodologyConfigs.slide_id, slideId));
+  }
+
+  // ── Deck Template Config ──────────────────────────────────────────────────
+  async getDeckTemplateConfig(): Promise<DeckTemplateConfig | null> {
+    const rows = await db.select().from(deckTemplateConfigs);
+    return rows[0] || null;
+  }
+  async upsertDeckTemplateConfig(data: Partial<DeckTemplateConfig>): Promise<DeckTemplateConfig> {
+    const existing = await this.getDeckTemplateConfig();
+    if (existing) {
+      const [updated] = await db.update(deckTemplateConfigs)
+        .set({ ...data, updated_at: new Date().toISOString() })
+        .where(eq(deckTemplateConfigs.id, existing.id!))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(deckTemplateConfigs)
+      .values({ ...data, updated_at: new Date().toISOString() } as any)
+      .returning();
+    return created;
   }
 }
 

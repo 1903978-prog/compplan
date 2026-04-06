@@ -410,8 +410,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { generateProposalDeck } = await import("./proposalDeck");
       const template = await storage.getActiveProposalTemplate();
 
-      // Load admin configs for brief-based slide generation
-      const allConfigs = await storage.getSlideMethodologyConfigs();
+      // Load admin configs and deck template for brief-based slide generation
+      const [allConfigs, deckTemplate] = await Promise.all([
+        storage.getSlideMethodologyConfigs(),
+        storage.getDeckTemplateConfig(),
+      ]);
       const adminConfigMap: Record<string, any> = {};
       for (const cfg of allConfigs) {
         adminConfigMap[cfg.slide_id] = cfg;
@@ -429,6 +432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           options: (proposal.options as any[]) || [],
           slide_briefs: (proposal.slide_briefs as any[]) || [],
           admin_configs: adminConfigMap,
+          deck_template: deckTemplate || undefined,
         },
         template,
       );
@@ -483,6 +487,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/slide-methodology/:slideId", requireAuth, async (req, res) => {
     await storage.deleteSlideMethodologyConfig(req.params.slideId);
     res.status(204).end();
+  });
+
+  // ── Deck Template Config ────────────────────────────────────────────────────
+  app.get("/api/deck-template", requireAuth, async (_req, res) => {
+    const config = await storage.getDeckTemplateConfig();
+    res.json(config || {});
+  });
+
+  app.put("/api/deck-template", requireAuth, async (req, res) => {
+    const config = await storage.upsertDeckTemplateConfig(req.body);
+    res.json(config);
   });
 
   // ── Admin downloads ────────────────────────────────────────────────────────

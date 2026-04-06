@@ -49,6 +49,14 @@ interface SlideBrief {
   notes: string;
 }
 
+interface DeckTemplateConfig {
+  palette?: Record<string, string>;
+  typography?: Record<string, string>;
+  footer_left?: string;
+  footer_right?: string;
+  system_prompt?: string;
+}
+
 interface ProposalData {
   company_name: string;
   proposal_title?: string | null;
@@ -60,19 +68,34 @@ interface ProposalData {
   options: ProposalOption[];
   slide_briefs?: SlideBrief[];
   admin_configs?: Record<string, SlideMethodologyConfig>;
+  deck_template?: DeckTemplateConfig;
 }
 
-// Eendigo branding colors
-const COLORS = {
-  PRIMARY: "1e3a5f",
-  ACCENT: "3b82f6",
+// Default Eendigo branding colors (overridden by deck template palette)
+const DEFAULT_COLORS = {
+  PRIMARY: "1A6571",    // C_TITLE / C_HEADER
+  ACCENT: "16C3CF",     // C_BORDER / C_SUBHEAD
   DARK: "1a1a2e",
-  WHITE: "FFFFFF",
-  LIGHT_BG: "f0f4f8",
+  WHITE: "FFFFFF",       // C_WHITE
+  LIGHT_BG: "F0F9FA",   // C_BGROW
   LIGHT_GRAY: "e2e8f0",
-  TEXT: "334155",
-  MUTED: "64748b",
+  TEXT: "535353",         // C_BODY / C_TRACKER
+  MUTED: "535353",       // C_TRACKER
 };
+
+function resolveColors(template?: DeckTemplateConfig) {
+  const p = template?.palette || {};
+  return {
+    PRIMARY: p.C_TITLE || p.C_HEADER || DEFAULT_COLORS.PRIMARY,
+    ACCENT: p.C_BORDER || p.C_SUBHEAD || DEFAULT_COLORS.ACCENT,
+    DARK: DEFAULT_COLORS.DARK,
+    WHITE: p.C_WHITE || DEFAULT_COLORS.WHITE,
+    LIGHT_BG: p.C_BGROW || DEFAULT_COLORS.LIGHT_BG,
+    LIGHT_GRAY: DEFAULT_COLORS.LIGHT_GRAY,
+    TEXT: p.C_BODY || DEFAULT_COLORS.TEXT,
+    MUTED: p.C_TRACKER || DEFAULT_COLORS.MUTED,
+  };
+}
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-EU", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value);
@@ -80,112 +103,8 @@ function formatCurrency(value: number): string {
 
 // ── Brief-based slide generators ────────────────────────────────────────────
 
-function addSlideHeader(slide: any, title: string) {
-  slide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
-  slide.addText(title, { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
-}
-
-function addInsightBar(slide: any, text: string) {
-  slide.addShape("rect", { x: 0, y: 6.4, w: "100%", h: 0.55, fill: { color: COLORS.ACCENT } });
-  slide.addText(text, { x: 0.8, y: 6.42, w: 11.5, h: 0.5, fontSize: 10, color: COLORS.WHITE, fontFace: "Arial", italic: true });
-}
-
-/**
- * Format A: Stacked sections — each field is a heading+content block rendered vertically.
- */
-function generateFormatA(pptx: any, brief: SlideBrief, config: SlideMethodologyConfig | undefined, addFooter: (s: any) => void) {
-  const slide = pptx.addSlide();
-  addSlideHeader(slide, brief.title);
-
-  let y = 1.3;
-  const maxY = config?.insight_bar ? 6.2 : 6.6;
-
-  for (const field of brief.content_structure) {
-    if (!field.value || y > maxY) continue;
-    slide.addText(field.label, { x: 0.8, y, w: 11, h: 0.35, fontSize: 14, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-    y += 0.4;
-    const lines = field.value.split("\n").filter(Boolean);
-    const text = lines.map(l => l.startsWith("-") || l.startsWith("•") ? `  \u2022  ${l.replace(/^[-•]\s*/, "")}` : l).join("\n");
-    const blockH = Math.min(Math.max(lines.length * 0.22, 0.5), maxY - y);
-    slide.addText(text, { x: 0.8, y, w: 11, h: blockH, fontSize: 11, color: COLORS.TEXT, fontFace: "Arial", valign: "top", paraSpaceAfter: 4 });
-    y += blockH + 0.25;
-  }
-
-  if (config?.insight_bar && brief.notes) {
-    addInsightBar(slide, brief.notes);
-  }
-  addFooter(slide);
-}
-
-/**
- * Format B: 3-column layout — distributes fields across columns using admin column definitions.
- */
-function generateFormatB(pptx: any, brief: SlideBrief, config: SlideMethodologyConfig | undefined, addFooter: (s: any) => void) {
-  const slide = pptx.addSlide();
-  addSlideHeader(slide, brief.title);
-
-  const cols = config?.columns || {};
-  const colW = 3.6;
-  const fields = brief.content_structure.filter(f => f.value);
-
-  // Distribute fields across 3 columns
-  const col1Fields: SlideBriefField[] = [];
-  const col2Fields: SlideBriefField[] = [];
-  const col3Fields: SlideBriefField[] = [];
-
-  fields.forEach((f, i) => {
-    if (i % 3 === 0) col1Fields.push(f);
-    else if (i % 3 === 1) col2Fields.push(f);
-    else col3Fields.push(f);
-  });
-
-  const maxY = config?.insight_bar ? 6.2 : 6.6;
-
-  function renderColumn(xStart: number, colFields: SlideBriefField[], colLabel?: string) {
-    let y = 1.3;
-    if (colLabel) {
-      slide.addText(colLabel, { x: xStart, y, w: colW, h: 0.3, fontSize: 10, color: COLORS.MUTED, fontFace: "Arial", italic: true });
-      y += 0.35;
-    }
-    for (const field of colFields) {
-      if (y > maxY) break;
-      slide.addText(field.label, { x: xStart, y, w: colW, h: 0.3, fontSize: 12, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-      y += 0.35;
-      const lines = field.value.split("\n").filter(Boolean);
-      const text = lines.map(l => l.startsWith("-") || l.startsWith("•") ? `\u2022 ${l.replace(/^[-•]\s*/, "")}` : l).join("\n");
-      const blockH = Math.min(Math.max(lines.length * 0.2, 0.4), maxY - y);
-      slide.addText(text, { x: xStart, y, w: colW, h: blockH, fontSize: 10, color: COLORS.TEXT, fontFace: "Arial", valign: "top", paraSpaceAfter: 3 });
-      y += blockH + 0.2;
-    }
-  }
-
-  renderColumn(0.5, col1Fields, cols.column_1);
-  renderColumn(4.3, col2Fields, cols.column_2);
-  renderColumn(8.1, col3Fields, cols.column_3);
-
-  // Add light vertical dividers
-  slide.addShape("line", { x: 4.1, y: 1.3, w: 0, h: maxY - 1.3, line: { color: COLORS.LIGHT_GRAY, width: 0.5 } });
-  slide.addShape("line", { x: 7.9, y: 1.3, w: 0, h: maxY - 1.3, line: { color: COLORS.LIGHT_GRAY, width: 0.5 } });
-
-  if (config?.insight_bar && brief.notes) {
-    addInsightBar(slide, brief.notes);
-  }
-  addFooter(slide);
-}
-
-/**
- * Generate a slide from a brief, choosing format based on admin config.
- */
-function generateSlideFromBrief(pptx: any, brief: SlideBrief, adminConfigs: Record<string, SlideMethodologyConfig>, addFooter: (s: any) => void) {
-  const config = adminConfigs[brief.slide_id];
-  const format = config?.format || "A";
-
-  if (format === "B") {
-    generateFormatB(pptx, brief, config, addFooter);
-  } else {
-    generateFormatA(pptx, brief, config, addFooter);
-  }
-}
+// Note: addSlideHeader, addInsightBar, and format generators are defined
+// inside generateProposalDeck to access the resolved COLORS closure.
 
 // Slides that have dedicated hardcoded generators (skip from brief-based rendering)
 const HARDCODED_SLIDE_IDS = new Set([
@@ -195,15 +114,100 @@ const HARDCODED_SLIDE_IDS = new Set([
 export async function generateProposalDeck(proposal: ProposalData, _template?: any): Promise<Buffer> {
   const PptxGenJS = (await import("pptxgenjs")).default;
   const pptx = new PptxGenJS();
+  const COLORS = resolveColors(proposal.deck_template);
+  const footerLeft = proposal.deck_template?.footer_left || "Notes and source";
+  const footerRight = proposal.deck_template?.footer_right || "Eendigo";
 
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "Eendigo";
   pptx.subject = proposal.proposal_title || `Proposal for ${proposal.company_name}`;
 
-  // Helper: add footer to every content slide
-  function addFooter(slide: any) {
-    slide.addShape("rect", { x: 0, y: 7.0, w: "100%", h: 0.5, fill: { color: COLORS.PRIMARY } });
-    slide.addText("Confidential | Eendigo", { x: 0.5, y: 7.05, w: 5, h: 0.4, fontSize: 8, color: COLORS.WHITE, fontFace: "Arial" });
+  // Helper: add footer to every content slide (Eendigo template style)
+  function addFooter(slide: any, pageNum?: number) {
+    slide.addShape("line", { x: 0.3, y: 7.0, w: 12.7, h: 0, line: { color: COLORS.LIGHT_GRAY, width: 0.5 } });
+    slide.addText(footerLeft, { x: 0.3, y: 7.05, w: 5, h: 0.35, fontSize: 7, color: COLORS.MUTED, fontFace: "Arial" });
+    slide.addText(footerRight, { x: 9.5, y: 7.05, w: 3.5, h: 0.35, fontSize: 7, color: COLORS.PRIMARY, fontFace: "Arial", align: "right" });
+  }
+
+  function addSlideHeader(slide: any, title: string) {
+    // Eendigo template: thin accent border line at top, then title
+    slide.addShape("rect", { x: 0, y: 0, w: "100%", h: 0.04, fill: { color: COLORS.ACCENT } });
+    slide.addText(title, { x: 0.5, y: 0.25, w: 12, h: 0.7, fontSize: 20, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+  }
+
+  function addInsightBar(slide: any, text: string) {
+    slide.addShape("rect", { x: 0.3, y: 6.4, w: 12.7, h: 0.5, fill: { color: COLORS.ACCENT } });
+    slide.addText(text, { x: 0.5, y: 6.42, w: 12.3, h: 0.45, fontSize: 8.5, color: COLORS.WHITE, fontFace: "Arial" });
+  }
+
+  function generateFormatA(brief: SlideBrief, config: SlideMethodologyConfig | undefined) {
+    const slide = pptx.addSlide();
+    addSlideHeader(slide, brief.title);
+
+    let y = 1.2;
+    const maxY = config?.insight_bar ? 6.2 : 6.8;
+
+    for (const field of brief.content_structure) {
+      if (!field.value || y > maxY) continue;
+      slide.addText(field.label, { x: 0.5, y, w: 12, h: 0.3, fontSize: 11, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+      y += 0.35;
+      const lines = field.value.split("\n").filter(Boolean);
+      const text = lines.map((l: string) => l.startsWith("-") || l.startsWith("\u2022") ? `  \u2022  ${l.replace(/^[-\u2022]\s*/, "")}` : l).join("\n");
+      const blockH = Math.min(Math.max(lines.length * 0.2, 0.4), maxY - y);
+      slide.addText(text, { x: 0.5, y, w: 12, h: blockH, fontSize: 8.5, color: COLORS.TEXT, fontFace: "Arial", valign: "top", paraSpaceAfter: 3 });
+      y += blockH + 0.2;
+    }
+
+    if (config?.insight_bar && brief.notes) addInsightBar(slide, brief.notes);
+    addFooter(slide);
+  }
+
+  function generateFormatB(brief: SlideBrief, config: SlideMethodologyConfig | undefined) {
+    const slide = pptx.addSlide();
+    addSlideHeader(slide, brief.title);
+
+    const cols = config?.columns || {};
+    const colW = 3.9;
+    const fields = brief.content_structure.filter((f: SlideBriefField) => f.value);
+    const col1: SlideBriefField[] = [], col2: SlideBriefField[] = [], col3: SlideBriefField[] = [];
+    fields.forEach((f: SlideBriefField, i: number) => { [col1, col2, col3][i % 3].push(f); });
+
+    const maxY = config?.insight_bar ? 6.2 : 6.8;
+
+    function renderCol(x: number, items: SlideBriefField[], label?: string) {
+      let y = 1.2;
+      if (label) {
+        slide.addText(label, { x, y, w: colW, h: 0.25, fontSize: 8.5, color: COLORS.ACCENT, fontFace: "Arial", bold: true });
+        y += 0.3;
+      }
+      for (const f of items) {
+        if (y > maxY) break;
+        slide.addText(f.label, { x, y, w: colW, h: 0.25, fontSize: 11, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+        y += 0.3;
+        const lines = f.value.split("\n").filter(Boolean);
+        const text = lines.map((l: string) => l.startsWith("-") || l.startsWith("\u2022") ? `\u2022 ${l.replace(/^[-\u2022]\s*/, "")}` : l).join("\n");
+        const h = Math.min(Math.max(lines.length * 0.18, 0.35), maxY - y);
+        slide.addText(text, { x, y, w: colW, h, fontSize: 8.5, color: COLORS.TEXT, fontFace: "Arial", valign: "top", paraSpaceAfter: 2 });
+        y += h + 0.15;
+      }
+    }
+
+    renderCol(0.3, col1, cols.column_1);
+    renderCol(4.5, col2, cols.column_2);
+    renderCol(8.7, col3, cols.column_3);
+
+    // Vertical accent dividers
+    slide.addShape("line", { x: 4.3, y: 1.2, w: 0, h: maxY - 1.2, line: { color: COLORS.ACCENT, width: 0.5 } });
+    slide.addShape("line", { x: 8.5, y: 1.2, w: 0, h: maxY - 1.2, line: { color: COLORS.ACCENT, width: 0.5 } });
+
+    if (config?.insight_bar && brief.notes) addInsightBar(slide, brief.notes);
+    addFooter(slide);
+  }
+
+  function generateSlideFromBrief(brief: SlideBrief, adminConfigs: Record<string, SlideMethodologyConfig>) {
+    const config = adminConfigs[brief.slide_id];
+    if ((config?.format || "A") === "B") generateFormatB(brief, config);
+    else generateFormatA(brief, config);
   }
 
   // ─── Slide 1: Cover ────────────────────────────────────────────────────────
@@ -234,7 +238,7 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     for (const brief of briefs) {
       if (HARDCODED_SLIDE_IDS.has(brief.slide_id)) continue;
       if (!brief.content_structure || brief.content_structure.length === 0) continue;
-      generateSlideFromBrief(pptx, brief, adminConfigs, addFooter);
+      generateSlideFromBrief(brief, adminConfigs);
     }
   } else {
     // ─── Fallback: Legacy hardcoded slides when no briefs exist ──────────────

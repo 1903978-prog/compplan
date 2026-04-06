@@ -4,9 +4,43 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Save, RotateCcw, Check, FileText, ChevronRight, Loader2, Trash2, Plus } from "lucide-react";
+import { Save, RotateCcw, Check, FileText, ChevronRight, Loader2, Trash2, Plus, Palette, Type } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { MASTER_SLIDES, PROJECT_TYPES } from "@/lib/proposalSlides";
+
+// ── Deck Template Types & Defaults ──────────────────────────────────────────
+
+interface DeckTemplateConfig {
+  id?: number;
+  palette: Record<string, string>;
+  typography: Record<string, string>;
+  format_a_desc: string;
+  format_b_desc: string;
+  footer_left: string;
+  footer_right: string;
+  system_prompt: string;
+  updated_at: string;
+}
+
+const DEFAULT_PALETTE: Record<string, string> = {
+  C_TRACKER: "535353", C_TITLE: "1A6571", C_HEADER: "1A6571", C_BORDER: "16C3CF",
+  C_BODY: "535353", C_WHITE: "FFFFFF", C_SUBHEAD: "16C3CF", C_BGROW: "F0F9FA",
+};
+
+const PALETTE_LABELS: Record<string, string> = {
+  C_TRACKER: "Tracker", C_TITLE: "Title", C_HEADER: "Header", C_BORDER: "Border",
+  C_BODY: "Body", C_WHITE: "White", C_SUBHEAD: "Subhead", C_BGROW: "Row BG",
+};
+
+const DEFAULT_TYPOGRAPHY: Record<string, string> = {
+  tracker: "Arial 7pt #535353 NOT bold",
+  title: "Arial 20pt #1A6571 Bold",
+  headers: "Arial 11pt #1A6571 Bold",
+  bullets: "Arial 8.5pt #535353",
+  footer: "Arial 7pt #535353",
+  eendigo: "Arial 7pt #1A6571 (footer right)",
+  page_num: "Arial 7pt #535353 (footer right)",
+};
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,15 +74,24 @@ function emptyConfig(slideId: string): SlideConfig {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
+type AdminTab = "slides" | "template";
+
 export default function SlideMethodologyAdmin() {
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<AdminTab>("slides");
   const [configs, setConfigs] = useState<Record<string, SlideConfig>>({});
   const [selectedSlide, setSelectedSlide] = useState<string>(MASTER_SLIDES[0].slide_id);
   const [editing, setEditing] = useState<SlideConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  useEffect(() => { loadConfigs(); }, []);
+  // ── Deck Template state ──────────────────────────────────────────────────
+  const [deckTemplate, setDeckTemplate] = useState<DeckTemplateConfig | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<DeckTemplateConfig | null>(null);
+  const [templateDirty, setTemplateDirty] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+
+  useEffect(() => { loadConfigs(); loadDeckTemplate(); }, []);
 
   useEffect(() => {
     // When selected slide changes, load its config into editing state
@@ -64,6 +107,66 @@ export default function SlideMethodologyAdmin() {
       const map: Record<string, SlideConfig> = {};
       for (const c of list) map[c.slide_id] = c;
       setConfigs(map);
+    }
+  }
+
+  async function loadDeckTemplate() {
+    const res = await fetch("/api/deck-template", { credentials: "include" });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.id) {
+        setDeckTemplate(data);
+        setEditingTemplate({ ...data });
+      } else {
+        // No config yet — create empty
+        const empty: DeckTemplateConfig = {
+          palette: DEFAULT_PALETTE,
+          typography: DEFAULT_TYPOGRAPHY,
+          format_a_desc: "",
+          format_b_desc: "",
+          footer_left: "Notes and source",
+          footer_right: "Eendigo",
+          system_prompt: "",
+          updated_at: new Date().toISOString(),
+        };
+        setDeckTemplate(empty);
+        setEditingTemplate({ ...empty });
+      }
+    }
+  }
+
+  function updateTemplate(partial: Partial<DeckTemplateConfig>) {
+    setEditingTemplate(prev => prev ? { ...prev, ...partial } : prev);
+    setTemplateDirty(true);
+  }
+
+  async function handleSaveTemplate() {
+    if (!editingTemplate) return;
+    setTemplateSaving(true);
+    try {
+      const res = await fetch("/api/deck-template", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editingTemplate),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setDeckTemplate(saved);
+        setEditingTemplate({ ...saved });
+        setTemplateDirty(false);
+        toast({ title: "Template saved" });
+      }
+    } catch {
+      toast({ title: "Save failed", variant: "destructive" });
+    }
+    setTemplateSaving(false);
+  }
+
+  function handleResetTemplate() {
+    if (deckTemplate) {
+      setEditingTemplate({ ...deckTemplate });
+      setTemplateDirty(false);
     }
   }
 
@@ -174,6 +277,168 @@ export default function SlideMethodologyAdmin() {
         description="Define structure, rules, and guidance for each proposal slide"
       />
 
+      {/* ── Tab bar ──────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1 mb-4 border-b">
+        <button
+          onClick={() => activeTab === "template" && templateDirty ? (window.confirm("Unsaved template changes. Discard?") && setActiveTab("slides")) : setActiveTab("slides")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "slides" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <FileText className="w-4 h-4 inline mr-1.5" />Slide Configs
+        </button>
+        <button
+          onClick={() => activeTab === "slides" && dirty ? (window.confirm("Unsaved slide changes. Discard?") && setActiveTab("template")) : setActiveTab("template")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "template" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Palette className="w-4 h-4 inline mr-1.5" />Template Format
+        </button>
+      </div>
+
+      {/* ── Template Format Tab ──────────────────────────────────────── */}
+      {activeTab === "template" && editingTemplate && (
+        <div className="space-y-4">
+          {/* Header with save/reset */}
+          <Card className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Palette className="w-5 h-5 text-primary" />
+                  Eendigo Deck Template
+                </h3>
+                <p className="text-sm text-muted-foreground">Master template format for PptxGenJS deck generation</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {templateDirty && <span className="text-xs text-orange-500 font-medium">Unsaved changes</span>}
+                <Button variant="outline" size="sm" onClick={handleResetTemplate} disabled={!templateDirty}>
+                  <RotateCcw className="w-4 h-4 mr-1" /> Discard
+                </Button>
+                <Button size="sm" onClick={handleSaveTemplate} disabled={templateSaving || !templateDirty}>
+                  {templateSaving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                  Save
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          {/* System Prompt */}
+          <Card className="p-4">
+            <h4 className="text-sm font-semibold mb-2">System Prompt</h4>
+            <p className="text-xs text-muted-foreground mb-2">Full template instructions fed to Claude and deck generator</p>
+            <Textarea
+              value={editingTemplate.system_prompt}
+              onChange={e => updateTemplate({ system_prompt: e.target.value })}
+              rows={18}
+              className="font-mono text-xs"
+              placeholder="System prompt for deck generation..."
+            />
+          </Card>
+
+          {/* Palette */}
+          <Card className="p-4">
+            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Palette className="w-4 h-4 text-primary" /> Color Palette
+            </h4>
+            <p className="text-xs text-muted-foreground mb-3">Hex colors used across all slides (DO NOT CHANGE unless rebranding)</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {Object.keys(DEFAULT_PALETTE).map(key => (
+                <div key={key} className="flex items-center gap-2">
+                  <div
+                    className="w-8 h-8 rounded border shrink-0"
+                    style={{ backgroundColor: `#${editingTemplate.palette[key] || DEFAULT_PALETTE[key]}` }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <label className="text-xs text-muted-foreground block">{PALETTE_LABELS[key] || key}</label>
+                    <Input
+                      value={editingTemplate.palette[key] || ""}
+                      onChange={e => updateTemplate({ palette: { ...editingTemplate.palette, [key]: e.target.value } })}
+                      className="h-7 text-xs font-mono"
+                      placeholder={DEFAULT_PALETTE[key]}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Typography */}
+          <Card className="p-4">
+            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Type className="w-4 h-4 text-primary" /> Typography
+            </h4>
+            <p className="text-xs text-muted-foreground mb-3">Font specifications for each slide element</p>
+            <div className="space-y-2">
+              {Object.keys(DEFAULT_TYPOGRAPHY).map(key => (
+                <div key={key} className="flex items-center gap-3">
+                  <label className="text-xs text-muted-foreground w-24 text-right capitalize shrink-0">{key.replace(/_/g, " ")}</label>
+                  <Input
+                    value={editingTemplate.typography[key] || ""}
+                    onChange={e => updateTemplate({ typography: { ...editingTemplate.typography, [key]: e.target.value } })}
+                    className="h-8 text-sm font-mono flex-1"
+                    placeholder={DEFAULT_TYPOGRAPHY[key]}
+                  />
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Format Descriptions */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="p-4">
+              <h4 className="text-sm font-semibold mb-2">Format A Description</h4>
+              <p className="text-xs text-muted-foreground mb-2">3-column with row bands</p>
+              <Textarea
+                value={editingTemplate.format_a_desc}
+                onChange={e => updateTemplate({ format_a_desc: e.target.value })}
+                rows={4}
+                className="text-sm"
+                placeholder="Describe Format A layout..."
+              />
+            </Card>
+            <Card className="p-4">
+              <h4 className="text-sm font-semibold mb-2">Format B Description</h4>
+              <p className="text-xs text-muted-foreground mb-2">Plain 3-column bullets</p>
+              <Textarea
+                value={editingTemplate.format_b_desc}
+                onChange={e => updateTemplate({ format_b_desc: e.target.value })}
+                rows={4}
+                className="text-sm"
+                placeholder="Describe Format B layout..."
+              />
+            </Card>
+          </div>
+
+          {/* Footer */}
+          <Card className="p-4">
+            <h4 className="text-sm font-semibold mb-2">Footer Settings</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Footer Left</label>
+                <Input
+                  value={editingTemplate.footer_left}
+                  onChange={e => updateTemplate({ footer_left: e.target.value })}
+                  className="h-8 text-sm"
+                  placeholder="Notes and source"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Footer Right</label>
+                <Input
+                  value={editingTemplate.footer_right}
+                  onChange={e => updateTemplate({ footer_right: e.target.value })}
+                  className="h-8 text-sm"
+                  placeholder="Eendigo"
+                />
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Slide Configs Tab ────────────────────────────────────────── */}
+      {activeTab === "slides" && (
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* ── Left panel: slide list ─────────────────────────────────────── */}
         <div className="lg:col-span-1">
@@ -405,6 +670,7 @@ export default function SlideMethodologyAdmin() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

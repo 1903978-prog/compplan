@@ -518,6 +518,33 @@ export const slideMethodologyConfigs = pgTable("slide_methodology_configs", {
   updated_at: text("updated_at").notNull(),
 });
 
+// ─── Deck Template Config ───────────────────────────────────────────────────
+
+export const deckTemplateConfigSchema = z.object({
+  id: z.number().optional(),
+  palette: z.any().default({}),          // { C_TRACKER, C_TITLE, ... }
+  typography: z.any().default({}),       // { tracker, title, headers, ... }
+  format_a_desc: z.string().default(""),
+  format_b_desc: z.string().default(""),
+  footer_left: z.string().default(""),
+  footer_right: z.string().default(""),
+  system_prompt: z.string().default(""), // full combined template instructions
+  updated_at: z.string(),
+});
+export type DeckTemplateConfig = z.infer<typeof deckTemplateConfigSchema>;
+
+export const deckTemplateConfigs = pgTable("deck_template_configs", {
+  id: serial("id").primaryKey(),
+  palette: jsonb("palette").notNull().default({}),
+  typography: jsonb("typography").notNull().default({}),
+  format_a_desc: text("format_a_desc").notNull().default(""),
+  format_b_desc: text("format_b_desc").notNull().default(""),
+  footer_left: text("footer_left").notNull().default(""),
+  footer_right: text("footer_right").notNull().default(""),
+  system_prompt: text("system_prompt").notNull().default(""),
+  updated_at: text("updated_at").notNull(),
+});
+
 // ─── Hiring Kanban ───────────────────────────────────────────────────────────
 
 export const hiringCandidates = pgTable("hiring_candidates", {
