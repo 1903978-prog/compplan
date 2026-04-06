@@ -287,6 +287,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Proposals ──────────────────────────────────────────────────────────────
+  app.get("/api/proposals", requireAuth, async (_req, res) => {
+    res.json(await storage.getProposals());
+  });
+
+  app.get("/api/proposals/:id", requireAuth, async (req, res) => {
+    const p = await storage.getProposal(safeInt(req.params.id));
+    if (!p) { res.status(404).json({ message: "Not found" }); return; }
+    res.json(p);
+  });
+
+  app.post("/api/proposals", requireAuth, async (req, res) => {
+    const p = await storage.createProposal(req.body);
+    res.status(201).json(p);
+  });
+
+  app.put("/api/proposals/:id", requireAuth, async (req, res) => {
+    const p = await storage.updateProposal(safeInt(req.params.id), req.body);
+    res.json(p);
+  });
+
+  app.delete("/api/proposals/:id", requireAuth, async (req, res) => {
+    await storage.deleteProposal(safeInt(req.params.id));
+    res.status(204).end();
+  });
+
+  app.post("/api/proposals/:id/analyze", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { analyzeProposal } = await import("./proposalAI");
+      const analysis = await analyzeProposal({
+        company_name: proposal.company_name,
+        website: proposal.website,
+        transcript: proposal.transcript,
+        notes: proposal.notes,
+        revenue: proposal.revenue,
+        ebitda_margin: proposal.ebitda_margin,
+        scope_perimeter: proposal.scope_perimeter,
+        objective: proposal.objective,
+        urgency: proposal.urgency,
+      });
+
+      const updated = await storage.updateProposal(id, {
+        company_summary: analysis.company_summary,
+        proposal_title: analysis.proposal_title,
+        why_now: analysis.why_now,
+        objective_statement: analysis.objective_statement,
+        scope_statement: analysis.scope_statement,
+        recommended_team: analysis.recommended_team,
+        staffing_intensity: analysis.staffing_intensity,
+        options: analysis.options,
+        ai_analysis: analysis,
+        status: "analyzed",
+      });
+      res.json(updated);
+    } catch (err: any) {
+      console.error("Analyze error:", err);
+      res.status(500).json({ message: err.message || "Analysis failed" });
+    }
+  });
+
+  app.post("/api/proposals/:id/generate-deck", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { generateProposalDeck } = await import("./proposalDeck");
+      const template = await storage.getActiveProposalTemplate();
+      const buffer = await generateProposalDeck(
+        {
+          company_name: proposal.company_name,
+          proposal_title: proposal.proposal_title,
+          company_summary: proposal.company_summary,
+          why_now: proposal.why_now,
+          objective_statement: proposal.objective_statement,
+          scope_statement: proposal.scope_statement,
+          recommended_team: proposal.recommended_team,
+          options: (proposal.options as any[]) || [],
+        },
+        template,
+      );
+
+      const fileName = `Eendigo_Proposal_${proposal.company_name.replace(/[^a-zA-Z0-9]/g, "_")}.pptx`;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("Deck generation error:", err);
+      res.status(500).json({ message: err.message || "Deck generation failed" });
+    }
+  });
+
+  // ── Proposal Templates ────────────────────────────────────────────────────
+  app.get("/api/proposal-templates", requireAuth, async (_req, res) => {
+    res.json(await storage.getProposalTemplates());
+  });
+
+  app.post("/api/proposal-templates", requireAuth, async (req, res) => {
+    const t = await storage.createProposalTemplate(req.body);
+    res.status(201).json(t);
+  });
+
+  app.delete("/api/proposal-templates/:id", requireAuth, async (req, res) => {
+    await storage.deleteProposalTemplate(safeInt(req.params.id));
+    res.status(204).end();
+  });
+
+  app.post("/api/proposal-templates/:id/activate", requireAuth, async (req, res) => {
+    const t = await storage.activateProposalTemplate(safeInt(req.params.id));
+    res.json(t);
+  });
+
   // ── Admin downloads ────────────────────────────────────────────────────────
 
   // Download all source code as tar.gz

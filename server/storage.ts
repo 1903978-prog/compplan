@@ -4,10 +4,12 @@ import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   performanceIssues, timeTrackingTopics, timeTrackingEntries,
+  proposals, proposalTemplates,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
   type TimeTrackingTopic, type TimeTrackingEntry,
+  type Proposal, type ProposalTemplate,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -374,6 +376,50 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTimeTrackingEntry(id: number): Promise<void> {
     await db.delete(timeTrackingEntries).where(eq(timeTrackingEntries.id, id));
+  }
+
+  // ── Proposals ───────────────────────────────────────────────────────────────
+  async getProposals() {
+    return await db.select().from(proposals).orderBy(proposals.created_at);
+  }
+  async getProposal(id: number) {
+    const rows = await db.select().from(proposals).where(eq(proposals.id, id));
+    return rows[0] || null;
+  }
+  async createProposal(data: any) {
+    const now = new Date().toISOString();
+    const rows = await db.insert(proposals).values({ ...data, created_at: now, updated_at: now }).returning();
+    return rows[0];
+  }
+  async updateProposal(id: number, data: any) {
+    const rows = await db.update(proposals).set({ ...data, updated_at: new Date().toISOString() }).where(eq(proposals.id, id)).returning();
+    return rows[0];
+  }
+  async deleteProposal(id: number) {
+    await db.delete(proposals).where(eq(proposals.id, id));
+  }
+
+  // ── Proposal Templates ──────────────────────────────────────────────────────
+  async getProposalTemplates() {
+    return await db.select().from(proposalTemplates).orderBy(proposalTemplates.uploaded_at);
+  }
+  async getActiveProposalTemplate() {
+    const rows = await db.select().from(proposalTemplates).where(eq(proposalTemplates.is_active, 1));
+    return rows[0] || null;
+  }
+  async createProposalTemplate(data: any) {
+    // Deactivate all existing
+    await db.update(proposalTemplates).set({ is_active: 0 });
+    const rows = await db.insert(proposalTemplates).values({ ...data, is_active: 1, uploaded_at: new Date().toISOString() }).returning();
+    return rows[0];
+  }
+  async activateProposalTemplate(id: number) {
+    await db.update(proposalTemplates).set({ is_active: 0 });
+    const rows = await db.update(proposalTemplates).set({ is_active: 1 }).where(eq(proposalTemplates.id, id)).returning();
+    return rows[0];
+  }
+  async deleteProposalTemplate(id: number) {
+    await db.delete(proposalTemplates).where(eq(proposalTemplates.id, id));
   }
 }
 

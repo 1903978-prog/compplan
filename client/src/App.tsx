@@ -16,7 +16,8 @@ import PricingTool from "@/pages/PricingTool";
 import PricingAdmin from "@/pages/PricingAdmin";
 import Hiring from "@/pages/Hiring";
 import TimeTracker from "@/pages/TimeTracker";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer } from "lucide-react";
+import Proposals from "@/pages/Proposals";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -109,6 +110,14 @@ function Navigation() {
                 ]}
               />
               <NavDropdown
+                label="Proposals"
+                icon={FileText}
+                basePaths={["/proposals"]}
+                items={[
+                  { href: "/proposals", label: "Proposals", icon: FileText },
+                ]}
+              />
+              <NavDropdown
                 label="Hiring"
                 icon={UserCheck}
                 basePaths={["/hiring"]}
@@ -139,6 +148,7 @@ function Router() {
       <Route path="/pricing" component={PricingTool} />
       <Route path="/pricing/admin" component={PricingAdmin} />
       <Route path="/time-tracker" component={TimeTracker} />
+      <Route path="/proposals" component={Proposals} />
       <Route path="/hiring" component={Hiring} />
       <Route component={NotFound} />
     </Switch>

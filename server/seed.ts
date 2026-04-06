@@ -282,6 +282,46 @@ export async function seedDatabase() {
     }
   }
 
+  // Proposals table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS proposals (
+      id SERIAL PRIMARY KEY,
+      company_name TEXT NOT NULL,
+      website TEXT,
+      transcript TEXT,
+      notes TEXT,
+      revenue REAL,
+      ebitda_margin REAL,
+      scope_perimeter TEXT,
+      objective TEXT,
+      urgency TEXT,
+      company_summary TEXT,
+      proposal_title TEXT,
+      why_now TEXT,
+      objective_statement TEXT,
+      scope_statement TEXT,
+      recommended_team TEXT,
+      staffing_intensity TEXT,
+      options JSONB NOT NULL DEFAULT '[]',
+      ai_analysis JSONB,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  // Proposal templates table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS proposal_templates (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      file_data TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      uploaded_at TEXT NOT NULL
+    )
+  `);
+
   // Performance issues table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS performance_issues (

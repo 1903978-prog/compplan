@@ -410,6 +410,79 @@ export const timeTrackingEntries = pgTable("time_tracking_entries", {
   end_time: text("end_time"),
 });
 
+// ─── Proposals ──────────────────────────────────────────────────────────────
+
+export const proposalSchema = z.object({
+  id: z.number().optional(),
+  company_name: z.string().min(1),
+  website: z.string().optional().nullable(),
+  transcript: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  revenue: z.number().optional().nullable(),
+  ebitda_margin: z.number().optional().nullable(),
+  scope_perimeter: z.string().optional().nullable(),
+  objective: z.string().optional().nullable(),
+  urgency: z.string().optional().nullable(),
+  // AI-generated fields (editable)
+  company_summary: z.string().optional().nullable(),
+  proposal_title: z.string().optional().nullable(),
+  why_now: z.string().optional().nullable(),
+  objective_statement: z.string().optional().nullable(),
+  scope_statement: z.string().optional().nullable(),
+  recommended_team: z.string().optional().nullable(),
+  staffing_intensity: z.string().optional().nullable(),
+  options: z.any().default([]),  // JSONB array of 3 option objects
+  ai_analysis: z.any().optional().nullable(),  // raw Claude response
+  status: z.string().default("draft"),  // draft, analyzed, finalized
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type Proposal = z.infer<typeof proposalSchema>;
+
+export const proposals = pgTable("proposals", {
+  id: serial("id").primaryKey(),
+  company_name: text("company_name").notNull(),
+  website: text("website"),
+  transcript: text("transcript"),
+  notes: text("notes"),
+  revenue: real("revenue"),
+  ebitda_margin: real("ebitda_margin"),
+  scope_perimeter: text("scope_perimeter"),
+  objective: text("objective"),
+  urgency: text("urgency"),
+  company_summary: text("company_summary"),
+  proposal_title: text("proposal_title"),
+  why_now: text("why_now"),
+  objective_statement: text("objective_statement"),
+  scope_statement: text("scope_statement"),
+  recommended_team: text("recommended_team"),
+  staffing_intensity: text("staffing_intensity"),
+  options: jsonb("options").notNull().default([]),
+  ai_analysis: jsonb("ai_analysis"),
+  status: text("status").notNull().default("draft"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
+export const proposalTemplateSchema = z.object({
+  id: z.number().optional(),
+  name: z.string().min(1),
+  file_data: z.string(),  // base64 encoded pptx
+  file_size: z.number(),
+  is_active: z.number().default(1),
+  uploaded_at: z.string(),
+});
+export type ProposalTemplate = z.infer<typeof proposalTemplateSchema>;
+
+export const proposalTemplates = pgTable("proposal_templates", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  file_data: text("file_data").notNull(),
+  file_size: integer("file_size").notNull(),
+  is_active: integer("is_active").notNull().default(1),
+  uploaded_at: text("uploaded_at").notNull(),
+});
+
 // ─── Hiring Kanban ───────────────────────────────────────────────────────────
 
 export const hiringCandidates = pgTable("hiring_candidates", {

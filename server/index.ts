@@ -7,6 +7,7 @@ import { seedDatabase } from "./seed";
 const app = express();
 app.set("trust proxy", 1);
 
+app.use('/api/proposal-templates', express.json({ limit: '10mb' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
