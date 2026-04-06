@@ -433,6 +433,7 @@ export const proposalSchema = z.object({
   staffing_intensity: z.string().optional().nullable(),
   project_type: z.string().optional().nullable(),  // e.g. "Strategy", "SPARK (Diagnostic)"
   slide_selection: z.any().default([]),  // JSONB array of SlideSelectionEntry
+  slide_briefs: z.any().default([]),  // JSONB array of SlideBrief objects
   options: z.any().default([]),  // JSONB array of 3 option objects
   ai_analysis: z.any().optional().nullable(),  // raw Claude response
   status: z.string().default("draft"),  // draft, analyzed, finalized
@@ -461,6 +462,7 @@ export const proposals = pgTable("proposals", {
   staffing_intensity: text("staffing_intensity"),
   project_type: text("project_type"),
   slide_selection: jsonb("slide_selection").notNull().default([]),
+  slide_briefs: jsonb("slide_briefs").notNull().default([]),
   options: jsonb("options").notNull().default([]),
   ai_analysis: jsonb("ai_analysis"),
   status: text("status").notNull().default("draft"),

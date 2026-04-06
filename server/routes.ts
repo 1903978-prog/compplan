@@ -313,6 +313,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  app.post("/api/proposals/:id/generate-briefs", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const selectedSlides = ((proposal.slide_selection as any[]) || [])
+        .filter((s: any) => s.is_selected)
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+        .map((s: any) => ({ slide_id: s.slide_id, title: s.title }));
+
+      if (selectedSlides.length === 0) {
+        res.status(400).json({ message: "No slides selected" });
+        return;
+      }
+
+      const { generateSlideBriefs } = await import("./proposalBriefs");
+      const briefs = await generateSlideBriefs({
+        company_name: proposal.company_name,
+        website: proposal.website,
+        transcript: proposal.transcript,
+        notes: proposal.notes,
+        revenue: proposal.revenue,
+        ebitda_margin: proposal.ebitda_margin,
+        scope_perimeter: proposal.scope_perimeter,
+        objective: proposal.objective,
+        urgency: proposal.urgency,
+        project_type: proposal.project_type || "Strategy",
+        selected_slides: selectedSlides,
+      });
+
+      const updated = await storage.updateProposal(id, {
+        slide_briefs: briefs,
+        status: "briefed",
+      });
+      res.json(updated);
+    } catch (err: any) {
+      console.error("Brief generation error:", err);
+      res.status(500).json({ message: err.message || "Brief generation failed" });
+    }
+  });
+
   app.post("/api/proposals/:id/analyze", requireAuth, async (req, res) => {
     try {
       const id = safeInt(req.params.id);

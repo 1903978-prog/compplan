@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import {
   Plus, Trash2, ArrowRight, ArrowLeft, Loader2, Download, Pencil, Eye,
   FileText, Upload, Check, X, Sparkles, GripVertical, ChevronUp, ChevronDown,
-  RotateCcw, AlertTriangle, Info,
+  RotateCcw, AlertTriangle, Info, ChevronRight, BookOpen, MessageSquare,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -17,6 +17,15 @@ import {
 } from "@/lib/proposalSlides";
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
+interface SlideBriefField { key: string; label: string; value: string }
+interface SlideBrief {
+  slide_id: string;
+  title: string;
+  purpose: string;
+  content_structure: SlideBriefField[];
+  notes: string;
+}
 
 interface TeamMember { role: string; count: number; days_per_week: number }
 interface PriceBreakdown { role: string; count: number; daily_rate: number; days: number; total: number }
@@ -53,6 +62,7 @@ interface Proposal {
   staffing_intensity?: string | null;
   project_type?: string | null;
   slide_selection: SlideSelectionEntry[];
+  slide_briefs: SlideBrief[];
   options: ProposalOption[];
   ai_analysis?: any;
   status: string;
@@ -81,9 +91,10 @@ const URGENCY_OPTIONS = ["Low", "Medium", "High", "Critical"];
 const WIZARD_STEPS = [
   { n: 1, label: "Input" },
   { n: 2, label: "Slides" },
-  { n: 3, label: "Analysis" },
-  { n: 4, label: "Architecture" },
-  { n: 5, label: "Generate" },
+  { n: 3, label: "Briefing" },
+  { n: 4, label: "Analysis" },
+  { n: 5, label: "Architecture" },
+  { n: 6, label: "Generate" },
 ];
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -121,6 +132,12 @@ export default function Proposals() {
   const [hasManualEdits, setHasManualEdits] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [pendingProjectType, setPendingProjectType] = useState<ProjectType | null>(null);
+  // Step 3: Slide briefing state
+  const [briefs, setBriefs] = useState<SlideBrief[]>([]);
+  const [generatingBriefs, setGeneratingBriefs] = useState(false);
+  const [expandedBrief, setExpandedBrief] = useState<string | null>(null);
+  const [briefProgress, setBriefProgress] = useState(0); // % of briefs reviewed
+
   // Drag state
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
@@ -145,7 +162,9 @@ export default function Proposals() {
     setCurrent(null);
     setProjectType("");
     setSlides([]);
+    setBriefs([]);
     setHasManualEdits(false);
+    setExpandedBrief(null);
     setStep(1);
     setView("wizard");
   }
@@ -155,7 +174,9 @@ export default function Proposals() {
     // Restore slide selection state
     setProjectType((p.project_type as ProjectType) || "");
     setSlides(Array.isArray(p.slide_selection) && p.slide_selection.length > 0 ? p.slide_selection : []);
+    setBriefs(Array.isArray(p.slide_briefs) && p.slide_briefs.length > 0 ? p.slide_briefs : []);
     setHasManualEdits(false);
+    setExpandedBrief(null);
 
     if (p.status === "draft") {
       setForm({
@@ -170,8 +191,10 @@ export default function Proposals() {
         urgency: p.urgency || "Medium",
       });
       setStep(1);
+    } else if (p.status === "briefed") {
+      setStep(3);
     } else {
-      setStep(4);
+      setStep(5);
     }
     setView("wizard");
   }
@@ -274,7 +297,7 @@ export default function Proposals() {
     }
   }
 
-  // ── Step 2 → Step 3: Save slide selection & trigger analysis ───────────────
+  // ── Step 2 → Step 3: Save slide selection & generate briefs ─────────────────
 
   async function handleSubmitSlides() {
     if (!projectType) {
@@ -301,6 +324,7 @@ export default function Proposals() {
       urgency: form.urgency || null,
       project_type: projectType,
       slide_selection: slides,
+      slide_briefs: briefs,
       status: "draft",
       options: current?.options || [],
       created_at: current?.created_at || now,
@@ -327,11 +351,75 @@ export default function Proposals() {
       setCurrent(saved);
       setSaving(false);
 
-      // Move to step 3: analyzing
+      // Generate briefs via AI
       setStep(3);
-      setAnalyzing(true);
+      setGeneratingBriefs(true);
 
-      const analyzeRes = await fetch(`/api/proposals/${saved.id}/analyze`, {
+      const briefRes = await fetch(`/api/proposals/${saved.id}/generate-briefs`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!briefRes.ok) throw new Error("Brief generation failed");
+      const briefed = await briefRes.json();
+      setCurrent(briefed);
+      setBriefs(Array.isArray(briefed.slide_briefs) ? briefed.slide_briefs : []);
+      setGeneratingBriefs(false);
+      // Auto-expand first brief
+      if (briefed.slide_briefs?.length > 0) {
+        setExpandedBrief(briefed.slide_briefs[0].slide_id);
+      }
+      loadProposals();
+    } catch (err: any) {
+      setSaving(false);
+      setGeneratingBriefs(false);
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
+
+  // ── Step 3: Save edited briefs ────────────────────────────────────────────
+
+  function updateBriefField(slideId: string, fieldKey: string, value: string) {
+    setBriefs(prev => prev.map(b =>
+      b.slide_id === slideId
+        ? { ...b, content_structure: b.content_structure.map(f => f.key === fieldKey ? { ...f, value } : f) }
+        : b
+    ));
+  }
+
+  function updateBriefNotes(slideId: string, notes: string) {
+    setBriefs(prev => prev.map(b => b.slide_id === slideId ? { ...b, notes } : b));
+  }
+
+  async function saveBriefs() {
+    if (!current?.id) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/proposals/${current.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...current, slide_briefs: briefs, status: "briefed", updated_at: new Date().toISOString() }),
+      });
+      const updated = await res.json();
+      setCurrent(updated);
+      loadProposals();
+      toast({ title: "Briefs saved" });
+    } catch {
+      toast({ title: "Save failed", variant: "destructive" });
+    }
+    setSaving(false);
+  }
+
+  // ── Step 3 → Step 4: Submit briefs & trigger AI analysis ──────────────────
+
+  async function handleSubmitBriefs() {
+    await saveBriefs();
+    // Move to step 4: analyzing
+    setStep(4);
+    setAnalyzing(true);
+
+    try {
+      const analyzeRes = await fetch(`/api/proposals/${current!.id}/analyze`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
       });
@@ -340,16 +428,15 @@ export default function Proposals() {
       const analyzed = await analyzeRes.json();
       setCurrent(analyzed);
       setAnalyzing(false);
-      setStep(4);
+      setStep(5);
       loadProposals();
     } catch (err: any) {
-      setSaving(false);
       setAnalyzing(false);
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
   }
 
-  // ── Step 4: Save edits to proposal ─────────────────────────────────────────
+  // ── Step 5: Save edits to proposal ─────────────────────────────────────────
 
   async function saveEdits() {
     if (!current?.id) return;
@@ -370,7 +457,7 @@ export default function Proposals() {
     setSaving(false);
   }
 
-  // ── Step 5: Generate deck ──────────────────────────────────────────────────
+  // ── Step 6: Generate deck ──────────────────────────────────────────────────
 
   async function generateDeck() {
     if (!current?.id) return;
@@ -510,15 +597,16 @@ export default function Proposals() {
     const stepDescriptions: Record<number, string> = {
       1: "Enter client information",
       2: "Select project type and proposal slides",
-      3: "AI is analyzing...",
-      4: "Review and edit proposal architecture",
-      5: "Generate and download deck",
+      3: "Review and edit slide briefs",
+      4: "AI is analyzing...",
+      5: "Review and edit proposal architecture",
+      6: "Generate and download deck",
     };
 
     return (
       <div>
         <PageHeader
-          title={step === 1 ? "New Proposal" : step === 2 ? "Proposal Structure" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
+          title={step === 1 ? "New Proposal" : step === 2 ? "Proposal Structure" : step === 3 ? "Slide Briefing" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
           description={stepDescriptions[step]}
           actions={
             <Button variant="outline" onClick={() => { setView("list"); setStep(1); }}>
@@ -792,16 +880,170 @@ export default function Proposals() {
                 <ArrowLeft className="w-4 h-4 mr-1" /> Back to Inputs
               </Button>
               <Button onClick={handleSubmitSlides} disabled={saving || !projectType}>
-                {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
-                Save Structure & Analyze with AI
+                {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BookOpen className="w-4 h-4 mr-1" />}
+                Generate Slide Briefs
                 <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* ── Step 3: Analyzing ─────────────────────────────────────────── */}
+        {/* ── Step 3: Slide Briefing & Content Definition ────────────────── */}
         {step === 3 && (
+          <div className="space-y-4">
+            {/* Loading state */}
+            {generatingBriefs && (
+              <Card className="p-12 flex flex-col items-center justify-center gap-4">
+                <Loader2 className="w-12 h-12 animate-spin text-primary" />
+                <p className="text-lg font-medium">Generating slide briefs...</p>
+                <p className="text-sm text-muted-foreground">Claude is structuring content for each selected slide</p>
+              </Card>
+            )}
+
+            {/* Briefs loaded */}
+            {!generatingBriefs && briefs.length > 0 && (
+              <>
+                {/* Progress bar */}
+                <Card className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium">{briefs.length} slide briefs</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Button variant="outline" size="sm" onClick={saveBriefs} disabled={saving}>
+                        {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                        Save Briefs
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setExpandedBrief(expandedBrief ? null : briefs[0]?.slide_id)}>
+                        {expandedBrief ? "Collapse All" : "Expand First"}
+                      </Button>
+                    </div>
+                  </div>
+                  {/* Quick navigation */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {briefs.map((b, idx) => (
+                      <button
+                        key={b.slide_id}
+                        onClick={() => {
+                          setExpandedBrief(b.slide_id);
+                          document.getElementById(`brief-${b.slide_id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }}
+                        className={`text-xs px-2 py-1 rounded-md transition-colors ${
+                          expandedBrief === b.slide_id
+                            ? "bg-primary text-primary-foreground"
+                            : b.content_structure.some(f => f.value.trim())
+                              ? "bg-green-100 text-green-700 hover:bg-green-200"
+                              : "bg-muted text-muted-foreground hover:bg-accent"
+                        }`}
+                      >
+                        {idx + 1}. {b.title}
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+
+                {/* Brief cards */}
+                {briefs.map((brief, idx) => (
+                  <Card
+                    key={brief.slide_id}
+                    id={`brief-${brief.slide_id}`}
+                    className={`overflow-hidden transition-all ${expandedBrief === brief.slide_id ? "ring-2 ring-primary/30" : ""}`}
+                  >
+                    {/* Header (always visible, clickable) */}
+                    <button
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-accent/30 transition-colors"
+                      onClick={() => setExpandedBrief(expandedBrief === brief.slide_id ? null : brief.slide_id)}
+                    >
+                      <span className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium shrink-0">
+                        {idx + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm">{brief.title}</div>
+                        <div className="text-xs text-muted-foreground">{brief.purpose}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {brief.content_structure.every(f => f.value.trim()) && (
+                          <span className="text-xs text-green-600 flex items-center gap-1"><Check className="w-3 h-3" /> Complete</span>
+                        )}
+                        {brief.notes && (
+                          <MessageSquare className="w-3.5 h-3.5 text-blue-500" />
+                        )}
+                        <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${expandedBrief === brief.slide_id ? "rotate-90" : ""}`} />
+                      </div>
+                    </button>
+
+                    {/* Expanded content */}
+                    {expandedBrief === brief.slide_id && (
+                      <div className="border-t px-4 py-4 space-y-4">
+                        {/* Editable fields */}
+                        {brief.content_structure.map(field => (
+                          <div key={field.key}>
+                            <label className="text-sm font-medium mb-1 block">{field.label}</label>
+                            <Textarea
+                              value={field.value}
+                              onChange={e => updateBriefField(brief.slide_id, field.key, e.target.value)}
+                              rows={Math.max(2, Math.ceil(field.value.length / 80))}
+                              className="text-sm"
+                            />
+                          </div>
+                        ))}
+
+                        {/* Notes */}
+                        <div className="border-t pt-3">
+                          <label className="text-sm font-medium mb-1 flex items-center gap-1.5">
+                            <MessageSquare className="w-3.5 h-3.5" /> Notes (optional)
+                          </label>
+                          <Textarea
+                            value={brief.notes}
+                            onChange={e => updateBriefNotes(brief.slide_id, e.target.value)}
+                            rows={2}
+                            className="text-sm"
+                            placeholder="Any special instructions or context for this slide..."
+                          />
+                        </div>
+
+                        {/* Navigate to next brief */}
+                        {idx < briefs.length - 1 && (
+                          <div className="flex justify-end">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const nextId = briefs[idx + 1].slide_id;
+                                setExpandedBrief(nextId);
+                                setTimeout(() => {
+                                  document.getElementById(`brief-${nextId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }, 50);
+                              }}
+                            >
+                              Next: {briefs[idx + 1].title} <ChevronRight className="w-4 h-4 ml-1" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                ))}
+
+                {/* Action buttons */}
+                <div className="flex justify-between">
+                  <Button variant="outline" onClick={() => setStep(2)}>
+                    <ArrowLeft className="w-4 h-4 mr-1" /> Back to Slides
+                  </Button>
+                  <Button onClick={handleSubmitBriefs} disabled={saving}>
+                    {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                    Validate & Analyze with AI
+                    <ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Step 4: Analyzing ─────────────────────────────────────────── */}
+        {step === 4 && (
           <Card className="p-12 flex flex-col items-center justify-center gap-4">
             <Loader2 className="w-12 h-12 animate-spin text-primary" />
             <p className="text-lg font-medium">Claude is analyzing your inputs...</p>
@@ -809,8 +1051,8 @@ export default function Proposals() {
           </Card>
         )}
 
-        {/* ── Step 4: Editable Architecture ──────────────────────────────── */}
-        {step === 4 && current && (
+        {/* ── Step 5: Editable Architecture ──────────────────────────────── */}
+        {step === 5 && current && (
           <div className="space-y-6">
             <Card className="p-6 space-y-4">
               <h3 className="text-lg font-semibold">Proposal Overview</h3>
@@ -873,15 +1115,15 @@ export default function Proposals() {
             </div>
 
             <div className="flex justify-between">
-              <Button variant="outline" onClick={() => setStep(2)}>
-                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Slides
+              <Button variant="outline" onClick={() => setStep(3)}>
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Briefing
               </Button>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={saveEdits} disabled={saving}>
                   {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
                   Save Changes
                 </Button>
-                <Button onClick={async () => { await saveEdits(); setStep(5); }}>
+                <Button onClick={async () => { await saveEdits(); setStep(6); }}>
                   Generate Deck <ArrowRight className="w-4 h-4 ml-1" />
                 </Button>
               </div>
@@ -889,8 +1131,8 @@ export default function Proposals() {
           </div>
         )}
 
-        {/* ── Step 5: Generate & Download ────────────────────────────────── */}
-        {step === 5 && current && (
+        {/* ── Step 6: Generate & Download ────────────────────────────────── */}
+        {step === 6 && current && (
           <Card className="p-8 flex flex-col items-center gap-6">
             <FileText className="w-16 h-16 text-primary" />
             <h3 className="text-xl font-semibold">Ready to Generate Deck</h3>
@@ -921,7 +1163,7 @@ export default function Proposals() {
             </div>
 
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setStep(4)}>
+              <Button variant="outline" onClick={() => setStep(5)}>
                 <ArrowLeft className="w-4 h-4 mr-1" /> Edit Architecture
               </Button>
               <Button size="lg" onClick={generateDeck} disabled={generating}>
