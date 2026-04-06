@@ -489,6 +489,156 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Slide Methodology: Bulk Parse Instructions ──────────────────────────────
+  app.post("/api/slide-methodology/bulk-parse", requireAuth, async (req, res) => {
+    try {
+      const { instructions } = req.body;
+      if (!instructions || typeof instructions !== "string") {
+        res.status(400).json({ message: "Instructions text is required" });
+        return;
+      }
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic();
+
+      // Master slide list (must match client/src/lib/proposalSlides.ts)
+      const SLIDES = [
+        { id: "cover", title: "Cover Page", desc: "Title slide with company name, date, and Eendigo branding" },
+        { id: "agenda", title: "Agenda", desc: "Overview of what the proposal covers" },
+        { id: "why_eendigo", title: "Why Eendigo + Proof of Impact", desc: "Credentials, case studies, and measurable results" },
+        { id: "exec_philosophy", title: "Execution Philosophy", desc: "How Eendigo approaches delivery and execution" },
+        { id: "proof_method", title: "Proof of Method", desc: "Evidence of the methodology's effectiveness" },
+        { id: "exec_summary", title: "Executive Summary", desc: "High-level overview of the engagement" },
+        { id: "client_context", title: "Client Context + Why Now", desc: "Client situation and urgency drivers" },
+        { id: "positioning", title: 'Positioning ("This is not X")', desc: "Differentiation from typical consulting" },
+        { id: "diag_justification", title: "Diagnostic Justification", desc: "Why a diagnostic phase is needed before action" },
+        { id: "transformation", title: "Transformation Logic", desc: "The change logic and transformation roadmap" },
+        { id: "methodology", title: "Methodology Overview", desc: "Core methodology and frameworks used" },
+        { id: "workstreams", title: "Workstreams / Scope Modules", desc: "Breakdown of work into streams or modules" },
+        { id: "deep_dive", title: "Deep Dive", desc: "Detailed analysis of key workstream" },
+        { id: "scope_boundaries", title: "Scope Boundaries (IN / OUT)", desc: "What is included vs excluded from scope" },
+        { id: "maturity", title: "Maturity / Size of Prize", desc: "Opportunity sizing and maturity assessment" },
+        { id: "org_design", title: "Org Design Deep Dive", desc: "Organizational design analysis and recommendations" },
+        { id: "sfe_lever", title: "SFE / Lever Deep Dive", desc: "Sales force effectiveness and commercial levers" },
+        { id: "comex_map", title: "ComEx System Map", desc: "Commercial excellence system and interconnections" },
+        { id: "scope_deliverables", title: "Scope & Deliverables", desc: "Summary of scope and key deliverables" },
+        { id: "sample_deliverables", title: "Sample Deliverables", desc: "Examples of deliverable formats and outputs" },
+        { id: "detailed_deliverables", title: "Detailed Deliverables Table", desc: "Comprehensive deliverables with ownership and timing" },
+        { id: "timeline", title: "Timeline", desc: "Project timeline with milestones" },
+        { id: "exec_cadence", title: "Execution Cadence (War Rooms)", desc: "War room rhythm and execution governance" },
+        { id: "options", title: "Options (2\u20133)", desc: "2\u20133 engagement options with different scope/investment" },
+        { id: "pricing", title: "Pricing & Commercials", desc: "Fee structure and commercial terms" },
+        { id: "governance", title: "Governance", desc: "Steering committee, escalation, and reporting" },
+        { id: "team", title: "Team", desc: "Proposed team members and their roles" },
+        { id: "client_deps", title: "Client Dependencies", desc: "What the client needs to provide for success" },
+        { id: "next_steps", title: "Next Steps", desc: "Immediate actions and decision timeline" },
+      ];
+      const slideList = SLIDES.map((s, i) =>
+        `${i + 1}. "${s.title}" (slide_id: "${s.id}") \u2014 ${s.desc}`
+      ).join("\n");
+
+      const tool = {
+        name: "submit_slide_configs",
+        description: "Submit the parsed slide configurations for all slides that have relevant instructions",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            slides: {
+              type: "array" as const,
+              description: "Array of slide configs to create/update",
+              items: {
+                type: "object" as const,
+                properties: {
+                  slide_id: { type: "string" as const, description: "The slide_id from the master list" },
+                  purpose: { type: "string" as const, description: "What this slide must achieve (1-2 sentences)" },
+                  sections: { type: "array" as const, items: { type: "string" as const }, description: "Structure template sections that must appear on this slide" },
+                  rules: { type: "string" as const, description: "Content rules and guidelines, one per line starting with -" },
+                  column_1: { type: "string" as const, description: "Column 1 label (for 3-column layouts)" },
+                  column_2: { type: "string" as const, description: "Column 2 label" },
+                  column_3: { type: "string" as const, description: "Column 3 label" },
+                  examples: { type: "array" as const, items: { type: "string" as const }, description: "Example bullets or best practice phrasing" },
+                  format: { type: "string" as const, enum: ["A", "B"], description: "A = stacked sections, B = 3-column layout" },
+                  insight_bar: { type: "number" as const, enum: [0, 1], description: "1 to enable insight bar at bottom" },
+                },
+                required: ["slide_id"],
+              },
+            },
+          },
+          required: ["slides"],
+        },
+      };
+
+      const systemPrompt = `You are an expert at structuring consulting proposal methodology. You receive raw instructions about how to build proposal slides.
+
+Your task: Parse the instructions and distribute them to the correct slides from this master list:
+${slideList}
+
+For each slide that has relevant instructions, extract:
+- purpose: What the slide must achieve
+- sections: The structural sections/blocks that must appear (as an array)
+- rules: Content guidelines (bullet points starting with -)
+- column_1/2/3: If the instructions mention a column layout
+- examples: Any example bullets or phrasing
+- format: "A" for stacked vertical, "B" for 3-column layout
+- insight_bar: 1 if there should be a bottom callout bar
+
+RULES:
+1. Match instructions to slides by title, number, content description, or keywords
+2. If instructions mention "page 7" or "slide 7", map to the 7th slide in the list
+3. If instructions are general (apply to all slides), apply them to each relevant slide's rules
+4. Extract structure from patterns like "sections:", "must include:", "layout:" etc.
+5. Keep purpose concise (1-2 sentences)
+6. Only include slides that have relevant instructions — skip others
+7. Be thorough — don't miss any instruction that maps to a slide`;
+
+      const response = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 8192,
+        system: systemPrompt,
+        tools: [tool],
+        tool_choice: { type: "tool", name: "submit_slide_configs" },
+        messages: [{ role: "user", content: instructions }],
+      });
+
+      const toolUse = response.content.find((block: any) => block.type === "tool_use");
+      if (!toolUse || toolUse.type !== "tool_use") {
+        res.status(500).json({ message: "AI did not return structured output" });
+        return;
+      }
+
+      const parsed = (toolUse as any).input as { slides: any[] };
+
+      // Save each parsed config to DB
+      const saved: any[] = [];
+      for (const slide of parsed.slides) {
+        if (!slide.slide_id) continue;
+        const config = {
+          slide_id: slide.slide_id,
+          purpose: slide.purpose || "",
+          structure: { sections: slide.sections || [] },
+          rules: slide.rules || "",
+          columns: {
+            column_1: slide.column_1 || "",
+            column_2: slide.column_2 || "",
+            column_3: slide.column_3 || "",
+          },
+          variations: {},
+          examples: slide.examples || [],
+          format: slide.format || "A",
+          insight_bar: slide.insight_bar || 0,
+          updated_at: new Date().toISOString(),
+        };
+        const result = await storage.upsertSlideMethodologyConfig(config as any);
+        saved.push(result);
+      }
+
+      res.json({ count: saved.length, slides: saved });
+    } catch (err: any) {
+      console.error("Bulk parse error:", err);
+      res.status(500).json({ message: err.message || "Bulk parse failed" });
+    }
+  });
+
   // ── Project Type Slide Defaults ──────────────────────────────────────────────
   app.get("/api/slide-defaults/:projectType", requireAuth, async (req, res) => {
     const defaults = await storage.getProjectTypeSlideDefault(req.params.projectType);

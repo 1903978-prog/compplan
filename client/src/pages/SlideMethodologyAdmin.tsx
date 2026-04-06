@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Save, RotateCcw, Check, FileText, ChevronRight, Loader2, Trash2, Plus, Palette, Type } from "lucide-react";
+import { Save, RotateCcw, Check, FileText, ChevronRight, Loader2, Trash2, Plus, Palette, Type, Sparkles, Wand2, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { MASTER_SLIDES, PROJECT_TYPES } from "@/lib/proposalSlides";
 
@@ -90,6 +90,44 @@ export default function SlideMethodologyAdmin() {
   const [editingTemplate, setEditingTemplate] = useState<DeckTemplateConfig | null>(null);
   const [templateDirty, setTemplateDirty] = useState(false);
   const [templateSaving, setTemplateSaving] = useState(false);
+
+  // ── Bulk Instructions state ────────────────────────────────────────────────
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
+
+  async function handleBulkParse() {
+    if (!bulkText.trim()) {
+      toast({ title: "Paste instructions first", variant: "destructive" });
+      return;
+    }
+    setBulkProcessing(true);
+    setBulkResult(null);
+    try {
+      const res = await fetch("/api/slide-methodology/bulk-parse", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instructions: bulkText }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Reload all configs from DB
+        await loadConfigs();
+        setBulkResult(`Processed ${data.count} slide${data.count !== 1 ? "s" : ""} successfully`);
+        toast({ title: `${data.count} slides configured from instructions` });
+      } else {
+        const err = await res.json();
+        setBulkResult(`Error: ${err.message}`);
+        toast({ title: "Processing failed", variant: "destructive" });
+      }
+    } catch {
+      setBulkResult("Error: Network failure");
+      toast({ title: "Processing failed", variant: "destructive" });
+    }
+    setBulkProcessing(false);
+  }
 
   useEffect(() => { loadConfigs(); loadDeckTemplate(); }, []);
 
@@ -439,6 +477,61 @@ export default function SlideMethodologyAdmin() {
 
       {/* ── Slide Configs Tab ────────────────────────────────────────── */}
       {activeTab === "slides" && (
+      <div className="space-y-4">
+        {/* ── Bulk Instructions Panel ──────────────────────────────────── */}
+        <Card className="p-0 overflow-hidden">
+          <button
+            onClick={() => setBulkOpen(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent/30 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Wand2 className="w-4 h-4 text-primary" />
+              <span className="text-sm font-semibold">AI Bulk Instructions</span>
+              <span className="text-xs text-muted-foreground">Paste instructions and auto-populate all slides</span>
+            </div>
+            <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${bulkOpen ? "rotate-180" : ""}`} />
+          </button>
+          {bulkOpen && (
+            <div className="px-4 pb-4 border-t">
+              <p className="text-xs text-muted-foreground mt-3 mb-2">
+                Paste your methodology instructions below. Claude will parse them and automatically fill the right fields
+                (purpose, structure, rules, columns, examples) for each slide it recognizes.
+                Reference slides by name, number, or description.
+              </p>
+              <Textarea
+                value={bulkText}
+                onChange={e => setBulkText(e.target.value)}
+                rows={10}
+                className="font-mono text-xs mb-3"
+                placeholder={`Example:\n\nPage 7 — Client Context + Why Now:\n- Purpose: Establish urgency and business context\n- Sections: Market context, Why now triggers, Competitive pressure, Executive mandate\n- Rules: Must be quantified, no generic language, max 6 bullets\n- Format: 3-column (Context | Triggers | Implications)\n\nPage 6 — Executive Summary:\n- Purpose: One-page decision enabler\n- Sections: Context, Recommendation, Impact, How\n...`}
+              />
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={handleBulkParse}
+                  disabled={bulkProcessing || !bulkText.trim()}
+                  size="sm"
+                >
+                  {bulkProcessing ? (
+                    <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Processing...</>
+                  ) : (
+                    <><Sparkles className="w-4 h-4 mr-1.5" /> Parse & Apply to Slides</>
+                  )}
+                </Button>
+                {bulkText.trim() && !bulkProcessing && (
+                  <Button variant="ghost" size="sm" onClick={() => { setBulkText(""); setBulkResult(null); }}>
+                    Clear
+                  </Button>
+                )}
+                {bulkResult && (
+                  <span className={`text-xs font-medium ${bulkResult.startsWith("Error") ? "text-destructive" : "text-green-600"}`}>
+                    {bulkResult}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* ── Left panel: slide list ─────────────────────────────────────── */}
         <div className="lg:col-span-1">
@@ -669,6 +762,7 @@ export default function SlideMethodologyAdmin() {
             </>
           )}
         </div>
+      </div>
       </div>
       )}
     </div>
