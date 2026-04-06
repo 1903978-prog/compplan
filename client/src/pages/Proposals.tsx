@@ -686,24 +686,37 @@ export default function Proposals() {
           title={step === 1 ? "New Proposal" : step === 2 ? "Proposal Structure" : step === 3 ? "Slide Briefing" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
           description={stepDescriptions[step]}
           actions={
-            <Button variant="outline" onClick={() => { setView("list"); setStep(1); }}>
-              <ArrowLeft className="w-4 h-4 mr-1" /> Back to List
-            </Button>
+            <div className="flex items-center gap-2">
+              {step > 1 && (
+                <Button variant="outline" onClick={() => setStep(step - 1)}>
+                  <ArrowLeft className="w-4 h-4 mr-1" /> Back to {WIZARD_STEPS.find(s => s.n === step - 1)?.label || "Previous"}
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => { setView("list"); setStep(1); }}>
+                Back to List
+              </Button>
+            </div>
           }
         />
 
-        {/* Step indicator */}
+        {/* Step indicator — click completed steps to navigate back */}
         <div className="flex items-center gap-2 mb-6">
           {WIZARD_STEPS.map(({ n, label }) => (
             <div key={n} className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                step === n ? "bg-primary text-primary-foreground" :
-                step > n ? "bg-green-500 text-white" :
-                "bg-muted text-muted-foreground"
-              }`}>
+              <button
+                onClick={() => { if (n < step) setStep(n); }}
+                disabled={n >= step}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+                  step === n ? "bg-primary text-primary-foreground" :
+                  step > n ? "bg-green-500 text-white hover:bg-green-600 cursor-pointer" :
+                  "bg-muted text-muted-foreground"
+                }`}
+              >
                 {step > n ? <Check className="w-4 h-4" /> : n}
-              </div>
-              <span className={`text-sm ${step === n ? "font-medium" : "text-muted-foreground"}`}>{label}</span>
+              </button>
+              <span className={`text-sm ${step === n ? "font-medium" : step > n ? "text-foreground cursor-pointer" : "text-muted-foreground"}`}
+                onClick={() => { if (n < step) setStep(n); }}
+              >{label}</span>
               {n < WIZARD_STEPS.length && <div className={`w-8 h-0.5 ${step > n ? "bg-green-500" : "bg-muted"}`} />}
             </div>
           ))}
