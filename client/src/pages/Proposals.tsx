@@ -1,12 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Plus, Trash2, ArrowRight, ArrowLeft, Loader2, Download, Pencil, Eye, FileText, Upload, Check, X, Sparkles } from "lucide-react";
+import {
+  Plus, Trash2, ArrowRight, ArrowLeft, Loader2, Download, Pencil, Eye,
+  FileText, Upload, Check, X, Sparkles, GripVertical, ChevronUp, ChevronDown,
+  RotateCcw, AlertTriangle, Info,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  MASTER_SLIDES, PROJECT_TYPES, type ProjectType, type SlideSelectionEntry,
+  getDefaultSlideSelection, getSlideCountStatus, SLIDE_COUNT,
+} from "@/lib/proposalSlides";
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface TeamMember { role: string; count: number; days_per_week: number }
 interface PriceBreakdown { role: string; count: number; daily_rate: number; days: number; total: number }
@@ -41,6 +51,8 @@ interface Proposal {
   scope_statement?: string | null;
   recommended_team?: string | null;
   staffing_intensity?: string | null;
+  project_type?: string | null;
+  slide_selection: SlideSelectionEntry[];
   options: ProposalOption[];
   ai_analysis?: any;
   status: string;
@@ -66,13 +78,21 @@ function formatDate(iso: string): string {
 
 const URGENCY_OPTIONS = ["Low", "Medium", "High", "Critical"];
 
+const WIZARD_STEPS = [
+  { n: 1, label: "Input" },
+  { n: 2, label: "Slides" },
+  { n: 3, label: "Analysis" },
+  { n: 4, label: "Architecture" },
+  { n: 5, label: "Generate" },
+];
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Proposals() {
   const { toast } = useToast();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [view, setView] = useState<"list" | "wizard">("list");
-  const [step, setStep] = useState(1); // 1=input, 2=analyzing, 3=edit architecture, 4=generate
+  const [step, setStep] = useState(1);
   const [current, setCurrent] = useState<Proposal | null>(null);
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -95,6 +115,16 @@ export default function Proposals() {
     urgency: "Medium",
   });
 
+  // Step 2: Slide selection state
+  const [projectType, setProjectType] = useState<ProjectType | "">(""  );
+  const [slides, setSlides] = useState<SlideSelectionEntry[]>([]);
+  const [hasManualEdits, setHasManualEdits] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [pendingProjectType, setPendingProjectType] = useState<ProjectType | null>(null);
+  // Drag state
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
+
   useEffect(() => {
     loadProposals();
     loadTemplates();
@@ -113,12 +143,20 @@ export default function Proposals() {
   function startNew() {
     setForm({ company_name: "", website: "", transcript: "", notes: "", revenue: "", ebitda_margin: "", scope_perimeter: "", objective: "", urgency: "Medium" });
     setCurrent(null);
+    setProjectType("");
+    setSlides([]);
+    setHasManualEdits(false);
     setStep(1);
     setView("wizard");
   }
 
   function openProposal(p: Proposal) {
     setCurrent(p);
+    // Restore slide selection state
+    setProjectType((p.project_type as ProjectType) || "");
+    setSlides(Array.isArray(p.slide_selection) && p.slide_selection.length > 0 ? p.slide_selection : []);
+    setHasManualEdits(false);
+
     if (p.status === "draft") {
       setForm({
         company_name: p.company_name,
@@ -133,7 +171,7 @@ export default function Proposals() {
       });
       setStep(1);
     } else {
-      setStep(3);
+      setStep(4);
     }
     setView("wizard");
   }
@@ -144,10 +182,108 @@ export default function Proposals() {
     toast({ title: "Proposal deleted" });
   }
 
-  // Step 1: Save draft & trigger analysis
-  async function handleSubmitInputs() {
+  // ── Step 1 → Step 2: Save draft ────────────────────────────────────────────
+
+  function handleGoToSlides() {
     if (!form.company_name.trim()) {
       toast({ title: "Company name is required", variant: "destructive" });
+      return;
+    }
+    // If no slides initialized yet and project type selected, apply defaults
+    if (slides.length === 0 && projectType) {
+      setSlides(getDefaultSlideSelection(projectType));
+    }
+    setStep(2);
+  }
+
+  // ── Step 2: Project type change handling ────────────────────────────────────
+
+  function applyProjectType(pt: ProjectType) {
+    setProjectType(pt);
+    setSlides(getDefaultSlideSelection(pt));
+    setHasManualEdits(false);
+  }
+
+  function handleProjectTypeChange(newType: ProjectType) {
+    if (!newType) return;
+    if (hasManualEdits) {
+      setPendingProjectType(newType);
+      setShowResetConfirm(true);
+    } else {
+      applyProjectType(newType);
+    }
+  }
+
+  function confirmProjectTypeReset() {
+    if (pendingProjectType) {
+      applyProjectType(pendingProjectType);
+    }
+    setShowResetConfirm(false);
+    setPendingProjectType(null);
+  }
+
+  function cancelProjectTypeReset() {
+    setShowResetConfirm(false);
+    setPendingProjectType(null);
+  }
+
+  function toggleSlide(slideId: string) {
+    setSlides(prev => prev.map(s => s.slide_id === slideId ? { ...s, is_selected: !s.is_selected } : s));
+    setHasManualEdits(true);
+  }
+
+  function moveSlide(fromIdx: number, direction: "up" | "down") {
+    const toIdx = direction === "up" ? fromIdx - 1 : fromIdx + 1;
+    if (toIdx < 0 || toIdx >= slides.length) return;
+    setSlides(prev => {
+      const next = [...prev];
+      [next[fromIdx], next[toIdx]] = [next[toIdx], next[fromIdx]];
+      return next.map((s, i) => ({ ...s, order: i }));
+    });
+    setHasManualEdits(true);
+  }
+
+  function handleDragStart(idx: number) {
+    dragItem.current = idx;
+  }
+
+  function handleDragEnter(idx: number) {
+    dragOverItem.current = idx;
+  }
+
+  function handleDragEnd() {
+    if (dragItem.current === null || dragOverItem.current === null) return;
+    const from = dragItem.current;
+    const to = dragOverItem.current;
+    if (from === to) { dragItem.current = null; dragOverItem.current = null; return; }
+    setSlides(prev => {
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next.map((s, i) => ({ ...s, order: i }));
+    });
+    setHasManualEdits(true);
+    dragItem.current = null;
+    dragOverItem.current = null;
+  }
+
+  function resetToDefaults() {
+    if (projectType) {
+      setSlides(getDefaultSlideSelection(projectType));
+      setHasManualEdits(false);
+    }
+  }
+
+  // ── Step 2 → Step 3: Save slide selection & trigger analysis ───────────────
+
+  async function handleSubmitSlides() {
+    if (!projectType) {
+      toast({ title: "Select a project type", variant: "destructive" });
+      return;
+    }
+    const selectedCount = slides.filter(s => s.is_selected).length;
+    if (selectedCount === 0) {
+      toast({ title: "Select at least one slide", variant: "destructive" });
       return;
     }
 
@@ -163,8 +299,10 @@ export default function Proposals() {
       scope_perimeter: form.scope_perimeter || null,
       objective: form.objective || null,
       urgency: form.urgency || null,
+      project_type: projectType,
+      slide_selection: slides,
       status: "draft",
-      options: [],
+      options: current?.options || [],
       created_at: current?.created_at || now,
       updated_at: now,
     };
@@ -189,8 +327,8 @@ export default function Proposals() {
       setCurrent(saved);
       setSaving(false);
 
-      // Move to step 2: analyzing
-      setStep(2);
+      // Move to step 3: analyzing
+      setStep(3);
       setAnalyzing(true);
 
       const analyzeRes = await fetch(`/api/proposals/${saved.id}/analyze`, {
@@ -202,7 +340,7 @@ export default function Proposals() {
       const analyzed = await analyzeRes.json();
       setCurrent(analyzed);
       setAnalyzing(false);
-      setStep(3);
+      setStep(4);
       loadProposals();
     } catch (err: any) {
       setSaving(false);
@@ -211,7 +349,8 @@ export default function Proposals() {
     }
   }
 
-  // Step 3: Save edits to proposal
+  // ── Step 4: Save edits to proposal ─────────────────────────────────────────
+
   async function saveEdits() {
     if (!current?.id) return;
     setSaving(true);
@@ -231,7 +370,8 @@ export default function Proposals() {
     setSaving(false);
   }
 
-  // Step 4: Generate deck
+  // ── Step 5: Generate deck ──────────────────────────────────────────────────
+
   async function generateDeck() {
     if (!current?.id) return;
     setGenerating(true);
@@ -248,7 +388,6 @@ export default function Proposals() {
       a.click();
       URL.revokeObjectURL(url);
 
-      // Mark finalized
       await fetch(`/api/proposals/${current.id}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -262,7 +401,8 @@ export default function Proposals() {
     setGenerating(false);
   }
 
-  // Template upload
+  // ── Template management ────────────────────────────────────────────────────
+
   async function handleTemplateUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -300,7 +440,12 @@ export default function Proposals() {
     loadTemplates();
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Computed values ────────────────────────────────────────────────────────
+
+  const selectedSlideCount = slides.filter(s => s.is_selected).length;
+  const slideCountStatus = getSlideCountStatus(selectedSlideCount);
+
+  // ── Render: Templates ──────────────────────────────────────────────────────
 
   if (showTemplates) {
     return (
@@ -359,12 +504,22 @@ export default function Proposals() {
     );
   }
 
+  // ── Render: Wizard ─────────────────────────────────────────────────────────
+
   if (view === "wizard") {
+    const stepDescriptions: Record<number, string> = {
+      1: "Enter client information",
+      2: "Select project type and proposal slides",
+      3: "AI is analyzing...",
+      4: "Review and edit proposal architecture",
+      5: "Generate and download deck",
+    };
+
     return (
       <div>
         <PageHeader
-          title={step === 1 ? "New Proposal" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
-          description={step === 1 ? "Enter client information" : step === 2 ? "AI is analyzing..." : "Review and edit proposal architecture"}
+          title={step === 1 ? "New Proposal" : step === 2 ? "Proposal Structure" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
+          description={stepDescriptions[step]}
           actions={
             <Button variant="outline" onClick={() => { setView("list"); setStep(1); }}>
               <ArrowLeft className="w-4 h-4 mr-1" /> Back to List
@@ -374,12 +529,7 @@ export default function Proposals() {
 
         {/* Step indicator */}
         <div className="flex items-center gap-2 mb-6">
-          {[
-            { n: 1, label: "Input" },
-            { n: 2, label: "Analysis" },
-            { n: 3, label: "Architecture" },
-            { n: 4, label: "Generate" },
-          ].map(({ n, label }) => (
+          {WIZARD_STEPS.map(({ n, label }) => (
             <div key={n} className="flex items-center gap-2">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
                 step === n ? "bg-primary text-primary-foreground" :
@@ -389,12 +539,12 @@ export default function Proposals() {
                 {step > n ? <Check className="w-4 h-4" /> : n}
               </div>
               <span className={`text-sm ${step === n ? "font-medium" : "text-muted-foreground"}`}>{label}</span>
-              {n < 4 && <div className={`w-8 h-0.5 ${step > n ? "bg-green-500" : "bg-muted"}`} />}
+              {n < WIZARD_STEPS.length && <div className={`w-8 h-0.5 ${step > n ? "bg-green-500" : "bg-muted"}`} />}
             </div>
           ))}
         </div>
 
-        {/* Step 1: Input form */}
+        {/* ── Step 1: Input Form ─────────────────────────────────────────── */}
         {step === 1 && (
           <Card className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -442,17 +592,216 @@ export default function Proposals() {
               </div>
             </div>
             <div className="flex justify-end mt-6">
-              <Button onClick={handleSubmitInputs} disabled={saving}>
-                {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
-                Analyze with AI
-                <ArrowRight className="w-4 h-4 ml-1" />
+              <Button onClick={handleGoToSlides}>
+                Choose Slides <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </Card>
         )}
 
-        {/* Step 2: Analyzing */}
+        {/* ── Step 2: Project Type & Slide Selection ─────────────────────── */}
         {step === 2 && (
+          <div className="space-y-4">
+            {/* Reset confirmation modal */}
+            {showResetConfirm && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <Card className="p-6 max-w-md mx-4">
+                  <div className="flex items-start gap-3 mb-4">
+                    <AlertTriangle className="w-5 h-5 text-orange-500 mt-0.5 shrink-0" />
+                    <div>
+                      <h4 className="font-semibold">Reset slide selection?</h4>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Changing the project type will reset the slide structure to defaults for <strong>{pendingProjectType}</strong>. Your manual edits will be lost.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={cancelProjectTypeReset}>Cancel</Button>
+                    <Button size="sm" onClick={confirmProjectTypeReset}>Reset to Defaults</Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* Project Type + Slide Count Header */}
+            <Card className="p-4">
+              <div className="flex flex-col sm:flex-row sm:items-end gap-4">
+                <div className="flex-1">
+                  <label className="text-sm font-medium mb-1 block">Project Type *</label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={projectType}
+                    onChange={e => handleProjectTypeChange(e.target.value as ProjectType)}
+                  >
+                    <option value="">Select project type...</option>
+                    {PROJECT_TYPES.map(pt => <option key={pt} value={pt}>{pt}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-4">
+                  {/* Slide count indicator */}
+                  {slides.length > 0 && (
+                    <div className="text-sm">
+                      <span className="font-medium">{selectedSlideCount}</span>
+                      <span className="text-muted-foreground"> / {slides.length} slides selected</span>
+                      <span className="text-xs text-muted-foreground ml-1">(target: {SLIDE_COUNT.IDEAL_MIN}–{SLIDE_COUNT.IDEAL_MAX})</span>
+                    </div>
+                  )}
+                  <Button variant="outline" size="sm" onClick={resetToDefaults} disabled={!projectType}>
+                    <RotateCcw className="w-4 h-4 mr-1" /> Reset Defaults
+                  </Button>
+                </div>
+              </div>
+
+              {/* Slide count warning */}
+              {slides.length > 0 && (selectedSlideCount < SLIDE_COUNT.ACCEPTABLE_MIN || selectedSlideCount > SLIDE_COUNT.ACCEPTABLE_MAX) && (
+                <div className={`flex items-center gap-2 mt-3 px-3 py-2 rounded-md bg-orange-50 border border-orange-200 ${slideCountStatus.color}`}>
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span className="text-sm">{slideCountStatus.message}</span>
+                </div>
+              )}
+              {slides.length > 0 && selectedSlideCount >= SLIDE_COUNT.ACCEPTABLE_MIN && selectedSlideCount <= SLIDE_COUNT.ACCEPTABLE_MAX && (
+                <div className={`flex items-center gap-2 mt-3 px-3 py-2 rounded-md bg-green-50 border border-green-200 ${slideCountStatus.color}`}>
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span className="text-sm">{slideCountStatus.message} ({selectedSlideCount} slides)</span>
+                </div>
+              )}
+            </Card>
+
+            {/* Slide selection: two-panel layout */}
+            {slides.length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Left: Full slide list */}
+                <div className="lg:col-span-2">
+                  <Card className="p-0 overflow-hidden">
+                    <div className="px-4 py-3 border-b bg-muted/30">
+                      <h3 className="text-sm font-semibold">All Slides</h3>
+                      <p className="text-xs text-muted-foreground">Click to toggle, drag or use arrows to reorder</p>
+                    </div>
+                    <div className="divide-y max-h-[600px] overflow-y-auto">
+                      {slides.map((slide, idx) => {
+                        const masterDef = MASTER_SLIDES.find(m => m.slide_id === slide.slide_id);
+                        return (
+                          <div
+                            key={slide.slide_id}
+                            draggable
+                            onDragStart={() => handleDragStart(idx)}
+                            onDragEnter={() => handleDragEnter(idx)}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={e => e.preventDefault()}
+                            className={`flex items-center gap-3 px-4 py-2.5 transition-colors cursor-grab active:cursor-grabbing ${
+                              slide.is_selected ? "bg-primary/5" : "bg-background opacity-60"
+                            }`}
+                          >
+                            <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
+
+                            {/* Order arrows */}
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                                onClick={() => moveSlide(idx, "up")}
+                                disabled={idx === 0}
+                              >
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                                onClick={() => moveSlide(idx, "down")}
+                                disabled={idx === slides.length - 1}
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {/* Checkbox */}
+                            <button
+                              onClick={() => toggleSlide(slide.slide_id)}
+                              className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                slide.is_selected
+                                  ? "bg-primary border-primary text-primary-foreground"
+                                  : "border-input hover:border-primary"
+                              }`}
+                            >
+                              {slide.is_selected && <Check className="w-3 h-3" />}
+                            </button>
+
+                            {/* Slide info */}
+                            <div className="flex-1 min-w-0" onClick={() => toggleSlide(slide.slide_id)}>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"}`}>
+                                  {slide.title}
+                                </span>
+                                {slide.default_selected && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">DEFAULT</span>
+                                )}
+                              </div>
+                              {masterDef && (
+                                <p className="text-xs text-muted-foreground truncate">{masterDef.description}</p>
+                              )}
+                            </div>
+
+                            <span className="text-xs text-muted-foreground w-6 text-right shrink-0">{idx + 1}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                </div>
+
+                {/* Right: Selected slides summary */}
+                <div>
+                  <Card className="p-0 overflow-hidden sticky top-20">
+                    <div className="px-4 py-3 border-b bg-muted/30">
+                      <h3 className="text-sm font-semibold">Selected Slides ({selectedSlideCount})</h3>
+                    </div>
+                    <div className="p-3 max-h-[540px] overflow-y-auto">
+                      {slides.filter(s => s.is_selected).length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-4">No slides selected</p>
+                      ) : (
+                        <ol className="space-y-1">
+                          {slides.filter(s => s.is_selected).map((s, i) => (
+                            <li key={s.slide_id} className="flex items-center gap-2 text-sm py-1">
+                              <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
+                              <span className="truncate">{s.title}</span>
+                              <button
+                                onClick={() => toggleSlide(s.slide_id)}
+                                className="ml-auto text-muted-foreground hover:text-destructive shrink-0"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* No project type selected */}
+            {!projectType && (
+              <Card className="p-12 text-center text-muted-foreground">
+                <FileText className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                <p>Select a project type to see the recommended slide structure</p>
+              </Card>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex justify-between">
+              <Button variant="outline" onClick={() => setStep(1)}>
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Inputs
+              </Button>
+              <Button onClick={handleSubmitSlides} disabled={saving || !projectType}>
+                {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                Save Structure & Analyze with AI
+                <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 3: Analyzing ─────────────────────────────────────────── */}
+        {step === 3 && (
           <Card className="p-12 flex flex-col items-center justify-center gap-4">
             <Loader2 className="w-12 h-12 animate-spin text-primary" />
             <p className="text-lg font-medium">Claude is analyzing your inputs...</p>
@@ -460,10 +809,9 @@ export default function Proposals() {
           </Card>
         )}
 
-        {/* Step 3: Editable Architecture */}
-        {step === 3 && current && (
+        {/* ── Step 4: Editable Architecture ──────────────────────────────── */}
+        {step === 4 && current && (
           <div className="space-y-6">
-            {/* Summary fields */}
             <Card className="p-6 space-y-4">
               <h3 className="text-lg font-semibold">Proposal Overview</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -506,7 +854,6 @@ export default function Proposals() {
               </div>
             </Card>
 
-            {/* 3 Option Cards */}
             <h3 className="text-lg font-semibold">Engagement Options</h3>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {(current.options || []).map((opt, optIdx) => (
@@ -525,17 +872,16 @@ export default function Proposals() {
               ))}
             </div>
 
-            {/* Action buttons */}
             <div className="flex justify-between">
-              <Button variant="outline" onClick={() => setStep(1)}>
-                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Inputs
+              <Button variant="outline" onClick={() => setStep(2)}>
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Slides
               </Button>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={saveEdits} disabled={saving}>
                   {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
                   Save Changes
                 </Button>
-                <Button onClick={async () => { await saveEdits(); setStep(4); }}>
+                <Button onClick={async () => { await saveEdits(); setStep(5); }}>
                   Generate Deck <ArrowRight className="w-4 h-4 ml-1" />
                 </Button>
               </div>
@@ -543,8 +889,8 @@ export default function Proposals() {
           </div>
         )}
 
-        {/* Step 4: Generate & Download */}
-        {step === 4 && current && (
+        {/* ── Step 5: Generate & Download ────────────────────────────────── */}
+        {step === 5 && current && (
           <Card className="p-8 flex flex-col items-center gap-6">
             <FileText className="w-16 h-16 text-primary" />
             <h3 className="text-xl font-semibold">Ready to Generate Deck</h3>
@@ -553,7 +899,6 @@ export default function Proposals() {
               Click below to generate and download the PowerPoint deck.
             </p>
 
-            {/* Pricing summary */}
             <div className="w-full max-w-lg">
               <Table>
                 <TableHeader>
@@ -576,7 +921,7 @@ export default function Proposals() {
             </div>
 
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setStep(3)}>
+              <Button variant="outline" onClick={() => setStep(4)}>
                 <ArrowLeft className="w-4 h-4 mr-1" /> Edit Architecture
               </Button>
               <Button size="lg" onClick={generateDeck} disabled={generating}>
@@ -590,7 +935,7 @@ export default function Proposals() {
     );
   }
 
-  // ── List View ────────────────────────────────────────────────────────────────
+  // ── Render: List View ──────────────────────────────────────────────────────
 
   return (
     <div>
@@ -614,6 +959,7 @@ export default function Proposals() {
             <TableRow>
               <TableHead>Company</TableHead>
               <TableHead>Title</TableHead>
+              <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Options</TableHead>
               <TableHead>Created</TableHead>
@@ -622,12 +968,19 @@ export default function Proposals() {
           </TableHeader>
           <TableBody>
             {proposals.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No proposals yet. Click "New Proposal" to start.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No proposals yet. Click "New Proposal" to start.</TableCell></TableRow>
             )}
             {[...proposals].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(p => (
               <TableRow key={p.id} className="cursor-pointer hover:bg-accent/50" onClick={() => openProposal(p)}>
                 <TableCell className="font-medium">{p.company_name}</TableCell>
-                <TableCell className="text-muted-foreground">{p.proposal_title || "—"}</TableCell>
+                <TableCell className="text-muted-foreground">{p.proposal_title || "\u2014"}</TableCell>
+                <TableCell>
+                  {p.project_type ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                      {p.project_type}
+                    </span>
+                  ) : "\u2014"}
+                </TableCell>
                 <TableCell>
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                     p.status === "finalized" ? "bg-green-100 text-green-700" :
@@ -640,7 +993,7 @@ export default function Proposals() {
                 <TableCell>
                   {(p.options || []).length > 0
                     ? (p.options as ProposalOption[]).map(o => formatCurrency(o.total_fee)).join(" / ")
-                    : "—"
+                    : "\u2014"
                   }
                 </TableCell>
                 <TableCell>{formatDate(p.created_at)}</TableCell>
@@ -713,7 +1066,6 @@ function OptionCard({ option, onChange }: { option: ProposalOption; onChange: (o
         </div>
       </div>
 
-      {/* Team */}
       <div>
         <label className="text-xs text-muted-foreground font-medium">Team</label>
         <div className="space-y-1 mt-1">
@@ -727,7 +1079,6 @@ function OptionCard({ option, onChange }: { option: ProposalOption; onChange: (o
         </div>
       </div>
 
-      {/* Scope */}
       <div>
         <div className="flex items-center justify-between">
           <label className="text-xs text-muted-foreground font-medium">Scope</label>
@@ -750,7 +1101,6 @@ function OptionCard({ option, onChange }: { option: ProposalOption; onChange: (o
         )}
       </div>
 
-      {/* Deliverables */}
       <div>
         <div className="flex items-center justify-between">
           <label className="text-xs text-muted-foreground font-medium">Deliverables</label>
@@ -773,13 +1123,11 @@ function OptionCard({ option, onChange }: { option: ProposalOption; onChange: (o
         )}
       </div>
 
-      {/* Cadence */}
       <div>
         <label className="text-xs text-muted-foreground">Cadence</label>
         <Input value={option.cadence} onChange={e => onChange({ ...option, cadence: e.target.value })} className="h-7 text-xs" />
       </div>
 
-      {/* Price breakdown */}
       <div className="border-t pt-2 mt-2">
         <label className="text-xs text-muted-foreground font-medium">Price Breakdown</label>
         <div className="text-xs space-y-0.5 mt-1">

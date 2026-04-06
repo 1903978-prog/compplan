@@ -322,6 +322,10 @@ export async function seedDatabase() {
     )
   `);
 
+  // Add project_type and slide_selection columns to proposals (idempotent)
+  await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS project_type TEXT`);
+  await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS slide_selection JSONB NOT NULL DEFAULT '[]'`);
+
   // Performance issues table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS performance_issues (
