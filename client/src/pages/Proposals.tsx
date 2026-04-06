@@ -42,6 +42,11 @@ interface ProposalOption {
   total_fee: number;
 }
 
+interface CallChecklistItem {
+  question: string;
+  checked: boolean;
+}
+
 interface Proposal {
   id?: number;
   company_name: string;
@@ -64,6 +69,7 @@ interface Proposal {
   slide_selection: SlideSelectionEntry[];
   slide_briefs: SlideBrief[];
   options: ProposalOption[];
+  call_checklist?: CallChecklistItem[];
   ai_analysis?: any;
   status: string;
   created_at: string;
@@ -87,6 +93,24 @@ function formatDate(iso: string): string {
 }
 
 const URGENCY_OPTIONS = ["Low", "Medium", "High", "Critical"];
+
+const DEFAULT_CALL_QUESTIONS: string[] = [
+  "What decision are you trying to make or what problem are you trying to solve now?",
+  "Why does this project matter now? What are the top 3\u20135 structural challenges or performance gaps today? What is the quantified value at stake if nothing changes (revenue opportunity, margin gap, cost leakage, etc.)?",
+  "What are the 2\u20133 biggest pain points or value levers you want to address?",
+  "What are sources of revenue growth: new clients, cross sell or share of wallet or pricing?",
+  "What outcomes would define success in 12\u201318 months?",
+  "Revenues, EBITDA, sales org. size",
+  "What has already been tried, and why has it not solved the issue?",
+  "What measurable business outcomes and KPIs matter most? Do you have any target ranges or assumptions on value creation?",
+  "What scope do you want help on: diagnostic, design, implementation, or execution support?",
+  "Which business units, geographies, products, channels, or customer segments are in scope?",
+  "Who are the decision makers, sponsors, and day-to-day owners on the client side?",
+  "Proposed Approach \u2014 From your perspective, what is the overall logic or architecture needed to solve this? Are there any specific workstreams or value drivers you already see as critical?",
+  "When is ideal start date? What timing matters \u2014 key deadlines, board dates, budget cycle, or transformation milestones?",
+  "What budget range or investment logic should we design the proposal around?",
+  "What is your ideal project duration and key milestones? Are you open to different scope/intensity options (light vs full, phased, etc.)?",
+];
 
 const WIZARD_STEPS = [
   { n: 1, label: "Input" },
@@ -132,6 +156,12 @@ export default function Proposals() {
   const [hasManualEdits, setHasManualEdits] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [pendingProjectType, setPendingProjectType] = useState<ProjectType | null>(null);
+  // Step 1: Call checklist state
+  const [callChecklist, setCallChecklist] = useState<CallChecklistItem[]>(
+    DEFAULT_CALL_QUESTIONS.map(q => ({ question: q, checked: false }))
+  );
+  const [editingQuestion, setEditingQuestion] = useState<number | null>(null);
+
   // Step 3: Slide briefing state
   const [briefs, setBriefs] = useState<SlideBrief[]>([]);
   const [generatingBriefs, setGeneratingBriefs] = useState(false);
@@ -163,6 +193,8 @@ export default function Proposals() {
     setProjectType("");
     setSlides([]);
     setBriefs([]);
+    setCallChecklist(DEFAULT_CALL_QUESTIONS.map(q => ({ question: q, checked: false })));
+    setEditingQuestion(null);
     setHasManualEdits(false);
     setExpandedBrief(null);
     setStep(1);
@@ -175,6 +207,13 @@ export default function Proposals() {
     setProjectType((p.project_type as ProjectType) || "");
     setSlides(Array.isArray(p.slide_selection) && p.slide_selection.length > 0 ? p.slide_selection : []);
     setBriefs(Array.isArray(p.slide_briefs) && p.slide_briefs.length > 0 ? p.slide_briefs : []);
+    // Restore call checklist
+    setCallChecklist(
+      Array.isArray(p.call_checklist) && p.call_checklist.length > 0
+        ? p.call_checklist
+        : DEFAULT_CALL_QUESTIONS.map(q => ({ question: q, checked: false }))
+    );
+    setEditingQuestion(null);
     setHasManualEdits(false);
     setExpandedBrief(null);
 
@@ -362,6 +401,7 @@ export default function Proposals() {
       project_type: projectType,
       slide_selection: slides,
       slide_briefs: briefs,
+      call_checklist: callChecklist,
       status: "draft",
       options: current?.options || [],
       created_at: current?.created_at || now,
@@ -671,57 +711,143 @@ export default function Proposals() {
 
         {/* ── Step 1: Input Form ─────────────────────────────────────────── */}
         {step === 1 && (
-          <Card className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium mb-1 block">Company Name *</label>
-                <Input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Acme Corp" />
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            {/* ── Left: Input Fields ──────────────────────────────────── */}
+            <Card className="lg:col-span-3 p-6">
+              <h3 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wide">Proposal Inputs</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Company Name *</label>
+                  <Input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Acme Corp" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Website</label>
+                  <Input value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Revenue (EUR M)</label>
+                  <Input type="number" value={form.revenue} onChange={e => setForm(f => ({ ...f, revenue: e.target.value }))} placeholder="150" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">EBITDA Margin %</label>
+                  <Input type="number" value={form.ebitda_margin} onChange={e => setForm(f => ({ ...f, ebitda_margin: e.target.value }))} placeholder="12" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Objective</label>
+                  <Input value={form.objective} onChange={e => setForm(f => ({ ...f, objective: e.target.value }))} placeholder="Improve commercial effectiveness..." />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Urgency</label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={form.urgency}
+                    onChange={e => setForm(f => ({ ...f, urgency: e.target.value }))}
+                  >
+                    {URGENCY_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-sm font-medium mb-1 block">Scope / Perimeter</label>
+                  <Textarea value={form.scope_perimeter} onChange={e => setForm(f => ({ ...f, scope_perimeter: e.target.value }))} placeholder="Which functions, geographies, products..." rows={2} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-sm font-medium mb-1 block">Call Transcript / Meeting Notes</label>
+                  <Textarea value={form.transcript} onChange={e => setForm(f => ({ ...f, transcript: e.target.value }))} placeholder="Paste call transcript or key notes..." rows={4} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-sm font-medium mb-1 block">Additional Notes</label>
+                  <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Anything else relevant..." rows={2} />
+                </div>
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Website</label>
-                <Input value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
+              <div className="flex justify-end mt-6">
+                <Button onClick={handleGoToSlides}>
+                  Choose Slides <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Revenue (EUR M)</label>
-                <Input type="number" value={form.revenue} onChange={e => setForm(f => ({ ...f, revenue: e.target.value }))} placeholder="150" />
+            </Card>
+
+            {/* ── Right: Intro Call Checklist ─────────────────────────── */}
+            <Card className="lg:col-span-2 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Intro Call Questions</h3>
+                <span className="text-xs text-muted-foreground">
+                  {callChecklist.filter(c => c.checked).length}/{callChecklist.length} answered
+                </span>
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">EBITDA Margin %</label>
-                <Input type="number" value={form.ebitda_margin} onChange={e => setForm(f => ({ ...f, ebitda_margin: e.target.value }))} placeholder="12" />
+              {/* Progress bar */}
+              <div className="w-full h-1.5 bg-muted rounded-full mb-3 overflow-hidden">
+                <div
+                  className="h-full bg-green-500 rounded-full transition-all"
+                  style={{ width: `${callChecklist.length > 0 ? (callChecklist.filter(c => c.checked).length / callChecklist.length) * 100 : 0}%` }}
+                />
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Objective</label>
-                <Input value={form.objective} onChange={e => setForm(f => ({ ...f, objective: e.target.value }))} placeholder="Improve commercial effectiveness..." />
+              <div className="space-y-1 max-h-[calc(100vh-300px)] overflow-y-auto">
+                {callChecklist.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex items-start gap-2 p-2 rounded-md transition-colors ${
+                      item.checked ? "bg-green-50 dark:bg-green-950/20" : "hover:bg-accent/30"
+                    }`}
+                  >
+                    <button
+                      className={`mt-0.5 w-5 h-5 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${
+                        item.checked
+                          ? "bg-green-500 border-green-500 text-white"
+                          : "border-muted-foreground/40 hover:border-primary"
+                      }`}
+                      onClick={() => setCallChecklist(prev => prev.map((c, i) => i === idx ? { ...c, checked: !c.checked } : c))}
+                    >
+                      {item.checked && <Check className="w-3 h-3" />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      {editingQuestion === idx ? (
+                        <Textarea
+                          value={item.question}
+                          onChange={e => setCallChecklist(prev => prev.map((c, i) => i === idx ? { ...c, question: e.target.value } : c))}
+                          onBlur={() => setEditingQuestion(null)}
+                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setEditingQuestion(null); } }}
+                          autoFocus
+                          rows={2}
+                          className="text-xs"
+                        />
+                      ) : (
+                        <button
+                          className={`text-xs text-left w-full leading-relaxed ${
+                            item.checked ? "text-muted-foreground line-through" : "text-foreground"
+                          }`}
+                          onClick={() => setEditingQuestion(idx)}
+                          title="Click to edit question"
+                        >
+                          <span className="text-muted-foreground mr-1.5">{idx + 1}.</span>
+                          {item.question}
+                        </button>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 w-5 p-0 shrink-0 opacity-0 group-hover:opacity-100 hover:opacity-100"
+                      onClick={() => setCallChecklist(prev => prev.filter((_, i) => i !== idx))}
+                      title="Remove question"
+                    >
+                      <X className="w-3 h-3 text-muted-foreground" />
+                    </Button>
+                  </div>
+                ))}
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Urgency</label>
-                <select
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  value={form.urgency}
-                  onChange={e => setForm(f => ({ ...f, urgency: e.target.value }))}
-                >
-                  {URGENCY_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-sm font-medium mb-1 block">Scope / Perimeter</label>
-                <Textarea value={form.scope_perimeter} onChange={e => setForm(f => ({ ...f, scope_perimeter: e.target.value }))} placeholder="Which functions, geographies, products..." rows={2} />
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-sm font-medium mb-1 block">Call Transcript / Meeting Notes</label>
-                <Textarea value={form.transcript} onChange={e => setForm(f => ({ ...f, transcript: e.target.value }))} placeholder="Paste call transcript or key notes..." rows={4} />
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-sm font-medium mb-1 block">Additional Notes</label>
-                <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Anything else relevant..." rows={2} />
-              </div>
-            </div>
-            <div className="flex justify-end mt-6">
-              <Button onClick={handleGoToSlides}>
-                Choose Slides <ArrowRight className="w-4 h-4 ml-1" />
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2 w-full"
+                onClick={() => {
+                  setCallChecklist(prev => [...prev, { question: "New question...", checked: false }]);
+                  setEditingQuestion(callChecklist.length);
+                }}
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add Question
               </Button>
-            </div>
-          </Card>
+            </Card>
+          </div>
         )}
 
         {/* ── Step 2: Project Type & Slide Selection ─────────────────────── */}
