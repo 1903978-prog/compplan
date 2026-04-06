@@ -329,6 +329,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
+      // Load admin configs for selected slides
+      const allConfigs = await storage.getSlideMethodologyConfigs();
+      const adminConfigMap: Record<string, any> = {};
+      for (const cfg of allConfigs) {
+        adminConfigMap[cfg.slide_id] = cfg;
+      }
+
       const { generateSlideBriefs } = await import("./proposalBriefs");
       const briefs = await generateSlideBriefs({
         company_name: proposal.company_name,
@@ -342,6 +349,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         urgency: proposal.urgency,
         project_type: proposal.project_type || "Strategy",
         selected_slides: selectedSlides,
+        admin_configs: adminConfigMap,
       });
 
       const updated = await storage.updateProposal(id, {
@@ -401,6 +409,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { generateProposalDeck } = await import("./proposalDeck");
       const template = await storage.getActiveProposalTemplate();
+
+      // Load admin configs for brief-based slide generation
+      const allConfigs = await storage.getSlideMethodologyConfigs();
+      const adminConfigMap: Record<string, any> = {};
+      for (const cfg of allConfigs) {
+        adminConfigMap[cfg.slide_id] = cfg;
+      }
+
       const buffer = await generateProposalDeck(
         {
           company_name: proposal.company_name,
@@ -411,6 +427,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           scope_statement: proposal.scope_statement,
           recommended_team: proposal.recommended_team,
           options: (proposal.options as any[]) || [],
+          slide_briefs: (proposal.slide_briefs as any[]) || [],
+          admin_configs: adminConfigMap,
         },
         template,
       );
@@ -443,6 +461,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/proposal-templates/:id/activate", requireAuth, async (req, res) => {
     const t = await storage.activateProposalTemplate(safeInt(req.params.id));
     res.json(t);
+  });
+
+  // ── Slide Methodology Config ───────────────────────────────────────────────
+  app.get("/api/slide-methodology", requireAuth, async (_req, res) => {
+    res.json(await storage.getSlideMethodologyConfigs());
+  });
+
+  app.get("/api/slide-methodology/:slideId", requireAuth, async (req, res) => {
+    const config = await storage.getSlideMethodologyConfig(req.params.slideId);
+    if (!config) { res.status(404).json({ message: "Not found" }); return; }
+    res.json(config);
+  });
+
+  app.put("/api/slide-methodology/:slideId", requireAuth, async (req, res) => {
+    const data = { ...req.body, slide_id: req.params.slideId, updated_at: new Date().toISOString() };
+    const config = await storage.upsertSlideMethodologyConfig(data);
+    res.json(config);
+  });
+
+  app.delete("/api/slide-methodology/:slideId", requireAuth, async (req, res) => {
+    await storage.deleteSlideMethodologyConfig(req.params.slideId);
+    res.status(204).end();
   });
 
   // ── Admin downloads ────────────────────────────────────────────────────────

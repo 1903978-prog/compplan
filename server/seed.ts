@@ -327,6 +327,68 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS slide_selection JSONB NOT NULL DEFAULT '[]'`);
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS slide_briefs JSONB NOT NULL DEFAULT '[]'`);
 
+  // Slide methodology config table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS slide_methodology_configs (
+      slide_id TEXT PRIMARY KEY,
+      purpose TEXT NOT NULL DEFAULT '',
+      structure JSONB NOT NULL DEFAULT '{"sections":[]}',
+      rules TEXT NOT NULL DEFAULT '',
+      columns JSONB NOT NULL DEFAULT '{}',
+      variations JSONB NOT NULL DEFAULT '{}',
+      examples JSONB NOT NULL DEFAULT '[]',
+      format TEXT NOT NULL DEFAULT 'A',
+      insight_bar INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  // Seed default configs for Executive Summary + Deep Dive (idempotent)
+  await db.execute(sql`
+    INSERT INTO slide_methodology_configs (slide_id, purpose, structure, rules, columns, variations, examples, format, insight_bar, updated_at)
+    VALUES (
+      'exec_summary',
+      'High-level overview that enables a decision-maker to understand context, recommendation, and impact in one page.',
+      '{"sections":["Context","Why now","Recommendation","Impact","How","Scope","Deliverables"]}',
+      '- Must include Top 3 priorities
+- Must be quantified (revenue, margin, FTE impact)
+- No generic consulting language
+- Must be decision-oriented (what, why, how much)
+- Maximum 7 bullet points
+- Each bullet must start with a verb or a number',
+      '{"column_1":"Context / problem","column_2":"Recommendation / approach","column_3":"Impact / value"}',
+      '{"SPARK (Diagnostic)":"Emphasize diagnostic scope and maturity assessment output","War Rooms (Execution)":"Focus on KPI targets and execution cadence","Pricing":"Highlight price optimization opportunity and GTN leakage"}',
+      '["Revenue uplift of EUR 12M through pricing optimization across 3 product lines","Reduce GTN leakage by 3.2pp through systematic discount governance","Deploy 4-week war room cadence with weekly KPI tracking across 12 regions"]',
+      'B',
+      1,
+      ${new Date().toISOString()}
+    )
+    ON CONFLICT (slide_id) DO NOTHING
+  `);
+
+  await db.execute(sql`
+    INSERT INTO slide_methodology_configs (slide_id, purpose, structure, rules, columns, variations, examples, format, insight_bar, updated_at)
+    VALUES (
+      'deep_dive',
+      'Detailed analysis of a key workstream showing observation-root cause-action logic with specific drivers.',
+      '{"sections":["Drivers (8-12 max)","Key observations","Root causes","Recommendations","Analytical proof (optional)"]}',
+      '- MUST follow: Observation → Root cause → Action pattern
+- MUST be specific to project type and client industry
+- MUST be concrete and data-backed
+- Each driver = 1 observation + 1 root cause + 1 action
+- Maximum 12 drivers
+- Avoid generic recommendations
+- Use client-specific language and metrics',
+      '{"column_1":"Observation / finding","column_2":"Root cause","column_3":"Recommended action"}',
+      '{"Strategy":"Focus on market segmentation gaps and prioritization logic","SPARK (Diagnostic)":"Emphasize maturity gaps across commercial dimensions","War Rooms (Execution)":"Focus on execution bottlenecks and KPI gaps","SFE (Sales Force Excellence)":"Coverage, activity, pipeline, and conversion drivers","Pricing":"Price driver analysis, GTN waterfall, discount governance gaps"}',
+      '["Coverage gap: 35% of high-potential accounts have no dedicated coverage → Reallocate 12 reps from low-value territories","Discount leakage: Average discount 28% vs. 22% target → Implement tiered approval workflow with 3 authority levels","Pipeline quality: 60% of pipeline >90 days old → Introduce monthly pipeline hygiene war room with mandatory stage validation"]',
+      'A',
+      0,
+      ${new Date().toISOString()}
+    )
+    ON CONFLICT (slide_id) DO NOTHING
+  `);
+
   // Performance issues table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS performance_issues (

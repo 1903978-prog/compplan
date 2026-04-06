@@ -489,6 +489,35 @@ export const proposalTemplates = pgTable("proposal_templates", {
   uploaded_at: text("uploaded_at").notNull(),
 });
 
+// ─── Slide Methodology Config ────────────────────────────────────────────────
+
+export const slideMethodologyConfigSchema = z.object({
+  slide_id: z.string(),
+  purpose: z.string().default(""),
+  structure: z.any().default({ sections: [] }),  // { sections: string[] }
+  rules: z.string().default(""),
+  columns: z.any().default({}),  // { column_1: "", column_2: "", column_3: "" }
+  variations: z.any().default({}),  // { "SPARK": "...", "War Rooms": "..." }
+  examples: z.any().default([]),  // string[]
+  format: z.string().default("A"),  // "A" or "B"
+  insight_bar: z.number().default(0),  // 0 or 1
+  updated_at: z.string(),
+});
+export type SlideMethodologyConfig = z.infer<typeof slideMethodologyConfigSchema>;
+
+export const slideMethodologyConfigs = pgTable("slide_methodology_configs", {
+  slide_id: text("slide_id").primaryKey(),
+  purpose: text("purpose").notNull().default(""),
+  structure: jsonb("structure").notNull().default({ sections: [] }),
+  rules: text("rules").notNull().default(""),
+  columns: jsonb("columns").notNull().default({}),
+  variations: jsonb("variations").notNull().default({}),
+  examples: jsonb("examples").notNull().default([]),
+  format: text("format").notNull().default("A"),
+  insight_bar: integer("insight_bar").notNull().default(0),
+  updated_at: text("updated_at").notNull(),
+});
+
 // ─── Hiring Kanban ───────────────────────────────────────────────────────────
 
 export const hiringCandidates = pgTable("hiring_candidates", {

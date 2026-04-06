@@ -4,12 +4,13 @@ import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   performanceIssues, timeTrackingTopics, timeTrackingEntries,
-  proposals, proposalTemplates,
+  proposals, proposalTemplates, slideMethodologyConfigs,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
   type TimeTrackingTopic, type TimeTrackingEntry,
   type Proposal, type ProposalTemplate,
+  type SlideMethodologyConfig,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -420,6 +421,30 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteProposalTemplate(id: number) {
     await db.delete(proposalTemplates).where(eq(proposalTemplates.id, id));
+  }
+
+  // ── Slide Methodology Config ──────────────────────────────────────────────
+  async getSlideMethodologyConfigs(): Promise<SlideMethodologyConfig[]> {
+    return db.select().from(slideMethodologyConfigs);
+  }
+  async getSlideMethodologyConfig(slideId: string): Promise<SlideMethodologyConfig | undefined> {
+    const [row] = await db.select().from(slideMethodologyConfigs).where(eq(slideMethodologyConfigs.slide_id, slideId));
+    return row;
+  }
+  async upsertSlideMethodologyConfig(data: SlideMethodologyConfig): Promise<SlideMethodologyConfig> {
+    const existing = await this.getSlideMethodologyConfig(data.slide_id);
+    if (existing) {
+      const [updated] = await db.update(slideMethodologyConfigs)
+        .set(data)
+        .where(eq(slideMethodologyConfigs.slide_id, data.slide_id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(slideMethodologyConfigs).values(data).returning();
+    return created;
+  }
+  async deleteSlideMethodologyConfig(slideId: string): Promise<void> {
+    await db.delete(slideMethodologyConfigs).where(eq(slideMethodologyConfigs.slide_id, slideId));
   }
 }
 

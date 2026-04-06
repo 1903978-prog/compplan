@@ -28,6 +28,7 @@ interface BriefInput {
   urgency?: string | null;
   project_type: string;
   selected_slides: { slide_id: string; title: string }[];
+  admin_configs?: Record<string, any>;  // slide_id → SlideMethodologyConfig
 }
 
 // ── Slide-specific structures ────────────────────────────────────────────────
@@ -286,17 +287,37 @@ const METHODOLOGY_BY_TYPE: Record<string, string> = {
   "Pricing":                     "Price Drivers \u2192 GTN Analysis \u2192 Optimization \u2192 Governance",
 };
 
+// ── Resolve fields: admin config overrides defaults ──────────────────────────
+
+function getFieldsForSlide(slideId: string, adminConfig?: any): { key: string; label: string; hint: string }[] {
+  // If admin config has structure.sections, use those as fields
+  if (adminConfig?.structure?.sections?.length > 0) {
+    return adminConfig.structure.sections.map((section: string) => {
+      const key = section.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+      return { key, label: section, hint: section };
+    });
+  }
+  // Fallback to hardcoded defaults
+  const structure = SLIDE_STRUCTURES[slideId];
+  return structure ? structure.fields : [{ key: "content", label: "Content", hint: "Content for this slide" }];
+}
+
+function getPurposeForSlide(slideId: string, adminConfig?: any): string {
+  if (adminConfig?.purpose) return adminConfig.purpose;
+  return SLIDE_STRUCTURES[slideId]?.purpose || "Slide content";
+}
+
 // ── Claude tool schema ───────────────────────────────────────────────────────
 
-function buildBriefTool(selectedSlides: { slide_id: string; title: string }[]) {
+function buildBriefTool(selectedSlides: { slide_id: string; title: string }[], adminConfigs?: Record<string, any>) {
   const slideProperties: Record<string, any> = {};
 
   for (const slide of selectedSlides) {
-    const structure = SLIDE_STRUCTURES[slide.slide_id];
-    if (!structure) continue;
+    const adminCfg = adminConfigs?.[slide.slide_id];
+    const fields = getFieldsForSlide(slide.slide_id, adminCfg);
 
     const fieldProperties: Record<string, any> = {};
-    for (const field of structure.fields) {
+    for (const field of fields) {
       fieldProperties[field.key] = { type: "string", description: field.hint };
     }
 
@@ -304,7 +325,7 @@ function buildBriefTool(selectedSlides: { slide_id: string; title: string }[]) {
       type: "object",
       description: `Brief for "${slide.title}"`,
       properties: fieldProperties,
-      required: structure.fields.map(f => f.key),
+      required: fields.map(f => f.key),
     };
   }
 
@@ -323,19 +344,20 @@ function buildBriefTool(selectedSlides: { slide_id: string; title: string }[]) {
 
 function getMockBriefs(input: BriefInput): SlideBrief[] {
   return input.selected_slides.map(slide => {
-    const structure = SLIDE_STRUCTURES[slide.slide_id];
-    const fields: SlideBriefField[] = structure
-      ? structure.fields.map(f => ({
-          key: f.key,
-          label: f.label,
-          value: `[AI unavailable \u2014 set ANTHROPIC_API_KEY] ${f.hint}`,
-        }))
-      : [{ key: "content", label: "Content", value: "[AI unavailable \u2014 set ANTHROPIC_API_KEY]" }];
+    const adminCfg = input.admin_configs?.[slide.slide_id];
+    const resolvedFields = getFieldsForSlide(slide.slide_id, adminCfg);
+    const purpose = getPurposeForSlide(slide.slide_id, adminCfg);
+
+    const fields: SlideBriefField[] = resolvedFields.map(f => ({
+      key: f.key,
+      label: f.label,
+      value: `[AI unavailable \u2014 set ANTHROPIC_API_KEY] ${f.hint}`,
+    }));
 
     return {
       slide_id: slide.slide_id,
       title: slide.title,
-      purpose: structure?.purpose || "Slide content",
+      purpose,
       content_structure: fields,
       notes: "",
     };
@@ -368,12 +390,35 @@ export async function generateSlideBriefs(input: BriefInput): Promise<SlideBrief
 
   const methodologyLogic = METHODOLOGY_BY_TYPE[input.project_type] || "Diagnostic \u2192 Design \u2192 Implementation";
 
+  const adminConfigs = input.admin_configs || {};
+
+  // Build enriched slide list with admin overrides
   const slideList = input.selected_slides.map((s, i) => {
-    const structure = SLIDE_STRUCTURES[s.slide_id];
-    const fieldsDesc = structure
-      ? structure.fields.map(f => `  - ${f.label}: ${f.hint}`).join("\n")
-      : "  - Content to define";
-    return `${i + 1}. ${s.title} (${s.slide_id})\n${fieldsDesc}`;
+    const adminCfg = adminConfigs[s.slide_id];
+    const fields = getFieldsForSlide(s.slide_id, adminCfg);
+    const purpose = getPurposeForSlide(s.slide_id, adminCfg);
+    const fieldsDesc = fields.map(f => `  - ${f.label}: ${f.hint}`).join("\n");
+
+    let slideBlock = `${i + 1}. ${s.title} (${s.slide_id})\n  Purpose: ${purpose}\n${fieldsDesc}`;
+
+    // Inject admin rules if configured
+    if (adminCfg?.rules) {
+      slideBlock += `\n  RULES:\n${adminCfg.rules.split("\n").map((r: string) => `    ${r}`).join("\n")}`;
+    }
+    // Inject project-type variation
+    if (adminCfg?.variations?.[input.project_type]) {
+      slideBlock += `\n  PROJECT-TYPE OVERRIDE (${input.project_type}): ${adminCfg.variations[input.project_type]}`;
+    }
+    // Inject examples
+    if (adminCfg?.examples?.length > 0) {
+      slideBlock += `\n  EXAMPLES:\n${adminCfg.examples.map((ex: string) => `    - ${ex}`).join("\n")}`;
+    }
+    // Inject column logic
+    if (adminCfg?.columns?.column_1) {
+      slideBlock += `\n  COLUMN LAYOUT: ${adminCfg.columns.column_1} | ${adminCfg.columns.column_2 || ""} | ${adminCfg.columns.column_3 || ""}`;
+    }
+
+    return slideBlock;
   }).join("\n\n");
 
   const systemPrompt = `You are Eendigo's senior proposal strategist. You specialize in management consulting proposals for commercial excellence, pricing, SFE, org transformation, and go-to-market optimization.
@@ -385,15 +430,16 @@ CRITICAL RULES:
 2. Must reflect the project type "${input.project_type}" methodology: ${methodologyLogic}
 3. Use bullet points and structured content, not paragraphs.
 4. Be concrete and actionable. Every field should contain usable content.
-5. For the Deep Dive slide: follow Observation \u2192 Root Cause \u2192 Action pattern.
-6. For Executive Summary: include Top 3 priorities.
-7. All quantified claims must be grounded in the client context provided.
-8. Keep each field concise (2-5 bullet points or 1-3 sentences max).
+5. For slides with RULES defined below, you MUST follow those rules exactly.
+6. For slides with EXAMPLES, use them as quality benchmarks for your output.
+7. For slides with COLUMN LAYOUT, structure the content to fit that column pattern.
+8. All quantified claims must be grounded in the client context provided.
+9. Keep each field concise (2-5 bullet points or 1-3 sentences max).
 
 The selected slides for this proposal are:
 ${slideList}`;
 
-  const tool = buildBriefTool(input.selected_slides);
+  const tool = buildBriefTool(input.selected_slides, adminConfigs);
 
   try {
     const response = await client.messages.create({
@@ -413,27 +459,23 @@ ${slideList}`;
 
     const rawBriefs = toolUse.input as Record<string, Record<string, string>>;
 
-    // Transform into SlideBrief[]
+    // Transform into SlideBrief[] using admin-resolved fields
     return input.selected_slides.map(slide => {
-      const structure = SLIDE_STRUCTURES[slide.slide_id];
+      const adminCfg = adminConfigs[slide.slide_id];
+      const resolvedFields = getFieldsForSlide(slide.slide_id, adminCfg);
+      const purpose = getPurposeForSlide(slide.slide_id, adminCfg);
       const briefData = rawBriefs[slide.slide_id] || {};
 
-      const fields: SlideBriefField[] = structure
-        ? structure.fields.map(f => ({
-            key: f.key,
-            label: f.label,
-            value: briefData[f.key] || "",
-          }))
-        : Object.entries(briefData).map(([key, value]) => ({
-            key,
-            label: key.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
-            value: value || "",
-          }));
+      const fields: SlideBriefField[] = resolvedFields.map(f => ({
+        key: f.key,
+        label: f.label,
+        value: briefData[f.key] || "",
+      }));
 
       return {
         slide_id: slide.slide_id,
         title: slide.title,
-        purpose: structure?.purpose || "Slide content",
+        purpose,
         content_structure: fields,
         notes: "",
       };

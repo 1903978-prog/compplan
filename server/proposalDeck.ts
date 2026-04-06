@@ -25,6 +25,30 @@ interface ProposalOption {
   total_fee: number;
 }
 
+interface SlideMethodologyConfig {
+  slide_id: string;
+  purpose?: string;
+  structure?: { sections: string[] };
+  rules?: string;
+  columns?: { column_1?: string; column_2?: string; column_3?: string };
+  format?: string;
+  insight_bar?: number;
+}
+
+interface SlideBriefField {
+  key: string;
+  label: string;
+  value: string;
+}
+
+interface SlideBrief {
+  slide_id: string;
+  title: string;
+  purpose: string;
+  content_structure: SlideBriefField[];
+  notes: string;
+}
+
 interface ProposalData {
   company_name: string;
   proposal_title?: string | null;
@@ -34,6 +58,8 @@ interface ProposalData {
   scope_statement?: string | null;
   recommended_team?: string | null;
   options: ProposalOption[];
+  slide_briefs?: SlideBrief[];
+  admin_configs?: Record<string, SlideMethodologyConfig>;
 }
 
 // Eendigo branding colors
@@ -51,6 +77,120 @@ const COLORS = {
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-EU", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value);
 }
+
+// ── Brief-based slide generators ────────────────────────────────────────────
+
+function addSlideHeader(slide: any, title: string) {
+  slide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
+  slide.addText(title, { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
+}
+
+function addInsightBar(slide: any, text: string) {
+  slide.addShape("rect", { x: 0, y: 6.4, w: "100%", h: 0.55, fill: { color: COLORS.ACCENT } });
+  slide.addText(text, { x: 0.8, y: 6.42, w: 11.5, h: 0.5, fontSize: 10, color: COLORS.WHITE, fontFace: "Arial", italic: true });
+}
+
+/**
+ * Format A: Stacked sections — each field is a heading+content block rendered vertically.
+ */
+function generateFormatA(pptx: any, brief: SlideBrief, config: SlideMethodologyConfig | undefined, addFooter: (s: any) => void) {
+  const slide = pptx.addSlide();
+  addSlideHeader(slide, brief.title);
+
+  let y = 1.3;
+  const maxY = config?.insight_bar ? 6.2 : 6.6;
+
+  for (const field of brief.content_structure) {
+    if (!field.value || y > maxY) continue;
+    slide.addText(field.label, { x: 0.8, y, w: 11, h: 0.35, fontSize: 14, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+    y += 0.4;
+    const lines = field.value.split("\n").filter(Boolean);
+    const text = lines.map(l => l.startsWith("-") || l.startsWith("•") ? `  \u2022  ${l.replace(/^[-•]\s*/, "")}` : l).join("\n");
+    const blockH = Math.min(Math.max(lines.length * 0.22, 0.5), maxY - y);
+    slide.addText(text, { x: 0.8, y, w: 11, h: blockH, fontSize: 11, color: COLORS.TEXT, fontFace: "Arial", valign: "top", paraSpaceAfter: 4 });
+    y += blockH + 0.25;
+  }
+
+  if (config?.insight_bar && brief.notes) {
+    addInsightBar(slide, brief.notes);
+  }
+  addFooter(slide);
+}
+
+/**
+ * Format B: 3-column layout — distributes fields across columns using admin column definitions.
+ */
+function generateFormatB(pptx: any, brief: SlideBrief, config: SlideMethodologyConfig | undefined, addFooter: (s: any) => void) {
+  const slide = pptx.addSlide();
+  addSlideHeader(slide, brief.title);
+
+  const cols = config?.columns || {};
+  const colW = 3.6;
+  const fields = brief.content_structure.filter(f => f.value);
+
+  // Distribute fields across 3 columns
+  const col1Fields: SlideBriefField[] = [];
+  const col2Fields: SlideBriefField[] = [];
+  const col3Fields: SlideBriefField[] = [];
+
+  fields.forEach((f, i) => {
+    if (i % 3 === 0) col1Fields.push(f);
+    else if (i % 3 === 1) col2Fields.push(f);
+    else col3Fields.push(f);
+  });
+
+  const maxY = config?.insight_bar ? 6.2 : 6.6;
+
+  function renderColumn(xStart: number, colFields: SlideBriefField[], colLabel?: string) {
+    let y = 1.3;
+    if (colLabel) {
+      slide.addText(colLabel, { x: xStart, y, w: colW, h: 0.3, fontSize: 10, color: COLORS.MUTED, fontFace: "Arial", italic: true });
+      y += 0.35;
+    }
+    for (const field of colFields) {
+      if (y > maxY) break;
+      slide.addText(field.label, { x: xStart, y, w: colW, h: 0.3, fontSize: 12, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+      y += 0.35;
+      const lines = field.value.split("\n").filter(Boolean);
+      const text = lines.map(l => l.startsWith("-") || l.startsWith("•") ? `\u2022 ${l.replace(/^[-•]\s*/, "")}` : l).join("\n");
+      const blockH = Math.min(Math.max(lines.length * 0.2, 0.4), maxY - y);
+      slide.addText(text, { x: xStart, y, w: colW, h: blockH, fontSize: 10, color: COLORS.TEXT, fontFace: "Arial", valign: "top", paraSpaceAfter: 3 });
+      y += blockH + 0.2;
+    }
+  }
+
+  renderColumn(0.5, col1Fields, cols.column_1);
+  renderColumn(4.3, col2Fields, cols.column_2);
+  renderColumn(8.1, col3Fields, cols.column_3);
+
+  // Add light vertical dividers
+  slide.addShape("line", { x: 4.1, y: 1.3, w: 0, h: maxY - 1.3, line: { color: COLORS.LIGHT_GRAY, width: 0.5 } });
+  slide.addShape("line", { x: 7.9, y: 1.3, w: 0, h: maxY - 1.3, line: { color: COLORS.LIGHT_GRAY, width: 0.5 } });
+
+  if (config?.insight_bar && brief.notes) {
+    addInsightBar(slide, brief.notes);
+  }
+  addFooter(slide);
+}
+
+/**
+ * Generate a slide from a brief, choosing format based on admin config.
+ */
+function generateSlideFromBrief(pptx: any, brief: SlideBrief, adminConfigs: Record<string, SlideMethodologyConfig>, addFooter: (s: any) => void) {
+  const config = adminConfigs[brief.slide_id];
+  const format = config?.format || "A";
+
+  if (format === "B") {
+    generateFormatB(pptx, brief, config, addFooter);
+  } else {
+    generateFormatA(pptx, brief, config, addFooter);
+  }
+}
+
+// Slides that have dedicated hardcoded generators (skip from brief-based rendering)
+const HARDCODED_SLIDE_IDS = new Set([
+  "cover", "pricing_overview", "pricing_detail", "next_steps",
+]);
 
 export async function generateProposalDeck(proposal: ProposalData, _template?: any): Promise<Buffer> {
   const PptxGenJS = (await import("pptxgenjs")).default;
@@ -84,46 +224,59 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     x: 0.8, y: 6.4, w: 5, h: 0.4, fontSize: 10, color: COLORS.MUTED, fontFace: "Arial", letterSpacing: 2,
   });
 
-  // ─── Slide 2: Executive Summary ────────────────────────────────────────────
-  const execSlide = pptx.addSlide();
-  execSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
-  execSlide.addText("Executive Summary", { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
+  // ─── Brief-based slides (when briefs exist) ─────────────────────────────────
+  const briefs = proposal.slide_briefs || [];
+  const adminConfigs = proposal.admin_configs || {};
+  const hasBriefs = briefs.length > 0;
 
-  if (proposal.company_summary) {
-    execSlide.addText("Company Overview", { x: 0.8, y: 1.3, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-    execSlide.addText(proposal.company_summary, { x: 0.8, y: 1.8, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+  if (hasBriefs) {
+    // Generate slides from briefs, skipping hardcoded ones (cover already done, pricing/next_steps done later)
+    for (const brief of briefs) {
+      if (HARDCODED_SLIDE_IDS.has(brief.slide_id)) continue;
+      if (!brief.content_structure || brief.content_structure.length === 0) continue;
+      generateSlideFromBrief(pptx, brief, adminConfigs, addFooter);
+    }
+  } else {
+    // ─── Fallback: Legacy hardcoded slides when no briefs exist ──────────────
+
+    // Slide 2: Executive Summary
+    const execSlide = pptx.addSlide();
+    addSlideHeader(execSlide, "Executive Summary");
+
+    if (proposal.company_summary) {
+      execSlide.addText("Company Overview", { x: 0.8, y: 1.3, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+      execSlide.addText(proposal.company_summary, { x: 0.8, y: 1.8, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+    }
+
+    if (proposal.objective_statement) {
+      execSlide.addText("Objective", { x: 0.8, y: 3.0, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+      execSlide.addText(proposal.objective_statement, { x: 0.8, y: 3.5, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+    }
+
+    if (proposal.recommended_team) {
+      execSlide.addText("Recommended Team", { x: 0.8, y: 4.7, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+      execSlide.addText(proposal.recommended_team, { x: 0.8, y: 5.2, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+    }
+    addFooter(execSlide);
+
+    // Slide 3: Why Now
+    if (proposal.why_now) {
+      const whySlide = pptx.addSlide();
+      addSlideHeader(whySlide, "Why Now?");
+      whySlide.addText(proposal.why_now, { x: 0.8, y: 1.5, w: 11, h: 4.0, fontSize: 14, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 8 });
+      addFooter(whySlide);
+    }
+
+    // Slide 4: Scope & Objectives
+    if (proposal.scope_statement) {
+      const scopeSlide = pptx.addSlide();
+      addSlideHeader(scopeSlide, "Scope & Objectives");
+      scopeSlide.addText(proposal.scope_statement, { x: 0.8, y: 1.5, w: 11, h: 4.0, fontSize: 14, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 8 });
+      addFooter(scopeSlide);
+    }
   }
 
-  if (proposal.objective_statement) {
-    execSlide.addText("Objective", { x: 0.8, y: 3.0, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-    execSlide.addText(proposal.objective_statement, { x: 0.8, y: 3.5, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
-  }
-
-  if (proposal.recommended_team) {
-    execSlide.addText("Recommended Team", { x: 0.8, y: 4.7, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-    execSlide.addText(proposal.recommended_team, { x: 0.8, y: 5.2, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
-  }
-  addFooter(execSlide);
-
-  // ─── Slide 3: Why Now ──────────────────────────────────────────────────────
-  if (proposal.why_now) {
-    const whySlide = pptx.addSlide();
-    whySlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
-    whySlide.addText("Why Now?", { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
-    whySlide.addText(proposal.why_now, { x: 0.8, y: 1.5, w: 11, h: 4.0, fontSize: 14, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 8 });
-    addFooter(whySlide);
-  }
-
-  // ─── Slide 4: Scope & Objectives ───────────────────────────────────────────
-  if (proposal.scope_statement) {
-    const scopeSlide = pptx.addSlide();
-    scopeSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
-    scopeSlide.addText("Scope & Objectives", { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
-    scopeSlide.addText(proposal.scope_statement, { x: 0.8, y: 1.5, w: 11, h: 4.0, fontSize: 14, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 8 });
-    addFooter(scopeSlide);
-  }
-
-  // ─── Slides 5-7: Options ───────────────────────────────────────────────────
+  // ─── Option Slides (always rendered) ───────────────────────────────────────
   for (const option of proposal.options) {
     const optSlide = pptx.addSlide();
     optSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
