@@ -4,7 +4,7 @@ import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   performanceIssues, timeTrackingTopics, timeTrackingEntries,
-  proposals, proposalTemplates, slideMethodologyConfigs, deckTemplateConfigs,
+  proposals, proposalTemplates, slideMethodologyConfigs, deckTemplateConfigs, projectTypeSlideDefaults,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
@@ -446,6 +446,27 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteSlideMethodologyConfig(slideId: string): Promise<void> {
     await db.delete(slideMethodologyConfigs).where(eq(slideMethodologyConfigs.slide_id, slideId));
+  }
+
+  // ── Project Type Slide Defaults ─────────────────────────────────────────────
+  async getProjectTypeSlideDefault(projectType: string) {
+    const [row] = await db.select().from(projectTypeSlideDefaults).where(eq(projectTypeSlideDefaults.project_type, projectType));
+    return row || null;
+  }
+  async upsertProjectTypeSlideDefault(projectType: string, slideIds: string[], slideOrder: string[]) {
+    const existing = await this.getProjectTypeSlideDefault(projectType);
+    const now = new Date().toISOString();
+    if (existing) {
+      const [updated] = await db.update(projectTypeSlideDefaults)
+        .set({ slide_ids: slideIds, slide_order: slideOrder, updated_at: now })
+        .where(eq(projectTypeSlideDefaults.project_type, projectType))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(projectTypeSlideDefaults)
+      .values({ project_type: projectType, slide_ids: slideIds, slide_order: slideOrder, updated_at: now })
+      .returning();
+    return created;
   }
 
   // ── Deck Template Config ──────────────────────────────────────────────────

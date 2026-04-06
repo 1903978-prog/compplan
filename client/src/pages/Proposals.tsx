@@ -207,22 +207,48 @@ export default function Proposals() {
 
   // ── Step 1 → Step 2: Save draft ────────────────────────────────────────────
 
-  function handleGoToSlides() {
+  async function handleGoToSlides() {
     if (!form.company_name.trim()) {
       toast({ title: "Company name is required", variant: "destructive" });
       return;
     }
-    // If no slides initialized yet and project type selected, apply defaults
+    // If no slides initialized yet and project type selected, apply learned/hardcoded defaults
     if (slides.length === 0 && projectType) {
-      setSlides(getDefaultSlideSelection(projectType));
+      await applyProjectType(projectType);
     }
     setStep(2);
   }
 
   // ── Step 2: Project type change handling ────────────────────────────────────
 
-  function applyProjectType(pt: ProjectType) {
+  async function applyProjectType(pt: ProjectType) {
     setProjectType(pt);
+    // Try to load learned defaults for this project type
+    try {
+      const res = await fetch(`/api/slide-defaults/${encodeURIComponent(pt)}`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        const savedIds: string[] = data.slide_ids || [];
+        const savedOrder: string[] = data.slide_order || [];
+        if (savedIds.length > 0) {
+          // We have learned defaults — use them
+          const selectedSet = new Set(savedIds);
+          // Build slides from saved order, adding any new master slides not yet in the order
+          const orderMap = new Map(savedOrder.map((id: string, i: number) => [id, i]));
+          const allSlides = MASTER_SLIDES.map((slide) => ({
+            slide_id: slide.slide_id,
+            title: slide.title,
+            is_selected: selectedSet.has(slide.slide_id),
+            default_selected: selectedSet.has(slide.slide_id),
+            order: orderMap.has(slide.slide_id) ? orderMap.get(slide.slide_id)! : 999,
+          }));
+          allSlides.sort((a, b) => a.order - b.order);
+          setSlides(allSlides.map((s, i) => ({ ...s, order: i })));
+          setHasManualEdits(false);
+          return;
+        }
+      }
+    } catch { /* fall through to hardcoded defaults */ }
     setSlides(getDefaultSlideSelection(pt));
     setHasManualEdits(false);
   }
@@ -292,6 +318,7 @@ export default function Proposals() {
 
   function resetToDefaults() {
     if (projectType) {
+      // Reset to hardcoded defaults (not learned) — user can use this to "unlearn"
       setSlides(getDefaultSlideSelection(projectType));
       setHasManualEdits(false);
     }
@@ -311,6 +338,16 @@ export default function Proposals() {
     }
 
     setSaving(true);
+
+    // Save this slide selection as learned defaults for this project type
+    const selectedIds = slides.filter(s => s.is_selected).map(s => s.slide_id);
+    const slideOrder = slides.map(s => s.slide_id);
+    fetch(`/api/slide-defaults/${encodeURIComponent(projectType)}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slide_ids: selectedIds, slide_order: slideOrder }),
+    }).catch(() => {}); // fire-and-forget — don't block the main flow
+
     const now = new Date().toISOString();
     const body = {
       company_name: form.company_name,

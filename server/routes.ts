@@ -489,6 +489,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Project Type Slide Defaults ──────────────────────────────────────────────
+  app.get("/api/slide-defaults/:projectType", requireAuth, async (req, res) => {
+    const defaults = await storage.getProjectTypeSlideDefault(req.params.projectType);
+    res.json(defaults || { slide_ids: [], slide_order: [] });
+  });
+
+  app.put("/api/slide-defaults/:projectType", requireAuth, async (req, res) => {
+    const { slide_ids, slide_order } = req.body;
+    const saved = await storage.upsertProjectTypeSlideDefault(req.params.projectType, slide_ids || [], slide_order || []);
+    res.json(saved);
+  });
+
   // ── Deck Template Config ────────────────────────────────────────────────────
   app.get("/api/deck-template", requireAuth, async (_req, res) => {
     const config = await storage.getDeckTemplateConfig();

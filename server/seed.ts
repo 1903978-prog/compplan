@@ -389,6 +389,16 @@ export async function seedDatabase() {
     ON CONFLICT (slide_id) DO NOTHING
   `);
 
+  // Project type slide defaults (learned from user selections)
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS project_type_slide_defaults (
+      project_type TEXT PRIMARY KEY,
+      slide_ids JSONB NOT NULL DEFAULT '[]',
+      slide_order JSONB NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // Deck template config table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS deck_template_configs (

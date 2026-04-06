@@ -545,6 +545,15 @@ export const deckTemplateConfigs = pgTable("deck_template_configs", {
   updated_at: text("updated_at").notNull(),
 });
 
+// ─── Project Type Slide Defaults (learned) ──────────────────────────────────
+
+export const projectTypeSlideDefaults = pgTable("project_type_slide_defaults", {
+  project_type: text("project_type").primaryKey(),
+  slide_ids: jsonb("slide_ids").notNull().default([]),      // string[] — ordered selected slide IDs
+  slide_order: jsonb("slide_order").notNull().default([]),   // string[] — full ordered list of all slide IDs
+  updated_at: text("updated_at").notNull(),
+});
+
 // ─── Hiring Kanban ───────────────────────────────────────────────────────────
 
 export const hiringCandidates = pgTable("hiring_candidates", {
