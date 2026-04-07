@@ -474,7 +474,10 @@ export default function Proposals() {
       const briefRes = await fetch(`/api/proposals/${current.id}/generate-briefs`, {
         method: "POST", credentials: "include",
       });
-      if (!briefRes.ok) throw new Error("Brief generation failed");
+      if (!briefRes.ok) {
+        const err = await briefRes.json().catch(() => ({ message: "Brief generation failed" }));
+        throw new Error(err.message || "Brief generation failed");
+      }
       const briefed = await briefRes.json();
       setCurrent(briefed);
       setBriefs(Array.isArray(briefed.slide_briefs) ? briefed.slide_briefs : []);
@@ -499,7 +502,10 @@ export default function Proposals() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: manualPasteText }),
       });
-      if (!res.ok) throw new Error("Parse failed");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Parse failed" }));
+        throw new Error(err.message || "Parse failed");
+      }
       const parsed = await res.json();
       setCurrent(parsed);
       setBriefs(Array.isArray(parsed.slide_briefs) ? parsed.slide_briefs : []);

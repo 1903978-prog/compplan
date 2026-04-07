@@ -537,9 +537,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return `- ${s.slide_id} ("${s.title}"): fields=[${fields.join(", ")}]`;
       }).join("\n");
 
+      console.log(`Parsing manual briefs for proposal ${id}, ${selectedSlides.length} slides, text length ${pastedText.length}`);
+
       const response = await client.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 4096,
+        max_tokens: 8192,
         messages: [{
           role: "user",
           content: `You are parsing pasted text (from ChatGPT or similar) into structured slide briefs for a consulting proposal deck.
@@ -552,7 +554,7 @@ The pasted text is:
 ${pastedText}
 ---
 
-For each slide above, extract the relevant content from the pasted text. Return a JSON array (no markdown) where each element is:
+For each slide above, extract the relevant content from the pasted text. Return a JSON array (no markdown, no code fences) where each element is:
 {
   "slide_id": "...",
   "title": "...",
@@ -561,17 +563,23 @@ For each slide above, extract the relevant content from the pasted text. Return 
   "notes": ""
 }
 
-Match content to slides by topic. If no content found for a slide, still include it with empty values. Return ONLY the JSON array.`
+Rules:
+- Match content to slides by topic/heading similarity
+- If no content found for a slide, include it with empty value strings
+- Return ONLY the raw JSON array — no markdown, no code blocks, no explanation`
         }],
       });
 
-      const text = (response.content[0] as any).text || "";
+      const rawText = (response.content[0] as any).text || "";
+      console.log("Claude response length:", rawText.length, "first 200 chars:", rawText.substring(0, 200));
       let briefs: any[];
       try {
-        briefs = JSON.parse(text.replace(/```json?\n?/g, "").replace(/```/g, "").trim());
-      } catch {
+        const cleaned = rawText.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+        briefs = JSON.parse(cleaned);
+      } catch (parseErr) {
+        console.error("JSON parse error:", parseErr, "raw text:", rawText.substring(0, 500));
         briefs = selectedSlides.map((s: any) => ({
-          slide_id: s.slide_id, title: s.title, purpose: "", content_structure: [], notes: "Could not parse — please edit manually",
+          slide_id: s.slide_id, title: s.title, purpose: "", content_structure: [], notes: "Could not parse AI response — please edit manually",
         }));
       }
 
