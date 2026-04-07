@@ -501,6 +501,7 @@ export const slideMethodologyConfigSchema = z.object({
   examples: z.any().default([]),  // string[]
   format: z.string().default("A"),  // "A" or "B"
   insight_bar: z.number().default(0),  // 0 or 1
+  guidance_image: z.string().nullable().optional(),
   updated_at: z.string(),
 });
 export type SlideMethodologyConfig = z.infer<typeof slideMethodologyConfigSchema>;
@@ -515,6 +516,7 @@ export const slideMethodologyConfigs = pgTable("slide_methodology_configs", {
   examples: jsonb("examples").notNull().default([]),
   format: text("format").notNull().default("A"),
   insight_bar: integer("insight_bar").notNull().default(0),
+  guidance_image: text("guidance_image"),
   updated_at: text("updated_at").notNull(),
 });
 

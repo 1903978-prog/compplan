@@ -344,6 +344,8 @@ export async function seedDatabase() {
     )
   `);
 
+  await db.execute(sql`ALTER TABLE slide_methodology_configs ADD COLUMN IF NOT EXISTS guidance_image TEXT`);
+
   // Seed default configs for Executive Summary + Deep Dive (idempotent)
   await db.execute(sql`
     INSERT INTO slide_methodology_configs (slide_id, purpose, structure, rules, columns, variations, examples, format, insight_bar, updated_at)

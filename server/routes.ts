@@ -489,6 +489,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  app.put("/api/slide-methodology/:slideId/guidance-image", requireAuth, async (req, res) => {
+    const { image } = req.body;
+    const existing = await storage.getSlideMethodologyConfig(req.params.slideId);
+    const base = existing || {
+      slide_id: req.params.slideId, purpose: "", structure: { sections: [] },
+      rules: "", columns: {}, variations: {}, examples: [], format: "A", insight_bar: 0,
+    };
+    const config = await storage.upsertSlideMethodologyConfig({
+      ...base, guidance_image: image || null, updated_at: new Date().toISOString(),
+    } as any);
+    res.json(config);
+  });
+
+  // ── Parse Manual Briefs (ChatGPT paste) ───────────────────────────────────
+  app.post("/api/proposals/:id/parse-manual-briefs", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { text: pastedText } = req.body;
+      if (!pastedText || typeof pastedText !== "string") {
+        res.status(400).json({ message: "Pasted text is required" }); return;
+      }
+
+      const selectedSlides = ((proposal.slide_selection as any[]) || [])
+        .filter((s: any) => s.is_selected)
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+        .map((s: any) => ({ slide_id: s.slide_id, title: s.title }));
+
+      if (selectedSlides.length === 0) {
+        res.status(400).json({ message: "No slides selected" }); return;
+      }
+
+      // Load admin configs
+      const allConfigs = await storage.getSlideMethodologyConfigs();
+      const adminConfigMap: Record<string, any> = {};
+      for (const cfg of allConfigs) adminConfigMap[cfg.slide_id] = cfg;
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic();
+
+      const slideList = selectedSlides.map((s: any) => {
+        const cfg = adminConfigMap[s.slide_id];
+        const fields = cfg?.structure?.sections || ["Key content"];
+        return `- ${s.slide_id} ("${s.title}"): fields=[${fields.join(", ")}]`;
+      }).join("\n");
+
+      const response = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        messages: [{
+          role: "user",
+          content: `You are parsing pasted text (from ChatGPT or similar) into structured slide briefs for a consulting proposal deck.
+
+The proposal slides are:
+${slideList}
+
+The pasted text is:
+---
+${pastedText}
+---
+
+For each slide above, extract the relevant content from the pasted text. Return a JSON array (no markdown) where each element is:
+{
+  "slide_id": "...",
+  "title": "...",
+  "purpose": "one-line purpose",
+  "content_structure": [{ "key": "field_name", "label": "Field Label", "value": "extracted content" }],
+  "notes": ""
+}
+
+Match content to slides by topic. If no content found for a slide, still include it with empty values. Return ONLY the JSON array.`
+        }],
+      });
+
+      const text = (response.content[0] as any).text || "";
+      let briefs: any[];
+      try {
+        briefs = JSON.parse(text.replace(/```json?\n?/g, "").replace(/```/g, "").trim());
+      } catch {
+        briefs = selectedSlides.map((s: any) => ({
+          slide_id: s.slide_id, title: s.title, purpose: "", content_structure: [], notes: "Could not parse — please edit manually",
+        }));
+      }
+
+      const updated = await storage.updateProposal(id, {
+        slide_briefs: briefs, status: "briefed",
+      });
+      res.json(updated);
+    } catch (err: any) {
+      console.error("Manual brief parse error:", err);
+      res.status(500).json({ message: err.message || "Parse failed" });
+    }
+  });
+
   // ── Slide Methodology: Bulk Parse Instructions ──────────────────────────────
   app.post("/api/slide-methodology/bulk-parse", requireAuth, async (req, res) => {
     try {

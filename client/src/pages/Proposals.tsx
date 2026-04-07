@@ -9,6 +9,7 @@ import {
   Plus, Trash2, ArrowRight, ArrowLeft, Loader2, Download, Pencil, Eye,
   FileText, Upload, Check, X, Sparkles, GripVertical, ChevronUp, ChevronDown,
   RotateCcw, AlertTriangle, Info, ChevronRight, BookOpen, MessageSquare,
+  Settings2, Image as ImageIcon, ClipboardPaste, Cpu, HelpCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -167,6 +168,17 @@ export default function Proposals() {
   const [generatingBriefs, setGeneratingBriefs] = useState(false);
   const [expandedBrief, setExpandedBrief] = useState<string | null>(null);
   const [briefProgress, setBriefProgress] = useState(0); // % of briefs reviewed
+  const [briefMode, setBriefMode] = useState<"choose" | "generating" | "editing">("choose");
+  const [showManualPaste, setShowManualPaste] = useState(false);
+  const [manualPasteText, setManualPasteText] = useState("");
+  const [parsingManual, setParsingManual] = useState(false);
+  // Template popup state
+  const [templatePopup, setTemplatePopup] = useState<string | null>(null); // slide_id
+  const [templateData, setTemplateData] = useState<any>(null);
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  // Guidance image state
+  const [guidanceImages, setGuidanceImages] = useState<Record<string, string>>({}); // slide_id → base64
 
   // Drag state
   const dragItem = useRef<number | null>(null);
@@ -197,6 +209,9 @@ export default function Proposals() {
     setEditingQuestion(null);
     setHasManualEdits(false);
     setExpandedBrief(null);
+    setBriefMode("choose");
+    setManualPasteText("");
+    setGuidanceImages({});
     setStep(1);
     setView("wizard");
   }
@@ -216,6 +231,7 @@ export default function Proposals() {
     setEditingQuestion(null);
     setHasManualEdits(false);
     setExpandedBrief(null);
+    setBriefMode(Array.isArray(p.slide_briefs) && p.slide_briefs.length > 0 ? "editing" : "choose");
 
     if (p.status === "draft") {
       setForm({
@@ -428,30 +444,140 @@ export default function Proposals() {
       setCurrent(saved);
       setSaving(false);
 
-      // Generate briefs via AI
+      // If briefs already exist (re-entering step 3), go straight to editing
+      if (Array.isArray(saved.slide_briefs) && saved.slide_briefs.length > 0) {
+        setBriefs(saved.slide_briefs);
+        setBriefMode("editing");
+        if (saved.slide_briefs.length > 0) setExpandedBrief(saved.slide_briefs[0].slide_id);
+      } else {
+        setBriefMode("choose");
+      }
       setStep(3);
-      setGeneratingBriefs(true);
+      // Load guidance images for selected slides
+      loadGuidanceImages();
+      loadProposals();
+    } catch (err: any) {
+      setSaving(false);
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
 
-      const briefRes = await fetch(`/api/proposals/${saved.id}/generate-briefs`, {
+  // Generate briefs via Claude API
+  async function generateBriefsWithClaude() {
+    if (!current?.id) return;
+    setBriefMode("generating");
+    setGeneratingBriefs(true);
+    try {
+      const briefRes = await fetch(`/api/proposals/${current.id}/generate-briefs`, {
         method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
       });
-
       if (!briefRes.ok) throw new Error("Brief generation failed");
       const briefed = await briefRes.json();
       setCurrent(briefed);
       setBriefs(Array.isArray(briefed.slide_briefs) ? briefed.slide_briefs : []);
       setGeneratingBriefs(false);
-      // Auto-expand first brief
-      if (briefed.slide_briefs?.length > 0) {
-        setExpandedBrief(briefed.slide_briefs[0].slide_id);
-      }
+      setBriefMode("editing");
+      if (briefed.slide_briefs?.length > 0) setExpandedBrief(briefed.slide_briefs[0].slide_id);
       loadProposals();
     } catch (err: any) {
-      setSaving(false);
       setGeneratingBriefs(false);
+      setBriefMode("choose");
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
+  }
+
+  // Parse pasted manual text into briefs
+  async function parseManualBriefs() {
+    if (!current?.id || !manualPasteText.trim()) return;
+    setParsingManual(true);
+    try {
+      const res = await fetch(`/api/proposals/${current.id}/parse-manual-briefs`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: manualPasteText }),
+      });
+      if (!res.ok) throw new Error("Parse failed");
+      const parsed = await res.json();
+      setCurrent(parsed);
+      setBriefs(Array.isArray(parsed.slide_briefs) ? parsed.slide_briefs : []);
+      setParsingManual(false);
+      setShowManualPaste(false);
+      setBriefMode("editing");
+      if (parsed.slide_briefs?.length > 0) setExpandedBrief(parsed.slide_briefs[0].slide_id);
+      loadProposals();
+    } catch (err: any) {
+      setParsingManual(false);
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
+
+  // Load guidance images for slide methodology configs
+  async function loadGuidanceImages() {
+    try {
+      const res = await fetch("/api/slide-methodology", { credentials: "include" });
+      if (!res.ok) return;
+      const configs = await res.json();
+      const images: Record<string, string> = {};
+      for (const cfg of configs) {
+        if (cfg.guidance_image) images[cfg.slide_id] = cfg.guidance_image;
+      }
+      setGuidanceImages(images);
+    } catch {}
+  }
+
+  // Upload guidance image for a slide
+  async function uploadGuidanceImage(slideId: string, file: File) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result as string;
+      try {
+        await fetch(`/api/slide-methodology/${encodeURIComponent(slideId)}/guidance-image`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64 }),
+        });
+        setGuidanceImages(prev => ({ ...prev, [slideId]: base64 }));
+        toast({ title: "Guidance image saved" });
+      } catch {
+        toast({ title: "Upload failed", variant: "destructive" });
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Open template popup for a slide
+  async function openTemplatePopup(slideId: string) {
+    setTemplatePopup(slideId);
+    setTemplateLoading(true);
+    try {
+      const res = await fetch(`/api/slide-methodology/${encodeURIComponent(slideId)}`, { credentials: "include" });
+      if (res.ok) {
+        setTemplateData(await res.json());
+      } else {
+        setTemplateData({ slide_id: slideId, purpose: "", structure: { sections: [] }, rules: "", columns: {}, variations: {}, examples: [], format: "A", insight_bar: 0 });
+      }
+    } catch {
+      setTemplateData(null);
+    }
+    setTemplateLoading(false);
+  }
+
+  // Save template data
+  async function saveTemplateData() {
+    if (!templateData) return;
+    setTemplateSaving(true);
+    try {
+      await fetch(`/api/slide-methodology/${encodeURIComponent(templateData.slide_id)}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(templateData),
+      });
+      toast({ title: "Template saved" });
+      setTemplatePopup(null);
+    } catch {
+      toast({ title: "Save failed", variant: "destructive" });
+    }
+    setTemplateSaving(false);
   }
 
   // ── Step 3: Save edited briefs ────────────────────────────────────────────
@@ -1057,7 +1183,7 @@ export default function Proposals() {
               </Button>
               <Button onClick={handleSubmitSlides} disabled={saving || !projectType}>
                 {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BookOpen className="w-4 h-4 mr-1" />}
-                Generate Slide Briefs
+                Continue to Briefing
                 <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
@@ -1067,8 +1193,166 @@ export default function Proposals() {
         {/* ── Step 3: Slide Briefing & Content Definition ────────────────── */}
         {step === 3 && (
           <div className="space-y-4">
-            {/* Loading state */}
-            {generatingBriefs && (
+            {/* Manual paste modal */}
+            {showManualPaste && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <Card className="p-6 max-w-3xl w-full mx-4 max-h-[80vh] flex flex-col">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <ClipboardPaste className="w-5 h-5" /> Paste Detailed Instructions
+                    </h3>
+                    <Button variant="ghost" size="sm" onClick={() => setShowManualPaste(false)}><X className="w-4 h-4" /></Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Paste the full text from ChatGPT (or similar) with slide-by-slide content. The AI will parse it and map content to each slide.
+                  </p>
+                  <Textarea
+                    value={manualPasteText}
+                    onChange={e => setManualPasteText(e.target.value)}
+                    rows={16}
+                    className="flex-1 text-sm font-mono"
+                    placeholder="Paste your detailed slide instructions here...
+
+Example format:
+## Executive Summary
+Context: The client faces...
+Recommendation: We propose...
+
+## Deep Dive - Sales Force
+Observation: Current coverage is...
+Root cause: Territory allocation..."
+                  />
+                  <div className="flex justify-end gap-2 mt-4">
+                    <Button variant="outline" onClick={() => setShowManualPaste(false)}>Cancel</Button>
+                    <Button onClick={parseManualBriefs} disabled={parsingManual || !manualPasteText.trim()}>
+                      {parsingManual ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                      Parse & Apply to Slides
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* Template popup modal */}
+            {templatePopup && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <Card className="p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <Settings2 className="w-5 h-5" /> Slide Template: {templatePopup}
+                    </h3>
+                    <Button variant="ghost" size="sm" onClick={() => setTemplatePopup(null)}><X className="w-4 h-4" /></Button>
+                  </div>
+                  {templateLoading ? (
+                    <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : templateData ? (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Purpose</label>
+                        <Textarea value={templateData.purpose || ""} onChange={e => setTemplateData((d: any) => ({ ...d, purpose: e.target.value }))} rows={2} className="text-sm" />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Structure Sections (one per line)</label>
+                        <Textarea
+                          value={(templateData.structure?.sections || []).join("\n")}
+                          onChange={e => setTemplateData((d: any) => ({ ...d, structure: { ...d.structure, sections: e.target.value.split("\n").filter((s: string) => s.trim()) } }))}
+                          rows={4} className="text-sm font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Rules</label>
+                        <Textarea value={templateData.rules || ""} onChange={e => setTemplateData((d: any) => ({ ...d, rules: e.target.value }))} rows={4} className="text-sm" />
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-sm font-medium mb-1 block">Column 1</label>
+                          <Input value={templateData.columns?.column_1 || ""} onChange={e => setTemplateData((d: any) => ({ ...d, columns: { ...d.columns, column_1: e.target.value } }))} className="text-sm" />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium mb-1 block">Column 2</label>
+                          <Input value={templateData.columns?.column_2 || ""} onChange={e => setTemplateData((d: any) => ({ ...d, columns: { ...d.columns, column_2: e.target.value } }))} className="text-sm" />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium mb-1 block">Column 3</label>
+                          <Input value={templateData.columns?.column_3 || ""} onChange={e => setTemplateData((d: any) => ({ ...d, columns: { ...d.columns, column_3: e.target.value } }))} className="text-sm" />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <label className="text-sm font-medium mb-1 block">Format</label>
+                          <select className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={templateData.format || "A"} onChange={e => setTemplateData((d: any) => ({ ...d, format: e.target.value }))}>
+                            <option value="A">Format A</option>
+                            <option value="B">Format B</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-2 mt-5">
+                          <input type="checkbox" checked={!!templateData.insight_bar} onChange={e => setTemplateData((d: any) => ({ ...d, insight_bar: e.target.checked ? 1 : 0 }))} />
+                          <label className="text-sm">Insight bar</label>
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-2 pt-2 border-t">
+                        <Button variant="outline" size="sm" onClick={() => setTemplatePopup(null)}>Cancel</Button>
+                        <Button size="sm" onClick={saveTemplateData} disabled={templateSaving}>
+                          {templateSaving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                          Save Template
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No template data available.</p>
+                  )}
+                </Card>
+              </div>
+            )}
+
+            {/* Choice screen: Claude API vs Manual Paste */}
+            {briefMode === "choose" && (
+              <div className="space-y-4">
+                <Card className="p-8">
+                  <h3 className="text-lg font-semibold mb-2 text-center">How would you like to generate slide briefs?</h3>
+                  <p className="text-sm text-muted-foreground text-center mb-8">
+                    Choose between AI-powered generation or paste your own detailed instructions
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
+                    {/* Option 1: Claude API */}
+                    <button
+                      className="flex flex-col items-center gap-3 p-6 rounded-lg border-2 border-dashed hover:border-primary hover:bg-primary/5 transition-colors text-center"
+                      onClick={generateBriefsWithClaude}
+                    >
+                      <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+                        <Cpu className="w-7 h-7 text-primary" />
+                      </div>
+                      <span className="font-semibold">Generate with Claude API</span>
+                      <span className="text-xs text-muted-foreground">
+                        AI analyzes your inputs and auto-generates structured briefs for each slide
+                      </span>
+                    </button>
+
+                    {/* Option 2: Manual Paste */}
+                    <button
+                      className="flex flex-col items-center gap-3 p-6 rounded-lg border-2 border-dashed hover:border-primary hover:bg-primary/5 transition-colors text-center"
+                      onClick={() => setShowManualPaste(true)}
+                    >
+                      <div className="w-14 h-14 rounded-full bg-orange-100 flex items-center justify-center">
+                        <ClipboardPaste className="w-7 h-7 text-orange-600" />
+                      </div>
+                      <span className="font-semibold">Paste Manual Instructions</span>
+                      <span className="text-xs text-muted-foreground">
+                        Paste detailed text from ChatGPT or similar — saves API costs
+                      </span>
+                    </button>
+                  </div>
+                </Card>
+                <div className="flex justify-start">
+                  <Button variant="outline" onClick={() => setStep(2)}>
+                    <ArrowLeft className="w-4 h-4 mr-1" /> Back to Slides
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Generating state */}
+            {briefMode === "generating" && (
               <Card className="p-12 flex flex-col items-center justify-center gap-4">
                 <Loader2 className="w-12 h-12 animate-spin text-primary" />
                 <p className="text-lg font-medium">Generating slide briefs...</p>
@@ -1076,8 +1360,8 @@ export default function Proposals() {
               </Card>
             )}
 
-            {/* Briefs loaded */}
-            {!generatingBriefs && briefs.length > 0 && (
+            {/* Briefs loaded — editing mode */}
+            {briefMode === "editing" && briefs.length > 0 && (
               <>
                 {/* Progress bar */}
                 <Card className="p-4">
@@ -1087,6 +1371,9 @@ export default function Proposals() {
                       <span className="text-sm font-medium">{briefs.length} slide briefs</span>
                     </div>
                     <div className="flex items-center gap-3">
+                      <Button variant="outline" size="sm" onClick={() => { setBriefMode("choose"); setBriefs([]); }}>
+                        <RotateCcw className="w-3 h-3 mr-1" /> Regenerate
+                      </Button>
                       <Button variant="outline" size="sm" onClick={saveBriefs} disabled={saving}>
                         {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
                         Save Briefs
@@ -1127,31 +1414,81 @@ export default function Proposals() {
                     className={`overflow-hidden transition-all ${expandedBrief === brief.slide_id ? "ring-2 ring-primary/30" : ""}`}
                   >
                     {/* Header (always visible, clickable) */}
-                    <button
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-accent/30 transition-colors"
-                      onClick={() => setExpandedBrief(expandedBrief === brief.slide_id ? null : brief.slide_id)}
-                    >
-                      <span className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium shrink-0">
-                        {idx + 1}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">{brief.title}</div>
-                        <div className="text-xs text-muted-foreground">{brief.purpose}</div>
+                    <div className="flex items-center gap-3 px-4 py-3 hover:bg-accent/30 transition-colors">
+                      <button
+                        className="flex-1 flex items-center gap-3 text-left min-w-0"
+                        onClick={() => setExpandedBrief(expandedBrief === brief.slide_id ? null : brief.slide_id)}
+                      >
+                        <span className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium shrink-0">
+                          {idx + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm">{brief.title}</div>
+                          <div className="text-xs text-muted-foreground">{brief.purpose}</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {brief.content_structure.every(f => f.value.trim()) && (
+                            <span className="text-xs text-green-600 flex items-center gap-1"><Check className="w-3 h-3" /> Complete</span>
+                          )}
+                          {brief.notes && <MessageSquare className="w-3.5 h-3.5 text-blue-500" />}
+                          {guidanceImages[brief.slide_id] && <ImageIcon className="w-3.5 h-3.5 text-purple-500" />}
+                          <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${expandedBrief === brief.slide_id ? "rotate-90" : ""}`} />
+                        </div>
+                      </button>
+                      {/* Action buttons on header */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          className="p-1.5 rounded hover:bg-accent transition-colors"
+                          title="Slide template"
+                          onClick={e => { e.stopPropagation(); openTemplatePopup(brief.slide_id); }}
+                        >
+                          <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
+                        </button>
+                        <label className="p-1.5 rounded hover:bg-accent transition-colors cursor-pointer" title="Upload guidance image">
+                          <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                          <input
+                            type="file"
+                            accept="image/*,.pptx,.ppt"
+                            className="hidden"
+                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadGuidanceImage(brief.slide_id, f); e.target.value = ""; }}
+                          />
+                        </label>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {brief.content_structure.every(f => f.value.trim()) && (
-                          <span className="text-xs text-green-600 flex items-center gap-1"><Check className="w-3 h-3" /> Complete</span>
-                        )}
-                        {brief.notes && (
-                          <MessageSquare className="w-3.5 h-3.5 text-blue-500" />
-                        )}
-                        <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${expandedBrief === brief.slide_id ? "rotate-90" : ""}`} />
-                      </div>
-                    </button>
+                    </div>
 
                     {/* Expanded content */}
                     {expandedBrief === brief.slide_id && (
                       <div className="border-t px-4 py-4 space-y-4">
+                        {/* Guidance image thumbnail */}
+                        {guidanceImages[brief.slide_id] && (
+                          <div className="flex items-start gap-3 p-3 bg-purple-50 dark:bg-purple-950/20 rounded-md">
+                            <img
+                              src={guidanceImages[brief.slide_id]}
+                              alt="Guidance"
+                              className="w-32 h-20 object-cover rounded border"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-purple-700 dark:text-purple-300">Guidance image attached</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">This image is saved as template guidance for future proposals</p>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="mt-1 h-6 text-xs text-destructive"
+                                onClick={async () => {
+                                  await fetch(`/api/slide-methodology/${encodeURIComponent(brief.slide_id)}/guidance-image`, {
+                                    method: "PUT", credentials: "include",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ image: null }),
+                                  });
+                                  setGuidanceImages(prev => { const n = { ...prev }; delete n[brief.slide_id]; return n; });
+                                }}
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Editable fields */}
                         {brief.content_structure.map(field => (
                           <div key={field.key}>
