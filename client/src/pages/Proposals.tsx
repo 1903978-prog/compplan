@@ -288,11 +288,10 @@ export default function Proposals() {
         if (savedIds.length > 0) {
           // We have learned defaults — use them
           const selectedSet = new Set(savedIds);
-          // Build slides from saved order, adding any new master slides not yet in the order
+          const defaults = getDefaultSlideSelection(pt);
           const orderMap = new Map(savedOrder.map((id: string, i: number) => [id, i]));
-          const allSlides = MASTER_SLIDES.map((slide) => ({
-            slide_id: slide.slide_id,
-            title: slide.title,
+          const allSlides = defaults.map((slide) => ({
+            ...slide,
             is_selected: selectedSet.has(slide.slide_id),
             default_selected: selectedSet.has(slide.slide_id),
             order: orderMap.has(slide.slide_id) ? orderMap.get(slide.slide_id)! : 999,
@@ -1058,115 +1057,154 @@ export default function Proposals() {
             </Card>
 
             {/* Slide selection: two-panel layout */}
-            {slides.length > 0 && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* Left: Full slide list */}
-                <div className="lg:col-span-2">
-                  <Card className="p-0 overflow-hidden">
-                    <div className="px-4 py-3 border-b bg-muted/30">
-                      <h3 className="text-sm font-semibold">All Slides</h3>
-                      <p className="text-xs text-muted-foreground">Click to toggle, drag or use arrows to reorder</p>
+            {slides.length > 0 && (() => {
+              const coreSlides = slides.filter(s => s.group === "core");
+              const optionalSlides = slides.filter(s => s.group === "optional");
+              const suggestedCount = optionalSlides.filter(s => s.is_suggested).length;
+
+              function renderSlideRow(slide: SlideSelectionEntry, idx: number, globalIdx: number) {
+                const masterDef = MASTER_SLIDES.find(m => m.slide_id === slide.slide_id);
+                return (
+                  <div
+                    key={slide.slide_id}
+                    draggable
+                    onDragStart={() => handleDragStart(globalIdx)}
+                    onDragEnter={() => handleDragEnter(globalIdx)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={e => e.preventDefault()}
+                    className={`flex items-center gap-3 px-4 py-2.5 transition-colors cursor-grab active:cursor-grabbing ${
+                      slide.is_selected ? "bg-primary/5" :
+                      slide.is_suggested && !slide.is_selected ? "bg-amber-50 dark:bg-amber-950/20" :
+                      "bg-background opacity-60"
+                    }`}
+                  >
+                    <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" onClick={() => moveSlide(globalIdx, "up")} disabled={globalIdx === 0}>
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" onClick={() => moveSlide(globalIdx, "down")} disabled={globalIdx === slides.length - 1}>
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                    <div className="divide-y max-h-[600px] overflow-y-auto">
-                      {slides.map((slide, idx) => {
-                        const masterDef = MASTER_SLIDES.find(m => m.slide_id === slide.slide_id);
-                        return (
-                          <div
-                            key={slide.slide_id}
-                            draggable
-                            onDragStart={() => handleDragStart(idx)}
-                            onDragEnter={() => handleDragEnter(idx)}
-                            onDragEnd={handleDragEnd}
-                            onDragOver={e => e.preventDefault()}
-                            className={`flex items-center gap-3 px-4 py-2.5 transition-colors cursor-grab active:cursor-grabbing ${
-                              slide.is_selected ? "bg-primary/5" : "bg-background opacity-60"
-                            }`}
-                          >
-                            <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <button
+                      onClick={() => toggleSlide(slide.slide_id)}
+                      className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                        slide.is_selected ? "bg-primary border-primary text-primary-foreground" : "border-input hover:border-primary"
+                      }`}
+                    >
+                      {slide.is_selected && <Check className="w-3 h-3" />}
+                    </button>
+                    <div className="flex-1 min-w-0" onClick={() => toggleSlide(slide.slide_id)}>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"}`}>{slide.title}</span>
+                        {slide.group === "core" && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 font-medium">CORE</span>
+                        )}
+                        {slide.is_suggested && !slide.is_selected && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 font-medium animate-pulse">SUGGESTED</span>
+                        )}
+                      </div>
+                      {masterDef && <p className="text-xs text-muted-foreground truncate">{masterDef.description}</p>}
+                    </div>
+                    <span className="text-xs text-muted-foreground w-6 text-right shrink-0">{globalIdx + 1}</span>
+                  </div>
+                );
+              }
 
-                            {/* Order arrows */}
-                            <div className="flex flex-col gap-0.5">
-                              <button
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                                onClick={() => moveSlide(idx, "up")}
-                                disabled={idx === 0}
-                              >
-                                <ChevronUp className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                                onClick={() => moveSlide(idx, "down")}
-                                disabled={idx === slides.length - 1}
-                              >
-                                <ChevronDown className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-
-                            {/* Checkbox */}
-                            <button
-                              onClick={() => toggleSlide(slide.slide_id)}
-                              className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                                slide.is_selected
-                                  ? "bg-primary border-primary text-primary-foreground"
-                                  : "border-input hover:border-primary"
-                              }`}
-                            >
-                              {slide.is_selected && <Check className="w-3 h-3" />}
-                            </button>
-
-                            {/* Slide info */}
-                            <div className="flex-1 min-w-0" onClick={() => toggleSlide(slide.slide_id)}>
-                              <div className="flex items-center gap-2">
-                                <span className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"}`}>
-                                  {slide.title}
-                                </span>
-                                {slide.default_selected && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">DEFAULT</span>
-                                )}
-                              </div>
-                              {masterDef && (
-                                <p className="text-xs text-muted-foreground truncate">{masterDef.description}</p>
-                              )}
-                            </div>
-
-                            <span className="text-xs text-muted-foreground w-6 text-right shrink-0">{idx + 1}</span>
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  {/* Left: Grouped slide list */}
+                  <div className="lg:col-span-2 space-y-4">
+                    {/* Core Pages */}
+                    <Card className="p-0 overflow-hidden">
+                      <div className="px-4 py-3 border-b bg-blue-50 dark:bg-blue-950/30">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h3 className="text-sm font-semibold flex items-center gap-2">
+                              Core Pages
+                              <span className="text-xs font-normal text-muted-foreground">({coreSlides.filter(s => s.is_selected).length}/{coreSlides.length} selected)</span>
+                            </h3>
+                            <p className="text-xs text-muted-foreground">Always included in every proposal</p>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </Card>
-                </div>
+                        </div>
+                      </div>
+                      <div className="divide-y">
+                        {slides.map((slide, globalIdx) => {
+                          if (slide.group !== "core") return null;
+                          const coreIdx = coreSlides.indexOf(slide);
+                          return renderSlideRow(slide, coreIdx, globalIdx);
+                        })}
+                      </div>
+                    </Card>
 
-                {/* Right: Selected slides summary */}
-                <div>
-                  <Card className="p-0 overflow-hidden sticky top-20">
-                    <div className="px-4 py-3 border-b bg-muted/30">
-                      <h3 className="text-sm font-semibold">Selected Slides ({selectedSlideCount})</h3>
-                    </div>
-                    <div className="p-3 max-h-[540px] overflow-y-auto">
-                      {slides.filter(s => s.is_selected).length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-4">No slides selected</p>
-                      ) : (
-                        <ol className="space-y-1">
-                          {slides.filter(s => s.is_selected).map((s, i) => (
-                            <li key={s.slide_id} className="flex items-center gap-2 text-sm py-1">
-                              <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
-                              <span className="truncate">{s.title}</span>
-                              <button
-                                onClick={() => toggleSlide(s.slide_id)}
-                                className="ml-auto text-muted-foreground hover:text-destructive shrink-0"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </li>
-                          ))}
-                        </ol>
-                      )}
-                    </div>
-                  </Card>
+                    {/* Optional Pages */}
+                    <Card className="p-0 overflow-hidden">
+                      <div className="px-4 py-3 border-b bg-amber-50 dark:bg-amber-950/30">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h3 className="text-sm font-semibold flex items-center gap-2">
+                              Optional Pages
+                              <span className="text-xs font-normal text-muted-foreground">({optionalSlides.filter(s => s.is_selected).length}/{optionalSlides.length} selected)</span>
+                            </h3>
+                            <p className="text-xs text-muted-foreground">
+                              Add based on project needs
+                              {suggestedCount > 0 && (
+                                <span className="ml-1 text-amber-600 font-medium">
+                                  — {suggestedCount} suggested for {projectType}
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="divide-y max-h-[400px] overflow-y-auto">
+                        {slides.map((slide, globalIdx) => {
+                          if (slide.group !== "optional") return null;
+                          const optIdx = optionalSlides.indexOf(slide);
+                          return renderSlideRow(slide, optIdx, globalIdx);
+                        })}
+                      </div>
+                    </Card>
+                  </div>
+
+                  {/* Right: Selected slides summary */}
+                  <div>
+                    <Card className="p-0 overflow-hidden sticky top-20">
+                      <div className="px-4 py-3 border-b bg-muted/30">
+                        <h3 className="text-sm font-semibold">Selected Slides ({selectedSlideCount})</h3>
+                        <p className="text-xs text-muted-foreground">
+                          {coreSlides.filter(s => s.is_selected).length} core + {optionalSlides.filter(s => s.is_selected).length} optional
+                        </p>
+                      </div>
+                      <div className="p-3 max-h-[540px] overflow-y-auto">
+                        {slides.filter(s => s.is_selected).length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-4">No slides selected</p>
+                        ) : (
+                          <ol className="space-y-1">
+                            {slides.filter(s => s.is_selected).map((s, i) => (
+                              <li key={s.slide_id} className="flex items-center gap-2 text-sm py-1">
+                                <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
+                                <span className="truncate">{s.title}</span>
+                                {s.group === "optional" && (
+                                  <span className="text-[9px] px-1 py-0 rounded bg-amber-100 text-amber-600 shrink-0">OPT</span>
+                                )}
+                                <button
+                                  onClick={() => toggleSlide(s.slide_id)}
+                                  className="ml-auto text-muted-foreground hover:text-destructive shrink-0"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+                      </div>
+                    </Card>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* No project type selected */}
             {!projectType && (

@@ -82,6 +82,15 @@ const SLIDE_STRUCTURES: Record<string, { purpose: string; fields: { key: string;
       { key: "deliverables", label: "Key Deliverables", hint: "2-4 main outputs" },
     ],
   },
+  context: {
+    purpose: "Client situation, market dynamics, and urgency drivers",
+    fields: [
+      { key: "business_model", label: "Business Model Summary", hint: "What the company does and how it makes money" },
+      { key: "challenges", label: "Key Challenges", hint: "3-5 specific challenges the client faces" },
+      { key: "performance_gaps", label: "Performance Gaps", hint: "Where performance falls short of potential" },
+      { key: "trigger", label: "Trigger for Change", hint: "What caused the client to seek help now" },
+    ],
+  },
   client_context: {
     purpose: "Client situation and urgency drivers",
     fields: [
@@ -268,6 +277,115 @@ const SLIDE_STRUCTURES: Record<string, { purpose: string; fields: { key: string;
       { key: "immediate_actions", label: "Immediate Actions", hint: "What happens next" },
       { key: "decision_timeline", label: "Decision Timeline", hint: "When decisions are needed" },
       { key: "kick_off", label: "Kick-off Plan", hint: "How the project starts" },
+    ],
+  },
+  // ── New slide IDs (matching updated MASTER_SLIDES) ─────────────────────────
+  value_at_stake: {
+    purpose: "Quantified opportunity sizing and impact if nothing changes",
+    fields: [
+      { key: "current_state", label: "Current Performance", hint: "Where the client stands today (revenue, margin, etc.)" },
+      { key: "gap", label: "Performance Gap", hint: "The gap between current and potential" },
+      { key: "impact", label: "Value at Stake", hint: "Quantified impact of inaction (EUR M, % margin, etc.)" },
+      { key: "assumptions", label: "Assumptions", hint: "Key assumptions behind the sizing" },
+    ],
+  },
+  proposed_approach: {
+    purpose: "Recommended approach, logic, and high-level workstreams",
+    fields: [
+      { key: "approach_logic", label: "Approach Logic", hint: "The overall logic flow of the approach" },
+      { key: "phases", label: "Key Phases", hint: "Main phases with description" },
+      { key: "workstreams", label: "Workstreams Overview", hint: "High-level workstream names and focus" },
+      { key: "emphasis", label: "Emphasis Areas", hint: "What the approach focuses on most" },
+    ],
+  },
+  timeline_options: {
+    purpose: "Project timeline with milestones and option variants",
+    fields: [
+      { key: "phases", label: "Phases", hint: "Name and duration of each phase" },
+      { key: "milestones", label: "Key Milestones", hint: "Critical checkpoints" },
+      { key: "duration", label: "Total Duration", hint: "Overall project duration" },
+      { key: "options_timeline", label: "Timeline by Option", hint: "How timeline differs per engagement option" },
+    ],
+  },
+  governance_inputs: {
+    purpose: "Steering committee, escalation, reporting, and client inputs",
+    fields: [
+      { key: "structure", label: "Governance Structure", hint: "Steering committee, working groups" },
+      { key: "reporting", label: "Reporting Cadence", hint: "Frequency and format of reports" },
+      { key: "escalation", label: "Escalation Path", hint: "How issues are raised and resolved" },
+      { key: "client_inputs", label: "Client Inputs Required", hint: "Data, decisions, and access needed from client" },
+    ],
+  },
+  impact_roi: {
+    purpose: "Expected business impact, ROI projections, and value creation",
+    fields: [
+      { key: "expected_impact", label: "Expected Impact", hint: "Quantified business outcomes (revenue, margin, efficiency)" },
+      { key: "roi_logic", label: "ROI Logic", hint: "Investment vs. return calculation" },
+      { key: "value_drivers", label: "Value Drivers", hint: "Key levers driving the impact" },
+      { key: "timeline_to_value", label: "Timeline to Value", hint: "When the client starts seeing results" },
+    ],
+  },
+  commercials: {
+    purpose: "Fee structure, pricing, and commercial terms",
+    fields: [
+      { key: "fee_structure", label: "Fee Structure", hint: "How fees are structured (fixed, weekly, etc.)" },
+      { key: "total_fees", label: "Total Fees by Option", hint: "Fee for each option" },
+      { key: "payment_terms", label: "Payment Terms", hint: "Payment schedule and conditions" },
+    ],
+  },
+  annex: {
+    purpose: "Supporting data, detailed tables, and appendix material",
+    fields: [
+      { key: "appendix_items", label: "Appendix Items", hint: "List of supporting materials to include" },
+    ],
+  },
+  scope_activities: {
+    purpose: "Detailed scope breakdown with activity descriptions",
+    fields: [
+      { key: "activities", label: "Key Activities", hint: "Activity list grouped by workstream or phase" },
+      { key: "ownership", label: "Ownership", hint: "Who leads each activity" },
+    ],
+  },
+  workstream_modules: {
+    purpose: "Breakdown of work into streams or modules",
+    fields: [
+      { key: "modules", label: "Workstream Modules", hint: "List each workstream with 1-2 line descriptions" },
+      { key: "dependencies", label: "Dependencies Between Streams", hint: "How workstreams connect" },
+    ],
+  },
+  workstream_activities: {
+    purpose: "Detailed activities within each workstream",
+    fields: [
+      { key: "workstream_details", label: "Activities by Workstream", hint: "For each workstream, list specific activities and outputs" },
+    ],
+  },
+  deliverables_matrix: {
+    purpose: "Deliverables mapped to workstreams, ownership, and timing",
+    fields: [
+      { key: "matrix", label: "Deliverables Matrix", hint: "Deliverable | Workstream | Owner | Timing" },
+    ],
+  },
+  governance_steercos: {
+    purpose: "Detailed steerco and weekly meeting cadence and agenda",
+    fields: [
+      { key: "steerco", label: "Steering Committee", hint: "Frequency, participants, agenda" },
+      { key: "weekly", label: "Weekly Meetings", hint: "Working-level cadence and format" },
+      { key: "agenda_template", label: "Agenda Template", hint: "Standard agenda structure" },
+    ],
+  },
+  team_bio: {
+    purpose: "Proposed team members, bios, and roles",
+    fields: [
+      { key: "team_composition", label: "Team Composition", hint: "Roles and responsibilities" },
+      { key: "bios", label: "Team Bios", hint: "Brief bio for each team member" },
+      { key: "effort", label: "Effort Allocation", hint: "Days per week per role" },
+    ],
+  },
+  client_time: {
+    purpose: "Expected time commitment from client stakeholders",
+    fields: [
+      { key: "stakeholder_time", label: "Stakeholder Time", hint: "Hours per week expected from key stakeholders" },
+      { key: "workshops", label: "Workshop Participation", hint: "Number and duration of workshops requiring client presence" },
     ],
   },
 };

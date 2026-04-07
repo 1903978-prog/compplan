@@ -108,7 +108,7 @@ function formatCurrency(value: number): string {
 
 // Slides that have dedicated hardcoded generators (skip from brief-based rendering)
 const HARDCODED_SLIDE_IDS = new Set([
-  "cover", "pricing_overview", "pricing_detail", "next_steps",
+  "cover", "pricing_overview", "pricing_detail", "next_steps", "commercials",
 ]);
 
 export async function generateProposalDeck(proposal: ProposalData, _template?: any): Promise<Buffer> {
