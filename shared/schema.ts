@@ -219,6 +219,7 @@ export const appSettings = pgTable("app_settings", {
   tests: jsonb("tests").$type<Test[]>().notNull().default([]),
   benchmark_data: jsonb("benchmark_data").$type<BenchmarkRow[]>().default([]),
   benchmark_updated_at: text("benchmark_updated_at"),
+  api_paused: integer("api_paused").notNull().default(0),
 });
 
 // Minimal users table for auth

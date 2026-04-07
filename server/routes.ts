@@ -12,8 +12,35 @@ function safeInt(val: string): number {
   return n;
 }
 
+async function checkApiPaused(): Promise<boolean> {
+  const settings = await storage.getSettings();
+  return !!(settings as any).api_paused;
+}
+
+async function guardApiAsync(res: any): Promise<boolean> {
+  if (await checkApiPaused()) {
+    res.status(503).json({ message: "API usage is paused. Enable it from the top bar to continue." });
+    return true;
+  }
+  return false;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
+
+  // ── API Pause Toggle ──────────────────────────────────────────────────────
+  app.get("/api/api-pause", requireAuth, async (_req, res) => {
+    const paused = await checkApiPaused();
+    res.json({ paused });
+  });
+
+  app.put("/api/api-pause", requireAuth, async (req, res) => {
+    const { paused } = req.body;
+    const { db } = await import("./db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`UPDATE app_settings SET api_paused = ${paused ? 1 : 0} WHERE id = 1`);
+    res.json({ paused: !!paused });
+  });
 
   // ── Employees ──────────────────────────────────────────────────────────────
   app.get("/api/employees", requireAuth, async (_req, res) => {
@@ -315,6 +342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/proposals/:id/generate-briefs", requireAuth, async (req, res) => {
     try {
+      if (await guardApiAsync(res)) return;
       const id = safeInt(req.params.id);
       const proposal = await storage.getProposal(id);
       if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
@@ -365,6 +393,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/proposals/:id/analyze", requireAuth, async (req, res) => {
     try {
+      if (await guardApiAsync(res)) return;
       const id = safeInt(req.params.id);
       const proposal = await storage.getProposal(id);
       if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
@@ -403,6 +432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/proposals/:id/generate-deck", requireAuth, async (req, res) => {
     try {
+      if (await guardApiAsync(res)) return;
       const id = safeInt(req.params.id);
       const proposal = await storage.getProposal(id);
       if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
@@ -505,6 +535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ── Parse Manual Briefs (ChatGPT paste) ───────────────────────────────────
   app.post("/api/proposals/:id/parse-manual-briefs", requireAuth, async (req, res) => {
     try {
+      if (await guardApiAsync(res)) return;
       const id = safeInt(req.params.id);
       const proposal = await storage.getProposal(id);
       if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
@@ -596,6 +627,7 @@ Rules:
   // ── Slide Methodology: Bulk Parse Instructions ──────────────────────────────
   app.post("/api/slide-methodology/bulk-parse", requireAuth, async (req, res) => {
     try {
+      if (await guardApiAsync(res)) return;
       const { instructions } = req.body;
       if (!instructions || typeof instructions !== "string") {
         res.status(400).json({ message: "Instructions text is required" });

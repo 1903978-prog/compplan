@@ -18,7 +18,7 @@ import Hiring from "@/pages/Hiring";
 import TimeTracker from "@/pages/TimeTracker";
 import Proposals from "@/pages/Proposals";
 import SlideMethodologyAdmin from "@/pages/SlideMethodologyAdmin";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -74,6 +74,25 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
 }
 
 function Navigation() {
+  const [apiPaused, setApiPaused] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/api-pause", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setApiPaused(!!d.paused))
+      .catch(() => {});
+  }, []);
+
+  const toggleApiPause = async () => {
+    const newState = !apiPaused;
+    setApiPaused(newState);
+    await fetch("/api/api-pause", {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: newState }),
+    });
+  };
+
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     window.location.reload();
@@ -129,10 +148,24 @@ function Navigation() {
               />
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground">
-            <LogOut className="w-4 h-4 mr-2" />
-            Logout
-          </Button>
+          <div className="flex items-center gap-2">
+            {apiPaused !== null && (
+              <Button
+                variant={apiPaused ? "destructive" : "outline"}
+                size="sm"
+                onClick={toggleApiPause}
+                className={apiPaused ? "" : "text-green-600 border-green-300 hover:bg-green-50"}
+                title={apiPaused ? "API is paused — click to resume" : "API is active — click to pause"}
+              >
+                {apiPaused ? <Pause className="w-3.5 h-3.5 mr-1.5" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
+                {apiPaused ? "API Paused" : "API Active"}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground">
+              <LogOut className="w-4 h-4 mr-2" />
+              Logout
+            </Button>
+          </div>
         </div>
       </div>
     </nav>
