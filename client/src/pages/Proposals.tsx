@@ -179,6 +179,10 @@ export default function Proposals() {
   const [templateSaving, setTemplateSaving] = useState(false);
   // Guidance image state
   const [guidanceImages, setGuidanceImages] = useState<Record<string, string>>({}); // slide_id → base64
+  // Slide template instructions popup (Step 2)
+  const [showSlideInstructions, setShowSlideInstructions] = useState(false);
+  const [slideInstructionsText, setSlideInstructionsText] = useState("");
+  const [slideInstructionsParsing, setSlideInstructionsParsing] = useState(false);
 
   // Drag state
   const dragItem = useRef<number | null>(null);
@@ -579,6 +583,27 @@ export default function Proposals() {
     setTemplateSaving(false);
   }
 
+  // ── Step 2: Parse slide template instructions via bulk-parse ──────────────
+
+  async function parseSlideInstructions() {
+    if (!slideInstructionsText.trim()) return;
+    setSlideInstructionsParsing(true);
+    try {
+      const res = await fetch("/api/slide-methodology/bulk-parse", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instructions: slideInstructionsText }),
+      });
+      if (!res.ok) throw new Error("Parse failed");
+      const result = await res.json();
+      toast({ title: `Updated ${result.updated_count || 0} slide templates` });
+      setShowSlideInstructions(false);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+    setSlideInstructionsParsing(false);
+  }
+
   // ── Step 3: Save edited briefs ────────────────────────────────────────────
 
   function updateBriefField(slideId: string, fieldKey: string, value: string) {
@@ -923,7 +948,7 @@ export default function Proposals() {
                 {callChecklist.map((item, idx) => (
                   <div
                     key={idx}
-                    className={`flex items-start gap-2 p-2 rounded-md transition-colors ${
+                    className={`group flex items-start gap-2 p-2 rounded-md transition-colors ${
                       item.checked ? "bg-green-50 dark:bg-green-950/20" : "hover:bg-accent/30"
                     }`}
                   >
@@ -949,8 +974,8 @@ export default function Proposals() {
                           className="text-xs"
                         />
                       ) : (
-                        <button
-                          className={`text-xs text-left w-full leading-relaxed ${
+                        <span
+                          className={`text-xs text-left w-full leading-relaxed cursor-pointer ${
                             item.checked ? "text-muted-foreground line-through" : "text-foreground"
                           }`}
                           onClick={() => setEditingQuestion(idx)}
@@ -958,18 +983,25 @@ export default function Proposals() {
                         >
                           <span className="text-muted-foreground mr-1.5">{idx + 1}.</span>
                           {item.question}
-                        </button>
+                        </span>
                       )}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 w-5 p-0 shrink-0 opacity-0 group-hover:opacity-100 hover:opacity-100"
-                      onClick={() => setCallChecklist(prev => prev.filter((_, i) => i !== idx))}
-                      title="Remove question"
-                    >
-                      <X className="w-3 h-3 text-muted-foreground" />
-                    </Button>
+                    <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        className="p-1 rounded hover:bg-accent"
+                        onClick={() => setEditingQuestion(idx)}
+                        title="Edit question"
+                      >
+                        <Pencil className="w-3 h-3 text-muted-foreground" />
+                      </button>
+                      <button
+                        className="p-1 rounded hover:bg-destructive/10"
+                        onClick={() => setCallChecklist(prev => prev.filter((_, i) => i !== idx))}
+                        title="Delete question"
+                      >
+                        <Trash2 className="w-3 h-3 text-destructive" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -991,6 +1023,52 @@ export default function Proposals() {
         {/* ── Step 2: Project Type & Slide Selection ─────────────────────── */}
         {step === 2 && (
           <div className="space-y-4">
+            {/* Slide template instructions popup */}
+            {showSlideInstructions && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <Card className="p-6 max-w-3xl w-full mx-4 max-h-[85vh] flex flex-col">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <FileText className="w-5 h-5" /> Slide Template Instructions
+                    </h3>
+                    <Button variant="ghost" size="sm" onClick={() => setShowSlideInstructions(false)}><X className="w-4 h-4" /></Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Paste instructions on how to populate each slide. The AI will parse them and automatically update the methodology config for each slide (purpose, structure, rules, examples).
+                  </p>
+                  <Textarea
+                    value={slideInstructionsText}
+                    onChange={e => setSlideInstructionsText(e.target.value)}
+                    rows={20}
+                    className="flex-1 text-sm font-mono"
+                    placeholder={`Paste your slide-by-slide instructions here...
+
+Example:
+## Executive Summary
+- Purpose: Enable decision-maker to understand context, recommendation and impact in one page
+- Must include Top 3 priorities
+- Must be quantified (revenue, margin, FTE impact)
+- Format: 3-column with insight bar
+- Column 1: Context / problem
+- Column 2: Recommendation / approach
+- Column 3: Impact / value
+
+## Context
+- Purpose: Show client situation and urgency drivers
+- Include business model, key challenges, performance gaps
+- Must reference specific data points from transcript...`}
+                  />
+                  <div className="flex justify-end gap-2 mt-4">
+                    <Button variant="outline" onClick={() => setShowSlideInstructions(false)}>Cancel</Button>
+                    <Button onClick={parseSlideInstructions} disabled={slideInstructionsParsing || !slideInstructionsText.trim()}>
+                      {slideInstructionsParsing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                      Parse & Apply to Slides
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+
             {/* Reset confirmation modal */}
             {showResetConfirm && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -1219,11 +1297,16 @@ export default function Proposals() {
               <Button variant="outline" onClick={() => setStep(1)}>
                 <ArrowLeft className="w-4 h-4 mr-1" /> Back to Inputs
               </Button>
-              <Button onClick={handleSubmitSlides} disabled={saving || !projectType}>
-                {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BookOpen className="w-4 h-4 mr-1" />}
-                Continue to Briefing
-                <ArrowRight className="w-4 h-4 ml-1" />
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowSlideInstructions(true)}>
+                  <FileText className="w-4 h-4 mr-1" /> Slide Template Instructions
+                </Button>
+                <Button onClick={handleSubmitSlides} disabled={saving || !projectType}>
+                  {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BookOpen className="w-4 h-4 mr-1" />}
+                  Continue to Briefing
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
             </div>
           </div>
         )}
