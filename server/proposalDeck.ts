@@ -57,6 +57,11 @@ interface DeckTemplateConfig {
   system_prompt?: string;
 }
 
+interface SlideSelectionEntry {
+  slide_id: string;
+  is_selected: boolean;
+}
+
 interface ProposalData {
   company_name: string;
   proposal_title?: string | null;
@@ -67,6 +72,7 @@ interface ProposalData {
   recommended_team?: string | null;
   options: ProposalOption[];
   slide_briefs?: SlideBrief[];
+  slide_selection?: SlideSelectionEntry[];
   admin_configs?: Record<string, SlideMethodologyConfig>;
   deck_template?: DeckTemplateConfig;
 }
@@ -121,6 +127,13 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "Eendigo";
   pptx.subject = proposal.proposal_title || `Proposal for ${proposal.company_name}`;
+
+  // Build set of selected slide IDs — ONLY these slides are generated
+  const selectedSlideIds = new Set(
+    (proposal.slide_selection || [])
+      .filter((s: SlideSelectionEntry) => s.is_selected)
+      .map((s: SlideSelectionEntry) => s.slide_id)
+  );
 
   // Helper: add footer to every content slide (Eendigo template style)
   function addFooter(slide: any, pageNum?: number) {
@@ -210,23 +223,28 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     else generateFormatA(brief, config);
   }
 
+  // Helper: check if a slide should be included
+  const shouldInclude = (id: string) => selectedSlideIds.size === 0 || selectedSlideIds.has(id);
+
   // ─── Slide 1: Cover ────────────────────────────────────────────────────────
-  const coverSlide = pptx.addSlide();
-  coverSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: "100%", fill: { color: COLORS.PRIMARY } });
-  coverSlide.addShape("rect", { x: 0, y: 5.5, w: "100%", h: 2, fill: { color: COLORS.DARK } });
-  coverSlide.addText("EENDIGO", { x: 0.8, y: 0.5, w: 5, h: 0.6, fontSize: 14, color: COLORS.ACCENT, fontFace: "Arial", bold: true, letterSpacing: 4 });
-  coverSlide.addText(proposal.proposal_title || `Engagement Proposal`, {
-    x: 0.8, y: 2.0, w: 11, h: 1.2, fontSize: 36, color: COLORS.WHITE, fontFace: "Arial", bold: true,
-  });
-  coverSlide.addText(proposal.company_name, {
-    x: 0.8, y: 3.4, w: 11, h: 0.8, fontSize: 24, color: COLORS.ACCENT, fontFace: "Arial",
-  });
-  coverSlide.addText(new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }), {
-    x: 0.8, y: 5.8, w: 5, h: 0.5, fontSize: 14, color: COLORS.LIGHT_GRAY, fontFace: "Arial",
-  });
-  coverSlide.addText("STRICTLY CONFIDENTIAL", {
-    x: 0.8, y: 6.4, w: 5, h: 0.4, fontSize: 10, color: COLORS.MUTED, fontFace: "Arial", letterSpacing: 2,
-  });
+  if (shouldInclude("cover")) {
+    const coverSlide = pptx.addSlide();
+    coverSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: "100%", fill: { color: COLORS.PRIMARY } });
+    coverSlide.addShape("rect", { x: 0, y: 5.5, w: "100%", h: 2, fill: { color: COLORS.DARK } });
+    coverSlide.addText("EENDIGO", { x: 0.8, y: 0.5, w: 5, h: 0.6, fontSize: 14, color: COLORS.ACCENT, fontFace: "Arial", bold: true, letterSpacing: 4 });
+    coverSlide.addText(proposal.proposal_title || `Engagement Proposal`, {
+      x: 0.8, y: 2.0, w: 11, h: 1.2, fontSize: 36, color: COLORS.WHITE, fontFace: "Arial", bold: true,
+    });
+    coverSlide.addText(proposal.company_name, {
+      x: 0.8, y: 3.4, w: 11, h: 0.8, fontSize: 24, color: COLORS.ACCENT, fontFace: "Arial",
+    });
+    coverSlide.addText(new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }), {
+      x: 0.8, y: 5.8, w: 5, h: 0.5, fontSize: 14, color: COLORS.LIGHT_GRAY, fontFace: "Arial",
+    });
+    coverSlide.addText("STRICTLY CONFIDENTIAL", {
+      x: 0.8, y: 6.4, w: 5, h: 0.4, fontSize: 10, color: COLORS.MUTED, fontFace: "Arial", letterSpacing: 2,
+    });
+  }
 
   // ─── Brief-based slides (when briefs exist) ─────────────────────────────────
   const briefs = proposal.slide_briefs || [];
@@ -234,37 +252,40 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
   const hasBriefs = briefs.length > 0;
 
   if (hasBriefs) {
-    // Generate slides from briefs, skipping hardcoded ones (cover already done, pricing/next_steps done later)
+    // Generate slides from briefs, skipping hardcoded ones and unselected slides
     for (const brief of briefs) {
       if (HARDCODED_SLIDE_IDS.has(brief.slide_id)) continue;
       if (!brief.content_structure || brief.content_structure.length === 0) continue;
+      if (!shouldInclude(brief.slide_id)) continue;
       generateSlideFromBrief(brief, adminConfigs);
     }
   } else {
     // ─── Fallback: Legacy hardcoded slides when no briefs exist ──────────────
 
     // Slide 2: Executive Summary
-    const execSlide = pptx.addSlide();
-    addSlideHeader(execSlide, "Executive Summary");
+    if (shouldInclude("exec_summary")) {
+      const execSlide = pptx.addSlide();
+      addSlideHeader(execSlide, "Executive Summary");
 
-    if (proposal.company_summary) {
-      execSlide.addText("Company Overview", { x: 0.8, y: 1.3, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-      execSlide.addText(proposal.company_summary, { x: 0.8, y: 1.8, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
-    }
+      if (proposal.company_summary) {
+        execSlide.addText("Company Overview", { x: 0.8, y: 1.3, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+        execSlide.addText(proposal.company_summary, { x: 0.8, y: 1.8, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+      }
 
-    if (proposal.objective_statement) {
-      execSlide.addText("Objective", { x: 0.8, y: 3.0, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-      execSlide.addText(proposal.objective_statement, { x: 0.8, y: 3.5, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
-    }
+      if (proposal.objective_statement) {
+        execSlide.addText("Objective", { x: 0.8, y: 3.0, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+        execSlide.addText(proposal.objective_statement, { x: 0.8, y: 3.5, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+      }
 
-    if (proposal.recommended_team) {
-      execSlide.addText("Recommended Team", { x: 0.8, y: 4.7, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-      execSlide.addText(proposal.recommended_team, { x: 0.8, y: 5.2, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+      if (proposal.recommended_team) {
+        execSlide.addText("Recommended Team", { x: 0.8, y: 4.7, w: 11, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
+        execSlide.addText(proposal.recommended_team, { x: 0.8, y: 5.2, w: 11, h: 1.0, fontSize: 12, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 6 });
+      }
+      addFooter(execSlide);
     }
-    addFooter(execSlide);
 
     // Slide 3: Why Now
-    if (proposal.why_now) {
+    if (proposal.why_now && shouldInclude("value_at_stake")) {
       const whySlide = pptx.addSlide();
       addSlideHeader(whySlide, "Why Now?");
       whySlide.addText(proposal.why_now, { x: 0.8, y: 1.5, w: 11, h: 4.0, fontSize: 14, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 8 });
@@ -272,7 +293,7 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     }
 
     // Slide 4: Scope & Objectives
-    if (proposal.scope_statement) {
+    if (proposal.scope_statement && shouldInclude("proposed_approach")) {
       const scopeSlide = pptx.addSlide();
       addSlideHeader(scopeSlide, "Scope & Objectives");
       scopeSlide.addText(proposal.scope_statement, { x: 0.8, y: 1.5, w: 11, h: 4.0, fontSize: 14, color: COLORS.TEXT, fontFace: "Arial", paraSpaceAfter: 8 });
@@ -280,7 +301,8 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     }
   }
 
-  // ─── Option Slides (always rendered) ───────────────────────────────────────
+  // ─── Option Slides (gated by selection) ────────────────────────────────────
+  if (shouldInclude("options") || shouldInclude("timeline_options")) {
   for (const option of proposal.options) {
     const optSlide = pptx.addSlide();
     optSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
@@ -331,8 +353,10 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
 
     addFooter(optSlide);
   }
+  } // end options gate
 
   // ─── Slide 8: Pricing Summary ──────────────────────────────────────────────
+  if (shouldInclude("commercials")) {
   const pricingSlide = pptx.addSlide();
   pricingSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
   pricingSlide.addText("Pricing Summary", { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
@@ -372,8 +396,10 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
   ];
   pricingSlide.addTable(rateRows, { x: 0.8, y: 4.5, w: 5, colW: [3.0, 2.0], border: { color: COLORS.LIGHT_GRAY, pt: 0.5 }, fontFace: "Arial" });
   addFooter(pricingSlide);
+  } // end commercials gate
 
   // ─── Slide 9: Next Steps ───────────────────────────────────────────────────
+  if (shouldInclude("next_steps")) {
   const nextSlide = pptx.addSlide();
   nextSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
   nextSlide.addText("Next Steps", { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
@@ -396,6 +422,7 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     x: 0.8, y: 6.2, w: 11, h: 0.5, fontSize: 14, color: COLORS.MUTED, fontFace: "Arial", italic: true,
   });
   addFooter(nextSlide);
+  } // end next_steps gate
 
   // Generate buffer
   const arrayBuffer = await pptx.write({ outputType: "arraybuffer" }) as ArrayBuffer;

@@ -461,6 +461,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           recommended_team: proposal.recommended_team,
           options: (proposal.options as any[]) || [],
           slide_briefs: (proposal.slide_briefs as any[]) || [],
+          slide_selection: (proposal.slide_selection as any[]) || [],
           admin_configs: adminConfigMap,
           deck_template: deckTemplate || undefined,
         },
