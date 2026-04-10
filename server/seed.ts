@@ -348,6 +348,7 @@ export async function seedDatabase() {
   `);
 
   await db.execute(sql`ALTER TABLE slide_methodology_configs ADD COLUMN IF NOT EXISTS guidance_image TEXT`);
+  await db.execute(sql`ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS body TEXT`);
 
   // Seed default configs for Executive Summary + Deep Dive (idempotent)
   await db.execute(sql`

@@ -344,6 +344,7 @@ export const pricingProposals = pgTable("pricing_proposals", {
 export const employeeTaskSchema = z.object({
   id: z.number().optional(),
   title: z.string().min(1),
+  body: z.string().nullable().optional(),
   delegated_to: z.string(),   // employee id
   deadline: z.string().nullable().optional(),
   status: z.enum(["pending", "done"]).default("pending"),
@@ -354,6 +355,7 @@ export type EmployeeTask = z.infer<typeof employeeTaskSchema>;
 export const employeeTasks = pgTable("employee_tasks", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
+  body: text("body"),
   delegated_to: text("delegated_to").notNull(),
   deadline: text("deadline"),
   status: text("status").notNull().default("pending"),

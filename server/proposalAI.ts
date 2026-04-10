@@ -27,8 +27,6 @@ interface ProposalOption {
   deliverables: string[];
   cadence: string;
   assumptions: string[];
-  price_breakdown: { role: string; count: number; daily_rate: number; days: number; total: number }[];
-  total_fee: number;
 }
 
 interface ProposalAnalysis {
@@ -42,28 +40,6 @@ interface ProposalAnalysis {
   options: ProposalOption[];
 }
 
-const DAILY_RATES: Record<string, number> = {
-  Partner: 7000,
-  EM: 2800,
-  ASC: 1200,
-};
-
-function calculateOptionPricing(option: ProposalOption): ProposalOption {
-  const priceBreakdown = option.team.map((member) => {
-    const rate = DAILY_RATES[member.role] || 1200;
-    const days = member.days_per_week * option.duration_weeks;
-    const total = rate * days * member.count;
-    return {
-      role: member.role,
-      count: member.count,
-      daily_rate: rate,
-      days,
-      total,
-    };
-  });
-  const totalFee = priceBreakdown.reduce((sum, item) => sum + item.total, 0);
-  return { ...option, price_breakdown: priceBreakdown, total_fee: totalFee };
-}
 
 const ANALYSIS_TOOL = {
   name: "submit_proposal_analysis" as const,
@@ -127,8 +103,6 @@ function getMockAnalysis(input: ProposalInput): ProposalAnalysis {
       deliverables: ["AI analysis unavailable - set ANTHROPIC_API_KEY"],
       cadence: "Weekly steering committee",
       assumptions: ["AI analysis unavailable - set ANTHROPIC_API_KEY"],
-      price_breakdown: [],
-      total_fee: 0,
     },
     {
       name: "Standard",
@@ -143,8 +117,6 @@ function getMockAnalysis(input: ProposalInput): ProposalAnalysis {
       deliverables: ["AI analysis unavailable - set ANTHROPIC_API_KEY"],
       cadence: "Weekly steering committee + bi-weekly board update",
       assumptions: ["AI analysis unavailable - set ANTHROPIC_API_KEY"],
-      price_breakdown: [],
-      total_fee: 0,
     },
     {
       name: "Premium",
@@ -159,8 +131,6 @@ function getMockAnalysis(input: ProposalInput): ProposalAnalysis {
       deliverables: ["AI analysis unavailable - set ANTHROPIC_API_KEY"],
       cadence: "Weekly steering committee + weekly board update",
       assumptions: ["AI analysis unavailable - set ANTHROPIC_API_KEY"],
-      price_breakdown: [],
-      total_fee: 0,
     },
   ];
 
@@ -172,7 +142,7 @@ function getMockAnalysis(input: ProposalInput): ProposalAnalysis {
     scope_statement: input.scope_perimeter || "AI analysis unavailable - set ANTHROPIC_API_KEY.",
     recommended_team: "AI analysis unavailable - set ANTHROPIC_API_KEY.",
     staffing_intensity: "moderate",
-    options: options.map(calculateOptionPricing),
+    options,
   };
 }
 
@@ -198,12 +168,7 @@ export async function analyzeProposal(input: ProposalInput): Promise<ProposalAna
 
   const systemPrompt = `You are Eendigo's proposal strategist. Eendigo is a management consulting firm specializing in commercial excellence, pricing strategy, sales force effectiveness, and go-to-market optimization for mid-market and large enterprises.
 
-Your task is to analyze the provided client information and generate a structured consulting proposal with 3 options (Essential, Standard, Premium) of increasing scope and investment.
-
-Daily rates:
-- Partner: EUR 7,000/day
-- EM (Engagement Manager): EUR 2,800/day
-- ASC (Associate/Senior Consultant): EUR 1,200/day
+Your task is to analyze the provided client information and generate a structured consulting proposal with 3 options (Essential, Standard, Premium) of increasing scope and investment. Pricing is handled separately — do not calculate fees.
 
 Guidelines:
 - Essential: Focused diagnostic or quick-win, 4-8 weeks, lean team, 3 days/week
@@ -234,9 +199,6 @@ Guidelines:
     }
 
     const analysis = toolUse.input as ProposalAnalysis;
-
-    // Recalculate pricing for each option
-    analysis.options = analysis.options.map(calculateOptionPricing);
 
     return analysis;
   } catch (error) {

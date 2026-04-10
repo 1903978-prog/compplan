@@ -29,7 +29,6 @@ interface SlideBrief {
 }
 
 interface TeamMember { role: string; count: number; days_per_week: number }
-interface PriceBreakdown { role: string; count: number; daily_rate: number; days: number; total: number }
 interface ProposalOption {
   name: string;
   duration_weeks: number;
@@ -39,8 +38,6 @@ interface ProposalOption {
   deliverables: string[];
   cadence: string;
   assumptions: string[];
-  price_breakdown: PriceBreakdown[];
-  total_fee: number;
 }
 
 interface CallChecklistItem {
@@ -83,10 +80,6 @@ interface Template {
   file_size: number;
   is_active: number;
   uploaded_at: string;
-}
-
-function formatCurrency(val: number): string {
-  return new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(val);
 }
 
 function formatDate(iso: string): string {
@@ -1787,7 +1780,6 @@ Root cause: Territory allocation..."
                   <TableRow>
                     <TableHead>Option</TableHead>
                     <TableHead className="text-center">Weeks</TableHead>
-                    <TableHead className="text-right">Total Fee</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1795,7 +1787,6 @@ Root cause: Territory allocation..."
                     <TableRow key={i}>
                       <TableCell className="font-medium">{opt.name}</TableCell>
                       <TableCell className="text-center">{opt.duration_weeks}</TableCell>
-                      <TableCell className="text-right font-semibold">{formatCurrency(opt.total_fee)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1843,14 +1834,13 @@ Root cause: Territory allocation..."
               <TableHead>Title</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Options</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="w-32"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {proposals.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No proposals yet. Click "New Proposal" to start.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No proposals yet. Click "New Proposal" to start.</TableCell></TableRow>
             )}
             {[...proposals].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(p => (
               <TableRow key={p.id} className="cursor-pointer hover:bg-accent/50" onClick={() => openProposal(p)}>
@@ -1871,12 +1861,6 @@ Root cause: Territory allocation..."
                   }`}>
                     {p.status}
                   </span>
-                </TableCell>
-                <TableCell>
-                  {(p.options || []).length > 0
-                    ? (p.options as ProposalOption[]).map(o => formatCurrency(o.total_fee)).join(" / ")
-                    : "\u2014"
-                  }
                 </TableCell>
                 <TableCell>{formatDate(p.created_at)}</TableCell>
                 <TableCell>
@@ -1907,25 +1891,13 @@ function OptionCard({ option, onChange }: { option: ProposalOption; onChange: (o
     } else {
       team[idx] = { ...team[idx], [field]: Number(val) || 0 };
     }
-    recalcPricing({ ...option, team });
-  }
-
-  function recalcPricing(opt: ProposalOption) {
-    const RATES: Record<string, number> = { Partner: 7000, EM: 2800, ASC: 1200 };
-    const price_breakdown = opt.team.map(m => {
-      const rate = RATES[m.role] || 1200;
-      const days = m.days_per_week * opt.duration_weeks;
-      return { role: m.role, count: m.count, daily_rate: rate, days, total: rate * days * m.count };
-    });
-    const total_fee = price_breakdown.reduce((s, b) => s + b.total, 0);
-    onChange({ ...opt, price_breakdown, total_fee });
+    onChange({ ...option, team });
   }
 
   return (
     <Card className="p-4 space-y-3 border-2 hover:border-primary/30 transition-colors">
       <div className="flex items-center justify-between">
         <h4 className="font-semibold text-lg">{option.name}</h4>
-        <span className="text-xl font-bold text-primary">{formatCurrency(option.total_fee)}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -1934,7 +1906,7 @@ function OptionCard({ option, onChange }: { option: ProposalOption; onChange: (o
           <Input
             type="number"
             value={option.duration_weeks}
-            onChange={e => recalcPricing({ ...option, duration_weeks: Number(e.target.value) || 0 })}
+            onChange={e => onChange({ ...option, duration_weeks: Number(e.target.value) || 0 })}
             className="h-8 text-sm"
           />
         </div>
@@ -2010,17 +1982,6 @@ function OptionCard({ option, onChange }: { option: ProposalOption; onChange: (o
         <Input value={option.cadence} onChange={e => onChange({ ...option, cadence: e.target.value })} className="h-7 text-xs" />
       </div>
 
-      <div className="border-t pt-2 mt-2">
-        <label className="text-xs text-muted-foreground font-medium">Price Breakdown</label>
-        <div className="text-xs space-y-0.5 mt-1">
-          {(option.price_breakdown || []).map((b, i) => (
-            <div key={i} className="flex justify-between">
-              <span>{b.role} ({b.count}x) - {b.days}d @ {formatCurrency(b.daily_rate)}</span>
-              <span className="font-medium">{formatCurrency(b.total)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
     </Card>
   );
 }

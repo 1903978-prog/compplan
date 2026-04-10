@@ -4,14 +4,6 @@ interface TeamMember {
   days_per_week: number;
 }
 
-interface PriceBreakdown {
-  role: string;
-  count: number;
-  daily_rate: number;
-  days: number;
-  total: number;
-}
-
 interface ProposalOption {
   name: string;
   duration_weeks: number;
@@ -21,8 +13,6 @@ interface ProposalOption {
   deliverables: string[];
   cadence: string;
   assumptions: string[];
-  price_breakdown: PriceBreakdown[];
-  total_fee: number;
 }
 
 interface SlideMethodologyConfig {
@@ -103,10 +93,6 @@ function resolveColors(template?: DeckTemplateConfig) {
   };
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-EU", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value);
-}
-
 // ── Brief-based slide generators ────────────────────────────────────────────
 
 // Note: addSlideHeader, addInsightBar, and format generators are defined
@@ -114,7 +100,7 @@ function formatCurrency(value: number): string {
 
 // Slides that have dedicated hardcoded generators (skip from brief-based rendering)
 const HARDCODED_SLIDE_IDS = new Set([
-  "cover", "pricing_overview", "pricing_detail", "next_steps", "commercials",
+  "cover", "next_steps",
 ]);
 
 export async function generateProposalDeck(proposal: ProposalData, _template?: any): Promise<Buffer> {
@@ -343,60 +329,12 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     const delText = option.deliverables.map((d) => `  \u2022  ${d}`).join("\n");
     optSlide.addText(delText, { x: 6.5, y: 2.3, w: 6, h: 2.0, fontSize: 10, color: COLORS.TEXT, fontFace: "Arial", valign: "top" });
 
-    // Pricing box
-    optSlide.addShape("roundRect", { x: 6.5, y: 5.5, w: 5.5, h: 1.2, fill: { color: COLORS.LIGHT_BG }, rectRadius: 0.1, line: { color: COLORS.ACCENT, width: 1.5 } });
-    optSlide.addText("Total Investment", { x: 6.7, y: 5.55, w: 3, h: 0.4, fontSize: 12, color: COLORS.MUTED, fontFace: "Arial" });
-    optSlide.addText(formatCurrency(option.total_fee), { x: 6.7, y: 5.95, w: 5, h: 0.6, fontSize: 28, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-
     // Cadence
     optSlide.addText(`Cadence: ${option.cadence}`, { x: 0.8, y: 6.3, w: 5, h: 0.4, fontSize: 10, color: COLORS.MUTED, fontFace: "Arial", italic: true });
 
     addFooter(optSlide);
   }
   } // end options gate
-
-  // ─── Slide 8: Pricing Summary ──────────────────────────────────────────────
-  if (shouldInclude("commercials")) {
-  const pricingSlide = pptx.addSlide();
-  pricingSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
-  pricingSlide.addText("Pricing Summary", { x: 0.8, y: 0.15, w: 10, h: 0.7, fontSize: 28, color: COLORS.WHITE, fontFace: "Arial", bold: true });
-
-  // Summary table
-  const summaryRows: any[][] = [
-    [
-      { text: "", options: { bold: true, fontSize: 11, fill: { color: COLORS.PRIMARY }, color: COLORS.WHITE } },
-      { text: "Duration", options: { bold: true, fontSize: 11, fill: { color: COLORS.PRIMARY }, color: COLORS.WHITE, align: "center" } },
-      { text: "Staffing", options: { bold: true, fontSize: 11, fill: { color: COLORS.PRIMARY }, color: COLORS.WHITE, align: "center" } },
-      { text: "Team Size", options: { bold: true, fontSize: 11, fill: { color: COLORS.PRIMARY }, color: COLORS.WHITE, align: "center" } },
-      { text: "Total Fee", options: { bold: true, fontSize: 11, fill: { color: COLORS.PRIMARY }, color: COLORS.WHITE, align: "center" } },
-    ],
-  ];
-  for (const opt of proposal.options) {
-    const teamSize = opt.team.reduce((sum, m) => sum + m.count, 0);
-    summaryRows.push([
-      { text: opt.name, options: { fontSize: 11, color: COLORS.PRIMARY, bold: true } },
-      { text: `${opt.duration_weeks} weeks`, options: { fontSize: 11, color: COLORS.TEXT, align: "center" } },
-      { text: opt.staffing_mode, options: { fontSize: 11, color: COLORS.TEXT, align: "center" } },
-      { text: String(teamSize), options: { fontSize: 11, color: COLORS.TEXT, align: "center" } },
-      { text: formatCurrency(opt.total_fee), options: { fontSize: 11, color: COLORS.PRIMARY, bold: true, align: "center" } },
-    ]);
-  }
-  pricingSlide.addTable(summaryRows, { x: 0.8, y: 1.5, w: 11.5, colW: [2.5, 2.0, 2.5, 2.0, 2.5], border: { color: COLORS.LIGHT_GRAY, pt: 0.5 }, fontFace: "Arial" });
-
-  // Rate card
-  pricingSlide.addText("Daily Rate Card", { x: 0.8, y: 4.0, w: 5, h: 0.4, fontSize: 16, color: COLORS.PRIMARY, fontFace: "Arial", bold: true });
-  const rateRows: any[][] = [
-    [
-      { text: "Role", options: { bold: true, fontSize: 10, fill: { color: COLORS.LIGHT_BG }, color: COLORS.PRIMARY } },
-      { text: "Daily Rate", options: { bold: true, fontSize: 10, fill: { color: COLORS.LIGHT_BG }, color: COLORS.PRIMARY, align: "center" } },
-    ],
-    [{ text: "Partner", options: { fontSize: 10, color: COLORS.TEXT } }, { text: "EUR 7,000", options: { fontSize: 10, color: COLORS.TEXT, align: "center" } }],
-    [{ text: "Engagement Manager", options: { fontSize: 10, color: COLORS.TEXT } }, { text: "EUR 2,800", options: { fontSize: 10, color: COLORS.TEXT, align: "center" } }],
-    [{ text: "Associate / Senior Consultant", options: { fontSize: 10, color: COLORS.TEXT } }, { text: "EUR 1,200", options: { fontSize: 10, color: COLORS.TEXT, align: "center" } }],
-  ];
-  pricingSlide.addTable(rateRows, { x: 0.8, y: 4.5, w: 5, colW: [3.0, 2.0], border: { color: COLORS.LIGHT_GRAY, pt: 0.5 }, fontFace: "Arial" });
-  addFooter(pricingSlide);
-  } // end commercials gate
 
   // ─── Slide 9: Next Steps ───────────────────────────────────────────────────
   if (shouldInclude("next_steps")) {
