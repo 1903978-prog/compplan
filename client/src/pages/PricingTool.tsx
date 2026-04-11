@@ -52,6 +52,8 @@ interface PricingCase {
   target_roi?: number | null;
   max_fees_ebitda_pct?: number | null;
   aspiration_ebitda_pct?: number | null;
+  company_revenue_m?: number | null;      // Company total revenue (€M)
+  aspiration_ebitda_eur?: number | null;  // Incremental aspiration EBITDA (€, absolute)
 }
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
@@ -271,6 +273,7 @@ function emptyCase(): PricingCase {
     procurement_involvement: null,
     target_roi: 10, max_fees_ebitda_pct: 3,
     aspiration_ebitda_pct: null,
+    company_revenue_m: null, aspiration_ebitda_eur: null,
   };
 }
 
@@ -1532,14 +1535,29 @@ export default function PricingTool() {
                     </div>
                   );
                 })()}
-                {/* Aspiration EBITDA increase */}
+                {/* Company total revenue */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Aspiration EBITDA increase (% of current)</Label>
-                  <Input type="number" min="0" max="200" step="1"
-                    placeholder="e.g. 20"
-                    value={form.aspiration_ebitda_pct ?? ""}
-                    onChange={e => setForm(f => ({ ...f, aspiration_ebitda_pct: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
-                  <div className="text-[9px] text-muted-foreground">Expected EBITDA uplift as % of current EBITDA</div>
+                  <Label className="text-xs">Company Revenue (€M)</Label>
+                  <Input type="number" min="0" step="10"
+                    placeholder="e.g. 500"
+                    value={form.company_revenue_m ?? ""}
+                    onChange={e => setForm(f => ({ ...f, company_revenue_m: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
+                  {form.company_revenue_m && form.ebitda_margin_pct ? (
+                    <div className="text-[9px] text-muted-foreground">
+                      Computed EBITDA: €{((form.company_revenue_m * form.ebitda_margin_pct / 100) * 1_000_000).toLocaleString("it-IT")}
+                    </div>
+                  ) : (
+                    <div className="text-[9px] text-muted-foreground">EBITDA = Revenue × Margin%</div>
+                  )}
+                </div>
+                {/* Incremental aspiration EBITDA (absolute €) */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Incremental Aspiration EBITDA (€)</Label>
+                  <Input type="number" min="0" step="100000"
+                    placeholder="e.g. 5000000"
+                    value={form.aspiration_ebitda_eur ?? ""}
+                    onChange={e => setForm(f => ({ ...f, aspiration_ebitda_eur: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
+                  <div className="text-[9px] text-muted-foreground">Absolute €, not %. Used in TNF/Aspiration ratio below.</div>
                 </div>
                 {/* Strategic intent */}
                 <div className="space-y-1">
@@ -1717,9 +1735,10 @@ export default function PricingTool() {
             const matrixRegion2 = regionMap2[form.region] ?? "Italy";
             const benchmarks = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
 
-            const currentEbitda = (form as any).vbp_current_ebitda ?? 0;
-            const aspirationPct = form.aspiration_ebitda_pct ?? 0;
-            const aspirationEur = aspirationPct > 0 && currentEbitda > 0 ? currentEbitda * aspirationPct / 100 : 0;
+            const revenueM = form.company_revenue_m ?? 0;
+            const ebitdaPct = form.ebitda_margin_pct ?? 0;
+            const currentEbitda = revenueM > 0 && ebitdaPct > 0 ? revenueM * 1_000_000 * ebitdaPct / 100 : 0;
+            const aspirationEur = form.aspiration_ebitda_eur ?? 0;
             const tnfEbitdaRatio = currentEbitda > 0 ? tnf / currentEbitda : null;
             const tnfAspirationRatio = aspirationEur > 0 ? tnf / aspirationEur : null;
 
@@ -1733,35 +1752,6 @@ export default function PricingTool() {
             const allBenchVals = [...benchRows.map(r => r.avg), tnf];
             const benchScale = Math.max(...allBenchVals, 1) * 1.1;
             const pctBar = (v: number) => `${Math.min(100, (v / benchScale) * 100).toFixed(1)}%`;
-
-            // Probability curve
-            const regionProposals = proposals.filter(p => p.region === form.region && (p.outcome === "won" || p.outcome === "lost"));
-            const cMin = minFeeWeekly > 0 ? minFeeWeekly * 0.8 : (regionProposals.length > 0 ? Math.min(...regionProposals.map(p => p.weekly_price)) * 0.85 : 15000);
-            const cMax = maxFeeWeekly < Infinity ? maxFeeWeekly * 1.1 : (regionProposals.length > 0 ? Math.max(...regionProposals.map(p => p.weekly_price)) * 1.15 : 120000);
-            const cRange = cMax - cMin || 1;
-            const NUM_POINTS = 40;
-            const bandwidth = cRange * 0.35;
-            const curvePoints = Array.from({ length: NUM_POINTS + 1 }, (_, i) => {
-              const price = cMin + cRange * (i / NUM_POINTS);
-              let prob: number;
-              if (regionProposals.length >= 3) {
-                const inWindow = regionProposals.filter(p => Math.abs(p.weekly_price - price) <= bandwidth);
-                prob = inWindow.length > 0
-                  ? inWindow.filter(p => p.outcome === "won").length / inWindow.length
-                  : 0.75 - 0.5 * ((price - cMin) / cRange);
-              } else {
-                prob = 0.75 - 0.45 * ((price - cMin) / cRange);
-              }
-              return { price, prob: Math.max(0.03, Math.min(0.97, prob)) };
-            });
-
-            const CW = 260; const CH = 160;
-            const cpx = (price: number) => 32 + ((price - cMin) / cRange) * (CW - 44);
-            const cpy = (prob: number) => CH - 22 - prob * (CH - 42);
-            const pathD = curvePoints.map((p, i) => `${i === 0 ? "M" : "L"} ${cpx(p.price).toFixed(1)} ${cpy(p.prob).toFixed(1)}`).join(" ");
-            const nwfPt = curvePoints.reduce((best, p) =>
-              Math.abs(p.price - nwfClamped) < Math.abs(best.price - nwfClamped) ? p : best
-            , curvePoints[0]);
 
             return (
               <div className="border rounded-lg p-4 bg-muted/10 space-y-3">
@@ -1801,7 +1791,7 @@ export default function PricingTool() {
                           <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(currentEbitda)}</span>
                         </span>
                       ) : (
-                        <span className="text-[10px] text-muted-foreground italic">Set Current EBITDA in VBP section</span>
+                        <span className="text-[10px] text-muted-foreground italic">Set Revenue + EBITDA margin above</span>
                       )}
                     </div>
                     {/* Row 4: TNF/Aspiration */}
@@ -1813,62 +1803,87 @@ export default function PricingTool() {
                           <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(aspirationEur)}</span>
                         </span>
                       ) : (
-                        <span className="text-[10px] text-muted-foreground italic">Set EBITDA + Aspiration % above</span>
+                        <span className="text-[10px] text-muted-foreground italic">Set Incremental Aspiration EBITDA above</span>
                       )}
                     </div>
                   </div>
-                  {/* Probability curve */}
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold uppercase text-muted-foreground">Win Probability vs Weekly Fee</div>
-                    <svg width={CW} height={CH} viewBox={`0 0 ${CW} ${CH}`}>
-                      {/* Grid lines */}
-                      {[0.25, 0.5, 0.75].map(p => (
-                        <line key={p} x1="30" x2={CW - 8} y1={cpy(p)} y2={cpy(p)} stroke="#e2e8f0" strokeWidth="0.5" strokeDasharray="3,2" />
-                      ))}
-                      {/* Axes */}
-                      <line x1="32" y1="6" x2="32" y2={CH - 20} stroke="#94a3b8" strokeWidth="0.5" />
-                      <line x1="30" y1={CH - 20} x2={CW - 6} y2={CH - 20} stroke="#94a3b8" strokeWidth="0.5" />
-                      {/* Y labels */}
-                      {[0, 0.25, 0.5, 0.75, 1].map(p => (
-                        <text key={p} x="28" y={cpy(p) + 3} textAnchor="end" fontSize="7" fill="#94a3b8">{Math.round(p * 100)}%</text>
-                      ))}
-                      {/* X labels */}
-                      <text x={cpx(cMin)} y={CH - 7} textAnchor="middle" fontSize="7" fill="#94a3b8">{fmtK2(cMin)}</text>
-                      <text x={cpx((cMin + cMax) / 2)} y={CH - 7} textAnchor="middle" fontSize="7" fill="#94a3b8">{fmtK2((cMin + cMax) / 2)}</text>
-                      <text x={cpx(cMax)} y={CH - 7} textAnchor="middle" fontSize="7" fill="#94a3b8">{fmtK2(cMax)}</text>
-                      {/* Historical data points */}
-                      {regionProposals.map((p, i) => (
-                        <circle key={i}
-                          cx={cpx(Math.min(cMax, Math.max(cMin, p.weekly_price)))}
-                          cy={cpy(p.outcome === "won" ? 1 : 0)}
-                          r="2.5" fill={p.outcome === "won" ? "#10b981" : "#ef4444"} opacity="0.45" />
-                      ))}
-                      {/* Smoothed win-rate curve */}
-                      <path d={pathD} fill="none" stroke="#1A6571" strokeWidth="1.5" opacity="0.85" />
-                      {/* NWF marker */}
-                      <line x1={cpx(nwfClamped)} y1={cpy(0)} x2={cpx(nwfClamped)} y2={cpy(nwfPt.prob)} stroke="#f59e0b" strokeWidth="1" strokeDasharray="2,2" />
-                      <circle cx={cpx(nwfClamped)} cy={cpy(nwfPt.prob)} r="3.5" fill="#f59e0b" />
-                      <text x={cpx(nwfClamped)} y={cpy(nwfPt.prob) - 6} textAnchor="middle" fontSize="8" fill="#d97706" fontWeight="bold">
-                        {Math.round(nwfPt.prob * 100)}%
-                      </text>
-                      {/* Axis labels */}
-                      <text x="10" y={cpy(0.5)} textAnchor="middle" fontSize="7" fill="#94a3b8"
-                        transform={`rotate(-90, 10, ${cpy(0.5)})`}>Win %</text>
-                      <text x={cpx((cMin + cMax) / 2)} y={CH + 2} textAnchor="middle" fontSize="7" fill="#94a3b8">Fee/wk</text>
-                    </svg>
-                    {regionProposals.length === 0 && (
-                      <div className="text-[9px] text-muted-foreground italic text-center">
-                        No win/loss data for {form.region} — showing indicative curve
+                  {/* Band visualization (replaces Win Probability chart) */}
+                  {(() => {
+                    const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
+                    const weeklyBench = benchmarks.find(b =>
+                      countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+                      (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+                    );
+                    const totalBench = benchmarks.find(b =>
+                      countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+                      (b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"))
+                    );
+
+                    const BandBar = ({ bench, marker, label }: { bench: CountryBenchmarkRow | undefined; marker: number; label: string }) => {
+                      if (!bench || bench.yellow_high === 0) {
+                        return (
+                          <div className="space-y-0.5">
+                            <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
+                            <div className="text-[9px] text-muted-foreground italic">No benchmark for {form.region}</div>
+                          </div>
+                        );
+                      }
+                      const rangeLow = Math.min(bench.yellow_low * 0.75, marker * 0.85);
+                      const rangeHigh = Math.max(bench.yellow_high * 1.15, marker * 1.15);
+                      const span = rangeHigh - rangeLow;
+                      const pct = (v: number) => Math.max(0, Math.min(100, ((v - rangeLow) / span) * 100));
+                      const markerPct = pct(marker);
+                      const band = marker >= bench.green_low && marker <= bench.green_high
+                        ? "green"
+                        : marker >= bench.yellow_low && marker <= bench.yellow_high
+                        ? "yellow"
+                        : "red";
+                      const bandLabel = band === "green" ? "In Green band" : band === "yellow" ? "In Yellow band" : "In Red band";
+                      const bandColor = band === "green" ? "text-emerald-600" : band === "yellow" ? "text-amber-600" : "text-red-600";
+                      return (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
+                            <div className={`text-[10px] font-bold ${bandColor}`}>{bandLabel}</div>
+                          </div>
+                          <div className="relative h-6 rounded overflow-hidden border border-border">
+                            {/* Red left */}
+                            <div className="absolute top-0 bottom-0 bg-red-400/40" style={{ left: 0, width: `${pct(bench.yellow_low)}%` }} />
+                            {/* Yellow left */}
+                            <div className="absolute top-0 bottom-0 bg-amber-300/60" style={{ left: `${pct(bench.yellow_low)}%`, width: `${pct(bench.green_low) - pct(bench.yellow_low)}%` }} />
+                            {/* Green middle */}
+                            <div className="absolute top-0 bottom-0 bg-emerald-400/70" style={{ left: `${pct(bench.green_low)}%`, width: `${pct(bench.green_high) - pct(bench.green_low)}%` }} />
+                            {/* Yellow right */}
+                            <div className="absolute top-0 bottom-0 bg-amber-300/60" style={{ left: `${pct(bench.green_high)}%`, width: `${pct(bench.yellow_high) - pct(bench.green_high)}%` }} />
+                            {/* Red right */}
+                            <div className="absolute top-0 bottom-0 bg-red-400/40" style={{ left: `${pct(bench.yellow_high)}%`, right: 0 }} />
+                            {/* Marker */}
+                            <div className="absolute top-0 bottom-0 w-0.5 bg-foreground" style={{ left: `calc(${markerPct}% - 1px)` }} />
+                            <div className="absolute -top-0.5 text-[9px] font-bold text-foreground whitespace-nowrap"
+                                 style={{ left: `${markerPct}%`, transform: "translate(-50%, -100%)" }}>
+                              ▼
+                            </div>
+                          </div>
+                          <div className="flex justify-between text-[8px] text-muted-foreground font-mono">
+                            <span>{fmtK2(rangeLow)}</span>
+                            <span className="text-emerald-700">🟢 {fmtK2(bench.green_low)}–{fmtK2(bench.green_high)}</span>
+                            <span>{fmtK2(rangeHigh)}</span>
+                          </div>
+                          <div className="text-[9px] text-center">
+                            <span className="font-semibold">{fmtC(marker)}</span>
+                            <span className="text-muted-foreground ml-1">({bench.decisiveness_pct}% decisiveness)</span>
+                          </div>
+                        </div>
+                      );
+                    };
+
+                    return (
+                      <div className="space-y-3">
+                        <BandBar bench={weeklyBench} marker={nwfClamped} label={`Weekly fee band — ${weeklyBench?.country ?? form.region}`} />
+                        <BandBar bench={totalBench} marker={tnf} label={`Total project cost band — ${totalBench?.country ?? form.region}`} />
                       </div>
-                    )}
-                    {regionProposals.length > 0 && (
-                      <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
-                        <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-emerald-500 opacity-70" /> Won</div>
-                        <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500 opacity-70" /> Lost</div>
-                        <div className="flex items-center gap-1"><div className="w-3 h-0 border-t-2 border-amber-500 border-dashed" /> NWF</div>
-                      </div>
-                    )}
-                  </div>
+                    );
+                  })()}
                 </div>
               </div>
             );

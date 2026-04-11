@@ -481,47 +481,6 @@ function sigmoid(a: number, x: number): number {
   return 1 / (1 + Math.exp(a * x));
 }
 
-// ── L0: Value Anchor ─────────────────────────────────────────────────────────
-
-function computeValueAnchor(input: PricingCaseInput): {
-  value_anchor_weekly: number | null;
-  ebitda_uplift: number | null;
-  ebitda_improvement_pct: number | null;
-} {
-  const { sector, ebitda_margin_pct, revenue_band, commercial_maturity, urgency, project_type, duration_weeks } = input;
-
-  if (!sector || ebitda_margin_pct == null || !project_type || !duration_weeks) {
-    return { value_anchor_weekly: null, ebitda_uplift: null, ebitda_improvement_pct: null };
-  }
-
-  // Get sector improvement range [low_mat, mid_mat, high_mat]
-  const sectorKey = sector in EBITDA_IMPROVEMENT_TABLE ? sector : "Other";
-  const [low_mat, mid_mat, high_mat] = EBITDA_IMPROVEMENT_TABLE[sectorKey];
-
-  // Select by maturity band
-  const mat = commercial_maturity ?? 3;
-  let base_improvement = mat <= 2 ? low_mat : mat >= 4 ? high_mat : mid_mat;
-
-  // Adjust by urgency
-  const urg = urgency ?? 3;
-  const urgency_mult = urg >= 4 ? 1.35 : urg <= 2 ? 0.80 : 1.0;
-  const ebitda_improvement_pct = base_improvement * urgency_mult;
-
-  // Revenue estimate
-  const revenue_m = REVENUE_MIDPOINTS[revenue_band] ?? 500;
-  const ebitda_m = revenue_m * (ebitda_margin_pct / 100);
-  const ebitda_uplift_m = ebitda_m * (ebitda_improvement_pct / 100);
-  const ebitda_uplift = ebitda_uplift_m * 1_000_000;
-
-  // Capture rate by project type
-  const capture_rate = CAPTURE_RATES[project_type] ?? 0.11;
-
-  // Weekly value anchor
-  const value_anchor_weekly = (ebitda_uplift * capture_rate) / duration_weeks;
-
-  return { value_anchor_weekly, ebitda_uplift, ebitda_improvement_pct };
-}
-
 // ── L1: Cost Floor ────────────────────────────────────────────────────────────
 
 function computeCostFloor(input: PricingCaseInput, settings: PricingSettings): number {
@@ -822,26 +781,11 @@ export function calculatePricing(
     note: `Rate-card build-up from ${input.staffing.length} role(s). Cost floor: ${formatCurrency(cost_floor_weekly)}/wk`,
   });
 
-  // ── L0: Value Anchor ─────────────────────────────────────────────────────
-  const { value_anchor_weekly, ebitda_uplift, ebitda_improvement_pct } = computeValueAnchor(input);
-
-  if (value_anchor_weekly !== null) {
-    layer_trace.push({
-      layer: "L0",
-      label: "Value Anchor",
-      value: value_anchor_weekly,
-      delta_pct: base_weekly > 0 ? ((value_anchor_weekly - base_weekly) / base_weekly) * 100 : 0,
-      note: `EBITDA uplift ${formatCurrency(ebitda_uplift ?? 0)} × ${((CAPTURE_RATES[input.project_type!] ?? 0.11) * 100).toFixed(0)}% capture / ${input.duration_weeks}w`,
-    });
-  }
-
-  // Blend value anchor with staffing base (60/40 if anchor available)
+  // ── L0: Value Anchor — REMOVED ───────────────────────────────────────────
+  const value_anchor_weekly = null;
+  const ebitda_uplift = null;
+  const ebitda_improvement_pct = null;
   let working_price = base_weekly;
-  if (value_anchor_weekly !== null && base_weekly > 0) {
-    working_price = 0.6 * base_weekly + 0.4 * value_anchor_weekly;
-  } else if (value_anchor_weekly !== null) {
-    working_price = value_anchor_weekly;
-  }
 
   // ── Geo multiplier (from settings) ───────────────────────────────────────
   const geoRegion = settings.regions.find(r =>
@@ -1015,7 +959,6 @@ export function calculatePricing(
   if (fund_proposals_count >= 5)  confidence += 0.10;
   if (comparable_wins.length >= 2)  confidence += 0.10;
   if (comparable_losses.length >= 2) confidence += 0.05;
-  if (value_anchor_weekly !== null) confidence += 0.10; // value anchor adds confidence
   if (input.competitive_intensity && input.competitor_type) confidence += 0.05; // market context
   if (input.commercial_maturity && input.urgency) confidence += 0.05;
   confidence = Math.min(confidence, 1.0);
@@ -1036,13 +979,6 @@ export function calculatePricing(
     })
     .join(", ");
   drivers.push(`Staffing: ${staffingDesc} → base ${formatCurrency(base_weekly)}/wk`);
-
-  if (value_anchor_weekly !== null) {
-    const captureRate = CAPTURE_RATES[input.project_type!] ?? 0.11;
-    drivers.push(
-      `Value anchor: estimated EBITDA uplift ${formatCurrency(ebitda_uplift ?? 0)} × ${(captureRate * 100).toFixed(0)}% capture / ${input.duration_weeks}w = ${formatCurrency(value_anchor_weekly)}/wk`
-    );
-  }
 
   if (geo_multiplier !== 1.0) {
     drivers.push(`Geography (${input.region}): ×${geo_multiplier} regional adjustment`);
@@ -1096,20 +1032,12 @@ export function calculatePricing(
     warnings.push(`⚠ Low estimated win probability (${(win_probability * 100).toFixed(0)}%) — consider a more competitive price`);
   }
 
-  if (value_anchor_weekly !== null && value_anchor_weekly > target_weekly * 2) {
-    warnings.push(`ℹ Value anchor (${formatCurrency(Math.round(value_anchor_weekly))}/wk) is much higher than target — significant value left uncaptured`);
-  }
-
   // ── Advisory ─────────────────────────────────────────────────────────────
   const postureDesc = posture === "Defensive"
     ? "a conservative posture to maximise win probability"
     : posture === "Assertive"
     ? "an assertive posture reflecting strong market positioning"
     : "a balanced posture between competitiveness and value capture";
-
-  const valueContext = value_anchor_weekly !== null
-    ? ` The value-based anchor (${formatCurrency(Math.round(value_anchor_weekly))}/wk) reflects estimated EBITDA impact of ${formatCurrency(ebitda_uplift ?? 0)}.`
-    : "";
 
   const historyContext = fund_proposals_count >= 2 && history_anchor !== null
     ? ` Historical data from ${fund_proposals_count} prior ${input.fund_name ? `${input.fund_name} ` : ""}proposals anchors at ${formatCurrency(Math.round(history_anchor))}/wk (time-decayed, outcome-weighted).`
@@ -1121,7 +1049,7 @@ export function calculatePricing(
 
   const advisory =
     `This ${input.duration_weeks}-week engagement is priced at ${formatCurrency(target_weekly)}/wk (${formatCurrency(target_total)} total), reflecting ${postureDesc}.` +
-    valueContext + historyContext +
+    historyContext +
     (all_comparables.length > 0 ? ` Comparable win rate: ${(win_probability * 100).toFixed(0)}%, expected margin ${expected_margin_pct.toFixed(0)}%. ` : " ") +
     `Confidence: ${confidence_label.toLowerCase()} (${(confidence * 100).toFixed(0)}%). ` +
     `Negotiation range: ${formatCurrency(low_weekly)}–${formatCurrency(high_weekly)}/wk.`;
