@@ -322,8 +322,9 @@ export async function seedDatabase() {
     )
   `);
 
-  // API pause flag
-  await db.execute(sql`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS api_paused INTEGER NOT NULL DEFAULT 0`);
+  // API pause flag — default paused; reset to paused on every restart
+  await db.execute(sql`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS api_paused INTEGER NOT NULL DEFAULT 1`);
+  await db.execute(sql`UPDATE app_settings SET api_paused = 1 WHERE id = 1`);
 
   // Add project_type and slide_selection columns to proposals (idempotent)
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS project_type TEXT`);
