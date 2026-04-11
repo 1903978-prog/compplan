@@ -121,6 +121,72 @@ function clientPrefix(name: string): string {
   return (name || "CLI").replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toUpperCase().padEnd(3, "X");
 }
 
+// ── Benchmark helpers ─────────────────────────────────────────────────────────
+
+const REGION_TO_COUNTRY: Record<string, string[]> = {
+  IT: ["Italy", "IT"],
+  FR: ["France", "FR"],
+  DE: ["Germany", "DACH", "DE"],
+  UK: ["United Kingdom", "UK"],
+  US: ["United States", "US"],
+  Asia: ["Asia"],
+  "Middle East": ["Middle East"],
+};
+
+function getBandForPrice(
+  weeklyPrice: number,
+  region: string,
+  benchmarks: CountryBenchmarkRow[]
+): "green" | "yellow" | "red" | null {
+  const aliases = REGION_TO_COUNTRY[region] ?? [region];
+  const bench = benchmarks.find(b =>
+    aliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+    (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+  );
+  if (!bench || bench.yellow_high === 0) return null;
+  if (weeklyPrice >= bench.green_low && weeklyPrice <= bench.green_high) return "green";
+  if (weeklyPrice >= bench.yellow_low && weeklyPrice <= bench.yellow_high) return "yellow";
+  return "red";
+}
+
+function parsePricePaste(text: string): CountryBenchmarkRow[] {
+  const toNum = (s: string): number => {
+    const clean = s.replace(/[€$£,\s]/g, "").toLowerCase();
+    const m = clean.match(/(\d+(?:\.\d+)?)(k|m)?/);
+    if (!m) return 0;
+    return Math.round(parseFloat(m[1]) * (m[2] === "k" ? 1000 : m[2] === "m" ? 1_000_000 : 1));
+  };
+  const rows: CountryBenchmarkRow[] = [];
+  for (const line of text.split("\n")) {
+    const raw = line.trim();
+    if (!raw.includes("|")) continue;
+    const cells = raw.split("|").map(c => c.trim()).filter(Boolean);
+    if (cells.length < 4) continue;
+    const country = cells[0];
+    if (!country || /^-+$/.test(country)) continue; // skip separator rows
+    if (country.toLowerCase() === "country") continue; // skip header
+    const parameter = cells[1] ?? "";
+    const greenStr = cells[2] ?? "";
+    const yellowStr = cells[3] ?? "";
+    const decisStr = cells[5] ?? cells[4] ?? "";
+    // Parse green band: "€28k–34k"
+    const greenNums = greenStr.split(/[–\-]/).map(toNum).filter(n => n > 0);
+    const green_low = greenNums[0] ?? 0;
+    const green_high = greenNums[1] ?? green_low;
+    // Parse yellow band: "€25k–28k / €34k–38k"
+    const yellowHalves = yellowStr.split("/");
+    const yLow = (yellowHalves[0] ?? "").split(/[–\-]/).map(toNum).filter(n => n > 0);
+    const yHigh = (yellowHalves[1] ?? "").split(/[–\-]/).map(toNum).filter(n => n > 0);
+    const yellow_low = yLow.length > 0 ? Math.min(...yLow) : 0;
+    const yellow_high = yHigh.length > 0 ? Math.max(...yHigh) : 0;
+    const decisMatch = decisStr.match(/(\d+(?:\.\d+)?)/);
+    const decisiveness_pct = decisMatch ? parseFloat(decisMatch[1]) : 25;
+    if (green_low === 0 && yellow_low === 0) continue;
+    rows.push({ country, parameter, yellow_low, green_low, green_high, yellow_high, decisiveness_pct });
+  }
+  return rows;
+}
+
 function emptyCase(): PricingCase {
   return {
     project_name: "", client_name: "", fund_name: "CARLYLE",
@@ -173,6 +239,8 @@ export default function PricingTool() {
   const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
   const [editingBenchmarks, setEditingBenchmarks] = useState(false);
   const [savingBenchmarks, setSavingBenchmarks] = useState(false);
+  const [pasteInput, setPasteInput] = useState("");
+  const [pasteResult, setPasteResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const loadAll = async () => {
     setLoading(true);
@@ -252,17 +320,18 @@ export default function PricingTool() {
     }
   };
 
-  const saveBenchmarks = async () => {
+  const saveBenchmarks = async (data?: CountryBenchmarkRow[]) => {
+    const toSave = data ?? benchmarksLocal;
     setSavingBenchmarks(true);
     try {
-      const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), country_benchmarks: benchmarksLocal };
+      const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), country_benchmarks: toSave };
       await fetch("/api/pricing/settings", {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated),
       });
-      setBenchmarks(benchmarksLocal);
-      setEditingBenchmarks(false);
+      setBenchmarks(toSave);
+      if (data == null) setEditingBenchmarks(false);
       toast({ title: "Benchmarks saved" });
       loadAll();
     } catch {
@@ -270,6 +339,25 @@ export default function PricingTool() {
     } finally {
       setSavingBenchmarks(false);
     }
+  };
+
+  const handleParsePaste = () => {
+    const parsed = parsePricePaste(pasteInput);
+    if (parsed.length === 0) {
+      setPasteResult({ ok: false, msg: "No valid rows found — check format" });
+      return;
+    }
+    const merged = [...benchmarks];
+    for (const row of parsed) {
+      const idx = merged.findIndex(r =>
+        r.country.toLowerCase() === row.country.toLowerCase() &&
+        r.parameter.toLowerCase() === row.parameter.toLowerCase()
+      );
+      if (idx >= 0) merged[idx] = row; else merged.push(row);
+    }
+    setPasteResult({ ok: true, msg: `${parsed.length} row${parsed.length > 1 ? "s" : ""} imported — saving…` });
+    setPasteInput("");
+    saveBenchmarks(merged).then(() => setPasteResult({ ok: true, msg: `${parsed.length} row${parsed.length > 1 ? "s" : ""} saved` }));
   };
 
   const updateBenchmarkLocal = (idx: number, field: keyof CountryBenchmarkRow, value: string | number) => {
@@ -590,6 +678,7 @@ export default function PricingTool() {
                       <TableHead>Region</TableHead>
                       <TableHead>Duration</TableHead>
                       <TableHead>Target / wk</TableHead>
+                      <TableHead className="w-14 text-center">Band</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead className="w-20">Actions</TableHead>
@@ -605,6 +694,20 @@ export default function PricingTool() {
                         <TableCell>{c.duration_weeks}w</TableCell>
                         <TableCell className="font-semibold text-emerald-600">
                           {c.recommendation?.target_weekly ? fmt(c.recommendation.target_weekly) : "—"}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {(() => {
+                            const price = c.recommendation?.target_weekly;
+                            if (!price) return <span className="text-muted-foreground text-xs">—</span>;
+                            const band = getBandForPrice(price, c.region, benchmarks);
+                            if (!band) return <span className="text-muted-foreground text-xs">—</span>;
+                            const cfg = band === "green"
+                              ? { cls: "bg-emerald-500", label: `Green band (${fmt(price)}/wk)` }
+                              : band === "yellow"
+                              ? { cls: "bg-amber-400", label: `Yellow band (${fmt(price)}/wk)` }
+                              : { cls: "bg-red-500", label: `Red band (${fmt(price)}/wk)` };
+                            return <span className={`inline-block w-3 h-3 rounded-full ${cfg.cls}`} title={cfg.label} />;
+                          })()}
                         </TableCell>
                         <TableCell>
                           <Badge variant={c.status === "final" ? "default" : "secondary"} className="text-xs capitalize">
@@ -965,6 +1068,27 @@ export default function PricingTool() {
                     </Table>
                   </div>
                 )}
+                {/* ── Paste import ─────────────────────────────── */}
+                <div className="border-t mt-3 pt-3 space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground">Import / update from table paste</p>
+                  <Textarea
+                    value={pasteInput}
+                    onChange={e => { setPasteInput(e.target.value); setPasteResult(null); }}
+                    placeholder={"Paste rows — e.g.:\n| Italy | Weekly fee | €28k–34k | €25k–28k / €34k–38k | <€25k / >€38k | 25% |\n| Italy | Total project cost | €300k–410k | €150k–300k / €410k–600k | <€150k / >€600k | 25% |"}
+                    className="text-xs font-mono resize-none"
+                    rows={3}
+                  />
+                  <div className="flex items-center gap-3">
+                    <Button size="sm" variant="outline" onClick={handleParsePaste} disabled={!pasteInput.trim() || savingBenchmarks}>
+                      {savingBenchmarks ? "Saving…" : "Import & Save"}
+                    </Button>
+                    {pasteResult && (
+                      <span className={`text-xs font-medium ${pasteResult.ok ? "text-emerald-600" : "text-destructive"}`}>
+                        {pasteResult.msg}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
