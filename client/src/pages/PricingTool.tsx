@@ -50,6 +50,7 @@ interface PricingCase {
   // Value-based pricing fields
   target_roi?: number | null;
   max_fees_ebitda_pct?: number | null;
+  aspiration_ebitda_pct?: number | null;
 }
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
@@ -129,6 +130,7 @@ function emptyCase(): PricingCase {
     competitor_type: null, ownership_type: null, strategic_intent: null,
     procurement_involvement: null,
     target_roi: 10, max_fees_ebitda_pct: 3,
+    aspiration_ebitda_pct: null,
   };
 }
 
@@ -422,6 +424,37 @@ export default function PricingTool() {
       .sort((a, b) => b.proposal_date.localeCompare(a.proposal_date))
       .slice(0, 5);
   }, [form.fund_name, proposals]);
+
+  // Rate matrix min/max for current case (used by waterfall + commercial analysis)
+  const { minFeeWeekly, maxFeeWeekly } = useMemo(() => {
+    if (!settings) return { minFeeWeekly: 0, maxFeeWeekly: Infinity };
+    const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
+    const matrixRegion = regionMap[form.region] ?? "Italy";
+    const clientType = form.pe_owned
+      ? (form.revenue_band === "above_1b" ? "PE >€1B"
+        : form.revenue_band === "200m_1b" ? "PE €200M-€1B"
+        : form.revenue_band === "100m_200m" ? "PE €100M-€200M"
+        : "PE <€100M")
+      : (form.revenue_band === "above_1b" || form.revenue_band === "200m_1b" ? "Family >€200M"
+        : form.revenue_band === "100m_200m" ? "Family €100M-€200M"
+        : "Family <€100M");
+    const matrixRow = settings.rate_matrix?.find(r => r.client_type === clientType);
+    const matrixCell = matrixRow?.rates?.[matrixRegion];
+    return {
+      minFeeWeekly: matrixCell && !matrixCell.avoid ? matrixCell.min_weekly : 0,
+      maxFeeWeekly: matrixCell && !matrixCell.avoid ? matrixCell.max_weekly : Infinity,
+    };
+  }, [settings, form.region, form.pe_owned, form.revenue_band]);
+
+  // NWF = target after discounts, clamped to country min/max
+  const nwfRaw = recommendation ? Math.round(recommendation.target_weekly * netMultiplier) : 0;
+  const nwfClamped = nwfRaw > 0
+    ? Math.max(
+        minFeeWeekly > 0 ? minFeeWeekly : nwfRaw,
+        Math.min(maxFeeWeekly < Infinity ? maxFeeWeekly : nwfRaw, nwfRaw)
+      )
+    : 0;
+  const tnf = nwfClamped * (form.duration_weeks || 0);
 
   // Stats for list view
   const avgTarget = cases.length
@@ -947,7 +980,7 @@ export default function PricingTool() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr,380px] gap-6 items-start">
+      <div className="grid lg:grid-cols-[1fr,500px] gap-6 items-start">
         {/* ── LEFT COLUMN ──────────────────────────────────────────────────── */}
         <div className="space-y-5">
 
@@ -1135,6 +1168,15 @@ export default function PricingTool() {
                     </div>
                   );
                 })()}
+                {/* Aspiration EBITDA increase */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Aspiration EBITDA increase (% of current)</Label>
+                  <Input type="number" min="0" max="200" step="1"
+                    placeholder="e.g. 20"
+                    value={form.aspiration_ebitda_pct ?? ""}
+                    onChange={e => setForm(f => ({ ...f, aspiration_ebitda_pct: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
+                  <div className="text-[9px] text-muted-foreground">Expected EBITDA uplift as % of current EBITDA</div>
+                </div>
                 {/* Strategic intent */}
                 <div className="space-y-1">
                   <Label className="text-xs">Strategic Intent <span className="text-muted-foreground/50 font-normal">(L5)</span></Label>
@@ -1235,25 +1277,42 @@ export default function PricingTool() {
             const trace = recommendation.layer_trace;
             const base = baseWeeklyDisplay;
             const final = recommendation.target_weekly;
-            // Build waterfall bars: [base, ...layer deltas..., final]
+
+            // Build layer delta bars
             const bars: { label: string; start: number; end: number; note: string }[] = [];
             let prev = base;
             for (const lt of trace) {
-              if (lt.layer === "L1") { prev = lt.value; continue; } // base already drawn
+              if (lt.layer === "L1") { prev = lt.value; continue; }
               bars.push({ label: lt.label, start: prev, end: lt.value, note: lt.note });
               prev = lt.value;
             }
-            // Extend to final if needed
             if (Math.abs(prev - final) > 50) bars.push({ label: "Final", start: prev, end: final, note: "Target recommendation" });
 
-            const allVals = [base, final, ...bars.flatMap(b => [b.start, b.end])];
+            // Extra bars: discounts + clamp
+            const extraBars: { label: string; start: number; end: number; color?: string }[] = [];
+            if (totalDiscountPct > 0) {
+              extraBars.push({ label: `Discounts −${totalDiscountPct.toFixed(0)}%`, start: final, end: nwfRaw });
+            }
+            if (Math.abs(nwfClamped - nwfRaw) > 50) {
+              extraBars.push({
+                label: nwfClamped > nwfRaw ? "Floor ↑" : "Cap ↓",
+                start: nwfRaw, end: nwfClamped,
+                color: nwfClamped > nwfRaw ? "#10b981" : "#f59e0b",
+              });
+            }
+            const showNWFBar = extraBars.length > 0;
+            const nwfFinal = nwfClamped > 0 ? nwfClamped : final;
+
+            const totalBarCount = 1 + bars.length + 1 + extraBars.length + (showNWFBar ? 1 : 0);
+            const allVals = [base, final, ...bars.flatMap(b => [b.start, b.end]),
+              ...extraBars.flatMap(b => [b.start, b.end]), nwfFinal];
             const minV = Math.min(...allVals) * 0.92;
             const maxV = Math.max(...allVals) * 1.08;
             const range = maxV - minV || 1;
 
             const W = 560; const H = 180;
-            const barW = Math.max(32, Math.floor((W - 60) / (bars.length + 2) - 6));
-            const gap = Math.floor((W - 60 - (bars.length + 2) * barW) / (bars.length + 1));
+            const barW = Math.max(26, Math.floor((W - 60) / (totalBarCount + 1) - 5));
+            const gap = Math.max(3, Math.floor((W - 60 - totalBarCount * barW) / totalBarCount));
             const xOf = (i: number) => 30 + i * (barW + gap);
             const yOf = (v: number) => H - 30 - ((v - minV) / range) * (H - 50);
             const hOf = (v1: number, v2: number) => Math.abs(yOf(v1) - yOf(v2));
@@ -1268,10 +1327,10 @@ export default function PricingTool() {
                     return <>
                       <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
                       <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#1A6571" fontWeight="bold">{fmt(base)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">Staffing Base</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">Staffing</text>
                     </>;
                   })()}
-                  {/* Delta bars */}
+                  {/* Layer delta bars */}
                   {bars.map((b, i) => {
                     const x = xOf(i + 1);
                     const up = b.end >= b.start;
@@ -1282,7 +1341,6 @@ export default function PricingTool() {
                     const sign = deltaEur >= 0 ? "+" : "";
                     return (
                       <g key={i}>
-                        {/* connector line */}
                         <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                         <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
                         <text x={x + barW/2} y={up ? y - 4 : y + h + 10} textAnchor="middle" fontSize="9" fill={color} fontWeight="bold">
@@ -1292,19 +1350,221 @@ export default function PricingTool() {
                       </g>
                     );
                   })}
-                  {/* Final bar */}
+                  {/* Target bar */}
                   {(() => {
-                    const x = xOf(bars.length + 1); const y = yOf(final); const h = hOf(minV, final);
+                    const bi = bars.length + 1;
+                    const x = xOf(bi); const y = yOf(final); const h = hOf(minV, final);
+                    const prevEnd = bars[bars.length - 1]?.end ?? base;
                     return <>
-                      <line x1={xOf(bars.length) + barW} y1={yOf(bars[bars.length-1]?.end ?? base)} x2={x} y2={yOf(final)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                      <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(final)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                       <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
                       <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#1A6571" fontWeight="bold">{fmt(final)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">Target</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">{showNWFBar ? "Target" : "NWF"}</text>
+                    </>;
+                  })()}
+                  {/* Discount / clamp bars */}
+                  {extraBars.map((b, i) => {
+                    const bi = bars.length + 2 + i;
+                    const x = xOf(bi);
+                    const up = b.end >= b.start;
+                    const color = b.color ?? (up ? "#16C3CF" : "#ef4444");
+                    const y = up ? yOf(b.end) : yOf(b.start);
+                    const h = Math.max(2, hOf(b.start, b.end));
+                    const deltaEur = b.end - b.start;
+                    const sign = deltaEur >= 0 ? "+" : "";
+                    return (
+                      <g key={i}>
+                        <line x1={xOf(bi - 1) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                        <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
+                        <text x={x + barW/2} y={up ? y - 4 : y + h + 10} textAnchor="middle" fontSize="9" fill={color} fontWeight="bold">
+                          {sign}{fmt(deltaEur)}
+                        </text>
+                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="7.5" fill="#64748b">{b.label}</text>
+                      </g>
+                    );
+                  })}
+                  {/* NWF final bar (only when extra steps exist) */}
+                  {showNWFBar && (() => {
+                    const bi = bars.length + 2 + extraBars.length;
+                    const x = xOf(bi); const y = yOf(nwfFinal); const h = hOf(minV, nwfFinal);
+                    const prevEnd = extraBars[extraBars.length - 1]?.end ?? final;
+                    return <>
+                      <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(nwfFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                      <rect x={x} y={y} width={barW} height={h} fill="#059669" rx="2" />
+                      <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#059669" fontWeight="bold">{fmt(nwfFinal)}</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">NWF</text>
                     </>;
                   })()}
                   {/* Baseline */}
-                  <line x1="25" y1={H-22} x2={W-5} y2={H-22} stroke="#e2e8f0" strokeWidth="0.5" />
+                  <line x1="25" y1={H - 22} x2={W - 5} y2={H - 22} stroke="#e2e8f0" strokeWidth="0.5" />
                 </svg>
+              </div>
+            );
+          })()}
+
+          {/* SECTION C: Commercial Analysis (TNF rows + probability curve) */}
+          {recommendation && nwfClamped > 0 && (() => {
+            const cur = getCurrencyForRegion(form.region);
+            const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
+            const fmtK2 = (n: number) => `${cur.symbol}${Math.round(n / 1000)}k`;
+
+            const regionMap2: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
+            const matrixRegion2 = regionMap2[form.region] ?? "Italy";
+            const benchmarks = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
+
+            const currentEbitda = (form as any).vbp_current_ebitda ?? 0;
+            const aspirationPct = form.aspiration_ebitda_pct ?? 0;
+            const aspirationEur = aspirationPct > 0 && currentEbitda > 0 ? currentEbitda * aspirationPct / 100 : 0;
+            const tnfEbitdaRatio = currentEbitda > 0 ? tnf / currentEbitda : null;
+            const tnfAspirationRatio = aspirationEur > 0 ? tnf / aspirationEur : null;
+
+            // Benchmark totals for this region
+            const benchRows = benchmarks.map(b => {
+              const minW = (b.rates as any)[matrixRegion2]?.min_weekly ?? 0;
+              const maxW = (b.rates as any)[matrixRegion2]?.max_weekly ?? 0;
+              const avg = ((minW + maxW) / 2) * (form.duration_weeks || 12);
+              return { label: b.label, color: b.color, avg };
+            }).filter(r => r.avg > 0);
+            const allBenchVals = [...benchRows.map(r => r.avg), tnf];
+            const benchScale = Math.max(...allBenchVals, 1) * 1.1;
+            const pctBar = (v: number) => `${Math.min(100, (v / benchScale) * 100).toFixed(1)}%`;
+
+            // Probability curve
+            const regionProposals = proposals.filter(p => p.region === form.region && (p.outcome === "won" || p.outcome === "lost"));
+            const cMin = minFeeWeekly > 0 ? minFeeWeekly * 0.8 : (regionProposals.length > 0 ? Math.min(...regionProposals.map(p => p.weekly_price)) * 0.85 : 15000);
+            const cMax = maxFeeWeekly < Infinity ? maxFeeWeekly * 1.1 : (regionProposals.length > 0 ? Math.max(...regionProposals.map(p => p.weekly_price)) * 1.15 : 120000);
+            const cRange = cMax - cMin || 1;
+            const NUM_POINTS = 40;
+            const bandwidth = cRange * 0.35;
+            const curvePoints = Array.from({ length: NUM_POINTS + 1 }, (_, i) => {
+              const price = cMin + cRange * (i / NUM_POINTS);
+              let prob: number;
+              if (regionProposals.length >= 3) {
+                const inWindow = regionProposals.filter(p => Math.abs(p.weekly_price - price) <= bandwidth);
+                prob = inWindow.length > 0
+                  ? inWindow.filter(p => p.outcome === "won").length / inWindow.length
+                  : 0.75 - 0.5 * ((price - cMin) / cRange);
+              } else {
+                prob = 0.75 - 0.45 * ((price - cMin) / cRange);
+              }
+              return { price, prob: Math.max(0.03, Math.min(0.97, prob)) };
+            });
+
+            const CW = 260; const CH = 160;
+            const cpx = (price: number) => 32 + ((price - cMin) / cRange) * (CW - 44);
+            const cpy = (prob: number) => CH - 22 - prob * (CH - 42);
+            const pathD = curvePoints.map((p, i) => `${i === 0 ? "M" : "L"} ${cpx(p.price).toFixed(1)} ${cpy(p.prob).toFixed(1)}`).join(" ");
+            const nwfPt = curvePoints.reduce((best, p) =>
+              Math.abs(p.price - nwfClamped) < Math.abs(best.price - nwfClamped) ? p : best
+            , curvePoints[0]);
+
+            return (
+              <div className="border rounded-lg p-4 bg-muted/10 space-y-3">
+                <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
+                <div className="grid grid-cols-[1fr,268px] gap-4 items-start">
+                  {/* 4 rows */}
+                  <div className="space-y-2">
+                    {/* Row 1: TNF */}
+                    <div className="flex items-center justify-between rounded bg-primary/5 border border-primary/15 px-3 py-2">
+                      <span className="text-xs font-semibold text-muted-foreground">Total Net Fees (TNF)</span>
+                      <span className="text-sm font-bold text-primary">
+                        {fmtC(tnf)}
+                        <span className="text-[10px] font-normal text-muted-foreground ml-1">({form.duration_weeks}w × {fmtC(nwfClamped)}/wk)</span>
+                      </span>
+                    </div>
+                    {/* Row 2: Benchmark bar */}
+                    <div className="rounded border px-3 py-2 space-y-1.5">
+                      <div className="text-[10px] font-bold uppercase text-muted-foreground">TNF vs Market (total project, {matrixRegion2})</div>
+                      {[...benchRows, { label: "Our TNF", color: "#f59e0b", avg: tnf, isOurs: true }].map((t, i) => (
+                        <div key={i} className="space-y-0.5">
+                          <div className="flex justify-between text-[10px] text-muted-foreground">
+                            <span className={(t as any).isOurs ? "font-bold text-amber-700" : ""}>{t.label}</span>
+                            <span className="font-mono">{fmtK2(t.avg)}</span>
+                          </div>
+                          <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{ width: pctBar(t.avg), backgroundColor: t.color, opacity: (t as any).isOurs ? 1 : 0.55 }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Row 3: TNF/EBITDA */}
+                    <div className="flex items-center justify-between rounded bg-muted/20 border px-3 py-2">
+                      <span className="text-xs text-muted-foreground">TNF / Company EBITDA</span>
+                      {tnfEbitdaRatio != null ? (
+                        <span className="text-sm font-bold">
+                          {(tnfEbitdaRatio * 100).toFixed(1)}%
+                          <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(currentEbitda)}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground italic">Set Current EBITDA in VBP section</span>
+                      )}
+                    </div>
+                    {/* Row 4: TNF/Aspiration */}
+                    <div className="flex items-center justify-between rounded bg-muted/20 border px-3 py-2">
+                      <span className="text-xs text-muted-foreground">TNF / Aspiration EBITDA increase</span>
+                      {tnfAspirationRatio != null ? (
+                        <span className="text-sm font-bold">
+                          {(tnfAspirationRatio * 100).toFixed(1)}%
+                          <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(aspirationEur)}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground italic">Set EBITDA + Aspiration % above</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Probability curve */}
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">Win Probability vs Weekly Fee</div>
+                    <svg width={CW} height={CH} viewBox={`0 0 ${CW} ${CH}`}>
+                      {/* Grid lines */}
+                      {[0.25, 0.5, 0.75].map(p => (
+                        <line key={p} x1="30" x2={CW - 8} y1={cpy(p)} y2={cpy(p)} stroke="#e2e8f0" strokeWidth="0.5" strokeDasharray="3,2" />
+                      ))}
+                      {/* Axes */}
+                      <line x1="32" y1="6" x2="32" y2={CH - 20} stroke="#94a3b8" strokeWidth="0.5" />
+                      <line x1="30" y1={CH - 20} x2={CW - 6} y2={CH - 20} stroke="#94a3b8" strokeWidth="0.5" />
+                      {/* Y labels */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(p => (
+                        <text key={p} x="28" y={cpy(p) + 3} textAnchor="end" fontSize="7" fill="#94a3b8">{Math.round(p * 100)}%</text>
+                      ))}
+                      {/* X labels */}
+                      <text x={cpx(cMin)} y={CH - 7} textAnchor="middle" fontSize="7" fill="#94a3b8">{fmtK2(cMin)}</text>
+                      <text x={cpx((cMin + cMax) / 2)} y={CH - 7} textAnchor="middle" fontSize="7" fill="#94a3b8">{fmtK2((cMin + cMax) / 2)}</text>
+                      <text x={cpx(cMax)} y={CH - 7} textAnchor="middle" fontSize="7" fill="#94a3b8">{fmtK2(cMax)}</text>
+                      {/* Historical data points */}
+                      {regionProposals.map((p, i) => (
+                        <circle key={i}
+                          cx={cpx(Math.min(cMax, Math.max(cMin, p.weekly_price)))}
+                          cy={cpy(p.outcome === "won" ? 1 : 0)}
+                          r="2.5" fill={p.outcome === "won" ? "#10b981" : "#ef4444"} opacity="0.45" />
+                      ))}
+                      {/* Smoothed win-rate curve */}
+                      <path d={pathD} fill="none" stroke="#1A6571" strokeWidth="1.5" opacity="0.85" />
+                      {/* NWF marker */}
+                      <line x1={cpx(nwfClamped)} y1={cpy(0)} x2={cpx(nwfClamped)} y2={cpy(nwfPt.prob)} stroke="#f59e0b" strokeWidth="1" strokeDasharray="2,2" />
+                      <circle cx={cpx(nwfClamped)} cy={cpy(nwfPt.prob)} r="3.5" fill="#f59e0b" />
+                      <text x={cpx(nwfClamped)} y={cpy(nwfPt.prob) - 6} textAnchor="middle" fontSize="8" fill="#d97706" fontWeight="bold">
+                        {Math.round(nwfPt.prob * 100)}%
+                      </text>
+                      {/* Axis labels */}
+                      <text x="10" y={cpy(0.5)} textAnchor="middle" fontSize="7" fill="#94a3b8"
+                        transform={`rotate(-90, 10, ${cpy(0.5)})`}>Win %</text>
+                      <text x={cpx((cMin + cMax) / 2)} y={CH + 2} textAnchor="middle" fontSize="7" fill="#94a3b8">Fee/wk</text>
+                    </svg>
+                    {regionProposals.length === 0 && (
+                      <div className="text-[9px] text-muted-foreground italic text-center">
+                        No win/loss data for {form.region} — showing indicative curve
+                      </div>
+                    )}
+                    {regionProposals.length > 0 && (
+                      <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
+                        <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-emerald-500 opacity-70" /> Won</div>
+                        <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500 opacity-70" /> Lost</div>
+                        <div className="flex items-center gap-1"><div className="w-3 h-0 border-t-2 border-amber-500 border-dashed" /> NWF</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             );
           })()}
