@@ -1235,21 +1235,12 @@ export default function PricingTool() {
               bars.push({ label: lt.label, start: prev, end: lt.value, note: lt.note });
               prev = lt.value;
             }
-            if (Math.abs(prev - final) > 50) bars.push({ label: "Final", start: prev, end: final, note: "Target recommendation" });
-
-            // Extra bars: discounts + clamp
+            // Single NWP bar after target (net after discounts + clamp)
             const extraBars: { label: string; start: number; end: number; color?: string }[] = [];
-            if (totalDiscountPct > 0) {
-              extraBars.push({ label: `Discounts −${totalDiscountPct.toFixed(0)}%`, start: final, end: nwfRaw });
+            const showNWFBar = totalDiscountPct > 0 || Math.abs(nwfClamped - final) > 50;
+            if (showNWFBar) {
+              extraBars.push({ label: "NWP", start: final, end: nwfClamped, color: "#059669" });
             }
-            if (Math.abs(nwfClamped - nwfRaw) > 50) {
-              extraBars.push({
-                label: nwfClamped > nwfRaw ? "Floor ↑" : "Cap ↓",
-                start: nwfRaw, end: nwfClamped,
-                color: nwfClamped > nwfRaw ? "#10b981" : "#f59e0b",
-              });
-            }
-            const showNWFBar = extraBars.length > 0;
             const nwfFinal = nwfClamped > 0 ? nwfClamped : final;
 
             const totalBarCount = 1 + bars.length + 1 + extraBars.length + (showNWFBar ? 1 : 0);

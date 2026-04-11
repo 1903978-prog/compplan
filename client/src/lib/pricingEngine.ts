@@ -968,51 +968,17 @@ export function calculatePricing(
     });
   }
 
-  // ── L6: EV Optimization ─────────────────────────────────────────────────
-  // Reference price: average comparable win or rate matrix target
-  const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
-  const matrixRegion = regionMap[input.region] ?? "Italy";
-  const clientType = input.pe_owned
-    ? (input.revenue_band === "above_1b" ? "PE >€1B"
-      : input.revenue_band === "200m_1b" ? "PE €200M-€1B"
-      : "PE <€200M")
-    : (input.revenue_band === "above_1b" || input.revenue_band === "200m_1b" ? "Family >€200M"
-      : input.revenue_band === "100m_200m" ? "Family €100M-€200M"
-      : "Family <€100M");
-  const matrixRow = settings.rate_matrix?.find(r => r.client_type === clientType);
-  const matrixCell = matrixRow?.rates?.[matrixRegion];
-  const matrix_reference = matrixCell && !matrixCell.avoid
-    ? (matrixCell.min_weekly + matrixCell.max_weekly) / 2
-    : null;
+  // ── Final price (L5 result used directly — L6 EV Optimization removed) ──
+  const target_weekly = roundTo500(after_intent);
 
-  const reference_for_ev = comparable_avg_win_weekly ?? matrix_reference;
-  const { ev_price, win_probability, expected_margin_pct } = evOptimize(
-    after_intent,
-    cost_floor_weekly,
-    reference_for_ev,
-    comparable_wins,
-    comparable_losses,
-  );
-
-  // Blend EV price with L5 result (don't let optimizer drift too far)
-  const max_ev_drift = 0.15; // max 15% shift from L5 price
-  const clamped_ev = Math.max(
-    after_intent * (1 - max_ev_drift),
-    Math.min(after_intent * (1 + max_ev_drift), ev_price)
-  );
-
-  if (Math.abs(clamped_ev - after_intent) > 500) {
-    layer_trace.push({
-      layer: "L6",
-      label: "EV Optimization",
-      value: clamped_ev,
-      delta_pct: ((clamped_ev - after_intent) / after_intent) * 100,
-      note: `EV-maximizing price (P(win)=${(win_probability * 100).toFixed(0)}%, margin=${expected_margin_pct.toFixed(0)}%)`,
-    });
-  }
-
-  // ── Final price ──────────────────────────────────────────────────────────
-  const target_weekly = roundTo500(clamped_ev);
+  // Win probability: fraction of comparable proposals won (simple estimate)
+  const all_comparables = [...comparable_wins, ...comparable_losses];
+  const win_probability = all_comparables.length > 0
+    ? comparable_wins.length / all_comparables.length
+    : 0.5;
+  const expected_margin_pct = cost_floor_weekly > 0 && target_weekly > 0
+    ? ((target_weekly - cost_floor_weekly) / target_weekly) * 100
+    : 0;
   const low_weekly  = Math.round((target_weekly * (1 - settings.bracket_low_pct / 100)) / 500) * 500;
   const high_weekly = Math.round((target_weekly * (1 + settings.bracket_high_pct / 100)) / 500) * 500;
 
@@ -1094,7 +1060,9 @@ export function calculatePricing(
     drivers.push(`Strategic intent: ${intent_note}`);
   }
 
-  drivers.push(`EV optimization: P(win) ${(win_probability * 100).toFixed(0)}% at target, expected margin ${expected_margin_pct.toFixed(0)}%`);
+  if (all_comparables.length > 0) {
+    drivers.push(`Comparable win rate: ${(win_probability * 100).toFixed(0)}% (${comparable_wins.length} won / ${all_comparables.length} total)`);
+  }
 
   // ── Warnings ─────────────────────────────────────────────────────────────
   const warnings: string[] = [];
@@ -1149,7 +1117,7 @@ export function calculatePricing(
   const advisory =
     `This ${input.duration_weeks}-week engagement is priced at ${formatCurrency(target_weekly)}/wk (${formatCurrency(target_total)} total), reflecting ${postureDesc}.` +
     valueContext + historyContext +
-    ` EV-optimized at P(win)=${(win_probability * 100).toFixed(0)}%, expected margin ${expected_margin_pct.toFixed(0)}%. ` +
+    (all_comparables.length > 0 ? ` Comparable win rate: ${(win_probability * 100).toFixed(0)}%, expected margin ${expected_margin_pct.toFixed(0)}%. ` : " ") +
     `Confidence: ${confidence_label.toLowerCase()} (${(confidence * 100).toFixed(0)}%). ` +
     `Negotiation range: ${formatCurrency(low_weekly)}–${formatCurrency(high_weekly)}/wk.`;
 
@@ -1195,7 +1163,7 @@ export function calculatePricing(
     ebitda_improvement_pct,
     win_probability,
     expected_margin_pct,
-    ev_optimized_weekly: ev_price,
+    ev_optimized_weekly: null,
     layer_trace,
   };
 }
