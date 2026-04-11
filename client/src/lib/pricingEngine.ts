@@ -81,6 +81,16 @@ export interface CompetitorBenchmark {
   sources: string[];
 }
 
+export interface CountryBenchmarkRow {
+  country: string;
+  parameter: string;
+  yellow_low: number;      // below this = red (low side)
+  green_low: number;       // green band start
+  green_high: number;      // green band end
+  yellow_high: number;     // above this = red (high side)
+  decisiveness_pct: number; // % of deals where price was decisive
+}
+
 export interface PricingSettings {
   roles: PricingRole[];
   regions: PricingRegion[];
@@ -92,6 +102,7 @@ export interface PricingSettings {
   staff_costs: StaffCostEntry[];
   rate_matrix: RateMatrixRow[];
   floor_rule?: FloorRule; // deprecated — kept optional for backward compat
+  country_benchmarks?: CountryBenchmarkRow[];
   bracket_low_pct: number;
   bracket_high_pct: number;
   aggressive_threshold_pct: number;
@@ -427,6 +438,10 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
       },
       sources: ["ProcureEx Consulting Procurement Benchmark", "Staffing Industry Analysts Fee Survey"],
     },
+  ],
+  country_benchmarks: [
+    { country: "Italy", parameter: "Weekly fee",         yellow_low: 25000, green_low: 28000, green_high: 34000, yellow_high: 38000, decisiveness_pct: 25 },
+    { country: "Italy", parameter: "Total project cost", yellow_low: 150000, green_low: 300000, green_high: 410000, yellow_high: 600000, decisiveness_pct: 25 },
   ],
   bracket_low_pct: 10,
   bracket_high_pct: 15,

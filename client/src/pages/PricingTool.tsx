@@ -18,6 +18,7 @@ import {
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
   type CompetitorBenchmark, type ProjectType, type CompetitiveIntensity, type CompetitorType,
   type OwnershipType, type StrategicIntent, type ProcurementInvolvement, type LayerTrace,
+  type CountryBenchmarkRow,
 } from "@/lib/pricingEngine";
 
 interface PricingCase {
@@ -168,6 +169,10 @@ export default function PricingTool() {
   const [savingProposal, setSavingProposal] = useState(false);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
   const [teamPreset, setTeamPreset] = useState<string>("1+2");
+  const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
+  const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
+  const [editingBenchmarks, setEditingBenchmarks] = useState(false);
+  const [savingBenchmarks, setSavingBenchmarks] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -200,6 +205,10 @@ export default function PricingTool() {
   };
 
   useEffect(() => { loadAll(); }, []);
+
+  useEffect(() => {
+    setBenchmarks(settings?.country_benchmarks ?? DEFAULT_PRICING_SETTINGS.country_benchmarks ?? []);
+  }, [settings]);
 
   // Initialise staffing from settings when opening form
   const initStaffing = (s: PricingSettings): StaffingLine[] => {
@@ -241,6 +250,30 @@ export default function PricingTool() {
     } else if (settings) {
       setCaseDiscounts(settings.discounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
     }
+  };
+
+  const saveBenchmarks = async () => {
+    setSavingBenchmarks(true);
+    try {
+      const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), country_benchmarks: benchmarksLocal };
+      await fetch("/api/pricing/settings", {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+      setBenchmarks(benchmarksLocal);
+      setEditingBenchmarks(false);
+      toast({ title: "Benchmarks saved" });
+      loadAll();
+    } catch {
+      toast({ title: "Failed to save benchmarks", variant: "destructive" });
+    } finally {
+      setSavingBenchmarks(false);
+    }
+  };
+
+  const updateBenchmarkLocal = (idx: number, field: keyof CountryBenchmarkRow, value: string | number) => {
+    setBenchmarksLocal(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
   };
 
   const deleteCase = async (id: number) => {
@@ -806,6 +839,135 @@ export default function PricingTool() {
         {/* ── WIN-LOSS ANALYSIS TAB ──────────────────────────────── */}
         {mainTab === "winloss" && (
           <div className="space-y-6">
+
+            {/* ── Country Benchmarks ──────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">Country Benchmarks</CardTitle>
+                  <div className="flex gap-2">
+                    {editingBenchmarks ? (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => setBenchmarksLocal(prev => [...prev, {
+                          country: "", parameter: "Weekly fee",
+                          yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 25,
+                        }])}>
+                          <Plus className="w-3.5 h-3.5 mr-1" /> Add Row
+                        </Button>
+                        <Button size="sm" onClick={saveBenchmarks} disabled={savingBenchmarks}>
+                          {savingBenchmarks ? "Saving…" : "Save"}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setBenchmarksLocal([...benchmarks]); setEditingBenchmarks(false); }}>
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => { setBenchmarksLocal([...benchmarks]); setEditingBenchmarks(true); }}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!editingBenchmarks ? (
+                  benchmarks.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">No benchmarks defined. Click Edit to add.</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-24">Country</TableHead>
+                          <TableHead>Parameter</TableHead>
+                          <TableHead className="text-center">🟢 Green band</TableHead>
+                          <TableHead className="text-center">🟡 Yellow band</TableHead>
+                          <TableHead className="text-center">🔴 Red band</TableHead>
+                          <TableHead className="text-center w-32">Price decisiveness</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {benchmarks.map((row, i) => {
+                          const fB = (n: number) => `€${(n / 1000) % 1 === 0 ? Math.round(n / 1000) : (n / 1000).toFixed(0)}k`;
+                          return (
+                            <TableRow key={i}>
+                              <TableCell className="font-medium text-sm">{row.country}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{row.parameter}</TableCell>
+                              <TableCell className="text-center">
+                                <span className="bg-emerald-100 text-emerald-800 text-xs font-mono px-2 py-0.5 rounded">
+                                  {fB(row.green_low)}–{fB(row.green_high)}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <span className="bg-amber-100 text-amber-800 text-xs font-mono px-2 py-0.5 rounded">
+                                  {fB(row.yellow_low)}–{fB(row.green_low)} / {fB(row.green_high)}–{fB(row.yellow_high)}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <span className="bg-red-100 text-red-800 text-xs font-mono px-2 py-0.5 rounded">
+                                  &lt;{fB(row.yellow_low)} / &gt;{fB(row.yellow_high)}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-center text-sm font-semibold">{row.decisiveness_pct}%</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  )
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Enter the 4 band thresholds (in €). Red = outside the yellow bounds.</p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Country</TableHead>
+                          <TableHead>Parameter</TableHead>
+                          <TableHead className="text-center">🟡 Yellow low (€)</TableHead>
+                          <TableHead className="text-center">🟢 Green low (€)</TableHead>
+                          <TableHead className="text-center">🟢 Green high (€)</TableHead>
+                          <TableHead className="text-center">🟡 Yellow high (€)</TableHead>
+                          <TableHead className="text-center">Decisiveness %</TableHead>
+                          <TableHead className="w-8" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {benchmarksLocal.map((row, i) => (
+                          <TableRow key={i}>
+                            <TableCell>
+                              <Input value={row.country} onChange={e => updateBenchmarkLocal(i, "country", e.target.value)} className="h-7 text-xs w-24" />
+                            </TableCell>
+                            <TableCell>
+                              <Input value={row.parameter} onChange={e => updateBenchmarkLocal(i, "parameter", e.target.value)} className="h-7 text-xs w-36" />
+                            </TableCell>
+                            <TableCell>
+                              <Input type="number" min="0" value={row.yellow_low || ""} onChange={e => updateBenchmarkLocal(i, "yellow_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
+                            </TableCell>
+                            <TableCell>
+                              <Input type="number" min="0" value={row.green_low || ""} onChange={e => updateBenchmarkLocal(i, "green_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
+                            </TableCell>
+                            <TableCell>
+                              <Input type="number" min="0" value={row.green_high || ""} onChange={e => updateBenchmarkLocal(i, "green_high", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
+                            </TableCell>
+                            <TableCell>
+                              <Input type="number" min="0" value={row.yellow_high || ""} onChange={e => updateBenchmarkLocal(i, "yellow_high", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
+                            </TableCell>
+                            <TableCell>
+                              <Input type="number" min="0" max="100" value={row.decisiveness_pct || ""} onChange={e => updateBenchmarkLocal(i, "decisiveness_pct", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
+                            </TableCell>
+                            <TableCell>
+                              <button onClick={() => setBenchmarksLocal(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive p-1">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {(() => {
               const wonProposals = proposals.filter(p => p.outcome === "won");
               const lostProposals = proposals.filter(p => p.outcome === "lost");
