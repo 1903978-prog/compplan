@@ -156,35 +156,108 @@ function parsePricePaste(text: string): CountryBenchmarkRow[] {
     if (!m) return 0;
     return Math.round(parseFloat(m[1]) * (m[2] === "k" ? 1000 : m[2] === "m" ? 1_000_000 : 1));
   };
-  const rows: CountryBenchmarkRow[] = [];
-  for (const line of text.split("\n")) {
-    const raw = line.trim();
-    if (!raw.includes("|")) continue;
-    const cells = raw.split("|").map(c => c.trim()).filter(Boolean);
+  const extractNums = (s: string): number[] =>
+    [...s.matchAll(/\d+(?:[.,]\d+)?(?:\s*k|\s*m)?/gi)].map(m => toNum(m[0])).filter(n => n > 0);
+
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+
+  // ── Mode 1: Structured (pipe or tab separated) ─────────────────────────────
+  const structured: CountryBenchmarkRow[] = [];
+  for (const line of lines) {
+    const sep = line.includes("|") ? "|" : line.includes("\t") ? "\t" : null;
+    if (!sep) continue;
+    const cells = line.split(sep).map(c => c.trim()).filter(Boolean);
     if (cells.length < 4) continue;
     const country = cells[0];
-    if (!country || /^-+$/.test(country)) continue; // skip separator rows
-    if (country.toLowerCase() === "country") continue; // skip header
+    if (!country || /^[-=]+$/.test(country) || country.toLowerCase() === "country") continue;
     const parameter = cells[1] ?? "";
     const greenStr = cells[2] ?? "";
     const yellowStr = cells[3] ?? "";
-    const decisStr = cells[5] ?? cells[4] ?? "";
-    // Parse green band: "€28k–34k"
-    const greenNums = greenStr.split(/[–\-]/).map(toNum).filter(n => n > 0);
-    const green_low = greenNums[0] ?? 0;
-    const green_high = greenNums[1] ?? green_low;
-    // Parse yellow band: "€25k–28k / €34k–38k"
-    const yellowHalves = yellowStr.split("/");
-    const yLow = (yellowHalves[0] ?? "").split(/[–\-]/).map(toNum).filter(n => n > 0);
-    const yHigh = (yellowHalves[1] ?? "").split(/[–\-]/).map(toNum).filter(n => n > 0);
-    const yellow_low = yLow.length > 0 ? Math.min(...yLow) : 0;
-    const yellow_high = yHigh.length > 0 ? Math.max(...yHigh) : 0;
-    const decisMatch = decisStr.match(/(\d+(?:\.\d+)?)/);
-    const decisiveness_pct = decisMatch ? parseFloat(decisMatch[1]) : 25;
+    const decisStr = cells.length > 5 ? cells[5] : (cells[4] ?? "");
+    const gNums = greenStr.split(/[–\-]/).map(toNum).filter(n => n > 0);
+    const green_low = gNums[0] ?? 0;
+    const green_high = gNums[1] ?? green_low;
+    const yHalves = yellowStr.split("/");
+    const yL = (yHalves[0] ?? "").split(/[–\-]/).map(toNum).filter(n => n > 0);
+    const yH = (yHalves[1] ?? "").split(/[–\-]/).map(toNum).filter(n => n > 0);
+    const yellow_low = yL.length > 0 ? Math.min(...yL) : 0;
+    const yellow_high = yH.length > 0 ? Math.max(...yH) : 0;
+    const dM = decisStr.match(/(\d+(?:\.\d+)?)/);
+    const decisiveness_pct = dM ? parseFloat(dM[1]) : 25;
     if (green_low === 0 && yellow_low === 0) continue;
-    rows.push({ country, parameter, yellow_low, green_low, green_high, yellow_high, decisiveness_pct });
+    structured.push({ country, parameter, yellow_low, green_low, green_high, yellow_high, decisiveness_pct });
   }
-  return rows;
+  if (structured.length > 0) return structured;
+
+  // ── Mode 2: Free-form country sections ─────────────────────────────────────
+  // Accepts text like:
+  //   Italy
+  //   Weekly fee: green €28k–34k, yellow €25k–28k / €34k–38k, 25%
+  //   Total project cost: strongest wins €300k–410k, mixed €150k–300k / €410k–600k, 25%
+  const PARAM_MAP: [RegExp, string][] = [
+    [/weekly\s*fee|fee\s*weekly|\bwkly\b/i, "Weekly fee"],
+    [/total\s*(project\s*)?cost|total\s*fee|project\s*cost/i, "Total project cost"],
+    [/daily\s*rate/i, "Daily rate"],
+  ];
+  const freeRows: CountryBenchmarkRow[] = [];
+  let currentCountry = "";
+  for (const line of lines) {
+    // Country detector: short line, starts uppercase, no € or | symbols
+    if (line.length < 40 && !line.includes("€") && !line.includes("|") && !line.includes(":")) {
+      const stripped = line.replace(/[:\-\*\#]+\s*$/, "").trim();
+      if (/^[A-Z]/.test(stripped) && stripped.split(/\s+/).length <= 3) {
+        currentCountry = stripped;
+        continue;
+      }
+    }
+    // Also detect "Italy:" lines (country name + colon only)
+    const countryColon = line.match(/^([A-Z][a-zA-Z\s]{1,20})\s*:\s*$/);
+    if (countryColon) { currentCountry = countryColon[1].trim(); continue; }
+
+    if (!currentCountry) continue;
+
+    // Detect parameter
+    let parameter = "";
+    for (const [rx, label] of PARAM_MAP) {
+      if (rx.test(line)) { parameter = label; break; }
+    }
+    if (!parameter) continue;
+
+    // Find green band from keywords
+    let green_low = 0, green_high = 0, yellow_low = 0, yellow_high = 0;
+    const gMatch = line.match(/(?:green|strong(?:est)?|wins?|optimal|cluster)[^€\d]*([€\d][^\n,;|]+)/i);
+    if (gMatch) {
+      const gn = gMatch[1].split(/[–\-]/).map(toNum).filter(n => n > 0);
+      green_low = gn[0] ?? 0; green_high = gn[1] ?? green_low;
+    }
+    // Yellow-low from "mixed/caution/yellow €X–Y"
+    const yLMatch = line.match(/(?:yellow|mixed|caution)[^€\d]*([€\d][^\/,;|\n]+)/i);
+    if (yLMatch) {
+      const yn = yLMatch[1].split(/[–\-]/).map(toNum).filter(n => n > 0);
+      yellow_low = Math.min(...yn);
+      if (yn.length > 1 && yellow_high === 0) yellow_high = Math.max(...yn);
+    }
+    // Yellow-high / red threshold from "above €X" or "risk above €X"
+    const yHMatch = line.match(/(?:above|high.?risk|red|danger|avoid)[^\d€]*([€\d][\d.,k]+)/i);
+    if (yHMatch) yellow_high = toNum(yHMatch[1]);
+
+    // Fallback: just use sorted nums
+    if (green_low === 0) {
+      const allN = extractNums(line).sort((a, b) => a - b);
+      if (allN.length >= 4) [yellow_low, green_low, green_high, yellow_high] = allN;
+      else if (allN.length === 3) { yellow_low = allN[0]; green_low = allN[0]; green_high = allN[1]; yellow_high = allN[2]; }
+      else if (allN.length === 2) { green_low = allN[0]; green_high = allN[1]; }
+    }
+    if (!yellow_low) yellow_low = green_low;
+    if (!yellow_high) yellow_high = green_high;
+
+    const dM = line.match(/(\d+(?:\.\d+)?)\s*%/);
+    const decisiveness_pct = dM ? parseFloat(dM[1]) : 25;
+
+    if (green_low === 0) continue;
+    freeRows.push({ country: currentCountry, parameter, yellow_low, green_low, green_high, yellow_high, decisiveness_pct });
+  }
+  return freeRows;
 }
 
 function emptyCase(): PricingCase {
@@ -957,7 +1030,7 @@ export default function PricingTool() {
                         }])}>
                           <Plus className="w-3.5 h-3.5 mr-1" /> Add Row
                         </Button>
-                        <Button size="sm" onClick={saveBenchmarks} disabled={savingBenchmarks}>
+                        <Button size="sm" onClick={() => saveBenchmarks()} disabled={savingBenchmarks}>
                           {savingBenchmarks ? "Saving…" : "Save"}
                         </Button>
                         <Button size="sm" variant="ghost" onClick={() => { setBenchmarksLocal([...benchmarks]); setEditingBenchmarks(false); }}>
@@ -966,97 +1039,123 @@ export default function PricingTool() {
                       </>
                     ) : (
                       <Button size="sm" variant="outline" onClick={() => { setBenchmarksLocal([...benchmarks]); setEditingBenchmarks(true); }}>
-                        Edit
+                        Edit manually
                       </Button>
                     )}
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
-                {!editingBenchmarks ? (
+              <CardContent className="space-y-4">
+
+                {/* ── Paste import — always visible ──────────────────── */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground">Paste win-loss analysis text to import</p>
+                  <Textarea
+                    value={pasteInput}
+                    onChange={e => { setPasteInput(e.target.value); setPasteResult(null); }}
+                    placeholder={
+                      "Pipe format:\nItaly | Weekly fee | €28k–34k | €25k–28k / €34k–38k | <€25k / >€38k | 25%\nItaly | Total project cost | €300k–410k | €150k–300k / €410k–600k | <€150k / >€600k | 25%\n\nFree-form format:\nItaly\nWeekly fee: green €28k–34k, yellow €25k–28k / €34k–38k, 25% decisiveness\nTotal project cost: strongest wins €300k–410k, mixed €150k–300k and €410k–600k, red above €600k, 25%"
+                    }
+                    className="text-xs font-mono resize-none"
+                    rows={5}
+                  />
+                  <div className="flex items-center gap-3">
+                    <Button size="sm" onClick={handleParsePaste} disabled={!pasteInput.trim() || savingBenchmarks}>
+                      {savingBenchmarks ? "Saving…" : "Import & Save"}
+                    </Button>
+                    {pasteResult && (
+                      <span className={`text-xs font-medium ${pasteResult.ok ? "text-emerald-600" : "text-destructive"}`}>
+                        {pasteResult.msg}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Display: per-country tables ─────────────────────── */}
+                {!editingBenchmarks && (
                   benchmarks.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">No benchmarks defined. Click Edit to add.</p>
+                    <p className="text-xs text-muted-foreground text-center py-2">No benchmarks yet — paste analysis text above to import.</p>
                   ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-24">Country</TableHead>
-                          <TableHead>Parameter</TableHead>
-                          <TableHead className="text-center">🟢 Green band</TableHead>
-                          <TableHead className="text-center">🟡 Yellow band</TableHead>
-                          <TableHead className="text-center">🔴 Red band</TableHead>
-                          <TableHead className="text-center w-32">Price decisiveness</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {benchmarks.map((row, i) => {
-                          const fB = (n: number) => `€${(n / 1000) % 1 === 0 ? Math.round(n / 1000) : (n / 1000).toFixed(0)}k`;
-                          return (
-                            <TableRow key={i}>
-                              <TableCell className="font-medium text-sm">{row.country}</TableCell>
-                              <TableCell className="text-sm text-muted-foreground">{row.parameter}</TableCell>
-                              <TableCell className="text-center">
-                                <span className="bg-emerald-100 text-emerald-800 text-xs font-mono px-2 py-0.5 rounded">
-                                  {fB(row.green_low)}–{fB(row.green_high)}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <span className="bg-amber-100 text-amber-800 text-xs font-mono px-2 py-0.5 rounded">
-                                  {fB(row.yellow_low)}–{fB(row.green_low)} / {fB(row.green_high)}–{fB(row.yellow_high)}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <span className="bg-red-100 text-red-800 text-xs font-mono px-2 py-0.5 rounded">
-                                  &lt;{fB(row.yellow_low)} / &gt;{fB(row.yellow_high)}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-center text-sm font-semibold">{row.decisiveness_pct}%</TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
+                    <div className="space-y-4">
+                      {[...new Set(benchmarks.map(b => b.country))].map(country => {
+                        const rows = benchmarks.filter(b => b.country === country);
+                        const fB = (n: number) => n >= 1000
+                          ? `€${Math.round(n / 1000)}k`
+                          : `€${n}`;
+                        return (
+                          <div key={country}>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="text-xs font-bold uppercase tracking-wide text-foreground">{country}</span>
+                              <div className="flex-1 border-t border-border" />
+                            </div>
+                            <Table>
+                              <TableHeader>
+                                <TableRow className="bg-muted/30">
+                                  <TableHead className="text-xs py-1.5">Parameter</TableHead>
+                                  <TableHead className="text-xs py-1.5 text-center">🟢 Green band</TableHead>
+                                  <TableHead className="text-xs py-1.5 text-center">🟡 Yellow band</TableHead>
+                                  <TableHead className="text-xs py-1.5 text-center">🔴 Red band</TableHead>
+                                  <TableHead className="text-xs py-1.5 text-center w-28">Decisiveness</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {rows.map((row, i) => (
+                                  <TableRow key={i}>
+                                    <TableCell className="text-xs py-2 font-medium">{row.parameter}</TableCell>
+                                    <TableCell className="text-center py-2">
+                                      <span className="bg-emerald-100 text-emerald-800 text-xs font-mono px-2 py-0.5 rounded">
+                                        {fB(row.green_low)}–{fB(row.green_high)}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-center py-2">
+                                      <span className="bg-amber-100 text-amber-800 text-xs font-mono px-2 py-0.5 rounded">
+                                        {fB(row.yellow_low)}–{fB(row.green_low)} / {fB(row.green_high)}–{fB(row.yellow_high)}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-center py-2">
+                                      <span className="bg-red-100 text-red-800 text-xs font-mono px-2 py-0.5 rounded">
+                                        &lt;{fB(row.yellow_low)} / &gt;{fB(row.yellow_high)}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-center py-2 text-xs font-semibold">{row.decisiveness_pct}%</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )
-                ) : (
+                )}
+
+                {/* ── Manual edit table ───────────────────────────────── */}
+                {editingBenchmarks && (
                   <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">Enter the 4 band thresholds (in €). Red = outside the yellow bounds.</p>
+                    <p className="text-xs text-muted-foreground">Edit thresholds directly (in €). Red = outside yellow bounds.</p>
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Country</TableHead>
                           <TableHead>Parameter</TableHead>
-                          <TableHead className="text-center">🟡 Yellow low (€)</TableHead>
-                          <TableHead className="text-center">🟢 Green low (€)</TableHead>
-                          <TableHead className="text-center">🟢 Green high (€)</TableHead>
-                          <TableHead className="text-center">🟡 Yellow high (€)</TableHead>
-                          <TableHead className="text-center">Decisiveness %</TableHead>
+                          <TableHead className="text-center">🟡 Yel low</TableHead>
+                          <TableHead className="text-center">🟢 Grn low</TableHead>
+                          <TableHead className="text-center">🟢 Grn high</TableHead>
+                          <TableHead className="text-center">🟡 Yel high</TableHead>
+                          <TableHead className="text-center">Decis %</TableHead>
                           <TableHead className="w-8" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {benchmarksLocal.map((row, i) => (
                           <TableRow key={i}>
-                            <TableCell>
-                              <Input value={row.country} onChange={e => updateBenchmarkLocal(i, "country", e.target.value)} className="h-7 text-xs w-24" />
-                            </TableCell>
-                            <TableCell>
-                              <Input value={row.parameter} onChange={e => updateBenchmarkLocal(i, "parameter", e.target.value)} className="h-7 text-xs w-36" />
-                            </TableCell>
-                            <TableCell>
-                              <Input type="number" min="0" value={row.yellow_low || ""} onChange={e => updateBenchmarkLocal(i, "yellow_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
-                            </TableCell>
-                            <TableCell>
-                              <Input type="number" min="0" value={row.green_low || ""} onChange={e => updateBenchmarkLocal(i, "green_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
-                            </TableCell>
-                            <TableCell>
-                              <Input type="number" min="0" value={row.green_high || ""} onChange={e => updateBenchmarkLocal(i, "green_high", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
-                            </TableCell>
-                            <TableCell>
-                              <Input type="number" min="0" value={row.yellow_high || ""} onChange={e => updateBenchmarkLocal(i, "yellow_high", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
-                            </TableCell>
-                            <TableCell>
-                              <Input type="number" min="0" max="100" value={row.decisiveness_pct || ""} onChange={e => updateBenchmarkLocal(i, "decisiveness_pct", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" />
-                            </TableCell>
+                            <TableCell><Input value={row.country} onChange={e => updateBenchmarkLocal(i, "country", e.target.value)} className="h-7 text-xs w-24" /></TableCell>
+                            <TableCell><Input value={row.parameter} onChange={e => updateBenchmarkLocal(i, "parameter", e.target.value)} className="h-7 text-xs w-36" /></TableCell>
+                            <TableCell><Input type="number" min="0" value={row.yellow_low || ""} onChange={e => updateBenchmarkLocal(i, "yellow_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
+                            <TableCell><Input type="number" min="0" value={row.green_low || ""} onChange={e => updateBenchmarkLocal(i, "green_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
+                            <TableCell><Input type="number" min="0" value={row.green_high || ""} onChange={e => updateBenchmarkLocal(i, "green_high", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
+                            <TableCell><Input type="number" min="0" value={row.yellow_high || ""} onChange={e => updateBenchmarkLocal(i, "yellow_high", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
+                            <TableCell><Input type="number" min="0" max="100" value={row.decisiveness_pct || ""} onChange={e => updateBenchmarkLocal(i, "decisiveness_pct", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
                             <TableCell>
                               <button onClick={() => setBenchmarksLocal(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive p-1">
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1068,27 +1167,7 @@ export default function PricingTool() {
                     </Table>
                   </div>
                 )}
-                {/* ── Paste import ─────────────────────────────── */}
-                <div className="border-t mt-3 pt-3 space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground">Import / update from table paste</p>
-                  <Textarea
-                    value={pasteInput}
-                    onChange={e => { setPasteInput(e.target.value); setPasteResult(null); }}
-                    placeholder={"Paste rows — e.g.:\n| Italy | Weekly fee | €28k–34k | €25k–28k / €34k–38k | <€25k / >€38k | 25% |\n| Italy | Total project cost | €300k–410k | €150k–300k / €410k–600k | <€150k / >€600k | 25% |"}
-                    className="text-xs font-mono resize-none"
-                    rows={3}
-                  />
-                  <div className="flex items-center gap-3">
-                    <Button size="sm" variant="outline" onClick={handleParsePaste} disabled={!pasteInput.trim() || savingBenchmarks}>
-                      {savingBenchmarks ? "Saving…" : "Import & Save"}
-                    </Button>
-                    {pasteResult && (
-                      <span className={`text-xs font-medium ${pasteResult.ok ? "text-emerald-600" : "text-destructive"}`}>
-                        {pasteResult.msg}
-                      </span>
-                    )}
-                  </div>
-                </div>
+
               </CardContent>
             </Card>
 
