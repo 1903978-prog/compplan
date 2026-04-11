@@ -975,8 +975,7 @@ export function calculatePricing(
   const clientType = input.pe_owned
     ? (input.revenue_band === "above_1b" ? "PE >€1B"
       : input.revenue_band === "200m_1b" ? "PE €200M-€1B"
-      : input.revenue_band === "100m_200m" ? "PE €100M-€200M"
-      : "PE <€100M")
+      : "PE <€200M")
     : (input.revenue_band === "above_1b" || input.revenue_band === "200m_1b" ? "Family >€200M"
       : input.revenue_band === "100m_200m" ? "Family €100M-€200M"
       : "Family <€100M");

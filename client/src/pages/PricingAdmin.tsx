@@ -176,7 +176,7 @@ const DEFAULT_SETTINGS: PricingSettings = {
     { role_id: "counsel",   role_name: "Counsel / Expert", daily_cost: 1500 },
   ],
   rate_matrix: [
-    // ── PE clients (4 revenue bands) ──
+    // ── PE clients (3 revenue bands: <€200M, €200M-€1B, >€1B) ──
     {
       client_type: "PE >€1B",
       rates: {
@@ -198,23 +198,13 @@ const DEFAULT_SETTINGS: PricingSettings = {
       },
     },
     {
-      client_type: "PE €100M-€200M",
+      client_type: "PE <€200M",
       rates: {
-        Italy:  { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
-        France: { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
-        UK:     { min_weekly: 28000, max_weekly: 34000, note: "", avoid: false },
-        DACH:   { min_weekly: 26000, max_weekly: 32000, note: "", avoid: false },
-        US:     { min_weekly: 34000, max_weekly: 42000, note: "", avoid: false },
-      },
-    },
-    {
-      client_type: "PE <€100M",
-      rates: {
-        Italy:  { min_weekly: 18000, max_weekly: 24000, note: "", avoid: false },
-        France: { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
-        UK:     { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
-        DACH:   { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
-        US:     { min_weekly: 28000, max_weekly: 36000, note: "", avoid: false },
+        Italy:  { min_weekly: 20000, max_weekly: 26000, note: "", avoid: false },
+        France: { min_weekly: 22000, max_weekly: 28000, note: "", avoid: false },
+        UK:     { min_weekly: 26000, max_weekly: 32000, note: "", avoid: false },
+        DACH:   { min_weekly: 24000, max_weekly: 30000, note: "", avoid: false },
+        US:     { min_weekly: 31000, max_weekly: 39000, note: "", avoid: false },
       },
     },
     // ── Family / Corporate clients (3 revenue bands) ──
