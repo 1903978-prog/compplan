@@ -17,7 +17,7 @@ import {
   getCurrencyForRegion, formatWithCurrency,
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
   type CompetitorBenchmark, type ProjectType, type CompetitiveIntensity, type CompetitorType,
-  type OwnershipType, type StrategicIntent, type ProcurementInvolvement,
+  type OwnershipType, type StrategicIntent, type ProcurementInvolvement, type LayerTrace,
 } from "@/lib/pricingEngine";
 
 interface PricingCase {
@@ -83,9 +83,45 @@ const STAFFING_ROLES: { label: string; match: string; defaultDays: number; defau
   { label: "Partner",  match: "Partner",     defaultDays: 1, defaultCount: 1 },
 ];
 
+const TEAM_PRESETS: Record<string, { label: string; config: { match: string; count: number; days: number }[] }> = {
+  "1+2": {
+    label: "1+2 (Partner + EM + 2 ASC)",
+    config: [{ match: "Partner", count: 1, days: 1 }, { match: "Manager EXT", count: 1, days: 5 }, { match: "ASC IN", count: 2, days: 5 }],
+  },
+  "1+1": {
+    label: "1+1 (Partner + EM + 1 ASC)",
+    config: [{ match: "Partner", count: 1, days: 1 }, { match: "Manager EXT", count: 1, days: 5 }, { match: "ASC IN", count: 1, days: 5 }],
+  },
+  "1+2pt": {
+    label: "1+2 part time (Partner + EM + 2 ASC, 3d/wk)",
+    config: [{ match: "Partner", count: 1, days: 1 }, { match: "Manager EXT", count: 1, days: 3 }, { match: "ASC IN", count: 2, days: 3 }],
+  },
+  "1+1pt": {
+    label: "1+1 part time (Partner + EM + 1 ASC, 3d/wk)",
+    config: [{ match: "Partner", count: 1, days: 1 }, { match: "Manager EXT", count: 1, days: 3 }, { match: "ASC IN", count: 1, days: 3 }],
+  },
+  "other": { label: "Other (manual)", config: [] },
+};
+
+function buildStaffingFromPreset(preset: string, settings: PricingSettings): StaffingLine[] {
+  const p = TEAM_PRESETS[preset];
+  if (!p || p.config.length === 0) return [];
+  const lines: StaffingLine[] = [];
+  for (const cfg of p.config) {
+    const role = settings.roles.find(r => r.role_name.toLowerCase().includes(cfg.match.toLowerCase()));
+    if (!role) continue;
+    lines.push({ role_id: role.id, role_name: role.role_name, days_per_week: cfg.days, daily_rate_used: role.default_daily_rate, count: cfg.count });
+  }
+  return lines;
+}
+
+function clientPrefix(name: string): string {
+  return (name || "CLI").replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toUpperCase().padEnd(3, "X");
+}
+
 function emptyCase(): PricingCase {
   return {
-    project_name: "", client_name: "", fund_name: "",
+    project_name: "", client_name: "", fund_name: "CARLYLE",
     region: "IT", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
     project_type: null, sector: null, ebitda_margin_pct: null,
@@ -129,6 +165,7 @@ export default function PricingTool() {
   const [showHistoryForm, setShowHistoryForm] = useState(false);
   const [savingProposal, setSavingProposal] = useState(false);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
+  const [teamPreset, setTeamPreset] = useState<string>("1+2");
 
   const loadAll = async () => {
     setLoading(true);
@@ -182,7 +219,8 @@ export default function PricingTool() {
 
   const openNewForm = () => {
     const base = emptyCase();
-    if (settings) base.staffing = initStaffing(settings);
+    if (settings) base.staffing = buildStaffingFromPreset("1+2", settings);
+    setTeamPreset("1+2");
     setForm(base);
     setView("form");
     setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
@@ -920,16 +958,41 @@ export default function PricingTool() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2 space-y-1">
-                  <Label className="text-xs">Project Name <span className="text-destructive">*</span></Label>
-                  <Input value={form.project_name} onChange={e => setForm(f => ({ ...f, project_name: e.target.value }))}
-                    placeholder="e.g. Digital Transformation Program" />
-                </div>
+                {/* Client name — first */}
                 <div className="space-y-1">
                   <Label className="text-xs">Client Company <span className="text-destructive">*</span></Label>
-                  <Input value={form.client_name} onChange={e => setForm(f => ({ ...f, client_name: e.target.value }))}
-                    placeholder="Client name" />
+                  <Input value={form.client_name}
+                    onChange={e => {
+                      const name = e.target.value;
+                      const pfx = clientPrefix(name);
+                      // Update project_name to next sequence if it follows the old prefix pattern
+                      setForm(f => {
+                        const oldPfx = clientPrefix(f.client_name);
+                        const isOldPattern = f.project_name.startsWith(oldPfx) && /^\d{2}$/.test(f.project_name.slice(3));
+                        const seq = isOldPattern ? f.project_name.slice(3) : "01";
+                        return { ...f, client_name: name, project_name: `${pfx}${seq}` };
+                      });
+                    }}
+                    placeholder="e.g. Apple" />
                 </div>
+                {/* Project sequence */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Project Sequence <span className="text-destructive">*</span></Label>
+                  {(() => {
+                    const pfx = clientPrefix(form.client_name);
+                    const seqOptions = Array.from({ length: 9 }, (_, i) => `${pfx}${String(i + 1).padStart(2, "0")}`);
+                    const currentSeq = seqOptions.includes(form.project_name) ? form.project_name : seqOptions[0];
+                    return (
+                      <Select value={currentSeq} onValueChange={v => setForm(f => ({ ...f, project_name: v }))}>
+                        <SelectTrigger className="h-9 text-sm font-mono"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {seqOptions.map(s => <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    );
+                  })()}
+                </div>
+                {/* PE Owner — default CARLYLE */}
                 <div className="space-y-1">
                   <Label className="text-xs">PE Owner</Label>
                   <Select value={form.fund_name || "__none__"} onValueChange={v => {
@@ -941,6 +1004,23 @@ export default function PricingTool() {
                       <SelectItem value="__none__">-- None (Family owned) --</SelectItem>
                       {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds).map(fund => (
                         <SelectItem key={fund} value={fund}>{fund}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Team Size preset */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Team Size</Label>
+                  <Select value={teamPreset} onValueChange={v => {
+                    setTeamPreset(v);
+                    if (v !== "other" && settings) {
+                      setForm(f => ({ ...f, staffing: buildStaffingFromPreset(v, settings) }));
+                    }
+                  }}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(TEAM_PRESETS).map(([k, p]) => (
+                        <SelectItem key={k} value={k}>{p.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -984,7 +1064,7 @@ export default function PricingTool() {
                   <Label className="text-xs">Notes / Context</Label>
                   <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                     placeholder="Any relevant context, competitive dynamics, constraints…"
-                    className="text-sm resize-none" rows={3} />
+                    className="text-sm resize-none" rows={2} />
                 </div>
               </div>
             </CardContent>
@@ -1150,7 +1230,88 @@ export default function PricingTool() {
             </CardContent>
           </Card>
 
-          {/* SECTION B: Staffing */}
+          {/* SECTION B: Pricing Waterfall Chart */}
+          {recommendation && recommendation.layer_trace.length > 0 && (() => {
+            const trace = recommendation.layer_trace;
+            const base = baseWeeklyDisplay;
+            const final = recommendation.target_weekly;
+            // Build waterfall bars: [base, ...layer deltas..., final]
+            const bars: { label: string; start: number; end: number; note: string }[] = [];
+            let prev = base;
+            for (const lt of trace) {
+              if (lt.layer === "L1") { prev = lt.value; continue; } // base already drawn
+              bars.push({ label: lt.label, start: prev, end: lt.value, note: lt.note });
+              prev = lt.value;
+            }
+            // Extend to final if needed
+            if (Math.abs(prev - final) > 50) bars.push({ label: "Final", start: prev, end: final, note: "Target recommendation" });
+
+            const allVals = [base, final, ...bars.flatMap(b => [b.start, b.end])];
+            const minV = Math.min(...allVals) * 0.92;
+            const maxV = Math.max(...allVals) * 1.08;
+            const range = maxV - minV || 1;
+
+            const W = 560; const H = 180;
+            const barW = Math.max(32, Math.floor((W - 60) / (bars.length + 2) - 6));
+            const gap = Math.floor((W - 60 - (bars.length + 2) * barW) / (bars.length + 1));
+            const xOf = (i: number) => 30 + i * (barW + gap);
+            const yOf = (v: number) => H - 30 - ((v - minV) / range) * (H - 50);
+            const hOf = (v1: number, v2: number) => Math.abs(yOf(v1) - yOf(v2));
+
+            return (
+              <div className="border rounded-lg p-4 bg-muted/10 space-y-2">
+                <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Pricing Waterfall</div>
+                <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
+                  {/* Base bar */}
+                  {(() => {
+                    const x = xOf(0); const y = yOf(base); const h = hOf(minV, base);
+                    return <>
+                      <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
+                      <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#1A6571" fontWeight="bold">{fmt(base)}</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">Staffing Base</text>
+                    </>;
+                  })()}
+                  {/* Delta bars */}
+                  {bars.map((b, i) => {
+                    const x = xOf(i + 1);
+                    const up = b.end >= b.start;
+                    const color = up ? "#16C3CF" : "#ef4444";
+                    const y = up ? yOf(b.end) : yOf(b.start);
+                    const h = Math.max(2, hOf(b.start, b.end));
+                    const deltaEur = b.end - b.start;
+                    const sign = deltaEur >= 0 ? "+" : "";
+                    return (
+                      <g key={i}>
+                        {/* connector line */}
+                        <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                        <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
+                        <text x={x + barW/2} y={up ? y - 4 : y + h + 10} textAnchor="middle" fontSize="9" fill={color} fontWeight="bold">
+                          {sign}{fmt(deltaEur)}
+                        </text>
+                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="7.5" fill="#64748b">{b.label.replace(/\(.*?\)/, "").trim()}</text>
+                      </g>
+                    );
+                  })}
+                  {/* Final bar */}
+                  {(() => {
+                    const x = xOf(bars.length + 1); const y = yOf(final); const h = hOf(minV, final);
+                    return <>
+                      <line x1={xOf(bars.length) + barW} y1={yOf(bars[bars.length-1]?.end ?? base)} x2={x} y2={yOf(final)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                      <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
+                      <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#1A6571" fontWeight="bold">{fmt(final)}</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">Target</text>
+                    </>;
+                  })()}
+                  {/* Baseline */}
+                  <line x1="25" y1={H-22} x2={W-5} y2={H-22} stroke="#e2e8f0" strokeWidth="0.5" />
+                </svg>
+              </div>
+            );
+          })()}
+
+          {/* SECTION B-old: Staffing moved to right column */}
+          {/* Staffing Build-up — now in right column */}
+          <div className="hidden">
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -1291,6 +1452,7 @@ export default function PricingTool() {
               )}
             </CardContent>
           </Card>
+          </div>{/* end hidden staffing */}
 
           {/* ── MARKET BENCHMARK CHART ────────────────────────────── */}
           {(() => {
@@ -1634,8 +1796,91 @@ export default function PricingTool() {
           </div>
         </div>
 
-        {/* ── RIGHT COLUMN: Live Result ─────────────────────────────────────── */}
+        {/* ── RIGHT COLUMN: Staffing + Live Result ─────────────────────────── */}
         <div className="lg:sticky lg:top-6 space-y-4">
+
+          {/* Staffing Build-up */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">Staffing Build-up</CardTitle>
+                {baseWeeklyDisplay > 0 && (
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    Base: <span className="text-foreground">{fmt(baseWeeklyDisplay)}/wk</span>
+                  </span>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {settings ? (
+                <div className="space-y-1">
+                  <div className="grid grid-cols-[80px_1fr_1fr_60px_70px] gap-1.5 px-1 pb-1">
+                    <span className="text-[9px] font-bold uppercase text-muted-foreground">Role</span>
+                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-center">Count</span>
+                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-center">d/wk</span>
+                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-right">Rate</span>
+                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-right">Weekly</span>
+                  </div>
+                  {STAFFING_ROLES.map(def => {
+                    const adminRole = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
+                    if (!adminRole) return null;
+                    const line = form.staffing.find(s => s.role_id === adminRole.id);
+                    const count = line?.count ?? 0;
+                    const days = line?.days_per_week ?? def.defaultDays;
+                    const rate = adminRole.default_daily_rate;
+                    const weekly = count > 0 ? count * days * rate : 0;
+                    const active = count > 0;
+                    const setCount = (n: number) => {
+                      const newCount = Math.max(0, Math.min(10, n));
+                      if (newCount === 0) {
+                        setForm(f => ({ ...f, staffing: f.staffing.filter(s => s.role_id !== adminRole.id) }));
+                      } else if (line) {
+                        updateStaffingLine(adminRole.id, "count", newCount);
+                      } else {
+                        setForm(f => ({ ...f, staffing: [...f.staffing, { role_id: adminRole.id, role_name: def.label, days_per_week: def.defaultDays, daily_rate_used: rate, count: newCount }] }));
+                      }
+                    };
+                    const setDays = (d: number) => { if (line) updateStaffingLine(adminRole.id, "days_per_week", Math.max(0.5, Math.min(5, d))); };
+                    return (
+                      <div key={def.label} className={`grid grid-cols-[80px_1fr_1fr_60px_70px] gap-1.5 items-center rounded px-1 py-1.5 transition-colors ${active ? "bg-primary/5 border border-primary/15" : "bg-muted/20 border border-transparent"}`}>
+                        <span className={`text-xs font-semibold ${active ? "text-foreground" : "text-muted-foreground"}`}>{def.label}</span>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <button type="button" onClick={() => setCount(count - 1)} disabled={count === 0} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center disabled:opacity-30">−</button>
+                          <span className={`w-5 text-center text-xs font-bold tabular-nums ${active ? "" : "text-muted-foreground"}`}>{count}</span>
+                          <button type="button" onClick={() => setCount(count + 1)} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center">+</button>
+                        </div>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <button type="button" onClick={() => setDays(days - 0.5)} disabled={!active || days <= 0.5} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center disabled:opacity-30">−</button>
+                          <span className={`w-7 text-center text-xs tabular-nums ${active ? "" : "text-muted-foreground/50"}`}>{active ? days : "—"}</span>
+                          <button type="button" onClick={() => setDays(days + 0.5)} disabled={!active || days >= 5} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center disabled:opacity-30">+</button>
+                        </div>
+                        <span className={`text-[10px] text-right tabular-nums ${active ? "text-muted-foreground" : "text-muted-foreground/40"}`}>€{rate.toLocaleString("it-IT")}/d</span>
+                        <span className={`text-xs font-semibold text-right tabular-nums ${active ? "text-foreground" : "text-muted-foreground/30"}`}>{active ? fmt(weekly) : "—"}</span>
+                      </div>
+                    );
+                  })}
+                  {(() => {
+                    const t = STAFFING_ROLES.reduce((acc, def) => {
+                      const role = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
+                      if (!role) return acc;
+                      const line = form.staffing.find(s => s.role_id === role.id);
+                      const count = line?.count ?? 0;
+                      const days = line?.days_per_week ?? def.defaultDays;
+                      const rate = line?.daily_rate_used ?? role.default_daily_rate;
+                      return { people: acc.people + count, days: acc.days + count * days, weekly: acc.weekly + count * days * rate };
+                    }, { people: 0, days: 0, weekly: 0 });
+                    return (
+                      <div className="flex items-center justify-between pt-2 border-t mt-1 px-1">
+                        <span className="text-xs text-muted-foreground">{t.people} people · {t.days.toFixed(1)}d/wk</span>
+                        <span className="font-bold text-sm">{fmt(t.weekly)}/week</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : <div className="text-sm text-muted-foreground">Loading roles…</div>}
+            </CardContent>
+          </Card>
+
           <Card className="overflow-hidden">
             <CardHeader className="pb-2 bg-muted/30">
               <CardTitle className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
