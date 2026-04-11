@@ -1605,24 +1605,48 @@ export default function PricingTool() {
           </Card>
 
           {/* SECTION B: Pricing Waterfall Chart */}
-          {recommendation && recommendation.layer_trace.length > 0 && (() => {
+          {recommendation && (() => {
             const trace = recommendation.layer_trace;
             const base = baseWeeklyDisplay;
             const final = recommendation.target_weekly;
 
-            // Build layer delta bars
-            const bars: { label: string; start: number; end: number; note: string }[] = [];
-            let prev = base;
+            // Map trace entries by normalized label (strip parenthetical suffixes like "(IT)")
+            const traceByKey: Record<string, LayerTrace> = {};
             for (const lt of trace) {
-              if (lt.layer === "L1") { prev = lt.value; continue; }
-              bars.push({ label: lt.label, start: prev, end: lt.value, note: lt.note });
-              prev = lt.value;
+              const key = lt.label.replace(/\s*\(.*?\)\s*$/, "").trim();
+              traceByKey[key] = lt;
             }
+
+            // Canonical layer sequence — always shown, even if 0% impact
+            const CANONICAL = [
+              "Geography",
+              "Market Context",
+              "Client Profile",
+              "Cost Floor Applied",
+              "Fund History",
+              "Win/Loss Comparables",
+              "Strategic Intent",
+            ];
+
+            // Build delta bars from canonical list, using trace values when present
+            const bars: { label: string; start: number; end: number; note: string; deltaPct: number }[] = [];
+            let prev = base;
+            for (const key of CANONICAL) {
+              const lt = traceByKey[key];
+              if (lt) {
+                bars.push({ label: key, start: prev, end: lt.value, note: lt.note, deltaPct: lt.delta_pct });
+                prev = lt.value;
+              } else {
+                bars.push({ label: key, start: prev, end: prev, note: "No impact", deltaPct: 0 });
+              }
+            }
+
             // Single NWP bar after target (net after discounts + clamp)
-            const extraBars: { label: string; start: number; end: number; color?: string }[] = [];
+            const extraBars: { label: string; start: number; end: number; color?: string; deltaPct: number }[] = [];
             const showNWFBar = totalDiscountPct > 0 || Math.abs(nwfClamped - final) > 50;
             if (showNWFBar) {
-              extraBars.push({ label: "NWP", start: final, end: nwfClamped, color: "#059669" });
+              const deltaPct = final > 0 ? ((nwfClamped - final) / final) * 100 : 0;
+              extraBars.push({ label: "NWP", start: final, end: nwfClamped, color: "#059669", deltaPct });
             }
             const nwfFinal = nwfClamped > 0 ? nwfClamped : final;
 
@@ -1633,12 +1657,23 @@ export default function PricingTool() {
             const maxV = Math.max(...allVals) * 1.08;
             const range = maxV - minV || 1;
 
-            const W = 560; const H = 180;
-            const barW = Math.max(26, Math.floor((W - 60) / (totalBarCount + 1) - 5));
+            const W = 640; const H = 180;
+            const barW = Math.max(22, Math.floor((W - 60) / (totalBarCount + 1) - 4));
             const gap = Math.max(3, Math.floor((W - 60 - totalBarCount * barW) / totalBarCount));
             const xOf = (i: number) => 30 + i * (barW + gap);
-            const yOf = (v: number) => H - 30 - ((v - minV) / range) * (H - 50);
+            const yOf = (v: number) => H - 32 - ((v - minV) / range) * (H - 56);
             const hOf = (v1: number, v2: number) => Math.abs(yOf(v1) - yOf(v2));
+
+            // Short labels to fit narrow bars
+            const SHORT: Record<string, string> = {
+              "Geography": "Geo",
+              "Market Context": "Market",
+              "Client Profile": "Client",
+              "Cost Floor Applied": "Floor",
+              "Fund History": "Fund Hist",
+              "Win/Loss Comparables": "W/L Comp",
+              "Strategic Intent": "Intent",
+            };
 
             return (
               <div className="border rounded-lg p-4 bg-muted/10 space-y-2">
@@ -1649,27 +1684,32 @@ export default function PricingTool() {
                     const x = xOf(0); const y = yOf(base); const h = hOf(minV, base);
                     return <>
                       <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
-                      <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#1A6571" fontWeight="bold">{fmt(base)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">Staffing</text>
+                      <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(base)}</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6.5" fill="#64748b">Staffing</text>
                     </>;
                   })()}
                   {/* Layer delta bars */}
                   {bars.map((b, i) => {
                     const x = xOf(i + 1);
+                    const isZero = Math.abs(b.end - b.start) < 1;
                     const up = b.end >= b.start;
-                    const color = up ? "#16C3CF" : "#ef4444";
+                    const color = isZero ? "#cbd5e1" : (up ? "#16C3CF" : "#ef4444");
                     const y = up ? yOf(b.end) : yOf(b.start);
                     const h = Math.max(2, hOf(b.start, b.end));
                     const deltaEur = b.end - b.start;
                     const sign = deltaEur >= 0 ? "+" : "";
+                    const textY = up ? y - 9 : y + h + 8;
                     return (
                       <g key={i}>
                         <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                        <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
-                        <text x={x + barW/2} y={up ? y - 4 : y + h + 10} textAnchor="middle" fontSize="9" fill={color} fontWeight="bold">
-                          {sign}{fmt(deltaEur)}
+                        <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity={isZero ? 0.45 : 0.85} />
+                        <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={isZero ? "#94a3b8" : color} fontWeight="bold">
+                          {isZero ? "—" : `${sign}${fmt(deltaEur)}`}
                         </text>
-                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="7.5" fill="#64748b">{b.label.replace(/\(.*?\)/, "").trim()}</text>
+                        <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">
+                          {isZero ? "0%" : `${sign}${b.deltaPct.toFixed(0)}%`}
+                        </text>
+                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6" fill="#64748b">{SHORT[b.label] ?? b.label}</text>
                       </g>
                     );
                   })}
@@ -1681,8 +1721,8 @@ export default function PricingTool() {
                     return <>
                       <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(final)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                       <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
-                      <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#1A6571" fontWeight="bold">{fmt(final)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">{showNWFBar ? "Target" : "NWF"}</text>
+                      <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(final)}</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6.5" fill="#64748b">{showNWFBar ? "Target" : "NWF"}</text>
                     </>;
                   })()}
                   {/* Discount / clamp bars */}
@@ -1695,14 +1735,18 @@ export default function PricingTool() {
                     const h = Math.max(2, hOf(b.start, b.end));
                     const deltaEur = b.end - b.start;
                     const sign = deltaEur >= 0 ? "+" : "";
+                    const textY = up ? y - 9 : y + h + 8;
                     return (
                       <g key={i}>
                         <line x1={xOf(bi - 1) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                         <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
-                        <text x={x + barW/2} y={up ? y - 4 : y + h + 10} textAnchor="middle" fontSize="9" fill={color} fontWeight="bold">
+                        <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={color} fontWeight="bold">
                           {sign}{fmt(deltaEur)}
                         </text>
-                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="7.5" fill="#64748b">{b.label}</text>
+                        <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">
+                          {sign}{b.deltaPct.toFixed(0)}%
+                        </text>
+                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6" fill="#64748b">{b.label}</text>
                       </g>
                     );
                   })}
@@ -1714,8 +1758,8 @@ export default function PricingTool() {
                     return <>
                       <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(nwfFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                       <rect x={x} y={y} width={barW} height={h} fill="#059669" rx="2" />
-                      <text x={x + barW/2} y={y - 4} textAnchor="middle" fontSize="9" fill="#059669" fontWeight="bold">{fmt(nwfFinal)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="8" fill="#64748b">NWF</text>
+                      <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#059669" fontWeight="bold">{fmt(nwfFinal)}</text>
+                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6.5" fill="#64748b">NWF</text>
                     </>;
                   })()}
                   {/* Baseline */}
