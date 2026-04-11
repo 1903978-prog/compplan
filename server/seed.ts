@@ -2,6 +2,7 @@ import { db } from "./db";
 import { roleGridEntries, appSettings, employees } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
+import { SEED_PROPOSALS } from "./seedProposals";
 
 const SEED_EMPLOYEES = [
   {
@@ -325,6 +326,43 @@ export async function seedDatabase() {
   // API pause flag — default paused; reset to paused on every restart
   await db.execute(sql`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS api_paused INTEGER NOT NULL DEFAULT 1`);
   await db.execute(sql`UPDATE app_settings SET api_paused = 1 WHERE id = 1`);
+
+  // Seed pricing_proposals from historical win/loss Excel (idempotent by project_name)
+  try {
+    const existing = await db.execute(sql`SELECT COUNT(*) AS c FROM pricing_proposals`);
+    const currentCount = Number((existing as any).rows?.[0]?.c ?? 0);
+    if (currentCount < SEED_PROPOSALS.length) {
+      for (const p of SEED_PROPOSALS) {
+        // Insert only if no row with this project_name already exists
+        await db.execute(sql`
+          INSERT INTO pricing_proposals
+            (proposal_date, project_name, client_name, fund_name, region, country, pe_owned, revenue_band, duration_weeks, weekly_price, total_fee, outcome, notes, created_at)
+          SELECT ${p.proposal_date}, ${p.project_name}, ${p.client_name}, ${p.fund_name}, ${p.region}, ${p.country}, ${p.pe_owned}, ${p.revenue_band}, ${p.duration_weeks}, ${p.weekly_price}, ${p.total_fee}, ${p.outcome}, ${p.notes}, ${new Date().toISOString()}
+          WHERE NOT EXISTS (SELECT 1 FROM pricing_proposals WHERE project_name = ${p.project_name})
+        `);
+      }
+      console.log(`Seeded pricing_proposals (target: ${SEED_PROPOSALS.length} rows)`);
+    }
+  } catch (e) {
+    console.error("Failed to seed pricing_proposals:", e);
+  }
+
+  // Add comprehensive pricing case columns (idempotent)
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS company_revenue_m REAL`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS aspiration_ebitda_eur REAL`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS target_roi REAL`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS max_fees_ebitda_pct REAL`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS aspiration_ebitda_pct REAL`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS relationship_type TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS decision_maker TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS budget_disclosed_eur REAL`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS incumbent_advisor TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS geographic_scope TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS value_driver TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS differentiation TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS risk_flags JSONB`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS problem_statement TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS expected_impact_eur REAL`);
 
   // Add project_type and slide_selection columns to proposals (idempotent)
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS project_type TEXT`);

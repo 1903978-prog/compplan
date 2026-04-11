@@ -315,6 +315,23 @@ export const pricingCases = pgTable("pricing_cases", {
   strategic_intent: text("strategic_intent"),
   procurement_involvement: text("procurement_involvement"),
   case_discounts: jsonb("case_discounts"),
+  // Value-based fields
+  company_revenue_m: real("company_revenue_m"),
+  aspiration_ebitda_eur: real("aspiration_ebitda_eur"),
+  target_roi: real("target_roi"),
+  max_fees_ebitda_pct: real("max_fees_ebitda_pct"),
+  aspiration_ebitda_pct: real("aspiration_ebitda_pct"),
+  // Comprehensive analysis
+  relationship_type: text("relationship_type"),
+  decision_maker: text("decision_maker"),
+  budget_disclosed_eur: real("budget_disclosed_eur"),
+  incumbent_advisor: text("incumbent_advisor"),
+  geographic_scope: text("geographic_scope"),
+  value_driver: text("value_driver"),
+  differentiation: text("differentiation"),
+  risk_flags: jsonb("risk_flags"),
+  problem_statement: text("problem_statement"),
+  expected_impact_eur: real("expected_impact_eur"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });

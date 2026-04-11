@@ -54,6 +54,17 @@ interface PricingCase {
   aspiration_ebitda_pct?: number | null;
   company_revenue_m?: number | null;      // Company total revenue (€M)
   aspiration_ebitda_eur?: number | null;  // Incremental aspiration EBITDA (€, absolute)
+  // Comprehensive analysis (v2)
+  relationship_type?: string | null;      // new / repeat / strategic
+  decision_maker?: string | null;         // CEO / CFO / COO / PE partner / Board
+  budget_disclosed_eur?: number | null;   // client-disclosed budget ceiling (€)
+  incumbent_advisor?: string | null;      // name of existing advisor if any
+  geographic_scope?: string | null;       // single / multi / global
+  value_driver?: string | null;           // key business lever (free text)
+  differentiation?: string | null;        // why us vs competition (free text)
+  risk_flags?: string[] | null;           // regulatory / timing / team / reputation
+  problem_statement?: string | null;      // what the project actually solves
+  expected_impact_eur?: number | null;    // expected € impact on client's P&L
 }
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
@@ -274,6 +285,10 @@ function emptyCase(): PricingCase {
     target_roi: 10, max_fees_ebitda_pct: 3,
     aspiration_ebitda_pct: null,
     company_revenue_m: null, aspiration_ebitda_eur: null,
+    relationship_type: null, decision_maker: null, budget_disclosed_eur: null,
+    incumbent_advisor: null, geographic_scope: null, value_driver: null,
+    differentiation: null, risk_flags: null, problem_statement: null,
+    expected_impact_eur: null,
   };
 }
 
@@ -317,6 +332,9 @@ export default function PricingTool() {
   const [savingBenchmarks, setSavingBenchmarks] = useState(false);
   const [pasteInput, setPasteInput] = useState("");
   const [pasteResult, setPasteResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [excelPaste, setExcelPaste] = useState("");
+  const [excelPasteResult, setExcelPasteResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [importingExcel, setImportingExcel] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -420,7 +438,7 @@ export default function PricingTool() {
   const handleParsePaste = () => {
     const parsed = parsePricePaste(pasteInput);
     if (parsed.length === 0) {
-      setPasteResult({ ok: false, msg: "No valid rows found — check format" });
+      setPasteResult({ ok: false, msg: "No valid rows found — use pipe format (Italy | Weekly fee | €28k-34k | ...) or free-form (country header + 'Weekly fee: green €28k-34k, yellow €25k-28k / €34k-38k')" });
       return;
     }
     const merged = [...benchmarks];
@@ -444,6 +462,143 @@ export default function PricingTool() {
     if (!confirm("Delete this pricing case?")) return;
     await fetch(`/api/pricing/cases/${id}`, { method: "DELETE", credentials: "include" });
     loadAll();
+  };
+
+  // Parse Excel-paste (tab-separated or comma-separated rows) into PricingProposal[]
+  const parseExcelPaste = (text: string): Partial<PricingProposal>[] => {
+    const rows: Partial<PricingProposal>[] = [];
+    const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return rows;
+
+    // Detect separator (tab preferred, else comma, else pipe)
+    const sep = lines[0].includes("\t") ? "\t" : lines[0].includes("|") ? "|" : ",";
+
+    // Normalize a header row to a column-index map
+    const headerCells = lines[0].split(sep).map(c => c.trim().toLowerCase());
+    const hasHeader = headerCells.some(h =>
+      h.includes("project") || h.includes("client") || h.includes("weekly") ||
+      h.includes("outcome") || h.includes("won") || h === "yymm");
+    const colIdx: Record<string, number> = {};
+    if (hasHeader) {
+      headerCells.forEach((h, i) => {
+        if (h.includes("yymm") || h.includes("date")) colIdx.date = i;
+        else if (h.includes("won") || h.includes("outcome")) colIdx.outcome = i;
+        else if (h.includes("project") && h.includes("code")) colIdx.project = i;
+        else if (h.includes("client")) colIdx.client = i;
+        else if (h.includes("sector") || h.includes("industry")) colIdx.sector = i;
+        else if (h.includes("fund") || h.includes("pe")) colIdx.fund = i;
+        else if (h.includes("revenue")) colIdx.revenue = i;
+        else if (h.includes("team")) colIdx.team = i;
+        else if (h.includes("total") && h.includes("amount")) colIdx.total = i;
+        else if (h.includes("week") && h.includes("amount")) colIdx.weekly = i;
+        else if (h.includes("nb") && h.includes("week")) colIdx.weeks = i;
+        else if (h === "weeks" || h === "duration") colIdx.weeks = i;
+        else if (h.includes("country")) colIdx.country = i;
+      });
+    }
+
+    const startIdx = hasHeader ? 1 : 0;
+    const toNum = (s: string) => {
+      const n = parseFloat((s || "").replace(/[€$,\s]/g, ""));
+      return isNaN(n) ? 0 : n;
+    };
+
+    for (let i = startIdx; i < lines.length; i++) {
+      const cells = lines[i].split(sep).map(c => c.trim());
+      if (cells.length < 4) continue;
+
+      // Without header, assume Excel column order matches the template
+      const get = (key: string, fallbackIdx: number) =>
+        hasHeader ? (colIdx[key] !== undefined ? cells[colIdx[key]] : "") : cells[fallbackIdx];
+
+      const rawDate = get("date", 0);
+      let proposal_date = new Date().toISOString().slice(0, 10);
+      if (/^\d{4}$/.test(rawDate)) {
+        proposal_date = `20${rawDate.slice(0, 2)}-${rawDate.slice(2, 4)}-15`;
+      } else if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) {
+        proposal_date = rawDate.slice(0, 10);
+      }
+
+      const outcomeRaw = (get("outcome", 1) || "").toLowerCase();
+      const outcome = outcomeRaw.includes("won") ? "won" : outcomeRaw.includes("lost") ? "lost" : "pending";
+
+      const project_name = get("project", 2);
+      if (!project_name) continue;
+
+      const client_name = get("client", 3);
+      const sector = get("sector", 4);
+      const fund_name = get("fund", 5);
+      const revRaw = toNum(get("revenue", 6));
+      const team = get("team", 7);
+      const total_fee = toNum(get("total", 9));
+      const weeks = toNum(get("weeks", 11));
+      const weekly_price = toNum(get("weekly", 12));
+      const country = get("country", 13);
+
+      if (!weekly_price || weekly_price < 100) continue;
+
+      // Revenue band
+      let rev_meur = revRaw;
+      if (rev_meur > 0 && rev_meur < 10) rev_meur *= 1000; // BEUR shorthand
+      let revenue_band = "above_1b";
+      if (rev_meur > 0 && rev_meur < 100) revenue_band = "below_100m";
+      else if (rev_meur < 200) revenue_band = "100m_200m";
+      else if (rev_meur < 1000) revenue_band = "200m_1b";
+
+      // Region mapping
+      const CMAP: Record<string, string> = {
+        "italy": "IT", "usa": "US", "united states": "US", "united kingdom": "UK", "uk": "UK",
+        "germany": "DE", "france": "FR", "switzerland": "DE", "austria": "DE",
+        "netherlands": "DE", "the netherlands": "DE", "belgium": "FR",
+        "luxembourg": "FR", "luxemburg": "FR", "czech republic": "DE",
+        "uae": "Middle East", "saudi arabia": "Middle East",
+        "japan": "Asia", "indonesia": "Asia", "the phillipines": "Asia", "philippines": "Asia",
+      };
+      const region = CMAP[country.toLowerCase()] ?? "IT";
+
+      const pe_owned = !!(fund_name && !/n\/a|publicly|independent|sovereign/i.test(fund_name));
+
+      rows.push({
+        proposal_date, project_name, client_name, fund_name,
+        region, pe_owned, revenue_band, duration_weeks: weeks || 0,
+        weekly_price, total_fee: total_fee || weekly_price * (weeks || 0), outcome,
+        notes: `Sector: ${sector}; Team: ${team}; Revenue: ${revRaw}; Origin: ${country}`,
+      } as any);
+    }
+    return rows;
+  };
+
+  const handleExcelImport = async () => {
+    const parsed = parseExcelPaste(excelPaste);
+    if (parsed.length === 0) {
+      setExcelPasteResult({ ok: false, msg: "No valid rows — tab-separated expected (copy from Excel)" });
+      return;
+    }
+    setImportingExcel(true);
+    try {
+      let inserted = 0, skipped = 0;
+      for (const p of parsed) {
+        const existing = proposals.find(x =>
+          x.project_name === p.project_name &&
+          x.client_name === p.client_name
+        );
+        if (existing) { skipped++; continue; }
+        const payload = { ...p, pe_owned: p.pe_owned ? 1 : 0 };
+        const res = await fetch("/api/pricing/proposals", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) inserted++;
+      }
+      setExcelPasteResult({ ok: true, msg: `Imported ${inserted}, skipped ${skipped} duplicates` });
+      setExcelPaste("");
+      loadAll();
+    } catch {
+      setExcelPasteResult({ ok: false, msg: "Import failed" });
+    } finally {
+      setImportingExcel(false);
+    }
   };
 
   const saveProposal = async () => {
@@ -676,8 +831,8 @@ export default function PricingTool() {
               <Plus className="w-4 h-4 mr-2" /> New Pricing Case
             </Button>
           ) : mainTab === "history" ? (
-            <Button onClick={() => { setHistoryForm(emptyProposal()); setEditingProposalId(null); setShowHistoryForm(true); }}>
-              <Plus className="w-4 h-4 mr-2" /> Log Past Project
+            <Button onClick={() => setShowHistoryForm(true)}>
+              <Plus className="w-4 h-4 mr-2" /> Import Excel / Paste
             </Button>
           ) : null}
         </div>
@@ -843,107 +998,33 @@ export default function PricingTool() {
             {showHistoryForm && (
               <Card className="border-primary/30">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">{editingProposalId ? "Edit Past Project" : "Log Past Project"}</CardTitle>
+                  <CardTitle className="text-base">Import Excel / Paste Win-Loss Data</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Date</Label>
-                      <Input type="date" value={historyForm.proposal_date}
-                        onChange={e => setHistoryForm(f => ({ ...f, proposal_date: e.target.value }))} className="h-9 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Project Name <span className="text-destructive">*</span></Label>
-                      <Input value={historyForm.project_name} placeholder="e.g. Cost reduction PMO"
-                        onChange={e => setHistoryForm(f => ({ ...f, project_name: e.target.value }))} className="h-9 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Client</Label>
-                      <Input value={historyForm.client_name ?? ""} placeholder="Client name"
-                        onChange={e => setHistoryForm(f => ({ ...f, client_name: e.target.value }))} className="h-9 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">PE Owner</Label>
-                      <Select value={historyForm.fund_name || "__none__"} onValueChange={v => {
-                        const isPE = v !== "__none__";
-                        setHistoryForm(f => ({ ...f, fund_name: isPE ? v : "", pe_owned: isPE }));
-                      }}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select PE owner…" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">-- None (Family owned) --</SelectItem>
-                          {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds).map(fund => (
-                            <SelectItem key={fund} value={fund}>{fund}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Region</Label>
-                      <Select value={historyForm.region} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {REGIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Revenue Band</Label>
-                      <Select value={historyForm.revenue_band} onValueChange={v => setHistoryForm(f => ({ ...f, revenue_band: v }))}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {REVENUE_BANDS.map(rb => <SelectItem key={rb.value} value={rb.value}>{rb.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Duration (weeks)</Label>
-                      <Input type="number" min="1" value={historyForm.duration_weeks ?? ""}
-                        onChange={e => setHistoryForm(f => ({ ...f, duration_weeks: parseInt(e.target.value) || 0 }))} className="h-9 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Weekly Price (€) <span className="text-destructive">*</span></Label>
-                      <Input type="number" min="0" value={historyForm.weekly_price || ""}
-                        onChange={e => setHistoryForm(f => ({ ...f, weekly_price: parseFloat(e.target.value) || 0 }))} className="h-9 text-sm font-mono" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Outcome</Label>
-                      <div className="flex gap-2">
-                        {(["won", "lost", "pending"] as const).map(v => (
-                          <button key={v} type="button"
-                            onClick={() => setHistoryForm(f => ({ ...f, outcome: v }))}
-                            className={`flex-1 py-1.5 rounded-md text-sm font-medium border capitalize transition-colors ${
-                              historyForm.outcome === v
-                                ? v === "won" ? "bg-emerald-600 text-white border-emerald-600"
-                                  : v === "lost" ? "bg-red-500 text-white border-red-500"
-                                  : "bg-primary text-primary-foreground border-primary"
-                                : "bg-background border-border text-muted-foreground hover:bg-muted"
-                            }`}>
-                            {v}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {historyForm.outcome === "lost" && (
-                      <div className="space-y-1">
-                        <Label className="text-xs">Loss Reason</Label>
-                        <Input value={historyForm.loss_reason ?? ""} placeholder="e.g. Price too high, lost to competitor"
-                          onChange={e => setHistoryForm(f => ({ ...f, loss_reason: e.target.value }))} className="h-9 text-sm" />
-                      </div>
-                    )}
-                    <div className="col-span-3 space-y-1">
-                      <Label className="text-xs">Notes</Label>
-                      <Textarea value={historyForm.notes ?? ""} placeholder="Any context about this deal…"
-                        onChange={e => setHistoryForm(f => ({ ...f, notes: e.target.value }))}
-                        className="text-sm resize-none" rows={2} />
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button onClick={saveProposal} disabled={savingProposal} size="sm">
-                      {savingProposal ? "Saving…" : editingProposalId ? "Update" : "Save"}
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Copy rows from Excel (select cells → Ctrl+C) and paste here. First row can be headers.
+                    Expected columns: YYMM, Won/Lost, Project Code, Client Name, Sector, Fund, Revenue (MEUR),
+                    Team Size, Team Size2, Total Amount, Currency, Nb of weeks, Weekly Amount, Client Country.
+                  </p>
+                  <Textarea
+                    value={excelPaste}
+                    onChange={e => { setExcelPaste(e.target.value); setExcelPasteResult(null); }}
+                    placeholder={"Paste here — tab-separated rows from Excel:\n2210\tLost\tARX00\tArxada AG\tPharma / Healthcare\tBain / Cinven\t2.4\tEM+1\t1\t357143\tEUR\t12\t29761\tSwitzerland"}
+                    className="text-xs font-mono resize-none"
+                    rows={8}
+                  />
+                  <div className="flex items-center gap-3">
+                    <Button onClick={handleExcelImport} disabled={!excelPaste.trim() || importingExcel} size="sm">
+                      {importingExcel ? "Importing…" : "Import & Save"}
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => { setShowHistoryForm(false); setEditingProposalId(null); setHistoryForm(emptyProposal()); }}>
+                    <Button variant="outline" size="sm" onClick={() => { setShowHistoryForm(false); setExcelPaste(""); setExcelPasteResult(null); }}>
                       Cancel
                     </Button>
+                    {excelPasteResult && (
+                      <span className={`text-xs font-medium ${excelPasteResult.ok ? "text-emerald-600" : "text-destructive"}`}>
+                        {excelPasteResult.msg}
+                      </span>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -958,7 +1039,7 @@ export default function PricingTool() {
                     <p className="font-semibold text-lg">No past projects logged yet</p>
                     <p className="text-sm text-muted-foreground">Log won and lost deals to improve pricing recommendations</p>
                   </div>
-                  <Button onClick={() => setShowHistoryForm(true)}><Plus className="w-4 h-4 mr-2" /> Log First Project</Button>
+                  <Button onClick={() => setShowHistoryForm(true)}><Plus className="w-4 h-4 mr-2" /> Import Excel / Paste</Button>
                 </CardContent>
               </Card>
             ) : proposals.length > 0 && (
@@ -1599,6 +1680,132 @@ export default function PricingTool() {
                       <SelectItem value="mbb">MBB (+15%)</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              </div>
+
+              {/* ── Comprehensive Analysis Fields ────────────────────────────── */}
+              <div className="pt-3 mt-3 border-t border-dashed border-border space-y-3">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Comprehensive Case Analysis</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Relationship */}
+                  <div className="space-y-1">
+                    <Label className="text-xs">Client Relationship</Label>
+                    <Select value={form.relationship_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, relationship_type: v === "__none__" ? null : v }))}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— Not set —</SelectItem>
+                        <SelectItem value="new">First-time client</SelectItem>
+                        <SelectItem value="repeat">Repeat client</SelectItem>
+                        <SelectItem value="strategic">Strategic account</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {/* Decision maker */}
+                  <div className="space-y-1">
+                    <Label className="text-xs">Primary Decision Maker</Label>
+                    <Select value={form.decision_maker ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, decision_maker: v === "__none__" ? null : v }))}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— Not set —</SelectItem>
+                        <SelectItem value="ceo">CEO</SelectItem>
+                        <SelectItem value="cfo">CFO</SelectItem>
+                        <SelectItem value="coo">COO</SelectItem>
+                        <SelectItem value="pe_partner">PE Partner / Investor</SelectItem>
+                        <SelectItem value="board">Board</SelectItem>
+                        <SelectItem value="procurement">Procurement</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {/* Geographic scope */}
+                  <div className="space-y-1">
+                    <Label className="text-xs">Geographic Scope</Label>
+                    <Select value={form.geographic_scope ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, geographic_scope: v === "__none__" ? null : v }))}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— Not set —</SelectItem>
+                        <SelectItem value="single">Single country</SelectItem>
+                        <SelectItem value="multi">Multi-country (2-5)</SelectItem>
+                        <SelectItem value="global">Global (6+ countries)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {/* Budget disclosed */}
+                  <div className="space-y-1">
+                    <Label className="text-xs">Budget Disclosed (€, if any)</Label>
+                    <Input type="number" min="0" step="10000"
+                      placeholder="e.g. 400000"
+                      value={form.budget_disclosed_eur ?? ""}
+                      onChange={e => setForm(f => ({ ...f, budget_disclosed_eur: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
+                  </div>
+                  {/* Incumbent advisor */}
+                  <div className="space-y-1">
+                    <Label className="text-xs">Incumbent Advisor (if any)</Label>
+                    <Input placeholder="e.g. McKinsey, internal team, none"
+                      value={form.incumbent_advisor ?? ""}
+                      onChange={e => setForm(f => ({ ...f, incumbent_advisor: e.target.value || null }))} />
+                  </div>
+                  {/* Expected impact */}
+                  <div className="space-y-1">
+                    <Label className="text-xs">Expected Client Impact (€)</Label>
+                    <Input type="number" min="0" step="100000"
+                      placeholder="e.g. 15000000"
+                      value={form.expected_impact_eur ?? ""}
+                      onChange={e => setForm(f => ({ ...f, expected_impact_eur: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
+                    {form.expected_impact_eur && recommendation?.target_total ? (
+                      <div className="text-[9px] text-muted-foreground">
+                        Fees/Impact: {((recommendation.target_total / form.expected_impact_eur) * 100).toFixed(1)}%
+                      </div>
+                    ) : (
+                      <div className="text-[9px] text-muted-foreground">€ P&amp;L impact target — drives value-based pricing</div>
+                    )}
+                  </div>
+                </div>
+                {/* Problem statement */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Problem Statement / Scope</Label>
+                  <Textarea value={form.problem_statement ?? ""}
+                    onChange={e => setForm(f => ({ ...f, problem_statement: e.target.value || null }))}
+                    placeholder="What business problem are we solving? E.g. 'Post-merger procurement consolidation across 3 BU targeting €8M savings in 6 months'"
+                    className="text-sm resize-none" rows={2} />
+                </div>
+                {/* Value driver */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Key Value Driver</Label>
+                  <Input placeholder="The one business lever this work moves — e.g. 'EBITDA +3pp via cost takeout'"
+                    value={form.value_driver ?? ""}
+                    onChange={e => setForm(f => ({ ...f, value_driver: e.target.value || null }))} />
+                </div>
+                {/* Differentiation */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Why Us vs Competition</Label>
+                  <Textarea value={form.differentiation ?? ""}
+                    onChange={e => setForm(f => ({ ...f, differentiation: e.target.value || null }))}
+                    placeholder="Our unique edge on this case — e.g. 'Prior work with this PE, sector IP, speed to impact'"
+                    className="text-sm resize-none" rows={2} />
+                </div>
+                {/* Risk flags */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Risk Flags</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {["regulatory", "timing", "team availability", "reputation", "payment risk", "scope creep"].map(flag => {
+                      const active = (form.risk_flags ?? []).includes(flag);
+                      return (
+                        <button key={flag} type="button"
+                          onClick={() => {
+                            const curr = form.risk_flags ?? [];
+                            const next = active ? curr.filter(f => f !== flag) : [...curr, flag];
+                            setForm(f => ({ ...f, risk_flags: next.length > 0 ? next : null }));
+                          }}
+                          className={`text-[10px] px-2 py-1 rounded border capitalize transition-colors ${
+                            active
+                              ? "bg-amber-100 border-amber-400 text-amber-800"
+                              : "bg-background border-border text-muted-foreground hover:bg-muted"
+                          }`}>
+                          {flag}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </CardContent>
