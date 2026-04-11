@@ -1984,7 +1984,7 @@ export default function PricingTool() {
 
             const regionMap2: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
             const matrixRegion2 = regionMap2[form.region] ?? "Italy";
-            const benchmarks = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
+            const competitorBenchmarks = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
 
             const revenueM = form.company_revenue_m ?? 0;
             const ebitdaPct = form.ebitda_margin_pct ?? 0;
@@ -1994,7 +1994,7 @@ export default function PricingTool() {
             const tnfAspirationRatio = aspirationEur > 0 ? tnf / aspirationEur : null;
 
             // Benchmark totals for this region
-            const benchRows = benchmarks.map(b => {
+            const benchRows = competitorBenchmarks.map(b => {
               const minW = (b.rates as any)[matrixRegion2]?.min_weekly ?? 0;
               const maxW = (b.rates as any)[matrixRegion2]?.max_weekly ?? 0;
               const avg = ((minW + maxW) / 2) * (form.duration_weeks || 12);
