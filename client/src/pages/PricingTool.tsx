@@ -275,18 +275,18 @@ function parsePricePaste(text: string): CountryBenchmarkRow[] {
 
 function emptyCase(): PricingCase {
   return {
-    project_name: "", client_name: "", fund_name: "CARLYLE",
+    project_name: "CLI01", client_name: "", fund_name: "CARLYLE",
     region: "IT", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
     project_type: "transformation", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
-    commercial_maturity: null, urgency: null, competitive_intensity: null,
-    competitor_type: null, ownership_type: null, strategic_intent: "enter",
+    commercial_maturity: null, urgency: null, competitive_intensity: "limited",
+    competitor_type: "none", ownership_type: null, strategic_intent: "enter",
     procurement_involvement: null,
     target_roi: 10, max_fees_ebitda_pct: 3,
     aspiration_ebitda_pct: null,
     company_revenue_m: 300, aspiration_ebitda_eur: 5000000,
-    relationship_type: null, decision_maker: null, budget_disclosed_eur: null,
-    incumbent_advisor: null, geographic_scope: null, value_driver: null,
+    relationship_type: "new", decision_maker: "ceo", budget_disclosed_eur: null,
+    incumbent_advisor: null, geographic_scope: "multi", value_driver: null,
     differentiation: null, risk_flags: null, problem_statement: null,
     expected_impact_eur: null,
   };
