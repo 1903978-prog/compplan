@@ -979,7 +979,7 @@ export default function PricingTool() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr,500px] gap-6 items-start">
+      <div className="grid lg:grid-cols-[1fr,700px] gap-6 items-start">
         {/* ── LEFT COLUMN ──────────────────────────────────────────────────── */}
         <div className="space-y-5">
 
