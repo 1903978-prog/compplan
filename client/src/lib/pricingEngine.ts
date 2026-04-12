@@ -113,6 +113,16 @@ export interface PricingSettings {
   competitor_benchmarks: CompetitorBenchmark[];
   project_types?: string[];
   sectors?: string[];
+  // Configurable price adjustments (admin-editable)
+  competitive_intensity_adj?: PricingAdjustment[];
+  competitor_type_adj?: PricingAdjustment[];
+  strategic_intent_adj?: PricingAdjustment[];
+}
+
+export interface PricingAdjustment {
+  value: string;    // key used in forms (e.g. "sole_source")
+  label: string;    // display label (e.g. "Sole source")
+  adj_pct: number;  // adjustment percentage (e.g. 15 for +15%, -15 for −15%)
 }
 
 export interface StaffingLine {
@@ -687,6 +697,23 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
   min_comparables: 3,
   fund_anchor_weight: 0.40,
   win_loss_weight: 0.60,
+  competitive_intensity_adj: [
+    { value: "sole_source", label: "Sole source",      adj_pct: 15  },
+    { value: "limited",     label: "Limited competition", adj_pct: 5 },
+    { value: "competitive", label: "Competitive",       adj_pct: 0  },
+    { value: "crowded",     label: "Crowded market",    adj_pct: -15 },
+  ],
+  competitor_type_adj: [
+    { value: "none",      label: "No competitor",  adj_pct: 0   },
+    { value: "boutiques", label: "Boutiques",      adj_pct: -5  },
+    { value: "tier2",     label: "Tier 2 firms",   adj_pct: 0   },
+    { value: "mbb",       label: "MBB present",    adj_pct: 15  },
+  ],
+  strategic_intent_adj: [
+    { value: "enter",   label: "Enter new client (beachhead)", adj_pct: -15 },
+    { value: "expand",  label: "Expand relationship",          adj_pct: 0   },
+    { value: "harvest", label: "Harvest (optimise margin)",    adj_pct: 15  },
+  ],
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -734,7 +761,7 @@ function computeCostFloor(input: PricingCaseInput, settings: PricingSettings): n
 
 // ── L2: Market Layer ──────────────────────────────────────────────────────────
 
-function computeMarketAdjustments(input: PricingCaseInput): {
+function computeMarketAdjustments(input: PricingCaseInput, settings: PricingSettings): {
   geo_mult: number;
   competitive_adj: number;
   competitor_adj: number;
@@ -743,25 +770,28 @@ function computeMarketAdjustments(input: PricingCaseInput): {
 } {
   const notes: string[] = [];
 
-  // Geo: returned separately (uses settings), hardcode defaults here for layer trace
-  // (actual geo_mult comes from settings in main function)
   const geo_mult = 1.0; // placeholder; overridden in main
 
-  // Competitive intensity adjustment (additive %)
+  // Competitive intensity adjustment — from settings
   let competitive_adj = 0;
-  switch (input.competitive_intensity) {
-    case "sole_source":  competitive_adj = 0.15;  notes.push("Sole source: +15% premium"); break;
-    case "limited":      competitive_adj = 0.05;  notes.push("Limited competition: +5%"); break;
-    case "competitive":  competitive_adj = 0.0;   break;
-    case "crowded":      competitive_adj = -0.15; notes.push("Crowded market: −15%"); break;
+  if (input.competitive_intensity) {
+    const entry = (settings.competitive_intensity_adj ?? DEFAULT_PRICING_SETTINGS.competitive_intensity_adj!)
+      .find(a => a.value === input.competitive_intensity);
+    if (entry && entry.adj_pct !== 0) {
+      competitive_adj = entry.adj_pct / 100;
+      notes.push(`${entry.label}: ${entry.adj_pct > 0 ? "+" : ""}${entry.adj_pct}%`);
+    }
   }
 
-  // Competitor type adjustment
+  // Competitor type adjustment — from settings
   let competitor_adj = 0;
-  switch (input.competitor_type) {
-    case "boutiques": competitor_adj = -0.05; notes.push("Boutique competition: −5%"); break;
-    case "tier2":     competitor_adj = 0.0;   break;
-    case "mbb":       competitor_adj = 0.15;  notes.push("MBB present validates premium: +15%"); break;
+  if (input.competitor_type) {
+    const entry = (settings.competitor_type_adj ?? DEFAULT_PRICING_SETTINGS.competitor_type_adj!)
+      .find(a => a.value === input.competitor_type);
+    if (entry && entry.adj_pct !== 0) {
+      competitor_adj = entry.adj_pct / 100;
+      notes.push(`${entry.label}: ${entry.adj_pct > 0 ? "+" : ""}${entry.adj_pct}%`);
+    }
   }
 
   // Interaction effects (rule table)
@@ -1050,7 +1080,7 @@ export function calculatePricing(
   });
 
   // ── L2: Market adjustments (competitive context) ──────────────────────────
-  const { competitive_adj, competitor_adj, interaction_adj, market_notes } = computeMarketAdjustments(input);
+  const { competitive_adj, competitor_adj, interaction_adj, market_notes } = computeMarketAdjustments(input, settings);
   const total_market_adj = competitive_adj + competitor_adj + interaction_adj;
   const after_market = working_price * geo_multiplier * (1 + total_market_adj);
 
@@ -1121,13 +1151,16 @@ export function calculatePricing(
   const history_adjustment_pct = history_anchor !== null
     ? ((after_floor - history_anchor) / history_anchor) * 100 : null;
 
-  // ── L5: Strategic Intent ─────────────────────────────────────────────────
+  // ── L5: Strategic Intent — from settings ────────────────────────────────
   let strategic_adj = 0;
   let intent_note = "";
-  switch (input.strategic_intent) {
-    case "enter":   strategic_adj = -0.15; intent_note = "Enter new client: −15% (beachhead)"; break;
-    case "expand":  strategic_adj = 0.0;   intent_note = "Expand existing relationship: neutral"; break;
-    case "harvest": strategic_adj = 0.15;  intent_note = "Harvest: +15% (optimise margin)"; break;
+  if (input.strategic_intent) {
+    const entry = (settings.strategic_intent_adj ?? DEFAULT_PRICING_SETTINGS.strategic_intent_adj!)
+      .find(a => a.value === input.strategic_intent);
+    if (entry) {
+      strategic_adj = entry.adj_pct / 100;
+      intent_note = `${entry.label}: ${entry.adj_pct > 0 ? "+" : ""}${entry.adj_pct}%`;
+    }
   }
 
   const after_intent = after_history * (1 + strategic_adj);

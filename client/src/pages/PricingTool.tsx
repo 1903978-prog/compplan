@@ -18,7 +18,7 @@ import {
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
   type CompetitorBenchmark, type ProjectType, type CompetitiveIntensity, type CompetitorType,
   type OwnershipType, type StrategicIntent, type ProcurementInvolvement, type LayerTrace,
-  type CountryBenchmarkRow, type PricingRegion,
+  type CountryBenchmarkRow, type PricingRegion, type PricingAdjustment,
 } from "@/lib/pricingEngine";
 
 interface PricingCase {
@@ -454,6 +454,12 @@ export default function PricingTool() {
   const [editingSectors, setEditingSectors] = useState(false);
   const [fundsLocal, setFundsLocal] = useState<string[]>([]);
   const [editingFunds, setEditingFunds] = useState(false);
+  const [compIntensityLocal, setCompIntensityLocal] = useState<PricingAdjustment[]>([]);
+  const [editingCompIntensity, setEditingCompIntensity] = useState(false);
+  const [compTypeLocal, setCompTypeLocal] = useState<PricingAdjustment[]>([]);
+  const [editingCompType, setEditingCompType] = useState(false);
+  const [stratIntentLocal, setStratIntentLocal] = useState<PricingAdjustment[]>([]);
+  const [editingStratIntent, setEditingStratIntent] = useState(false);
   const [regionsLocal, setRegionsLocal] = useState<PricingRegion[]>([]);
   const [editingRegions, setEditingRegions] = useState(false);
   const [pasteInput, setPasteInput] = useState("");
@@ -580,6 +586,9 @@ export default function PricingTool() {
     setProjectTypesLocal(settings?.project_types ?? DEFAULT_PROJECT_TYPES);
     setSectorsLocal(settings?.sectors ?? [...SECTORS]);
     setFundsLocal(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []);
+    setCompIntensityLocal(settings?.competitive_intensity_adj ?? DEFAULT_PRICING_SETTINGS.competitive_intensity_adj ?? []);
+    setCompTypeLocal(settings?.competitor_type_adj ?? DEFAULT_PRICING_SETTINGS.competitor_type_adj ?? []);
+    setStratIntentLocal(settings?.strategic_intent_adj ?? DEFAULT_PRICING_SETTINGS.strategic_intent_adj ?? []);
     setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions);
   }, [settings]);
 
@@ -699,6 +708,23 @@ export default function PricingTool() {
     setSettings(updated);
     setEditingSectors(false);
     toast({ title: "Sectors saved" });
+  };
+
+  const saveAdjustments = async (
+    key: "competitive_intensity_adj" | "competitor_type_adj" | "strategic_intent_adj",
+    data: PricingAdjustment[],
+    setEditing: (v: boolean) => void,
+    label: string,
+  ) => {
+    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), [key]: data };
+    await fetch("/api/pricing/settings", {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    });
+    setSettings(updated);
+    setEditing(false);
+    toast({ title: `${label} saved` });
   };
 
   const handleParsePaste = () => {
@@ -2424,6 +2450,90 @@ export default function PricingTool() {
                 )}
               </CardContent>
             </Card>
+
+            {/* ── Reusable adjustment admin cards ──────────────────── */}
+            {([
+              {
+                title: "Competitive Intensity (L2)", settingsKey: "competitive_intensity_adj" as const,
+                local: compIntensityLocal, setLocal: setCompIntensityLocal,
+                editing: editingCompIntensity, setEditing: setEditingCompIntensity,
+                defaults: DEFAULT_PRICING_SETTINGS.competitive_intensity_adj!,
+              },
+              {
+                title: "Competitor Type (L2)", settingsKey: "competitor_type_adj" as const,
+                local: compTypeLocal, setLocal: setCompTypeLocal,
+                editing: editingCompType, setEditing: setEditingCompType,
+                defaults: DEFAULT_PRICING_SETTINGS.competitor_type_adj!,
+              },
+              {
+                title: "Strategic Intent (L5)", settingsKey: "strategic_intent_adj" as const,
+                local: stratIntentLocal, setLocal: setStratIntentLocal,
+                editing: editingStratIntent, setEditing: setEditingStratIntent,
+                defaults: DEFAULT_PRICING_SETTINGS.strategic_intent_adj!,
+              },
+            ] as const).map(cfg => (
+              <Card key={cfg.title}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-semibold">{cfg.title}</CardTitle>
+                    <div className="flex gap-2">
+                      {cfg.editing ? (
+                        <>
+                          <Button size="sm" onClick={() => saveAdjustments(cfg.settingsKey, cfg.local, cfg.setEditing, cfg.title)}>Save</Button>
+                          <Button size="sm" variant="ghost" onClick={() => {
+                            cfg.setLocal((settings as any)?.[cfg.settingsKey] ?? cfg.defaults);
+                            cfg.setEditing(false);
+                          }}>Cancel</Button>
+                        </>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={() => {
+                          cfg.setLocal([...((settings as any)?.[cfg.settingsKey] ?? cfg.defaults)]);
+                          cfg.setEditing(true);
+                        }}>Edit</Button>
+                      )}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {cfg.editing ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-[1fr,120px,80px,32px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase px-1">
+                        <span>Key</span><span>Label</span><span>Adj %</span><span />
+                      </div>
+                      {cfg.local.map((a, i) => (
+                        <div key={i} className="grid grid-cols-[1fr,120px,80px,32px] gap-2 items-center">
+                          <Input value={a.value}
+                            onChange={e => cfg.setLocal(prev => prev.map((v, j) => j === i ? { ...v, value: e.target.value } : v))}
+                            className="h-7 text-sm font-mono" placeholder="key" />
+                          <Input value={a.label}
+                            onChange={e => cfg.setLocal(prev => prev.map((v, j) => j === i ? { ...v, label: e.target.value } : v))}
+                            className="h-7 text-sm" placeholder="Label" />
+                          <Input type="number" step="1" value={a.adj_pct}
+                            onChange={e => cfg.setLocal(prev => prev.map((v, j) => j === i ? { ...v, adj_pct: parseFloat(e.target.value) || 0 } : v))}
+                            className="h-7 text-sm font-mono text-center" />
+                          <button onClick={() => cfg.setLocal(prev => prev.filter((_, j) => j !== i))}
+                            className="text-muted-foreground hover:text-destructive p-1">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <Button size="sm" variant="outline" onClick={() => cfg.setLocal(prev => [...prev, { value: "", label: "", adj_pct: 0 }])}>
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Add
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {((settings as any)?.[cfg.settingsKey] ?? cfg.defaults).map((a: PricingAdjustment) => (
+                        <Badge key={a.value} variant={a.adj_pct > 0 ? "default" : a.adj_pct < 0 ? "destructive" : "secondary"}
+                          className="text-xs font-mono">
+                          {a.label} {a.adj_pct > 0 ? "+" : ""}{a.adj_pct}%
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
 
           </div>
         ) : null}
