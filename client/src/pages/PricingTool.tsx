@@ -462,7 +462,6 @@ export default function PricingTool() {
   const [propSort, setPropSort] = useState<{ field: string; dir: "asc" | "desc" }>({ field: "proposal_date", dir: "desc" });
   const [disabledBars, setDisabledBars] = useState<Set<string>>(new Set());
   const [waterfallDuration, setWaterfallDuration] = useState<number | null>(null);
-  const [negotiationDelta, setNegotiationDelta] = useState(0);
   const [variableFeePct, setVariableFeePct] = useState(10);
   const [adminFeePct, setAdminFeePct] = useState(8);
   const [markingOutcome, setMarkingOutcome] = useState(false);
@@ -1494,7 +1493,7 @@ export default function PricingTool() {
     if (!recommendation) return;
     setMarkingOutcome(true);
     try {
-      const baseWeekly = nwfClamped + manualDelta + negotiationDelta;
+      const baseWeekly = nwfClamped + manualDelta;
       // weekly_price = gross+admin (variable fee is tracked separately as a success fee)
       const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
       // Net = recommended price (what we receive)
@@ -1775,7 +1774,7 @@ export default function PricingTool() {
         running += (lt.value - running); // apply delta to get to lt.value
       }
     }
-    running += manualDelta + negotiationDelta;
+    running += manualDelta;
     // Clamp to green band
     const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
     const weeklyBench = benchmarks.find(b =>
@@ -1788,7 +1787,7 @@ export default function PricingTool() {
       running = Math.min(gHigh, Math.max(gLow, running));
     }
     return Math.round(running);
-  }, [recommendation, manualDelta, negotiationDelta, form.region, benchmarks]);
+  }, [recommendation, manualDelta, form.region, benchmarks]);
 
   const canonicalGrossWeekly = useMemo(() => {
     let g = canonicalNetWeekly * (1 + adminFeePct / 100);
@@ -3804,7 +3803,7 @@ export default function PricingTool() {
 
             // Gross / Net fees for display in Section C
             const secCEffDur = waterfallDuration ?? form.duration_weeks ?? 0;
-            const secCBaseWkly = nwfClamped + manualDelta + negotiationDelta;
+            const secCBaseWkly = nwfClamped + manualDelta;
             const secCFinalWkly = Math.round(secCBaseWkly * (1 + variableFeePct / 100 + adminFeePct / 100));
             const secCGross = Math.round(secCBaseWkly * secCEffDur);
             const secCNet = Math.round(secCFinalWkly * secCEffDur);
@@ -3896,8 +3895,8 @@ export default function PricingTool() {
                       </div>
                     )}
                     {/* Band bars */}
-                    <BandBar bench={weeklyBench} marker={nwfClamped} label={`Weekly — ${weeklyBench?.country ?? form.region} · PE >${form.revenue_band === "above_1b" ? "€1B" : "€500M"}`} />
-                    <BandBar bench={totalBench} marker={tnf} label={`Total cost — ${totalBench?.country ?? form.region}`} />
+                    <BandBar bench={weeklyBench} marker={canonicalNetWeekly} label={`Weekly — ${weeklyBench?.country ?? form.region} · PE >${form.revenue_band === "above_1b" ? "€1B" : "€500M"}`} />
+                    <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total cost — ${totalBench?.country ?? form.region}`} />
 
                     {/* W/L Comparables */}
                     {(() => {
@@ -3989,18 +3988,6 @@ export default function PricingTool() {
                         </span>
                         <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
                         {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[10px] text-muted-foreground hover:text-foreground underline">reset</button>}
-                      </div>
-                    </div>
-                    {/* Post-negotiation adjustment */}
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold text-muted-foreground uppercase">Post-negotiation adjustment (±500)</div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => setNegotiationDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
-                        <span className={`text-sm font-mono font-bold w-24 text-center ${negotiationDelta > 0 ? "text-emerald-600" : negotiationDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
-                          {negotiationDelta === 0 ? "±€0" : `${negotiationDelta > 0 ? "+" : ""}€${Math.abs(negotiationDelta).toLocaleString("it-IT")}`}
-                        </span>
-                        <button onClick={() => setNegotiationDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
-                        {negotiationDelta !== 0 && <button onClick={() => setNegotiationDelta(0)} className="text-[10px] text-muted-foreground hover:text-foreground underline">reset</button>}
                       </div>
                     </div>
                   </div>
@@ -4193,7 +4180,7 @@ export default function PricingTool() {
                     const fmtP = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
                     const template = settings?.proposal_template ?? DEFAULT_PROPOSAL_TEMPLATE;
                     const dur = (waterfallDuration ?? form.duration_weeks) || 0;
-                    const netWk = nwfClamped + manualDelta + negotiationDelta;
+                    const netWk = nwfClamped + manualDelta;
                     let grossWk = netWk * (1 + adminFeePct / 100);
                     const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
                     for (const d of enabledDisc) grossWk = grossWk / (1 - d.pct / 100);
@@ -5045,7 +5032,7 @@ export default function PricingTool() {
                       <div className="border border-blue-100 rounded-lg bg-blue-50/40 p-3 space-y-3">
                         <div className="flex items-center justify-between">
                           <div className="text-sm uppercase font-bold text-blue-700 tracking-wide">
-                            Historical Intelligence
+                            Historical Intelligence — Net Weekly Prices
                           </div>
                           <button onClick={() => setShowL4Info(v => !v)} className="text-blue-400 hover:text-blue-600">
                             <Info className="w-3.5 h-3.5" />
@@ -5080,7 +5067,7 @@ export default function PricingTool() {
                     const fmtFee = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
                     const fmtK2Local = (n: number) => n >= 1_000_000 ? `${cur.symbol}${(n / 1_000_000).toFixed(1)}M` : `${cur.symbol}${Math.round(n / 1000)}k`;
                     const effDur = (waterfallDuration ?? form.duration_weeks) || 0;
-                    const baseWkly = nwfClamped + manualDelta + negotiationDelta;
+                    const baseWkly = nwfClamped + manualDelta;
                     // Net = recommended price (what we receive — never changes with discounts)
                     const net = Math.round(baseWkly * effDur);
                     // Gross weekly = net × (1+admin%) / (1-d1%) / (1-d2%) / ...
