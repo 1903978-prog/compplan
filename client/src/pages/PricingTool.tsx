@@ -1210,48 +1210,109 @@ export default function PricingTool() {
     </div>
   );
 
-  const downloadProposalsCsv = () => {
-    const cols: { key: keyof PricingProposal; label: string }[] = [
-      { key: "proposal_date", label: "Date" },
-      { key: "project_name", label: "Project" },
-      { key: "client_name", label: "Client" },
-      { key: "fund_name", label: "Fund" },
-      { key: "region", label: "Region" },
-      { key: "country", label: "Country" },
-      { key: "sector", label: "Sector" },
-      { key: "project_type", label: "Type" },
-      { key: "pe_owned", label: "PE owned" },
-      { key: "revenue_band", label: "Revenue band" },
-      { key: "duration_weeks", label: "Duration (w)" },
-      { key: "team_size", label: "Team size" },
-      { key: "currency", label: "Currency" },
-      { key: "weekly_price", label: "Weekly price" },
-      { key: "total_fee", label: "Total fee" },
-      { key: "outcome", label: "Outcome" },
-      { key: "loss_reason", label: "Loss reason" },
-      { key: "company_revenue_m", label: "Company revenue (M€)" },
-      { key: "ebitda_margin_pct", label: "EBITDA margin %" },
-      { key: "expected_ebitda_growth_pct", label: "Expected EBITDA growth %" },
-      { key: "notes", label: "Notes" },
+  const downloadProposalsExcel = () => {
+    // Columns in the same order as the table, plus all extra project fields
+    const cols: { key: keyof PricingProposal; label: string; fmt?: "num" | "pct" | "date" }[] = [
+      { key: "proposal_date",            label: "Date",                   fmt: "date" },
+      { key: "project_name",             label: "Project" },
+      { key: "client_name",              label: "Client" },
+      { key: "fund_name",                label: "Fund" },
+      { key: "region",                   label: "Region" },
+      { key: "country",                  label: "Country" },
+      { key: "sector",                   label: "Sector" },
+      { key: "project_type",             label: "Type" },
+      { key: "duration_weeks",           label: "Weeks",                  fmt: "num" },
+      { key: "team_size",                label: "Team",                   fmt: "num" },
+      { key: "currency",                 label: "Cur." },
+      { key: "weekly_price",             label: "Weekly Price",           fmt: "num" },
+      { key: "total_fee",                label: "Total Net Fees",         fmt: "num" },
+      { key: "outcome",                  label: "Outcome" },
+      { key: "loss_reason",              label: "Loss Reason" },
+      { key: "pe_owned",                 label: "PE Owned" },
+      { key: "revenue_band",             label: "Revenue Band" },
+      { key: "company_revenue_m",        label: "Company Revenue (M€)",   fmt: "num" },
+      { key: "ebitda_margin_pct",        label: "EBITDA Margin %",        fmt: "pct" },
+      { key: "expected_ebitda_growth_pct",label: "Exp. EBITDA Growth %",  fmt: "pct" },
+      { key: "notes",                    label: "Notes" },
     ];
+
     const esc = (v: unknown): string => {
       if (v === null || v === undefined) return "";
-      const s = typeof v === "boolean" ? (v ? "true" : "false") : String(v);
-      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      if (typeof v === "boolean") return v ? "Yes" : "No";
+      return String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     };
-    const header = cols.map(c => c.label).join(";");
-    const rows = proposals.map(p => cols.map(c => esc((p as any)[c.key])).join(";"));
-    const csv = "\ufeff" + [header, ...rows].join("\n"); // BOM for Excel UTF-8
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+
+    const numFmt = (v: unknown) => {
+      if (v === null || v === undefined || v === "") return "";
+      const n = Number(v);
+      return isNaN(n) ? esc(v) : n.toLocaleString("it-IT", { maximumFractionDigits: 2 });
+    };
+
+    const cellVal = (p: PricingProposal, col: typeof cols[0]): string => {
+      const raw = (p as any)[col.key];
+      if (col.key === "pe_owned") return raw ? "Yes" : "No";
+      if (col.fmt === "num") return numFmt(raw);
+      if (col.fmt === "pct") return raw != null ? `${raw}%` : "";
+      return esc(raw);
+    };
+
+    const cellAlign = (col: typeof cols[0]) =>
+      col.fmt === "num" || col.fmt === "pct" ? "right" : "left";
+
+    // Sort: same as propSort state
+    const sorted = [...proposals].sort((a, b) => {
+      const dir = propSort.dir === "asc" ? 1 : -1;
+      const av = (a as any)[propSort.field] ?? "";
+      const bv = (b as any)[propSort.field] ?? "";
+      if (typeof av === "number" && typeof bv === "number") return dir * (av - bv);
+      return dir * String(av).localeCompare(String(bv));
+    });
+
+    // Build HTML table
+    const headerRow = cols.map(c =>
+      `<th style="background:#1A3A4A;color:#fff;font-weight:bold;font-size:11px;padding:6px 10px;border:1px solid #ccc;white-space:nowrap;">${c.label}</th>`
+    ).join("");
+
+    const dataRows = sorted.map((p, i) => {
+      const bg = i % 2 === 0 ? "#ffffff" : "#f8f9fa";
+      const excluded = isExcluded(p);
+      const rowStyle = excluded ? `background:${bg};color:#aaa;text-decoration:line-through;` : `background:${bg};`;
+      const cells = cols.map(col => {
+        const val = cellVal(p, col);
+        const align = cellAlign(col);
+        // Outcome color
+        let color = "";
+        if (col.key === "outcome") {
+          if (val === "won") color = "color:#16a34a;font-weight:bold;";
+          else if (val === "lost") color = "color:#dc2626;font-weight:bold;";
+        }
+        return `<td style="${rowStyle}${color}text-align:${align};font-size:11px;padding:4px 8px;border:1px solid #e5e7eb;white-space:nowrap;">${val}</td>`;
+      }).join("");
+      return `<tr>${cells}</tr>`;
+    }).join("");
+
+    const html = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8">
+<style>table{border-collapse:collapse;font-family:Calibri,Arial,sans-serif;}td,th{mso-number-format:"\\@";}</style>
+</head>
+<body>
+<table>
+<thead><tr>${headerRow}</tr></thead>
+<tbody>${dataRows}</tbody>
+</table>
+</body></html>`;
+
+    const blob = new Blob(["\ufeff" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `past_projects_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `past_projects_${new Date().toISOString().slice(0, 10)}.xls`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast({ title: "CSV downloaded", description: `${proposals.length} projects exported.` });
+    toast({ title: "Excel downloaded", description: `${proposals.length} projects exported.` });
   };
 
   // Recalculate weekly_price from total_fee / duration_weeks / team_size
@@ -1658,8 +1719,8 @@ export default function PricingTool() {
                 title="Recalculate weekly price = total fee / weeks / team size">
                 <RefreshCw className="w-4 h-4 mr-2" /> Recalc Weekly
               </Button>
-              <Button variant="outline" onClick={downloadProposalsCsv} disabled={proposals.length === 0}>
-                <Download className="w-4 h-4 mr-2" /> Download CSV
+              <Button variant="outline" onClick={downloadProposalsExcel} disabled={proposals.length === 0}>
+                <Download className="w-4 h-4 mr-2" /> Download Excel
               </Button>
               <Button variant="outline" onClick={() => {
                 setHistoryForm(emptyProposal());
