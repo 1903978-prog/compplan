@@ -344,6 +344,8 @@ export default function PricingTool() {
   const [showEditProposalForm, setShowEditProposalForm] = useState(false);
   const [savingProposal, setSavingProposal] = useState(false);
   const [propSort, setPropSort] = useState<{ field: string; dir: "asc" | "desc" }>({ field: "proposal_date", dir: "desc" });
+  const [disabledBars, setDisabledBars] = useState<Set<string>>(new Set());
+  const [waterfallDuration, setWaterfallDuration] = useState<number | null>(null);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
   const [teamPreset, setTeamPreset] = useState<string>("1+2");
   const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
@@ -1948,163 +1950,284 @@ export default function PricingTool() {
           {recommendation && (() => {
             const trace = recommendation.layer_trace;
             const base = baseWeeklyDisplay;
-            const final = recommendation.target_weekly;
 
-            // Map trace entries by normalized label (strip parenthetical suffixes like "(IT)")
+            // Map trace entries by normalized label
             const traceByKey: Record<string, LayerTrace> = {};
             for (const lt of trace) {
               const key = lt.label.replace(/\s*\(.*?\)\s*$/, "").trim();
               traceByKey[key] = lt;
             }
 
-            // Canonical layer sequence — always shown, even if 0% impact
             const CANONICAL = [
-              "Geography",
-              "Market Context",
-              "Client Profile",
-              "Cost Floor Applied",
-              "Fund History",
-              "Win/Loss Comparables",
-              "Strategic Intent",
+              "Geography", "Market Context", "Client Profile",
+              "Cost Floor Applied", "Fund History", "Win/Loss Comparables", "Strategic Intent",
             ];
 
-            // Build delta bars from canonical list, using trace values when present
-            const bars: { label: string; start: number; end: number; note: string; deltaPct: number }[] = [];
-            let prev = base;
+            // Compute absolute deltas from original trace
+            const deltas: Record<string, number> = {};
+            const origNotes: Record<string, string> = {};
+            const origDeltaPct: Record<string, number> = {};
+            let prevOrig = base;
             for (const key of CANONICAL) {
               const lt = traceByKey[key];
               if (lt) {
-                bars.push({ label: key, start: prev, end: lt.value, note: lt.note, deltaPct: lt.delta_pct });
-                prev = lt.value;
+                deltas[key] = lt.value - prevOrig;
+                origNotes[key] = lt.note;
+                origDeltaPct[key] = lt.delta_pct;
+                prevOrig = lt.value;
               } else {
-                bars.push({ label: key, start: prev, end: prev, note: "No impact", deltaPct: 0 });
+                deltas[key] = 0; origNotes[key] = "No impact"; origDeltaPct[key] = 0;
               }
             }
 
-            // Single NWP bar after target (net after discounts + clamp)
-            const extraBars: { label: string; start: number; end: number; color?: string; deltaPct: number }[] = [];
-            const showNWFBar = totalDiscountPct > 0 || Math.abs(nwfClamped - final) > 50;
-            if (showNWFBar) {
-              const deltaPct = final > 0 ? ((nwfClamped - final) / final) * 100 : 0;
-              extraBars.push({ label: "NWP", start: final, end: nwfClamped, color: "#059669", deltaPct });
+            // Build bars respecting disabledBars state
+            const bars: { label: string; start: number; end: number; note: string; deltaPct: number; isDisabled: boolean }[] = [];
+            let runningValue = base;
+            for (const key of CANONICAL) {
+              const delta = deltas[key] ?? 0;
+              const isDisabled = disabledBars.has(key);
+              if (isDisabled) {
+                bars.push({ label: key, start: runningValue, end: runningValue, note: "off", deltaPct: 0, isDisabled: true });
+              } else if (Math.abs(delta) < 1) {
+                bars.push({ label: key, start: runningValue, end: runningValue, note: origNotes[key], deltaPct: 0, isDisabled: false });
+              } else {
+                const newEnd = runningValue + delta;
+                bars.push({ label: key, start: runningValue, end: newEnd, note: origNotes[key], deltaPct: origDeltaPct[key], isDisabled: false });
+                runningValue = newEnd;
+              }
             }
-            const nwfFinal = nwfClamped > 0 ? nwfClamped : final;
+            const adjustedFinal = runningValue;
 
-            const totalBarCount = 1 + bars.length + 1 + extraBars.length + (showNWFBar ? 1 : 0);
-            const allVals = [base, final, ...bars.flatMap(b => [b.start, b.end]),
-              ...extraBars.flatMap(b => [b.start, b.end]), nwfFinal];
+            // NWF = adjusted final after discounts
+            const adjustedNwfRaw = Math.round(adjustedFinal * netMultiplier);
+            const adjustedNwfClamped = adjustedNwfRaw > 0
+              ? Math.max(minFeeWeekly > 0 ? minFeeWeekly : adjustedNwfRaw, Math.min(maxFeeWeekly < Infinity ? maxFeeWeekly : adjustedNwfRaw, adjustedNwfRaw))
+              : 0;
+            const showNWFBar = totalDiscountPct > 0 || Math.abs(adjustedNwfClamped - adjustedFinal) > 50;
+            const extraBars: { label: string; start: number; end: number; color?: string; deltaPct: number }[] = [];
+            if (showNWFBar) {
+              const deltaPct = adjustedFinal > 0 ? ((adjustedNwfClamped - adjustedFinal) / adjustedFinal) * 100 : 0;
+              extraBars.push({ label: "NWP", start: adjustedFinal, end: adjustedNwfClamped, color: "#059669", deltaPct });
+            }
+            const nwfFinal = adjustedNwfClamped > 0 ? adjustedNwfClamped : adjustedFinal;
+
+            // Green band from country benchmarks
+            const countryAliasesW = REGION_TO_COUNTRY[form.region] ?? [form.region];
+            const weeklyBenchW = benchmarks.find(b =>
+              countryAliasesW.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+              (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+            );
+            const greenLow = weeklyBenchW?.green_low ?? 0;
+            const greenHigh = weeklyBenchW?.green_high ?? 0;
+            const hasGreenBand = greenLow > 0 && greenHigh > 0;
+
+            // Recommended NWF: clamp to green band
+            const recommendedNwf = hasGreenBand
+              ? Math.min(greenHigh, Math.max(greenLow, nwfFinal))
+              : nwfFinal;
+
+            // Duration & fee calculation for right panel
+            const effectiveDuration = waterfallDuration ?? form.duration_weeks;
+            const grossFees = Math.round(adjustedFinal * effectiveDuration);
+            const netFees = Math.round(recommendedNwf * effectiveDuration);
+
+            // Y-scale
+            const allVals = [base, adjustedFinal, ...bars.flatMap(b => [b.start, b.end]),
+              ...extraBars.flatMap(b => [b.start, b.end]), nwfFinal, recommendedNwf,
+              ...(hasGreenBand ? [greenLow, greenHigh] : [])];
             const minV = Math.min(...allVals) * 0.92;
             const maxV = Math.max(...allVals) * 1.08;
             const range = maxV - minV || 1;
 
-            const W = 640; const H = 180;
-            const barW = Math.max(22, Math.floor((W - 60) / (totalBarCount + 1) - 4));
+            // Layout
+            const totalBarCount = 1 + bars.length + 1 + extraBars.length + (showNWFBar ? 1 : 0) + 1; // +1 rec NWF
+            const W = 620; const H = 210;
+            const TH = 16; // toggle row height at top
+            const chartBot = H - 22; const chartTop = TH + 12;
+            const chartH = chartBot - chartTop;
+            const barW = Math.max(20, Math.floor((W - 60) / (totalBarCount + 1) - 4));
             const gap = Math.max(3, Math.floor((W - 60 - totalBarCount * barW) / totalBarCount));
             const xOf = (i: number) => 30 + i * (barW + gap);
-            const yOf = (v: number) => H - 32 - ((v - minV) / range) * (H - 56);
+            const yOf = (v: number) => chartBot - ((v - minV) / range) * chartH;
             const hOf = (v1: number, v2: number) => Math.abs(yOf(v1) - yOf(v2));
 
-            // Short labels to fit narrow bars
             const SHORT: Record<string, string> = {
-              "Geography": "Geo",
-              "Market Context": "Market",
-              "Client Profile": "Client",
-              "Cost Floor Applied": "Floor",
-              "Fund History": "Fund Hist",
-              "Win/Loss Comparables": "W/L Comp",
-              "Strategic Intent": "Intent",
+              "Geography": "Geo", "Market Context": "Market", "Client Profile": "Client",
+              "Cost Floor Applied": "Floor", "Fund History": "Fund", "Win/Loss Comparables": "W/L", "Strategic Intent": "Intent",
             };
 
+            const toggleBar = (label: string) => setDisabledBars(prev => {
+              const next = new Set(prev);
+              next.has(label) ? next.delete(label) : next.add(label);
+              return next;
+            });
+
             return (
-              <div className="border rounded-lg p-4 bg-muted/10 space-y-2">
-                <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Pricing Waterfall</div>
-                <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
-                  {/* Base bar */}
-                  {(() => {
-                    const x = xOf(0); const y = yOf(base); const h = hOf(minV, base);
-                    return <>
-                      <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
-                      <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(base)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6.5" fill="#64748b">Staffing</text>
-                    </>;
-                  })()}
-                  {/* Layer delta bars */}
-                  {bars.map((b, i) => {
-                    const x = xOf(i + 1);
-                    const isZero = Math.abs(b.end - b.start) < 1;
-                    const up = b.end >= b.start;
-                    const color = isZero ? "#cbd5e1" : (up ? "#16C3CF" : "#ef4444");
-                    const y = up ? yOf(b.end) : yOf(b.start);
-                    const h = Math.max(2, hOf(b.start, b.end));
-                    const deltaEur = b.end - b.start;
-                    const sign = deltaEur >= 0 ? "+" : "";
-                    const textY = up ? y - 9 : y + h + 8;
-                    return (
-                      <g key={i}>
-                        <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                        <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity={isZero ? 0.45 : 0.85} />
-                        <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={isZero ? "#94a3b8" : color} fontWeight="bold">
-                          {isZero ? "—" : `${sign}${fmt(deltaEur)}`}
-                        </text>
-                        <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">
-                          {isZero ? "0%" : `${sign}${b.deltaPct.toFixed(0)}%`}
-                        </text>
-                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6" fill="#64748b">{SHORT[b.label] ?? b.label}</text>
-                      </g>
-                    );
-                  })}
-                  {/* Target bar */}
-                  {(() => {
-                    const bi = bars.length + 1;
-                    const x = xOf(bi); const y = yOf(final); const h = hOf(minV, final);
-                    const prevEnd = bars[bars.length - 1]?.end ?? base;
-                    return <>
-                      <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(final)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                      <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
-                      <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(final)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6.5" fill="#64748b">{showNWFBar ? "Target" : "NWF"}</text>
-                    </>;
-                  })()}
-                  {/* Discount / clamp bars */}
-                  {extraBars.map((b, i) => {
-                    const bi = bars.length + 2 + i;
-                    const x = xOf(bi);
-                    const up = b.end >= b.start;
-                    const color = b.color ?? (up ? "#16C3CF" : "#ef4444");
-                    const y = up ? yOf(b.end) : yOf(b.start);
-                    const h = Math.max(2, hOf(b.start, b.end));
-                    const deltaEur = b.end - b.start;
-                    const sign = deltaEur >= 0 ? "+" : "";
-                    const textY = up ? y - 9 : y + h + 8;
-                    return (
-                      <g key={i}>
-                        <line x1={xOf(bi - 1) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                        <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
-                        <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={color} fontWeight="bold">
-                          {sign}{fmt(deltaEur)}
-                        </text>
-                        <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">
-                          {sign}{b.deltaPct.toFixed(0)}%
-                        </text>
-                        <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6" fill="#64748b">{b.label}</text>
-                      </g>
-                    );
-                  })}
-                  {/* NWF final bar (only when extra steps exist) */}
-                  {showNWFBar && (() => {
-                    const bi = bars.length + 2 + extraBars.length;
-                    const x = xOf(bi); const y = yOf(nwfFinal); const h = hOf(minV, nwfFinal);
-                    const prevEnd = extraBars[extraBars.length - 1]?.end ?? final;
-                    return <>
-                      <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(nwfFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                      <rect x={x} y={y} width={barW} height={h} fill="#059669" rx="2" />
-                      <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#059669" fontWeight="bold">{fmt(nwfFinal)}</text>
-                      <text x={x + barW/2} y={H - 8} textAnchor="middle" fontSize="6.5" fill="#64748b">NWF</text>
-                    </>;
-                  })()}
-                  {/* Baseline */}
-                  <line x1="25" y1={H - 22} x2={W - 5} y2={H - 22} stroke="#e2e8f0" strokeWidth="0.5" />
-                </svg>
+              <div className="border rounded-lg p-4 bg-muted/10">
+                <div className="flex items-start gap-5">
+                  {/* Left: waterfall SVG */}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Pricing Waterfall</div>
+                    <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
+                      {/* Green band background */}
+                      {hasGreenBand && (
+                        <rect x={25} y={yOf(greenHigh)} width={W - 30} height={Math.max(1, hOf(greenLow, greenHigh))}
+                          fill="#22c55e" opacity="0.08" />
+                      )}
+                      {hasGreenBand && <>
+                        <line x1={25} x2={W - 5} y1={yOf(greenHigh)} y2={yOf(greenHigh)} stroke="#22c55e" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.55" />
+                        <line x1={25} x2={W - 5} y1={yOf(greenLow)} y2={yOf(greenLow)} stroke="#22c55e" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.55" />
+                        <text x={W - 6} y={yOf(greenHigh) - 2} textAnchor="end" fontSize="5" fill="#16a34a" opacity="0.8">{fmt(greenHigh)}</text>
+                        <text x={W - 6} y={yOf(greenLow) + 7} textAnchor="end" fontSize="5" fill="#16a34a" opacity="0.8">{fmt(greenLow)}</text>
+                      </>}
+
+                      {/* Base bar */}
+                      {(() => {
+                        const x = xOf(0); const y = yOf(base); const h = hOf(minV, base);
+                        return <>
+                          <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(base)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">Staffing</text>
+                        </>;
+                      })()}
+
+                      {/* Layer delta bars with toggles */}
+                      {bars.map((b, i) => {
+                        const x = xOf(i + 1);
+                        const isZero = Math.abs(b.end - b.start) < 1;
+                        const up = b.end >= b.start;
+                        const color = b.isDisabled ? "#94a3b8" : (isZero ? "#cbd5e1" : (up ? "#16C3CF" : "#ef4444"));
+                        const y = up ? yOf(b.end) : yOf(b.start);
+                        const h = Math.max(2, hOf(b.start, b.end));
+                        const deltaEur = b.end - b.start;
+                        const sign = deltaEur >= 0 ? "+" : "";
+                        const textY = up ? y - 9 : y + h + 8;
+                        return (
+                          <g key={i}>
+                            {/* Toggle pill */}
+                            <g style={{ cursor: "pointer" }} onClick={() => toggleBar(b.label)}>
+                              <rect x={x} y={2} width={barW} height={TH - 3} rx="2"
+                                fill={b.isDisabled ? "#f1f5f9" : "#e0f2fe"} stroke={b.isDisabled ? "#cbd5e1" : "#7dd3fc"} strokeWidth="0.5" />
+                              <text x={x + barW/2} y={TH - 3} textAnchor="middle" fontSize="5.5"
+                                fill={b.isDisabled ? "#94a3b8" : "#0369a1"} fontWeight="600">
+                                {b.isDisabled ? "off" : "on"}
+                              </text>
+                            </g>
+                            <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                            <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity={b.isDisabled ? 0.3 : (isZero ? 0.45 : 0.85)} />
+                            <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={b.isDisabled ? "#94a3b8" : (isZero ? "#94a3b8" : color)} fontWeight="bold">
+                              {b.isDisabled ? "—" : (isZero ? "—" : `${sign}${fmt(deltaEur)}`)}
+                            </text>
+                            {!b.isDisabled && !isZero && (
+                              <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">
+                                {sign}{b.deltaPct.toFixed(0)}%
+                              </text>
+                            )}
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6" fill={b.isDisabled ? "#cbd5e1" : "#64748b"}>{SHORT[b.label] ?? b.label}</text>
+                          </g>
+                        );
+                      })}
+
+                      {/* Adjusted target bar */}
+                      {(() => {
+                        const bi = bars.length + 1;
+                        const x = xOf(bi); const y = yOf(adjustedFinal); const h = hOf(minV, adjustedFinal);
+                        const prevEnd = bars[bars.length - 1]?.end ?? base;
+                        return <>
+                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(adjustedFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(adjustedFinal)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">{showNWFBar ? "Target" : "NWF"}</text>
+                        </>;
+                      })()}
+
+                      {/* Discount bars */}
+                      {extraBars.map((b, i) => {
+                        const bi = bars.length + 2 + i;
+                        const x = xOf(bi); const up = b.end >= b.start;
+                        const color = b.color ?? (up ? "#16C3CF" : "#ef4444");
+                        const y = up ? yOf(b.end) : yOf(b.start);
+                        const h = Math.max(2, hOf(b.start, b.end));
+                        const deltaEur = b.end - b.start; const sign = deltaEur >= 0 ? "+" : "";
+                        const textY = up ? y - 9 : y + h + 8;
+                        return (
+                          <g key={i}>
+                            <line x1={xOf(bi - 1) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                            <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
+                            <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={color} fontWeight="bold">{sign}{fmt(deltaEur)}</text>
+                            <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">{sign}{b.deltaPct.toFixed(0)}%</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6" fill="#64748b">{b.label}</text>
+                          </g>
+                        );
+                      })}
+
+                      {/* NWF bar */}
+                      {showNWFBar && (() => {
+                        const bi = bars.length + 2 + extraBars.length;
+                        const x = xOf(bi); const y = yOf(nwfFinal); const h = hOf(minV, nwfFinal);
+                        const prevEnd = extraBars[extraBars.length - 1]?.end ?? adjustedFinal;
+                        return <>
+                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(nwfFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <rect x={x} y={y} width={barW} height={h} fill="#059669" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#059669" fontWeight="bold">{fmt(nwfFinal)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">NWF</text>
+                        </>;
+                      })()}
+
+                      {/* Recommended NWF bar (clamped to green band) */}
+                      {(() => {
+                        const bi = bars.length + 2 + extraBars.length + (showNWFBar ? 1 : 0);
+                        const prevBarEnd = showNWFBar ? nwfFinal : (extraBars[extraBars.length - 1]?.end ?? adjustedFinal);
+                        const x = xOf(bi); const y = yOf(recommendedNwf); const h = hOf(minV, recommendedNwf);
+                        const inGreen = hasGreenBand && recommendedNwf >= greenLow && recommendedNwf <= greenHigh;
+                        const recColor = inGreen ? "#16a34a" : "#f59e0b";
+                        return <>
+                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevBarEnd)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <rect x={x} y={y} width={barW} height={h} fill={recColor} rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill={recColor} fontWeight="bold">{fmt(recommendedNwf)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill={recColor} fontWeight="600">Rec.</text>
+                        </>;
+                      })()}
+
+                      {/* Baseline */}
+                      <line x1="25" y1={chartBot} x2={W - 5} y2={chartBot} stroke="#e2e8f0" strokeWidth="0.5" />
+                    </svg>
+                  </div>
+
+                  {/* Right: fees summary */}
+                  <div className="w-48 shrink-0 flex flex-col gap-4 pt-6">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Duration</Label>
+                      <Select
+                        value={String(waterfallDuration ?? form.duration_weeks)}
+                        onValueChange={v => setWaterfallDuration(Number(v))}
+                      >
+                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {[6, 8, 12, 16, 24].map(w => (
+                            <SelectItem key={w} value={String(w)}>{w} weeks</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1 border rounded-lg p-3 bg-background">
+                      <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
+                      <div className="text-[10px] text-muted-foreground">before discounts & rebates</div>
+                      <div className="text-2xl font-bold text-foreground">{fmt(grossFees)}</div>
+                      <div className="text-[10px] text-muted-foreground">{fmt(adjustedFinal)}/wk × {effectiveDuration}w</div>
+                    </div>
+                    <div className="space-y-1 border rounded-lg p-3 bg-background">
+                      <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
+                      <div className="text-[10px] text-muted-foreground">after discounts, within band</div>
+                      <div className="text-2xl font-bold text-emerald-600">{fmt(netFees)}</div>
+                      <div className="text-[10px] text-muted-foreground">{fmt(recommendedNwf)}/wk × {effectiveDuration}w</div>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground text-center">
+                      {effectiveDuration}w project
+                      {hasGreenBand && <span className="block text-emerald-600">🟢 band {fmt(greenLow)}–{fmt(greenHigh)}</span>}
+                    </div>
+                  </div>
+                </div>
               </div>
             );
           })()}
