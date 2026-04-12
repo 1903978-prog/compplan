@@ -4150,7 +4150,8 @@ export default function PricingTool() {
             const totalGross = Math.round(grossWeekly * effectiveDur);
             const netFees = Math.round(netWeekly * effectiveDur);
             const grossFees = totalGross;
-            const variableFeeTotal = Math.round(netWeekly * variableFeePct / 100 * effectiveDur);
+            // Variable fee = GROSS1 × variable% × weeks (same base as waterfall Var. Fee bar)
+            const variableFeeTotal = Math.round(grossWeekly * variableFeePct / 100 * effectiveDur);
             const invoiceCount = Math.max(1, Math.floor(1 + effectiveDur / 4));
             const perInvoice = invoiceCount > 0 ? Math.round(totalGross / invoiceCount) : 0;
             const cur = getCurrencyForRegion(form.region);
