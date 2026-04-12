@@ -3980,63 +3980,107 @@ export default function PricingTool() {
                   </div>
                 </div>
 
-                {/* Fee summary table */}
-                <div className="rounded-lg border overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-muted/30">
-                        <TableHead className="text-[10px] py-1.5">Gross /wk</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Net /wk</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Duration</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Total Gross Fees</TableHead>
-                        <TableHead className="text-[10px] py-1.5 text-center">Invoices</TableHead>
-                        <TableHead className="text-[10px] py-1.5 text-right">Gross / Invoice</TableHead>
-                        <TableHead className="text-[10px] py-1.5 text-right">Variable fee</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(grossWeekly)}</TableCell>
-                        <TableCell className="font-mono text-sm font-semibold text-emerald-600">{fmtC(netWeekly)}</TableCell>
-                        <TableCell className="text-sm">{effectiveDur}w</TableCell>
-                        <TableCell className="font-mono text-sm font-bold">{fmtC(totalGross)}</TableCell>
-                        <TableCell className="text-sm text-center font-semibold">{invoiceCount}</TableCell>
-                        <TableCell className="font-mono text-sm font-semibold text-right">{fmtC(perInvoice)}</TableCell>
-                        <TableCell className="font-mono text-sm text-right text-amber-600">{fmtC(variableFeeTotal)}</TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* GM boxes — below fee table */}
-                {recommendation && recommendation.delivery_cost_weekly > 0 && (() => {
-                  const teamCostWk = recommendation.delivery_cost_weekly;
+                {/* Fee summary tables */}
+                {(() => {
+                  // Gross 1 = with admin, before D&R: net × (1+admin%)
+                  const gross1Wk = Math.round(netWeekly * (1 + adminFeePct / 100));
+                  // Gross 2 = with admin + D&R built in: gross1 / (1-d1%) / (1-d2%)…
+                  let gross2Wk = gross1Wk;
+                  for (const d of enabledDiscounts) gross2Wk = Math.round(gross2Wk / (1 - d.pct / 100));
+                  // Net 1 = net weekly (after D&R, without admin) = recommended
+                  const net1Wk = netWeekly;
+                  // Net 2 = net weekly + admin = gross1
+                  const net2Wk = gross1Wk;
+                  // Totals
+                  const gross1Total = gross1Wk * effectiveDur;
+                  const gross2Total = gross2Wk * effectiveDur;
+                  const net1Total = net1Wk * effectiveDur;
+                  const net2Total = net2Wk * effectiveDur;
+                  const grossPerInvoice = invoiceCount > 0 ? Math.round(gross2Total / invoiceCount) : 0;
+                  // GM on Gross 1 (with admin, before D&R)
+                  const teamCostWk = recommendation?.delivery_cost_weekly ?? 0;
                   const teamCostTotal = Math.round(teamCostWk * effectiveDur);
-                  const gmWeekly = netWeekly - teamCostWk;
-                  const gmTotal = netFees - teamCostTotal;
-                  const gmPctWk = netWeekly > 0 ? (gmWeekly / netWeekly * 100) : 0;
-                  const gmPctTotal = netFees > 0 ? (gmTotal / netFees * 100) : 0;
-                  const gmColor = gmPctTotal >= 50 ? "text-emerald-600" : gmPctTotal >= 30 ? "text-amber-600" : "text-red-600";
+                  const gmTotal = gross1Total - teamCostTotal;
+                  const gmPct = gross1Total > 0 ? (gmTotal / gross1Total * 100) : 0;
+                  const gmColor = gmPct >= 50 ? "text-emerald-600" : gmPct >= 30 ? "text-amber-600" : "text-red-600";
+
                   return (
-                    <div className="grid grid-cols-4 gap-2">
-                      <div className="border rounded-lg p-2.5 bg-background text-center">
-                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">GM /wk</div>
-                        <div className={`text-base font-bold ${gmColor}`}>{fmtC(gmWeekly)}</div>
-                        <div className="text-[9px] text-muted-foreground">net {fmtC(netWeekly)} − cost {fmtC(teamCostWk)}</div>
+                    <div className="space-y-3">
+                      {/* Row 1: Weekly fees */}
+                      <div className="rounded-lg border overflow-hidden">
+                        <div className="bg-[#1A3A4A] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5">Weekly Fees</div>
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/30">
+                              <TableHead className="text-[9px] py-1.5">Gross 1<br/><span className="font-normal text-muted-foreground">w/ admin, bef. D&R</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5">Gross 2<br/><span className="font-normal text-muted-foreground">w/ admin + D&R</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5">Net 1<br/><span className="font-normal text-muted-foreground">after D&R, no admin</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5">Net 2<br/><span className="font-normal text-muted-foreground">w/ admin, after D&R</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5 text-center">Duration</TableHead>
+                              <TableHead className="text-[9px] py-1.5 text-center">Invoices</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            <TableRow>
+                              <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(gross1Wk)}</TableCell>
+                              <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(gross2Wk)}</TableCell>
+                              <TableCell className="font-mono text-sm font-semibold text-emerald-600">{fmtC(net1Wk)}</TableCell>
+                              <TableCell className="font-mono text-sm font-semibold text-blue-600">{fmtC(net2Wk)}</TableCell>
+                              <TableCell className="text-sm text-center font-semibold">{effectiveDur}w</TableCell>
+                              <TableCell className="text-sm text-center font-semibold">{invoiceCount}</TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
                       </div>
-                      <div className="border rounded-lg p-2.5 bg-background text-center">
-                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">GM %</div>
-                        <div className={`text-base font-bold ${gmColor}`}>{gmPctWk.toFixed(0)}%</div>
+
+                      {/* Row 2: Total project fees */}
+                      <div className="rounded-lg border overflow-hidden">
+                        <div className="bg-[#1A3A4A] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5">
+                          Total Project Fees ({effectiveDur} weeks)
+                        </div>
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/30">
+                              <TableHead className="text-[9px] py-1.5">Gross 1 Total</TableHead>
+                              <TableHead className="text-[9px] py-1.5">Gross 2 Total</TableHead>
+                              <TableHead className="text-[9px] py-1.5">Net 1 Total</TableHead>
+                              <TableHead className="text-[9px] py-1.5">Net 2 Total</TableHead>
+                              <TableHead className="text-[9px] py-1.5">Gross / Invoice</TableHead>
+                              <TableHead className="text-[9px] py-1.5">Variable Fee</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            <TableRow>
+                              <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(gross1Total)}</TableCell>
+                              <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(gross2Total)}</TableCell>
+                              <TableCell className="font-mono text-sm font-semibold text-emerald-600">{fmtC(net1Total)}</TableCell>
+                              <TableCell className="font-mono text-sm font-semibold text-blue-600">{fmtC(net2Total)}</TableCell>
+                              <TableCell className="font-mono text-sm font-semibold">{fmtC(grossPerInvoice)}</TableCell>
+                              <TableCell className="font-mono text-sm text-amber-600">{fmtC(variableFeeTotal)}</TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
                       </div>
-                      <div className="border rounded-lg p-2.5 bg-background text-center">
-                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">Total GM</div>
-                        <div className={`text-base font-bold ${gmColor}`}>{fmtC(gmTotal)}</div>
-                        <div className="text-[9px] text-muted-foreground">{fmtC(netFees)} − {fmtC(teamCostTotal)}</div>
-                      </div>
-                      <div className="border rounded-lg p-2.5 bg-background text-center">
-                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">Total GM %</div>
-                        <div className={`text-base font-bold ${gmColor}`}>{gmPctTotal.toFixed(0)}%</div>
-                      </div>
+
+                      {/* Row 3: Gross Margin */}
+                      {teamCostWk > 0 && (
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="border rounded-lg p-2.5 bg-background text-center">
+                            <div className="text-[9px] text-muted-foreground uppercase font-semibold">Team Cost (total)</div>
+                            <div className="text-sm font-bold text-muted-foreground">{fmtC(teamCostTotal)}</div>
+                            <div className="text-[9px] text-muted-foreground">{fmtC(teamCostWk)}/wk × {effectiveDur}w</div>
+                          </div>
+                          <div className="border rounded-lg p-2.5 bg-background text-center">
+                            <div className="text-[9px] text-muted-foreground uppercase font-semibold">Gross Margin</div>
+                            <div className={`text-sm font-bold ${gmColor}`}>{fmtC(gmTotal)}</div>
+                            <div className="text-[9px] text-muted-foreground">Gross 1 − costs</div>
+                          </div>
+                          <div className="border rounded-lg p-2.5 bg-background text-center">
+                            <div className="text-[9px] text-muted-foreground uppercase font-semibold">GM %</div>
+                            <div className={`text-lg font-bold ${gmColor}`}>{gmPct.toFixed(0)}%</div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
