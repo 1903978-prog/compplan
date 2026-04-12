@@ -904,7 +904,7 @@ export function calculatePricing(
     });
   }
 
-  // ── L4: Historical Intelligence ────────────────────────────────────────────
+  // ── L4: Historical Intelligence (informational only — not blended into price) ──
   const histResult = computeHistoricalAnchor(input, historicalProposals, settings);
   const {
     fund_proposals_count, fund_avg_weekly, fund_recent_weekly,
@@ -913,34 +913,11 @@ export function calculatePricing(
     comparable_avg_win_weekly, comparable_avg_loss_weekly,
   } = histResult;
 
-  let after_history = after_floor;
-  if (history_anchor !== null && fund_proposals_count >= 2) {
-    const blend = settings.fund_anchor_weight;
-    after_history = after_floor * (1 - blend) + history_anchor * blend;
-    layer_trace.push({
-      layer: "L4",
-      label: "Fund History",
-      value: after_history,
-      delta_pct: ((after_history - after_floor) / after_floor) * 100,
-      note: `${fund_proposals_count} prior proposals blended (time-decayed, outcome-weighted) at ${(blend * 100).toFixed(0)}%`,
-    });
-  }
-
-  if (comparable_avg_win_weekly !== null && comparable_wins.length >= settings.min_comparables) {
-    const wl = settings.win_loss_weight;
-    after_history = after_history * (1 - wl) + comparable_avg_win_weekly * wl;
-    layer_trace.push({
-      layer: "L4",
-      label: "Win/Loss Comparables",
-      value: after_history,
-      delta_pct: comparable_avg_win_weekly !== null
-        ? ((comparable_avg_win_weekly - after_history) / after_history) * 100 : 0,
-      note: `${comparable_wins.length} comparable wins avg ${formatCurrency(comparable_avg_win_weekly ?? 0)} blended at ${(wl * 100).toFixed(0)}%`,
-    });
-  }
-
+  // L4 data is computed and returned for display in Commercial Analysis,
+  // but intentionally NOT applied to the working price.
+  const after_history = after_floor;
   const history_adjustment_pct = history_anchor !== null
-    ? ((after_history - history_anchor) / history_anchor) * 100 : null;
+    ? ((after_floor - history_anchor) / history_anchor) * 100 : null;
 
   // ── L5: Strategic Intent ─────────────────────────────────────────────────
   let strategic_adj = 0;
@@ -1035,11 +1012,6 @@ export function calculatePricing(
 
   if (total_client_adj !== 0) {
     drivers.push(`Client profile: ${client_notes.join(", ")} (${total_client_adj > 0 ? "+" : ""}${(total_client_adj * 100).toFixed(0)}%)`);
-  }
-
-  if (history_anchor !== null && fund_proposals_count > 0 && input.fund_name) {
-    const winRateStr = fund_win_rate !== null ? ` — ${(fund_win_rate * 100).toFixed(0)}% win rate` : "";
-    drivers.push(`Fund history (${input.fund_name}): ${fund_proposals_count} proposals, time-decayed anchor ${formatCurrency(Math.round(history_anchor))}/wk${winRateStr}`);
   }
 
   if (input.strategic_intent && Math.abs(strategic_adj) > 0) {

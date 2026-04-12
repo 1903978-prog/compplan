@@ -2964,7 +2964,7 @@ export default function PricingTool() {
 
             const CANONICAL = [
               "Geography", "Market Context", "Client Profile",
-              "Cost Floor Applied", "Fund History", "Strategic Intent",
+              "Cost Floor Applied", "Strategic Intent",
             ];
 
             // Compute absolute deltas from original trace
@@ -3057,7 +3057,7 @@ export default function PricingTool() {
 
             const SHORT: Record<string, string> = {
               "Geography": "Geo", "Market Context": "Market", "Client Profile": "Client",
-              "Cost Floor Applied": "Floor", "Fund History": "Fund", "Strategic Intent": "Intent",
+              "Cost Floor Applied": "Floor", "Strategic Intent": "Intent",
             };
 
             const toggleBar = (label: string) => setDisabledBars(prev => {
@@ -4010,9 +4010,6 @@ export default function PricingTool() {
                       <div>
                         <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
                           Negotiation range
-                          {(recommendation.history_anchor || recommendation.comparable_wins.length > 0) && (
-                            <span className="ml-1 font-normal normal-case">(blended with historical data)</span>
-                          )}
                         </div>
                         <div className="grid grid-cols-3 gap-1.5">
                           <div className="text-center p-2.5 bg-muted/30 rounded-lg">
@@ -4032,12 +4029,6 @@ export default function PricingTool() {
                           </div>
                         </div>
 
-                        {/* fund anchor note */}
-                        {recommendation.history_anchor && (
-                          <div className="text-[10px] text-blue-600 mt-1 px-0.5">
-                            Fund anchor ({recommendation.fund_proposals_count} prior proposals): {fmt(recommendation.history_anchor)}/wk blended in
-                          </div>
-                        )}
                       </div>
                     );
                   })()}
@@ -4262,32 +4253,84 @@ export default function PricingTool() {
                     </div>
                   )}
 
-                  {/* Fund history mini-table */}
-                  {fundProposals.length > 0 && (
-                    <div>
-                      <div className="text-[10px] uppercase font-bold text-muted-foreground mb-1">
-                        Prior proposals for {form.fund_name}
-                      </div>
-                      <div className="space-y-1">
-                        {fundProposals.map(p => (
-                          <div key={p.id} className="flex items-center justify-between text-xs bg-muted/20 rounded px-2 py-1">
-                            <span className="text-muted-foreground">{p.proposal_date?.slice(0, 7)}</span>
-                            <span className="truncate max-w-[100px] mx-1 text-muted-foreground">{p.project_name}</span>
-                            <span className="font-semibold">{fmt(p.weekly_price)}</span>
-                            <OutcomeBadge outcome={p.outcome} />
+                  {/* ── Historical Intelligence (L4) — reference only ────── */}
+                  {(() => {
+                    const hasData = fundProposals.length > 0 || (recommendation.comparable_wins?.length ?? 0) > 0;
+                    if (!hasData) return null;
+                    const [showL4Info, setShowL4Info] = React.useState(false);
+                    return (
+                      <div className="border border-blue-100 rounded-lg bg-blue-50/40 p-3 space-y-2">
+                        {/* Header with info button */}
+                        <div className="flex items-center justify-between">
+                          <div className="text-[10px] uppercase font-bold text-blue-700 tracking-wide">
+                            Historical Intelligence
                           </div>
-                        ))}
-                      </div>
-                      {recommendation.fund_avg_weekly && (
-                        <div className="text-[10px] text-muted-foreground mt-1">
-                          Avg: <span className="font-semibold">{fmt(recommendation.fund_avg_weekly)}</span>
-                          {recommendation.fund_win_rate != null && (
-                            <> • Win rate: <span className="font-semibold">{Math.round(recommendation.fund_win_rate * 100)}%</span></>
-                          )}
+                          <div className="relative">
+                            <button
+                              onClick={() => setShowL4Info(v => !v)}
+                              className="text-blue-400 hover:text-blue-600 transition-colors"
+                              title="How is this computed?"
+                            >
+                              <Info className="w-3.5 h-3.5" />
+                            </button>
+                            {showL4Info && (
+                              <div className="absolute right-0 top-5 z-50 w-72 bg-white border border-blue-200 rounded-lg shadow-xl p-3 text-[11px] text-slate-700 leading-relaxed space-y-2">
+                                <div className="font-bold text-blue-700 text-xs">How Historical Intelligence works</div>
+                                <p>
+                                  <span className="font-semibold">Fund anchor:</span> All past proposals for the same fund are retrieved and averaged using time-decay (recent deals count more) and outcome weighting (won deals count 2× vs lost). Requires ≥2 proposals to activate.
+                                </p>
+                                <p>
+                                  <span className="font-semibold">Comparable wins:</span> Every past project is scored for similarity — fund match (40 pts), same region (25 pts), same PE/non-PE (15 pts), same revenue band (20 pts). The top 8 scoring projects with ≥25 pts are used. Win prices are averaged.
+                                </p>
+                                <p>
+                                  <span className="font-semibold">Why not used in the price:</span> Historical data is shown here as a reference only. It is <span className="font-semibold">not blended into the recommendation</span> because past prices reflect the context of those deals (team, scope, market moment) — using them mechanically can anchor you too low or too high. Use these numbers as a sanity check, not as a target.
+                                </p>
+                                <button onClick={() => setShowL4Info(false)} className="text-blue-500 underline text-[10px]">Close</button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  )}
+
+                        {/* Fund anchor summary */}
+                        {recommendation.history_anchor != null && (
+                          <div className="flex items-center gap-3 text-xs">
+                            <div>
+                              <span className="text-muted-foreground">Fund anchor</span>
+                              <span className="ml-1.5 font-bold text-blue-700">{fmt(recommendation.history_anchor)}/wk</span>
+                              <span className="text-muted-foreground ml-1">(time-decayed avg of {recommendation.fund_proposals_count} proposals)</span>
+                            </div>
+                            {recommendation.fund_win_rate != null && (
+                              <span className="text-muted-foreground">Win rate: <span className="font-semibold">{Math.round(recommendation.fund_win_rate * 100)}%</span></span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Comparable wins anchor */}
+                        {recommendation.comparable_avg_win_weekly != null && (
+                          <div className="text-xs">
+                            <span className="text-muted-foreground">Comparable wins avg</span>
+                            <span className="ml-1.5 font-bold text-blue-700">{fmt(recommendation.comparable_avg_win_weekly)}/wk</span>
+                            <span className="text-muted-foreground ml-1">({recommendation.comparable_wins.length} similar won projects)</span>
+                          </div>
+                        )}
+
+                        {/* Fund proposals mini-table */}
+                        {fundProposals.length > 0 && (
+                          <div className="space-y-1 pt-1">
+                            <div className="text-[10px] text-muted-foreground font-semibold">Prior proposals — {form.fund_name}</div>
+                            {fundProposals.map(p => (
+                              <div key={p.id} className="flex items-center justify-between text-xs bg-white/70 rounded px-2 py-1">
+                                <span className="text-muted-foreground">{p.proposal_date?.slice(0, 7)}</span>
+                                <span className="truncate max-w-[90px] mx-1 text-muted-foreground">{p.project_name}</span>
+                                <span className="font-semibold">{fmt(p.weekly_price)}</span>
+                                <OutcomeBadge outcome={p.outcome} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Advisory */}
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
