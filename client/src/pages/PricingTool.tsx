@@ -3747,19 +3747,26 @@ export default function PricingTool() {
           {/* SECTION D: Price Finalization */}
           {recommendation && nwfClamped > 0 && (() => {
             const baseWeekly = nwfClamped + manualDelta + negotiationDelta;
-            // Weekly gross+admin: base × (1 + admin%). Variable fee is excluded — it's a separate bucket.
-            const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
-            const finalWeekly = weeklyGrossAdmin; // kept name used elsewhere in this block
             const effectiveDur = (waterfallDuration ?? form.duration_weeks) || 0;
-            // Net = recommended price (what we actually receive)
-            const netFees = Math.round(baseWeekly * effectiveDur);
-            // Gross = Net / (1 − discount%) — goes up to absorb discounts
-            const grossFees = totalDiscountPct > 0
-              ? Math.round(netFees / (1 - totalDiscountPct / 100))
-              : netFees;
-            const variableFeeTotal = Math.round(baseWeekly * variableFeePct / 100 * effectiveDur);
+
+            // Net weekly = recommended price (what we receive)
+            const netWeekly = baseWeekly;
+
+            // Gross weekly = net × (1 + admin%) / (1 - d1%) / (1 - d2%) / ...
+            // Each discount compounds multiplicatively (not additive)
+            const enabledDiscounts = caseDiscounts.filter(d => d.enabled && d.pct > 0);
+            let grossWeekly = netWeekly * (1 + adminFeePct / 100);
+            for (const d of enabledDiscounts) {
+              grossWeekly /= (1 - d.pct / 100);
+            }
+            grossWeekly = Math.round(grossWeekly);
+
+            const totalGross = Math.round(grossWeekly * effectiveDur);
+            const netFees = Math.round(netWeekly * effectiveDur);
+            const grossFees = totalGross;
+            const variableFeeTotal = Math.round(netWeekly * variableFeePct / 100 * effectiveDur);
             const invoiceCount = Math.max(1, Math.floor(1 + effectiveDur / 4));
-            const perInvoice = invoiceCount > 0 ? Math.round(netFees / invoiceCount) : 0;
+            const perInvoice = invoiceCount > 0 ? Math.round(totalGross / invoiceCount) : 0;
             const cur = getCurrencyForRegion(form.region);
             const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
             return (
@@ -3825,23 +3832,21 @@ export default function PricingTool() {
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-muted/30">
-                        <TableHead className="text-[10px] py-1.5">Weekly (base)</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Weekly gross+admin</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Gross /wk</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Net /wk</TableHead>
                         <TableHead className="text-[10px] py-1.5">Duration</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Gross Fees</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Net total (after D&R)</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Total Gross Fees</TableHead>
                         <TableHead className="text-[10px] py-1.5 text-center">Invoices</TableHead>
-                        <TableHead className="text-[10px] py-1.5 text-right">Per Invoice</TableHead>
+                        <TableHead className="text-[10px] py-1.5 text-right">Gross / Invoice</TableHead>
                         <TableHead className="text-[10px] py-1.5 text-right">Variable fee</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       <TableRow>
-                        <TableCell className="font-mono text-sm font-semibold">{fmtC(baseWeekly)}</TableCell>
-                        <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(finalWeekly)}</TableCell>
+                        <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(grossWeekly)}</TableCell>
+                        <TableCell className="font-mono text-sm font-semibold text-emerald-600">{fmtC(netWeekly)}</TableCell>
                         <TableCell className="text-sm">{effectiveDur}w</TableCell>
-                        <TableCell className="font-mono text-sm text-muted-foreground">{fmtC(grossFees)}</TableCell>
-                        <TableCell className="font-mono text-sm font-bold text-emerald-600">{fmtC(netFees)}</TableCell>
+                        <TableCell className="font-mono text-sm font-bold">{fmtC(totalGross)}</TableCell>
                         <TableCell className="text-sm text-center font-semibold">{invoiceCount}</TableCell>
                         <TableCell className="font-mono text-sm font-semibold text-right">{fmtC(perInvoice)}</TableCell>
                         <TableCell className="font-mono text-sm text-right text-amber-600">{fmtC(variableFeeTotal)}</TableCell>
@@ -4741,12 +4746,13 @@ export default function PricingTool() {
                     const fmtK2Local = (n: number) => n >= 1_000_000 ? `${cur.symbol}${(n / 1_000_000).toFixed(1)}M` : `${cur.symbol}${Math.round(n / 1000)}k`;
                     const effDur = (waterfallDuration ?? form.duration_weeks) || 0;
                     const baseWkly = nwfClamped + manualDelta + negotiationDelta;
-                    // Net = recommended price (fixed — discounts don't reduce it)
+                    // Net = recommended price (what we receive — never changes with discounts)
                     const net = Math.round(baseWkly * effDur);
-                    // Gross = Net / (1 − discount%) — goes UP when discounts are added
-                    const gross = totalDiscountPct > 0
-                      ? Math.round(net / (1 - totalDiscountPct / 100))
-                      : net;
+                    // Gross weekly = net × (1+admin%) / (1-d1%) / (1-d2%) / ...
+                    const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
+                    let grossWkly = baseWkly * (1 + adminFeePct / 100);
+                    for (const d of enabledDisc) grossWkly /= (1 - d.pct / 100);
+                    const gross = Math.round(grossWkly * effDur);
                     // TNF / EBITDA ratios
                     const revenueMLocal = form.company_revenue_m ?? 0;
                     const ebitdaPctLocal = form.ebitda_margin_pct ?? 0;
@@ -4788,19 +4794,17 @@ export default function PricingTool() {
                         <div className="grid grid-cols-2 gap-2">
                           <div className="border rounded-lg p-3 bg-background space-y-0.5">
                             <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
-                            <div className="text-[10px] text-muted-foreground">recommended price (what we receive)</div>
+                            <div className="text-[10px] text-muted-foreground">what we receive</div>
                             <div className="text-xl font-bold text-emerald-600">{fmtFee(net)}</div>
                             <div className="text-[10px] text-muted-foreground">{fmtFee(baseWkly)}/wk × {effDur}w</div>
                           </div>
                           <div className="border rounded-lg p-3 bg-background space-y-0.5">
                             <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
                             <div className="text-[10px] text-muted-foreground">
-                              {totalDiscountPct > 0 ? `price to quote (+${totalDiscountPct.toFixed(1)}% disc/rebate/one-off built in)` : "= net (no discounts)"}
+                              {enabledDisc.length > 0 ? `price to quote (net+admin${enabledDisc.map(d => `/${d.name}`).join("")})` : adminFeePct > 0 ? "net + admin" : "= net (no markups)"}
                             </div>
                             <div className="text-xl font-bold text-foreground">{fmtFee(gross)}</div>
-                            {totalDiscountPct > 0 && (
-                              <div className="text-[10px] text-muted-foreground">{fmtFee(net)} ÷ (1 − {totalDiscountPct.toFixed(1)}%)</div>
-                            )}
+                            <div className="text-[10px] text-muted-foreground">{fmtFee(Math.round(grossWkly))}/wk × {effDur}w</div>
                           </div>
                         </div>
 
