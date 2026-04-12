@@ -2934,13 +2934,20 @@ export default function PricingTool() {
                 )}
 
                 {/* ── Manual edit table ───────────────────────────────── */}
-                {editingBenchmarks && (
+                {editingBenchmarks && (() => {
+                  // Region options for the country dropdown — use REGION_TO_COUNTRY keys
+                  // plus any countries already in benchmarks that don't map to a known region
+                  const regionOptions = Object.keys(REGION_TO_COUNTRY);
+                  const existingCountries = [...new Set(benchmarksLocal.map(b => b.country))];
+                  const allOptions = [...new Set([...regionOptions, ...existingCountries])].sort();
+
+                  return (
                   <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">Edit thresholds directly (in €). Red = outside yellow bounds.</p>
+                    <p className="text-xs text-muted-foreground">Edit thresholds directly (in €). Use region names from Country Benchmarks.</p>
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Country</TableHead>
+                          <TableHead>Region</TableHead>
                           <TableHead>Parameter</TableHead>
                           <TableHead className="text-center">🟡 Yel low</TableHead>
                           <TableHead className="text-center">🟢 Grn low</TableHead>
@@ -2953,8 +2960,24 @@ export default function PricingTool() {
                       <TableBody>
                         {benchmarksLocal.map((row, i) => (
                           <TableRow key={i}>
-                            <TableCell><Input value={row.country} onChange={e => updateBenchmarkLocal(i, "country", e.target.value)} className="h-7 text-xs w-24" /></TableCell>
-                            <TableCell><Input value={row.parameter} onChange={e => updateBenchmarkLocal(i, "parameter", e.target.value)} className="h-7 text-xs w-36" /></TableCell>
+                            <TableCell>
+                              <Select value={row.country || "__none__"} onValueChange={v => updateBenchmarkLocal(i, "country", v === "__none__" ? "" : v)}>
+                                <SelectTrigger className="h-7 text-xs w-32"><SelectValue placeholder="Region" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">— Select —</SelectItem>
+                                  {allOptions.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Select value={row.parameter || "__none__"} onValueChange={v => updateBenchmarkLocal(i, "parameter", v === "__none__" ? "" : v)}>
+                                <SelectTrigger className="h-7 text-xs w-36"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="Weekly fee">Weekly fee</SelectItem>
+                                  <SelectItem value="Total project cost">Total project cost</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
                             <TableCell><Input type="number" min="0" value={row.yellow_low || ""} onChange={e => updateBenchmarkLocal(i, "yellow_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
                             <TableCell><Input type="number" min="0" value={row.green_low || ""} onChange={e => updateBenchmarkLocal(i, "green_low", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
                             <TableCell><Input type="number" min="0" value={row.green_high || ""} onChange={e => updateBenchmarkLocal(i, "green_high", +e.target.value || 0)} className="h-7 text-xs font-mono text-right" /></TableCell>
@@ -2970,7 +2993,8 @@ export default function PricingTool() {
                       </TableBody>
                     </Table>
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* ── Paste import — at bottom ────────────────────────── */}
                 <div className="space-y-2 border-t pt-3">
