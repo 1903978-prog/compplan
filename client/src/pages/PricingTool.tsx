@@ -3304,44 +3304,48 @@ export default function PricingTool() {
                     onChange={e => setForm(f => ({ ...f, aspiration_ebitda_pct: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
                   <div className="text-[9px] text-muted-foreground">% increase in EBITDA targeted by the project. Used in TNF/Aspiration ratio below.</div>
                 </div>
-                {/* Strategic intent */}
+                {/* Strategic intent — labels from settings */}
                 <div className="space-y-1">
                   <Label className="text-xs">Strategic Intent <span className="text-muted-foreground/50 font-normal">(L5)</span></Label>
                   <Select value={form.strategic_intent ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, strategic_intent: v === "__none__" ? null : v as StrategicIntent }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
-                      <SelectItem value="enter">Enter — new client (beachhead −15%)</SelectItem>
-                      <SelectItem value="expand">Expand — existing relationship</SelectItem>
-                      <SelectItem value="harvest">Harvest — optimise margin (+15%)</SelectItem>
+                      {(settings?.strategic_intent_adj ?? DEFAULT_PRICING_SETTINGS.strategic_intent_adj ?? []).map(a => (
+                        <SelectItem key={a.value} value={a.value}>
+                          {a.label}{a.adj_pct !== 0 ? ` (${a.adj_pct > 0 ? "+" : ""}${a.adj_pct}%)` : ""}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
-                {/* Competitive intensity */}
+                {/* Competitive intensity — labels from settings */}
                 <div className="space-y-1">
                   <Label className="text-xs">Competitive Intensity <span className="text-muted-foreground/50 font-normal">(L2)</span></Label>
                   <Select value={form.competitive_intensity ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitive_intensity: v === "__none__" ? null : v as CompetitiveIntensity }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
-                      <SelectItem value="sole_source">Sole source (+15%)</SelectItem>
-                      <SelectItem value="limited">Limited (+5%)</SelectItem>
-                      <SelectItem value="competitive">Competitive (neutral)</SelectItem>
-                      <SelectItem value="crowded">Crowded (−15%)</SelectItem>
+                      {(settings?.competitive_intensity_adj ?? DEFAULT_PRICING_SETTINGS.competitive_intensity_adj ?? []).map(a => (
+                        <SelectItem key={a.value} value={a.value}>
+                          {a.label}{a.adj_pct !== 0 ? ` (${a.adj_pct > 0 ? "+" : ""}${a.adj_pct}%)` : ""}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
-                {/* Competitor type */}
+                {/* Competitor type — labels from settings */}
                 <div className="space-y-1">
                   <Label className="text-xs">Main Competitor <span className="text-muted-foreground/50 font-normal">(L2)</span></Label>
                   <Select value={form.competitor_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitor_type: v === "__none__" ? null : v as CompetitorType }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
-                      <SelectItem value="none">None</SelectItem>
-                      <SelectItem value="boutiques">Boutiques (−5%)</SelectItem>
-                      <SelectItem value="tier2">Tier 2 (neutral)</SelectItem>
-                      <SelectItem value="mbb">MBB (+15%)</SelectItem>
+                      {(settings?.competitor_type_adj ?? DEFAULT_PRICING_SETTINGS.competitor_type_adj ?? []).map(a => (
+                        <SelectItem key={a.value} value={a.value}>
+                          {a.label}{a.adj_pct !== 0 ? ` (${a.adj_pct > 0 ? "+" : ""}${a.adj_pct}%)` : ""}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
