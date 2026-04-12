@@ -1758,6 +1758,16 @@ export default function PricingTool() {
     : 0;
   const tnf = nwfClamped * (form.duration_weeks || 0);
 
+  // ── Single source of truth: canonical Net and Gross weekly ────────────
+  // Net = nwfClamped + adjustments (same as waterfall output before green-band clamping)
+  // These are used everywhere: Fee Range boxes, fee summary table, right column
+  const canonicalNetWeekly = nwfClamped + manualDelta + negotiationDelta;
+  const canonicalGrossWeekly = (() => {
+    let g = canonicalNetWeekly * (1 + adminFeePct / 100);
+    for (const d of caseDiscounts.filter(d => d.enabled && d.pct > 0)) g /= (1 - d.pct / 100);
+    return Math.round(g);
+  })();
+
   // Stats for list view
   const avgTarget = cases.length
     ? cases.filter(c => c.recommendation?.target_weekly).reduce((s, c) => s + (c.recommendation?.target_weekly ?? 0), 0)
@@ -3595,9 +3605,9 @@ export default function PricingTool() {
                       {(() => {
                         const x = xOf(0); const y = yOf(base); const h = hOf(minV, base);
                         return <>
-                          <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(base)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">Staffing</text>
+                          <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(base)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#64748b">Staffing</text>
                         </>;
                       })()}
 
@@ -3606,7 +3616,7 @@ export default function PricingTool() {
                         const x = xOf(i + 1);
                         const isZero = Math.abs(b.end - b.start) < 1;
                         const up = b.end >= b.start;
-                        const color = b.isDisabled ? "#94a3b8" : (isZero ? "#cbd5e1" : (up ? "#16C3CF" : "#ef4444"));
+                        const color = b.isDisabled ? "#94a3b8" : (isZero ? "#cbd5e1" : (up ? "#166534" : "#166534"));
                         const y = up ? yOf(b.end) : yOf(b.start);
                         const h = Math.max(2, hOf(b.start, b.end));
                         const deltaEur = b.end - b.start;
@@ -3625,15 +3635,15 @@ export default function PricingTool() {
                             </g>
                             <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                             <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity={b.isDisabled ? 0.3 : (isZero ? 0.45 : 0.85)} />
-                            <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={b.isDisabled ? "#94a3b8" : (isZero ? "#94a3b8" : color)} fontWeight="bold">
+                            <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="8" fill={b.isDisabled ? "#94a3b8" : (isZero ? "#94a3b8" : color)} fontWeight="bold">
                               {b.isDisabled ? "—" : (isZero ? "—" : `${sign}${fmt(deltaEur)}`)}
                             </text>
                             {!b.isDisabled && !isZero && (
-                              <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">
+                              <text x={x + barW/2} y={textY + 7} textAnchor="middle" fontSize="6" fill="#94a3b8">
                                 {sign}{b.deltaPct.toFixed(0)}%
                               </text>
                             )}
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6" fill={b.isDisabled ? "#cbd5e1" : "#64748b"}>{SHORT[b.label] ?? b.label}</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill={b.isDisabled ? "#cbd5e1" : "#64748b"}>{SHORT[b.label] ?? b.label}</text>
                           </g>
                         );
                       })}
@@ -3645,23 +3655,21 @@ export default function PricingTool() {
                         const prevEnd = bars[bars.length - 1]?.end ?? base;
                         return <>
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(adjustedFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(adjustedFinal)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">NWF</text>
+                          <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(adjustedFinal)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#64748b">NWF</text>
                         </>;
                       })()}
 
-                      {/* Recommended NWF bar (clamped to green band) — this is the net price we target */}
+                      {/* Net bar (light green) — recommended net price */}
                       {(() => {
                         const bi = bars.length + 2;
                         const x = xOf(bi); const y = yOf(recommendedNwf); const h = hOf(minV, recommendedNwf);
-                        const inGreen = hasGreenBand && recommendedNwf >= greenLow && recommendedNwf <= greenHigh;
-                        const recColor = inGreen ? "#16a34a" : "#f59e0b";
                         return <>
                           <line x1={xOf(bi - 1) + barW} y1={yOf(adjustedFinal)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x} y={y} width={barW} height={h} fill={recColor} rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill={recColor} fontWeight="bold">{fmt(recommendedNwf)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill={recColor} fontWeight="600">Net</text>
+                          <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(recommendedNwf)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="600">Net</text>
                         </>;
                       })()}
 
@@ -3675,15 +3683,15 @@ export default function PricingTool() {
                         return (
                           <g key={`markup-${i}`}>
                             <line x1={xOf(bi - 1) + barW} y1={yOf(mb.start)} x2={x} y2={yOf(mb.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                            <rect x={x} y={y} width={barW} height={h} fill="#f59e0b" rx="2" opacity="0.85" />
-                            <text x={x + barW/2} y={y - 9} textAnchor="middle" fontSize="7" fill="#d97706" fontWeight="bold">+{fmt(delta)}</text>
-                            <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="5.5" fill="#94a3b8">+{mb.deltaPct}%</text>
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="5.5" fill="#64748b">{mb.label.length > 8 ? mb.label.slice(0, 8) + "…" : mb.label}</text>
+                            <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" opacity="0.7" />
+                            <text x={x + barW/2} y={y - 9} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">+{fmt(delta)}</text>
+                            <text x={x + barW/2} y={y - 2} textAnchor="middle" fontSize="6" fill="#94a3b8">+{mb.deltaPct}%</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">{mb.label.length > 8 ? mb.label.slice(0, 8) + "…" : mb.label}</text>
                           </g>
                         );
                       })}
 
-                      {/* Final Gross bar (only if markups exist) */}
+                      {/* Final Gross bar (light green, only if markups exist) */}
                       {hasMarkups && (() => {
                         const bi = bars.length + 3 + markupBars.length;
                         const x = xOf(bi);
@@ -3692,9 +3700,9 @@ export default function PricingTool() {
                         const prevEnd = markupBars[markupBars.length - 1].end;
                         return <>
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x} y={y} width={barW} height={h} fill="#d97706" rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#d97706" fontWeight="bold">{fmt(grossWeeklyWaterfall)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#d97706" fontWeight="600">Gross</text>
+                          <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(grossWeeklyWaterfall)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="600">Gross</text>
                         </>;
                       })()}
 
@@ -4710,71 +4718,62 @@ export default function PricingTool() {
                       : 50;
                     const highMkt = recommendation.high_market_weekly;
 
-                    // Gross = Net × (1+admin%) / (1-disc%) / (1-rebate%) / (1-oneoff%)
-                    const enabledDisc = caseDiscounts.filter(dd => dd.enabled && dd.pct > 0);
-                    let grossRec = rec * (1 + adminFeePct / 100);
-                    for (const dd of enabledDisc) grossRec = grossRec / (1 - dd.pct / 100);
-                    grossRec = Math.round(grossRec);
+                    const highMktLabel = highMkt && recommendation.high_market_context
+                      ? `max won in ${recommendation.high_market_context}` : null;
 
                     return (
                       <div className="space-y-2">
                         <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-0.5">
                           Fee Range
                         </div>
-                        <div className="grid grid-cols-4 gap-1.5">
+                        <div className="grid grid-cols-3 gap-1.5">
                           {/* Low — 50% GM floor */}
-                          <div className="text-center p-2 bg-muted/30 rounded-lg">
+                          <div className="text-center p-2.5 bg-muted/30 rounded-lg">
                             <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">Low</div>
-                            <div className="text-sm font-bold text-muted-foreground mt-0.5">
+                            <div className="text-base font-bold text-muted-foreground mt-0.5">
                               {low50 ? fmt(low50) : "—"}
                             </div>
-                            <div className="text-[8px] text-muted-foreground">/week</div>
-                            <div className="text-[8px] text-emerald-600 font-semibold mt-0.5">GM {Math.round(low50GM)}%</div>
+                            <div className="text-[8px] text-muted-foreground">/week · GM {Math.round(low50GM)}%</div>
                           </div>
-                          {/* Net = Recommended */}
-                          <div className="text-center p-2 bg-emerald-50 rounded-lg border border-emerald-200">
+                          {/* Net = Recommended (mirrors waterfall) */}
+                          <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
                             <div className="text-[9px] text-emerald-700 uppercase font-bold tracking-wide">Net</div>
-                            <div className="text-lg font-bold text-emerald-700 mt-0.5">{fmt(rec)}</div>
-                            <div className="text-[8px] text-muted-foreground">we communicate</div>
+                            <div className="text-xl font-bold text-emerald-700 mt-0.5">{fmt(canonicalNetWeekly)}</div>
+                            <div className="text-[8px] text-muted-foreground">/week · recommended</div>
                           </div>
-                          {/* Gross = what we invoice */}
-                          <div className="text-center p-2 bg-amber-50 rounded-lg border border-amber-200">
-                            <div className="text-[9px] text-amber-700 uppercase font-bold tracking-wide">Gross</div>
-                            <div className="text-lg font-bold text-amber-700 mt-0.5">{fmt(grossRec)}</div>
-                            <div className="text-[8px] text-muted-foreground">we invoice</div>
-                          </div>
-                          {/* High — market ceiling */}
-                          <div className="text-center p-2 bg-muted/30 rounded-lg">
-                            <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">High</div>
-                            <div className="text-sm font-bold text-muted-foreground mt-0.5">
+                          {/* Max — highest weekly from similar projects */}
+                          <div className="text-center p-2.5 bg-muted/30 rounded-lg">
+                            <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">Max</div>
+                            <div className="text-base font-bold text-muted-foreground mt-0.5">
                               {highMkt ? fmt(highMkt) : "—"}
                             </div>
                             <div className="text-[8px] text-muted-foreground">/week</div>
                           </div>
                         </div>
 
-                        {/* Calculation explanations */}
+                        {/* Net + Gross + Total Gross boxes */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
+                            <div className="text-[9px] text-emerald-700 uppercase font-bold">Net /wk</div>
+                            <div className="text-base font-bold text-emerald-700">{fmt(canonicalNetWeekly)}</div>
+                          </div>
+                          <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-200">
+                            <div className="text-[9px] text-amber-700 uppercase font-bold">Gross /wk</div>
+                            <div className="text-base font-bold text-amber-700">{fmt(canonicalGrossWeekly)}</div>
+                          </div>
+                          <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-200">
+                            <div className="text-[9px] text-amber-700 uppercase font-bold">Total Gross</div>
+                            <div className="text-base font-bold text-amber-700">{fmt(canonicalGrossWeekly * (form.duration_weeks || 0))}</div>
+                            <div className="text-[8px] text-muted-foreground">{form.duration_weeks || 0}w</div>
+                          </div>
+                        </div>
+
+                        {/* Explanations */}
                         <div className="text-[9px] text-muted-foreground space-y-0.5 px-0.5 leading-relaxed">
-                          <div>
-                            <span className="font-semibold text-foreground/70">Low:</span>{" "}
-                            {low50
-                              ? `${fmt(low50)}/wk = 50% GM floor (${fmt(recommendation.delivery_cost_weekly)}/wk × 2)`
-                              : "Enter team build-up"}
-                          </div>
-                          <div>
-                            <span className="font-semibold text-foreground/70">Net:</span>{" "}
-                            {fmt(rec)}/wk = recommended (waterfall output). We communicate this to the client.
-                          </div>
-                          <div>
-                            <span className="font-semibold text-foreground/70">Gross:</span>{" "}
-                            {fmt(rec)} × (1+{adminFeePct}%){enabledDisc.map(dd => ` ÷ (1−${dd.pct}%)`).join("")} = {fmt(grossRec)}/wk. We invoice this.
-                          </div>
-                          <div>
-                            <span className="font-semibold text-foreground/70">High:</span>{" "}
-                            {highMkt && recommendation.high_market_context
-                              ? `${fmt(highMkt)}/wk = max won in ${recommendation.high_market_context}`
-                              : "No comparable data"}
-                          </div>
+                          <div><span className="font-semibold text-foreground/70">Low:</span> {low50 ? `${fmt(low50)}/wk = 50% GM floor` : "Enter team build-up"}</div>
+                          <div><span className="font-semibold text-foreground/70">Net:</span> {fmt(canonicalNetWeekly)}/wk = waterfall recommended</div>
+                          <div><span className="font-semibold text-foreground/70">Max:</span> {highMktLabel ? `${fmt(highMkt!)}/wk = ${highMktLabel}` : "No comparable data"}</div>
+                          <div><span className="font-semibold text-foreground/70">Gross:</span> Net × (1+{adminFeePct}%){caseDiscounts.filter(d => d.enabled && d.pct > 0).map(d => ` ÷ (1−${d.pct}%)`).join("")} = {fmt(canonicalGrossWeekly)}/wk (we invoice)</div>
                         </div>
                       </div>
                     );
