@@ -3794,14 +3794,12 @@ export default function PricingTool() {
                         const textY = up ? y - 9 : y + h + 8;
                         return (
                           <g key={i}>
-                            {/* Toggle pill */}
+                            {/* Toggle switch */}
                             <g style={{ cursor: "pointer" }} onClick={() => toggleBar(b.label)}>
-                              <rect x={x} y={2} width={barW} height={TH - 3} rx="2"
-                                fill={b.isDisabled ? "#f1f5f9" : "#e0f2fe"} stroke={b.isDisabled ? "#cbd5e1" : "#7dd3fc"} strokeWidth="0.5" />
-                              <text x={x + barW/2} y={TH - 3} textAnchor="middle" fontSize="5.5"
-                                fill={b.isDisabled ? "#94a3b8" : "#0369a1"} fontWeight="600">
-                                {b.isDisabled ? "off" : "on"}
-                              </text>
+                              <rect x={x + barW/2 - 10} y={3} width={20} height={10} rx="5"
+                                fill={b.isDisabled ? "#e2e8f0" : "#166534"} />
+                              <circle cx={b.isDisabled ? x + barW/2 - 5 : x + barW/2 + 5} cy={8} r={3.5}
+                                fill="white" stroke={b.isDisabled ? "#cbd5e1" : "#166534"} strokeWidth="0.5" />
                             </g>
                             <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                             <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity={b.isDisabled ? 0.3 : (isZero ? 0.45 : 0.85)} />
@@ -3850,7 +3848,7 @@ export default function PricingTool() {
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="9" fill="#166534" fontWeight="bold">{fmt(recommendedNwf)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#166534" fontWeight="700">NET</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#166534" fontWeight="700">NET1</text>
                         </>;
                       })()}
 
