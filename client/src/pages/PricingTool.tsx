@@ -3707,7 +3707,8 @@ export default function PricingTool() {
             const range = maxV - minV || 1;
 
             // Layout: base + layers + target + rec + markup bars + (gross bar if has markups)
-            const totalBarCount = 1 + bars.length + 1 + 1 + markupBars.length + (hasMarkups ? 1 : 0);
+            // base + layers + (adj if non-zero) + Net + markup bars + (Gross if markups)
+            const totalBarCount = 1 + bars.length + (manualDelta !== 0 ? 1 : 0) + 1 + markupBars.length + (hasMarkups ? 1 : 0);
             const W = 620; const H = 210;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
@@ -3795,34 +3796,45 @@ export default function PricingTool() {
                         );
                       })}
 
-                      {/* Target bar (= net recommended, no discounts) */}
-                      {(() => {
+                      {/* Model Adjustment bar (if non-zero) — shows the ±500 delta */}
+                      {manualDelta !== 0 && (() => {
                         const bi = bars.length + 1;
-                        const x = xOf(bi); const y = yOf(adjustedFinal); const h = hOf(minV, adjustedFinal);
+                        const x = xOf(bi);
                         const prevEnd = bars[bars.length - 1]?.end ?? base;
-                        return <>
-                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(adjustedFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(adjustedFinal)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#64748b">NWF</text>
-                        </>;
+                        const adjEnd = prevEnd + manualDelta;
+                        const up = manualDelta > 0;
+                        const y = up ? yOf(adjEnd) : yOf(prevEnd);
+                        const h = Math.max(2, hOf(prevEnd, adjEnd));
+                        return (
+                          <g>
+                            <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(prevEnd)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                            <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" opacity="0.7" />
+                            <text x={x + barW/2} y={up ? y - 3 : y + h + 8} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="bold">
+                              {manualDelta > 0 ? "+" : ""}{fmt(manualDelta)}
+                            </text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">Adj.</text>
+                          </g>
+                        );
                       })()}
 
-                      {/* Net bar (light green) — recommended net price */}
+                      {/* Net bar (light green) — THE final net price = canonicalNetWeekly */}
                       {(() => {
-                        const bi = bars.length + 2;
+                        const bi = bars.length + 1 + (manualDelta !== 0 ? 1 : 0);
                         const x = xOf(bi); const y = yOf(recommendedNwf); const h = hOf(minV, recommendedNwf);
+                        const prevEnd = manualDelta !== 0
+                          ? (bars[bars.length - 1]?.end ?? base) + manualDelta
+                          : (bars[bars.length - 1]?.end ?? base);
                         return <>
-                          <line x1={xOf(bi - 1) + barW} y1={yOf(adjustedFinal)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(recommendedNwf)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="600">Net</text>
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="9" fill="#166534" fontWeight="bold">{fmt(recommendedNwf)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#166534" fontWeight="700">NET</text>
                         </>;
                       })()}
 
                       {/* Markup bars: admin + discounts/rebates/one-off build UP to Gross */}
                       {markupBars.map((mb, i) => {
-                        const bi = bars.length + 3 + i;
+                        const bi = bars.length + 2 + (manualDelta !== 0 ? 1 : 0) + i;
                         const x = xOf(bi);
                         const y = yOf(mb.end);
                         const h = Math.max(2, hOf(mb.start, mb.end));
@@ -3840,7 +3852,7 @@ export default function PricingTool() {
 
                       {/* Final Gross bar (light green, only if markups exist) */}
                       {hasMarkups && (() => {
-                        const bi = bars.length + 3 + markupBars.length;
+                        const bi = bars.length + 2 + (manualDelta !== 0 ? 1 : 0) + markupBars.length;
                         const x = xOf(bi);
                         const y = yOf(grossWeeklyWaterfall);
                         const h = hOf(minV, grossWeeklyWaterfall);
