@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, EyeOff, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X,
+  Users, AlertTriangle, Eye, EyeOff, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X, FileText,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
@@ -93,6 +93,16 @@ function emptyProposal(): PricingProposal {
     notes: "",
   };
 }
+
+const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees outlined for this Statement of Work, spanning over {{DURATION_WEEKS}} weeks with a team of {{TEAM_COUNT}} professionals ({{TEAM_ROLES}}), amount to {{GROSS_TOTAL}}.
+
+In recognition of the mutual intention to build a long-term partnership, we are pleased to extend the following commercial incentives:
+
+Our standard professional-fee rate card is {{GROSS_TOTAL}}. In recognition of the mutual intention to build a long-term partnership, we are pleased to extend the following commercial incentives:
+
+{{DISCOUNT_ITEMS}}
+
+Net Professional Fees (all incentives achieved, excluding any success fee): {{NET_TOTAL}}`;
 
 // Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
 // Default full Eendigo team = 2 ASC INT + 3 EM EXT (5 people)
@@ -494,6 +504,9 @@ export default function PricingTool() {
   const [weeklyRecalcSelected, setWeeklyRecalcSelected] = useState<Set<number>>(new Set());
   const [showTNFInfo, setShowTNFInfo] = useState(false);
   const [showL4Info, setShowL4Info] = useState(false);
+  const [showProposalText, setShowProposalText] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState(false);
+  const [templateLocal, setTemplateLocal] = useState("");
 
   // Proposals included in all analysis (filters out excluded_from_analysis)
   const isExcluded = (p: PricingProposal): boolean => !!(p.excluded_from_analysis);
@@ -4085,6 +4098,115 @@ export default function PricingTool() {
                     ✗ Mark as Lost
                   </Button>
                   {markingOutcome && <span className="text-[10px] text-muted-foreground">Saving…</span>}
+                </div>
+
+                {/* Generate proposal text */}
+                <div className="border-t pt-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setShowProposalText(v => !v)}>
+                      <FileText className="w-3.5 h-3.5 mr-1.5" />
+                      {showProposalText ? "Hide Proposal Text" : "Generate Proposal Text"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => {
+                      setTemplateLocal(settings?.proposal_template ?? DEFAULT_PROPOSAL_TEMPLATE);
+                      setEditingTemplate(true);
+                    }}>
+                      <Pencil className="w-3 h-3 mr-1" /> Edit Template
+                    </Button>
+                  </div>
+
+                  {/* Template editor */}
+                  {editingTemplate && (
+                    <div className="space-y-2 border rounded-lg p-3 bg-muted/10">
+                      <div className="text-[10px] font-bold uppercase text-muted-foreground">Edit Proposal Template</div>
+                      <p className="text-[9px] text-muted-foreground">
+                        Variables: {"{{DURATION_WEEKS}}"} {"{{TEAM_COUNT}}"} {"{{TEAM_ROLES}}"} {"{{GROSS_WEEKLY}}"} {"{{NET_WEEKLY}}"} {"{{GROSS_TOTAL}}"} {"{{NET_TOTAL}}"} {"{{DISCOUNT_ITEMS}}"} {"{{CLIENT_NAME}}"} {"{{PROJECT_NAME}}"} {"{{ADMIN_PCT}}"} {"{{VARIABLE_PCT}}"} {"{{CURRENCY}}"}
+                      </p>
+                      <Textarea value={templateLocal}
+                        onChange={e => setTemplateLocal(e.target.value)}
+                        className="text-xs font-mono resize-none" rows={15} />
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={async () => {
+                          const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), proposal_template: templateLocal };
+                          await fetch("/api/pricing/settings", {
+                            method: "PUT", credentials: "include",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(updated),
+                          });
+                          setSettings(updated);
+                          setEditingTemplate(false);
+                          toast({ title: "Template saved" });
+                        }}>Save Template</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingTemplate(false)}>Cancel</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setTemplateLocal(DEFAULT_PROPOSAL_TEMPLATE)}>Reset to Default</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Generated text */}
+                  {showProposalText && !editingTemplate && (() => {
+                    const cur = getCurrencyForRegion(form.region);
+                    const fmtP = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
+                    const template = settings?.proposal_template ?? DEFAULT_PROPOSAL_TEMPLATE;
+                    const dur = (waterfallDuration ?? form.duration_weeks) || 0;
+                    const netWk = nwfClamped + manualDelta + negotiationDelta;
+                    let grossWk = netWk * (1 + adminFeePct / 100);
+                    const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
+                    for (const d of enabledDisc) grossWk = grossWk / (1 - d.pct / 100);
+                    grossWk = Math.round(grossWk);
+                    const netTotal = netWk * dur;
+                    const grossTotal = grossWk * dur;
+                    const teamCount = form.staffing.filter(s => s.days_per_week > 0 && s.count > 0)
+                      .reduce((s, l) => s + l.count, 0);
+                    const teamRoles = form.staffing.filter(s => s.days_per_week > 0 && s.count > 0)
+                      .map(s => s.role_name || s.resource_label || "").join(", ");
+
+                    // Build discount items text
+                    const discountLines: string[] = [];
+                    let itemNum = 1;
+                    for (const d of caseDiscounts) {
+                      if (!d.enabled) continue;
+                      const amount = d.pct > 0 ? Math.round(grossTotal * d.pct / 100) : 0;
+                      discountLines.push(`A${itemNum}. ${d.name} – ${d.pct}% (${fmtP(amount)})`);
+                      itemNum++;
+                    }
+                    if (variableFeePct > 0) {
+                      const varAmount = Math.round(netWk * variableFeePct / 100 * dur);
+                      discountLines.push(`A${itemNum}. Success Fee – ${variableFeePct}% of Base Fees (${fmtP(varAmount)})\nA success fee equal to ${variableFeePct}% of the base fees will be invoiced only upon formal written e-mail confirmation of satisfaction by the Project Commissioner at the close of the engagement.`);
+                    }
+
+                    const text = template
+                      .replace(/\{\{DURATION_WEEKS\}\}/g, String(dur))
+                      .replace(/\{\{TEAM_COUNT\}\}/g, String(teamCount))
+                      .replace(/\{\{TEAM_ROLES\}\}/g, teamRoles)
+                      .replace(/\{\{GROSS_WEEKLY\}\}/g, fmtP(grossWk))
+                      .replace(/\{\{NET_WEEKLY\}\}/g, fmtP(netWk))
+                      .replace(/\{\{GROSS_TOTAL\}\}/g, fmtP(grossTotal))
+                      .replace(/\{\{NET_TOTAL\}\}/g, fmtP(netTotal))
+                      .replace(/\{\{DISCOUNT_ITEMS\}\}/g, discountLines.join("\n\n"))
+                      .replace(/\{\{CLIENT_NAME\}\}/g, form.client_name || "[Client]")
+                      .replace(/\{\{PROJECT_NAME\}\}/g, form.project_name || "[Project]")
+                      .replace(/\{\{ADMIN_PCT\}\}/g, String(adminFeePct))
+                      .replace(/\{\{VARIABLE_PCT\}\}/g, String(variableFeePct))
+                      .replace(/\{\{CURRENCY\}\}/g, cur.code);
+
+                    return (
+                      <div className="border rounded-lg p-4 bg-white space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[10px] font-bold uppercase text-muted-foreground">Proposal Fee Section</div>
+                          <Button size="sm" variant="outline" onClick={() => {
+                            navigator.clipboard.writeText(text);
+                            toast({ title: "Copied to clipboard" });
+                          }}>
+                            Copy
+                          </Button>
+                        </div>
+                        <pre className="text-xs whitespace-pre-wrap font-sans leading-relaxed text-foreground bg-muted/20 rounded p-3 max-h-96 overflow-y-auto">
+                          {text}
+                        </pre>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             );

@@ -117,6 +117,7 @@ export interface PricingSettings {
   competitive_intensity_adj?: PricingAdjustment[];
   competitor_type_adj?: PricingAdjustment[];
   strategic_intent_adj?: PricingAdjustment[];
+  proposal_template?: string;
 }
 
 export interface PricingAdjustment {
