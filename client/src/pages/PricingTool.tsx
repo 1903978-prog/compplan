@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info,
+  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS,
@@ -350,6 +350,7 @@ export default function PricingTool() {
   const [variableFeePct, setVariableFeePct] = useState(10);
   const [adminFeePct, setAdminFeePct] = useState(8);
   const [markingOutcome, setMarkingOutcome] = useState(false);
+  const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
   const [teamPreset, setTeamPreset] = useState<string>("1+2");
   const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
@@ -601,14 +602,29 @@ export default function PricingTool() {
       return;
     }
     setImportingExcel(true);
+    const conflicts: { incoming: PricingProposal; existing: PricingProposal }[] = [];
     try {
       let inserted = 0, skipped = 0;
       for (const p of parsed) {
-        const existing = proposals.find(x =>
+        // Exact match: same project_name + client_name + outcome + price within 2%
+        const exact = proposals.find(x =>
           x.project_name === p.project_name &&
-          x.client_name === p.client_name
+          x.client_name === p.client_name &&
+          x.outcome === p.outcome &&
+          Math.abs((x.weekly_price - p.weekly_price) / (p.weekly_price || 1)) < 0.02
         );
-        if (existing) { skipped++; continue; }
+        if (exact) { skipped++; continue; }
+
+        // Conflict: same project_name (or same client + fund) but different key fields
+        const conflict = proposals.find(x =>
+          x.project_name === p.project_name ||
+          (x.client_name && p.client_name &&
+           x.client_name.toLowerCase().trim() === p.client_name.toLowerCase().trim() &&
+           x.fund_name && p.fund_name &&
+           x.fund_name.toLowerCase().trim() === p.fund_name.toLowerCase().trim())
+        );
+        if (conflict) { conflicts.push({ incoming: p, existing: conflict }); continue; }
+
         const payload = { ...p, pe_owned: p.pe_owned ? 1 : 0 };
         const res = await fetch("/api/pricing/proposals", {
           method: "POST", credentials: "include",
@@ -617,14 +633,39 @@ export default function PricingTool() {
         });
         if (res.ok) inserted++;
       }
-      setExcelPasteResult({ ok: true, msg: `Imported ${inserted}, skipped ${skipped} duplicates` });
-      setExcelPaste("");
+      setImportConflicts(conflicts);
+      const conflictMsg = conflicts.length > 0 ? `, ${conflicts.length} conflict(s) need review` : "";
+      setExcelPasteResult({ ok: true, msg: `Imported ${inserted}, skipped ${skipped} exact duplicates${conflictMsg}` });
+      if (conflicts.length === 0) setExcelPaste("");
       loadAll();
     } catch {
       setExcelPasteResult({ ok: false, msg: "Import failed" });
     } finally {
       setImportingExcel(false);
     }
+  };
+
+  const resolveConflict = async (conflict: { incoming: PricingProposal; existing: PricingProposal }, keep: "incoming" | "existing") => {
+    if (keep === "incoming") {
+      // Replace existing with incoming
+      const payload = { ...conflict.incoming, pe_owned: conflict.incoming.pe_owned ? 1 : 0 };
+      if (conflict.existing.id) {
+        await fetch(`/api/pricing/proposals/${conflict.existing.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await fetch("/api/pricing/proposals", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+      loadAll();
+    }
+    // Either way, remove this conflict from the list
+    setImportConflicts(prev => prev.filter(c => c !== conflict));
   };
 
   const saveProposal = async () => {
@@ -1092,6 +1133,39 @@ export default function PricingTool() {
               </Card>
             )}
 
+            {/* Import conflict resolution */}
+            {importConflicts.length > 0 && (
+              <Card className="border-amber-300">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-amber-700">⚠ Conflicts detected — review before importing</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {importConflicts.map((c, i) => (
+                    <div key={i} className="border rounded-lg overflow-hidden">
+                      <div className="grid grid-cols-2 divide-x text-xs">
+                        <div className="p-3 bg-muted/20 space-y-1">
+                          <div className="font-bold text-muted-foreground uppercase text-[10px] mb-1">Existing</div>
+                          <div><span className="font-semibold">{c.existing.project_name}</span> · {c.existing.client_name}</div>
+                          <div className="text-muted-foreground">{c.existing.fund_name} · {c.existing.region} · {c.existing.proposal_date?.slice(0,7)}</div>
+                          <div>{fmt(c.existing.weekly_price)}/wk · {c.existing.duration_weeks}w · <span className={c.existing.outcome === "won" ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>{c.existing.outcome}</span></div>
+                        </div>
+                        <div className="p-3 bg-amber-50/50 space-y-1">
+                          <div className="font-bold text-amber-700 uppercase text-[10px] mb-1">Incoming (new)</div>
+                          <div><span className="font-semibold">{c.incoming.project_name}</span> · {c.incoming.client_name}</div>
+                          <div className="text-muted-foreground">{c.incoming.fund_name} · {c.incoming.region} · {c.incoming.proposal_date?.slice(0,7)}</div>
+                          <div>{fmt(c.incoming.weekly_price)}/wk · {c.incoming.duration_weeks}w · <span className={c.incoming.outcome === "won" ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>{c.incoming.outcome}</span></div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 px-3 py-2 bg-muted/10 border-t">
+                        <Button size="sm" variant="outline" onClick={() => resolveConflict(c, "existing")}>Keep existing</Button>
+                        <Button size="sm" className="bg-amber-600 hover:bg-amber-700 text-white" onClick={() => resolveConflict(c, "incoming")}>Use new</Button>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Proposals table */}
             {proposals.length === 0 && !showHistoryForm ? (
               <Card className="py-16">
@@ -1141,7 +1215,7 @@ export default function PricingTool() {
                     </TableHeader>
                     <TableBody>
                       {sortedProposals.map(p => (
-                        <TableRow key={p.id}>
+                        <TableRow key={p.id} className="cursor-pointer hover:bg-muted/30" onClick={() => editProposal(p)}>
                           <TableCell className="text-xs text-muted-foreground">
                             {p.proposal_date ? new Date(p.proposal_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
                           </TableCell>
@@ -1160,10 +1234,10 @@ export default function PricingTool() {
                               ? <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>
                               : <Badge variant="secondary" className="text-xs">Pending</Badge>}
                           </TableCell>
-                          <TableCell>
+                          <TableCell onClick={e => e.stopPropagation()}>
                             <div className="flex gap-1">
                               <button onClick={() => editProposal(p)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Edit">
-                                <Eye className="w-3.5 h-3.5" />
+                                <Pencil className="w-3.5 h-3.5" />
                               </button>
                               <button onClick={() => deleteProposal(p.id!)} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors" title="Delete">
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1334,58 +1408,109 @@ export default function PricingTool() {
                 {!editingBenchmarks && (
                   benchmarks.length === 0 ? (
                     <p className="text-xs text-muted-foreground text-center py-2">No benchmarks yet — paste analysis text above to import.</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {[...new Set(benchmarks.map(b => b.country))].map(country => {
-                        const rows = benchmarks.filter(b => b.country === country);
-                        const fB = (n: number) => n >= 1000
-                          ? `€${Math.round(n / 1000)}k`
-                          : `€${n}`;
-                        return (
-                          <div key={country}>
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <span className="text-xs font-bold uppercase tracking-wide text-foreground">{country}</span>
-                              <div className="flex-1 border-t border-border" />
+                  ) : (() => {
+                    const fB = (n: number) => n >= 1000 ? `€${Math.round(n / 1000)}k` : `€${n}`;
+                    const countries = [...new Set(benchmarks.map(b => b.country))];
+                    // Global shared scales per parameter type (so bars are comparable across countries)
+                    const weeklyRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"));
+                    const totalRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"));
+                    const weeklyScale = Math.max(...weeklyRows.map(r => r.yellow_high).filter(Boolean), 1);
+                    const totalScale = Math.max(...totalRows.map(r => r.yellow_high).filter(Boolean), 1);
+                    const getScale = (row: CountryBenchmarkRow) =>
+                      (row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee"))
+                        ? weeklyScale : totalScale;
+
+                    return (
+                      <div className="space-y-5">
+                        {/* Scale legend */}
+                        <div className="flex gap-6 text-[9px] text-muted-foreground">
+                          <span>Weekly scale: 0 – {fB(weeklyScale)}</span>
+                          <span>Total scale: 0 – {fB(totalScale)}</span>
+                          <span className="ml-auto flex gap-3">
+                            <span><span className="inline-block w-3 h-2 bg-red-400/50 rounded-sm mr-1" />Red</span>
+                            <span><span className="inline-block w-3 h-2 bg-amber-300/70 rounded-sm mr-1" />Yellow</span>
+                            <span><span className="inline-block w-3 h-2 bg-emerald-400/80 rounded-sm mr-1" />Green</span>
+                          </span>
+                        </div>
+                        {countries.map(country => {
+                          const rows = benchmarks.filter(b => b.country === country);
+                          return (
+                            <div key={country}>
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <span className="text-xs font-bold uppercase tracking-wide">{country}</span>
+                                <div className="flex-1 border-t border-border" />
+                              </div>
+                              <div className="grid grid-cols-[280px,1fr] gap-3 items-start">
+                                {/* Left: compact number table */}
+                                <table className="text-[10px] w-full border rounded overflow-hidden">
+                                  <thead>
+                                    <tr className="bg-muted/30 border-b">
+                                      <th className="text-left px-2 py-1 font-semibold text-muted-foreground">Parameter</th>
+                                      <th className="text-center px-2 py-1 font-semibold text-emerald-700">🟢 Green</th>
+                                      <th className="text-center px-2 py-1 font-semibold text-muted-foreground">Decisive</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {rows.map((row, i) => (
+                                      <tr key={i} className="border-b last:border-0">
+                                        <td className="px-2 py-1 font-medium text-muted-foreground">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</td>
+                                        <td className="px-2 py-1 text-center font-mono text-emerald-700">
+                                          {row.green_high === 0 ? <span className="text-muted-foreground italic">n/a</span> : `${fB(row.green_low)}–${fB(row.green_high)}`}
+                                        </td>
+                                        <td className="px-2 py-1 text-center font-semibold">{row.decisiveness_pct}%</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                                {/* Right: visual band bars (shared scale) */}
+                                <div className="space-y-2 pt-1">
+                                  {rows.map((row, i) => {
+                                    const scale = getScale(row);
+                                    const pct = (v: number) => `${Math.min(100, Math.max(0, (v / scale) * 100)).toFixed(2)}%`;
+                                    const noData = row.yellow_high === 0;
+                                    return (
+                                      <div key={i} className="space-y-0.5">
+                                        <div className="text-[9px] text-muted-foreground">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</div>
+                                        {noData ? (
+                                          <div className="h-5 rounded bg-muted/30 flex items-center px-2">
+                                            <span className="text-[9px] text-muted-foreground italic">No data</span>
+                                          </div>
+                                        ) : (
+                                          <div className="relative h-5 rounded overflow-hidden bg-muted/20 border border-border/50">
+                                            {/* red left zone: 0 → yellow_low */}
+                                            <div className="absolute inset-y-0 bg-red-400/50" style={{ left: 0, width: pct(row.yellow_low) }} />
+                                            {/* yellow left: yellow_low → green_low */}
+                                            <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.yellow_low), width: `${Math.max(0, (row.green_low - row.yellow_low) / scale * 100).toFixed(2)}%` }} />
+                                            {/* green: green_low → green_high */}
+                                            <div className="absolute inset-y-0 bg-emerald-400/80" style={{ left: pct(row.green_low), width: `${Math.max(0, (row.green_high - row.green_low) / scale * 100).toFixed(2)}%` }} />
+                                            {/* yellow right: green_high → yellow_high */}
+                                            <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.green_high), width: `${Math.max(0, (row.yellow_high - row.green_high) / scale * 100).toFixed(2)}%` }} />
+                                            {/* red right: yellow_high → scale */}
+                                            <div className="absolute inset-y-0 bg-red-400/50" style={{ left: pct(row.yellow_high), right: 0 }} />
+                                            {/* Scale tick marks */}
+                                            {[0.25, 0.5, 0.75].map(t => (
+                                              <div key={t} className="absolute inset-y-0 w-px bg-white/40" style={{ left: `${t * 100}%` }} />
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
                             </div>
-                            <Table>
-                              <TableHeader>
-                                <TableRow className="bg-muted/30">
-                                  <TableHead className="text-xs py-1.5">Parameter</TableHead>
-                                  <TableHead className="text-xs py-1.5 text-center">🟢 Green band</TableHead>
-                                  <TableHead className="text-xs py-1.5 text-center">🟡 Yellow band</TableHead>
-                                  <TableHead className="text-xs py-1.5 text-center">🔴 Red band</TableHead>
-                                  <TableHead className="text-xs py-1.5 text-center w-28">Decisiveness</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {rows.map((row, i) => (
-                                  <TableRow key={i}>
-                                    <TableCell className="text-xs py-2 font-medium">{row.parameter}</TableCell>
-                                    <TableCell className="text-center py-2">
-                                      <span className="bg-emerald-100 text-emerald-800 text-xs font-mono px-2 py-0.5 rounded">
-                                        {fB(row.green_low)}–{fB(row.green_high)}
-                                      </span>
-                                    </TableCell>
-                                    <TableCell className="text-center py-2">
-                                      <span className="bg-amber-100 text-amber-800 text-xs font-mono px-2 py-0.5 rounded">
-                                        {fB(row.yellow_low)}–{fB(row.green_low)} / {fB(row.green_high)}–{fB(row.yellow_high)}
-                                      </span>
-                                    </TableCell>
-                                    <TableCell className="text-center py-2">
-                                      <span className="bg-red-100 text-red-800 text-xs font-mono px-2 py-0.5 rounded">
-                                        &lt;{fB(row.yellow_low)} / &gt;{fB(row.yellow_high)}
-                                      </span>
-                                    </TableCell>
-                                    <TableCell className="text-center py-2 text-xs font-semibold">{row.decisiveness_pct}%</TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
+                          );
+                        })}
+                        {/* Scale axis labels */}
+                        <div className="grid grid-cols-[280px,1fr] gap-3">
+                          <div />
+                          <div className="flex justify-between text-[8px] text-muted-foreground px-0.5">
+                            <span>0</span><span>25%</span><span>50%</span><span>75%</span><span>max</span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )
+                        </div>
+                      </div>
+                    );
+                  })()
                 )}
 
                 {/* ── Manual edit table ───────────────────────────────── */}
