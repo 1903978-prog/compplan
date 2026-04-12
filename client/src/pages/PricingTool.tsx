@@ -1677,14 +1677,6 @@ export default function PricingTool() {
                   ) : (() => {
                     const fB = (n: number) => n >= 1000 ? `€${Math.round(n / 1000)}k` : `€${n}`;
                     const countries = [...new Set(benchmarks.map(b => b.country))];
-                    // Global shared scales per parameter type (so bars are comparable across countries)
-                    const weeklyRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"));
-                    const totalRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"));
-                    const weeklyScale = Math.max(...weeklyRows.map(r => r.yellow_high).filter(Boolean), 1);
-                    const totalScale = Math.max(...totalRows.map(r => r.yellow_high).filter(Boolean), 1);
-                    const getScale = (row: CountryBenchmarkRow) =>
-                      (row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee"))
-                        ? weeklyScale : totalScale;
 
                     // Helper: find won proposals for a benchmark country
                     const wonForCountry = (country: string) => {
@@ -1698,6 +1690,26 @@ export default function PricingTool() {
                         )
                       );
                     };
+
+                    // Global shared scales per parameter type (so bars are comparable across countries)
+                    // Include synthetic bands (avgWonWeekly * 1.1) for countries without benchmark data
+                    const weeklyRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"));
+                    const totalRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"));
+                    const syntheticWeeklyHighs = countries
+                      .filter(c => weeklyRows.filter(b => b.country === c && b.yellow_high > 0).length === 0)
+                      .map(c => {
+                        const wp = wonForCountry(c);
+                        return wp.length > 0 ? (wp.reduce((s, p) => s + p.weekly_price, 0) / wp.length) * 1.1 : 0;
+                      });
+                    const weeklyScale = Math.max(
+                      ...weeklyRows.map(r => r.yellow_high).filter(Boolean),
+                      ...syntheticWeeklyHighs,
+                      1
+                    );
+                    const totalScale = Math.max(...totalRows.map(r => r.yellow_high).filter(Boolean), 1);
+                    const getScale = (row: CountryBenchmarkRow) =>
+                      (row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee"))
+                        ? weeklyScale : totalScale;
 
                     const deleteCountry = (country: string) => {
                       const updated = benchmarks.filter(b => b.country !== country);
