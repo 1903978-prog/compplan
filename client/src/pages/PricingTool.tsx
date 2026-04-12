@@ -1681,11 +1681,11 @@ export default function PricingTool() {
   }, [form.staffing, settings]);
 
   const totalDiscountPct = caseDiscounts.filter(d => d.enabled).reduce((s, d) => s + d.pct, 0);
-  const netMultiplier = 1 - totalDiscountPct / 100;
-  const netTargetWeekly = recommendation ? Math.round(recommendation.target_weekly * netMultiplier) : 0;
-  const netTargetTotal = netTargetWeekly * form.duration_weeks;
   const totalProjectCost = totalWeeklyCost * form.duration_weeks;
-  const netRevenue = totalDiscountPct > 0 ? netTargetTotal : (recommendation?.target_total ?? 0);
+  // Net = recommended (target_weekly), never reduced by discounts
+  const netTargetWeekly = recommendation ? recommendation.target_weekly : 0;
+  const netTargetTotal = netTargetWeekly * form.duration_weeks;
+  const netRevenue = netTargetTotal;
   const grossMarginEur = netRevenue - totalProjectCost;
   const grossMarginPct = netRevenue > 0 ? (grossMarginEur / netRevenue) * 100 : 0;
 
@@ -1721,8 +1721,9 @@ export default function PricingTool() {
   // Project types list (from settings or defaults)
   const projectTypes = settings?.project_types ?? DEFAULT_PROJECT_TYPES;
 
-  // NWF = target after discounts, clamped to country min/max
-  const nwfRaw = recommendation ? Math.round(recommendation.target_weekly * netMultiplier) : 0;
+  // NWF = recommended net weekly fees (= target_weekly, no discounts applied)
+  // Clamped to country min/max from rate matrix
+  const nwfRaw = recommendation ? recommendation.target_weekly : 0;
   const nwfClamped = nwfRaw > 0
     ? Math.max(
         minFeeWeekly > 0 ? minFeeWeekly : nwfRaw,
@@ -3478,18 +3479,9 @@ export default function PricingTool() {
             }
             const adjustedFinal = runningValue;
 
-            // NWF = adjusted final after discounts
-            const adjustedNwfRaw = Math.round(adjustedFinal * netMultiplier);
-            const adjustedNwfClamped = adjustedNwfRaw > 0
-              ? Math.max(minFeeWeekly > 0 ? minFeeWeekly : adjustedNwfRaw, Math.min(maxFeeWeekly < Infinity ? maxFeeWeekly : adjustedNwfRaw, adjustedNwfRaw))
-              : 0;
-            const showNWFBar = totalDiscountPct > 0 || Math.abs(adjustedNwfClamped - adjustedFinal) > 50;
+            // No discount bars in the waterfall — discounts only affect Gross price
+            // in the fee summary. The waterfall shows the clean Net recommended price.
             const extraBars: { label: string; start: number; end: number; color?: string; deltaPct: number }[] = [];
-            if (showNWFBar) {
-              const deltaPct = adjustedFinal > 0 ? ((adjustedNwfClamped - adjustedFinal) / adjustedFinal) * 100 : 0;
-              extraBars.push({ label: "NWP", start: adjustedFinal, end: adjustedNwfClamped, color: "#059669", deltaPct });
-            }
-            const nwfFinal = adjustedNwfClamped > 0 ? adjustedNwfClamped : adjustedFinal;
 
             // Green band from country benchmarks
             const countryAliasesW = REGION_TO_COUNTRY[form.region] ?? [form.region];
@@ -3501,26 +3493,24 @@ export default function PricingTool() {
             const greenHigh = weeklyBenchW?.green_high ?? 0;
             const hasGreenBand = greenLow > 0 && greenHigh > 0;
 
-            // Recommended NWF: clamp to green band
+            // Recommended NWF: clamp to green band (this is the NET price we target)
             const recommendedNwf = hasGreenBand
-              ? Math.min(greenHigh, Math.max(greenLow, nwfFinal))
-              : nwfFinal;
+              ? Math.min(greenHigh, Math.max(greenLow, adjustedFinal))
+              : adjustedFinal;
 
             // Duration & fee calculation for right panel
             const effectiveDuration = waterfallDuration ?? form.duration_weeks;
-            const grossFees = Math.round(adjustedFinal * effectiveDuration);
-            const netFees = Math.round(recommendedNwf * effectiveDuration);
 
             // Y-scale
             const allVals = [base, adjustedFinal, ...bars.flatMap(b => [b.start, b.end]),
-              ...extraBars.flatMap(b => [b.start, b.end]), nwfFinal, recommendedNwf,
+              recommendedNwf,
               ...(hasGreenBand ? [greenLow, greenHigh] : [])];
             const minV = Math.min(...allVals) * 0.92;
             const maxV = Math.max(...allVals) * 1.08;
             const range = maxV - minV || 1;
 
-            // Layout
-            const totalBarCount = 1 + bars.length + 1 + extraBars.length + (showNWFBar ? 1 : 0) + 1; // +1 rec NWF
+            // Layout — no NWP bar anymore, just: base + layers + target + rec
+            const totalBarCount = 1 + bars.length + 1 + extraBars.length + 1;
             const W = 620; const H = 210;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
@@ -3608,7 +3598,7 @@ export default function PricingTool() {
                         );
                       })}
 
-                      {/* Adjusted target bar */}
+                      {/* Target bar (= net recommended, no discounts) */}
                       {(() => {
                         const bi = bars.length + 1;
                         const x = xOf(bi); const y = yOf(adjustedFinal); const h = hOf(minV, adjustedFinal);
@@ -3617,52 +3607,18 @@ export default function PricingTool() {
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(adjustedFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill="#1A6571" rx="2" />
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#1A6571" fontWeight="bold">{fmt(adjustedFinal)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">{showNWFBar ? "Target" : "NWF"}</text>
-                        </>;
-                      })()}
-
-                      {/* Discount bars */}
-                      {extraBars.map((b, i) => {
-                        const bi = bars.length + 2 + i;
-                        const x = xOf(bi); const up = b.end >= b.start;
-                        const color = b.color ?? (up ? "#16C3CF" : "#ef4444");
-                        const y = up ? yOf(b.end) : yOf(b.start);
-                        const h = Math.max(2, hOf(b.start, b.end));
-                        const deltaEur = b.end - b.start; const sign = deltaEur >= 0 ? "+" : "";
-                        const textY = up ? y - 9 : y + h + 8;
-                        return (
-                          <g key={i}>
-                            <line x1={xOf(bi - 1) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                            <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity="0.85" />
-                            <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="7" fill={color} fontWeight="bold">{sign}{fmt(deltaEur)}</text>
-                            <text x={x + barW/2} y={textY + 6} textAnchor="middle" fontSize="5.5" fill="#94a3b8">{sign}{b.deltaPct.toFixed(0)}%</text>
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6" fill="#64748b">{b.label}</text>
-                          </g>
-                        );
-                      })}
-
-                      {/* NWF bar */}
-                      {showNWFBar && (() => {
-                        const bi = bars.length + 2 + extraBars.length;
-                        const x = xOf(bi); const y = yOf(nwfFinal); const h = hOf(minV, nwfFinal);
-                        const prevEnd = extraBars[extraBars.length - 1]?.end ?? adjustedFinal;
-                        return <>
-                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(nwfFinal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x} y={y} width={barW} height={h} fill="#059669" rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#059669" fontWeight="bold">{fmt(nwfFinal)}</text>
                           <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">NWF</text>
                         </>;
                       })()}
 
-                      {/* Recommended NWF bar (clamped to green band) */}
+                      {/* Recommended NWF bar (clamped to green band) — this is the net price we target */}
                       {(() => {
-                        const bi = bars.length + 2 + extraBars.length + (showNWFBar ? 1 : 0);
-                        const prevBarEnd = showNWFBar ? nwfFinal : (extraBars[extraBars.length - 1]?.end ?? adjustedFinal);
+                        const bi = bars.length + 2;
                         const x = xOf(bi); const y = yOf(recommendedNwf); const h = hOf(minV, recommendedNwf);
                         const inGreen = hasGreenBand && recommendedNwf >= greenLow && recommendedNwf <= greenHigh;
                         const recColor = inGreen ? "#16a34a" : "#f59e0b";
                         return <>
-                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevBarEnd)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <line x1={xOf(bi - 1) + barW} y1={yOf(adjustedFinal)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill={recColor} rx="2" />
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill={recColor} fontWeight="bold">{fmt(recommendedNwf)}</text>
                           <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill={recColor} fontWeight="600">Rec.</text>
