@@ -150,32 +150,47 @@ function clientPrefix(name: string): string {
 
 // ── Benchmark helpers ─────────────────────────────────────────────────────────
 
-// Maps admin region codes → country names that belong to that region.
+// Maps admin region codes → country names / aliases that belong to that region.
 // Country Benchmarks, Fees by Country, and Win-Loss scatter all group by region.
 const REGION_TO_COUNTRY: Record<string, string[]> = {
   IT:            ["Italy", "IT"],
-  FR:            ["France", "FR", "Belgium", "Luxembourg", "LU"],
+  FR:            ["France", "FR", "Belgium"],
   DACH:          ["Germany", "DE", "Switzerland", "CH", "Austria", "AT", "Czech Republic", "CZ", "DACH"],
-  Nordics:       ["Netherlands", "NL", "Sweden", "SE", "Denmark", "DK", "Norway", "NO", "Finland", "FI"],
+  Nordics:       ["Netherlands", "NL", "The Netherlands", "Sweden", "SE", "Denmark", "DK", "Norway", "NO", "Finland", "FI"],
   UK:            ["United Kingdom", "UK"],
-  US:            ["United States", "US"],
+  US:            ["United States", "US", "USA"],
   "Middle East": ["UAE", "AE", "Saudi Arabia", "SA", "Middle East"],
-  Asia:          ["Philippines", "PH", "Japan", "Indonesia", "Asia"],
+  Asia:          ["Philippines", "PH", "The Philippines", "The Phillipines", "Japan", "Indonesia", "Asia"],
+  "Other EU":    ["Luxembourg", "LU", "Luxemburg", "Luxembours"],
 };
 
-// Reverse lookup: country name → region code
-function countryToRegion(country: string): string | null {
-  const lc = country.toLowerCase();
+// Reverse lookup: country name or region code → canonical region key
+function countryToRegion(value: string): string | null {
+  if (!value) return null;
+  const lc = value.toLowerCase().trim();
+  // Direct key match first (e.g. "IT" → "IT", "DACH" → "DACH")
+  if (REGION_TO_COUNTRY[value]) return value;
+  // Alias match
   for (const [region, aliases] of Object.entries(REGION_TO_COUNTRY)) {
+    if (region.toLowerCase() === lc) return region;
     if (aliases.some(a => a.toLowerCase() === lc)) return region;
   }
   return null;
 }
 
-// Resolve a proposal's display region: use p.region if it matches an admin region,
-// or map p.country → region via REGION_TO_COUNTRY.
+// Resolve a proposal's display region.
+// Tries: p.region mapped → p.country mapped → p.region raw → p.country raw
 function proposalRegionKey(p: { region: string; country?: string | null }): string {
-  return p.region || (p.country ? countryToRegion(p.country) ?? p.country : "—");
+  // Try mapping p.region to a canonical key
+  const fromRegion = countryToRegion(p.region);
+  if (fromRegion) return fromRegion;
+  // Try mapping p.country to a canonical key
+  if (p.country) {
+    const fromCountry = countryToRegion(p.country);
+    if (fromCountry) return fromCountry;
+  }
+  // Fallback: raw region or country
+  return p.region || p.country || "—";
 }
 
 function getBandForPrice(
