@@ -1557,15 +1557,24 @@ export default function PricingTool() {
   // Inline one-field update for the past-projects table (e.g. team_size).
   // Optimistic: we patch local state immediately, then PUT the row.
   const patchProposalInline = async (id: number, patch: Partial<PricingProposal>) => {
-    setProposals(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
-    const current = proposals.find(p => p.id === id);
-    if (!current) return;
-    const payload = { ...current, ...patch, pe_owned: (current.pe_owned ? 1 : 0) };
+    // Optimistic local update — use prev to avoid stale closure
+    let resolvedPayload: any = null;
+    setProposals(prev => {
+      const updated = prev.map(p => p.id === id ? { ...p, ...patch } : p);
+      const current = updated.find(p => p.id === id);
+      if (current) {
+        resolvedPayload = { ...current, ...patch, pe_owned: current.pe_owned ? 1 : 0 };
+      }
+      return updated;
+    });
+    // Wait one tick for setProposals to flush
+    await new Promise(r => setTimeout(r, 0));
+    if (!resolvedPayload) return;
     try {
       await fetch(`/api/pricing/proposals/${id}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(resolvedPayload),
       });
     } catch {
       toast({ title: "Failed to update", variant: "destructive" });
