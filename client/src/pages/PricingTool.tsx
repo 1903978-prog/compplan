@@ -3974,27 +3974,26 @@ export default function PricingTool() {
 
                 {/* Fee summary tables */}
                 {(() => {
-                  // Gross 1 = with admin, before D&R: net × (1+admin%)
-                  const gross1Wk = Math.round(netWeekly * (1 + adminFeePct / 100));
-                  // Gross 2 = with admin + D&R built in: gross1 / (1-d1%) / (1-d2%)…
-                  let gross2Wk = gross1Wk;
-                  for (const d of enabledDiscounts) gross2Wk = Math.round(gross2Wk / (1 - d.pct / 100));
-                  // Net 1 = net weekly (after D&R, without admin) = recommended
-                  const net1Wk = netWeekly;
-                  // Net 2 = net weekly + admin = gross1
-                  const net2Wk = gross1Wk;
+                  // Net = recommended weekly (what we communicate to client)
+                  const netWk = netWeekly;
+                  // Gross = Net × (1+admin%) / (1-disc%) / (1-rebate%) / (1-oneoff%)
+                  // This is what we invoice
+                  let grossWk = netWk * (1 + adminFeePct / 100);
+                  for (const d of enabledDiscounts) grossWk = grossWk / (1 - d.pct / 100);
+                  grossWk = Math.round(grossWk);
                   // Totals
-                  const gross1Total = gross1Wk * effectiveDur;
-                  const gross2Total = gross2Wk * effectiveDur;
-                  const net1Total = net1Wk * effectiveDur;
-                  const net2Total = net2Wk * effectiveDur;
-                  const grossPerInvoice = invoiceCount > 0 ? Math.round(gross2Total / invoiceCount) : 0;
-                  // GM on Gross 1 (with admin, before D&R)
+                  const netTotal = netWk * effectiveDur;
+                  const grossTotal = grossWk * effectiveDur;
+                  const grossPerInvoice = invoiceCount > 0 ? Math.round(grossTotal / invoiceCount) : 0;
+                  // Gross Margin = Gross − team costs
                   const teamCostWk = recommendation?.delivery_cost_weekly ?? 0;
                   const teamCostTotal = Math.round(teamCostWk * effectiveDur);
-                  const gmTotal = gross1Total - teamCostTotal;
-                  const gmPct = gross1Total > 0 ? (gmTotal / gross1Total * 100) : 0;
+                  const gmTotal = grossTotal - teamCostTotal;
+                  const gmPct = grossTotal > 0 ? (gmTotal / grossTotal * 100) : 0;
                   const gmColor = gmPct >= 50 ? "text-emerald-600" : gmPct >= 30 ? "text-amber-600" : "text-red-600";
+                  // Formula text
+                  const formulaParts: string[] = [`${fmtC(netWk)} × (1+${adminFeePct}%)`];
+                  for (const d of enabledDiscounts) formulaParts.push(`÷ (1−${d.pct}%)`);
 
                   return (
                     <div className="space-y-3">
@@ -4004,25 +4003,24 @@ export default function PricingTool() {
                         <Table>
                           <TableHeader>
                             <TableRow className="bg-muted/30">
-                              <TableHead className="text-[9px] py-1.5">Gross 1<br/><span className="font-normal text-muted-foreground">w/ admin, bef. D&R</span></TableHead>
-                              <TableHead className="text-[9px] py-1.5">Gross 2<br/><span className="font-normal text-muted-foreground">w/ admin + D&R</span></TableHead>
-                              <TableHead className="text-[9px] py-1.5">Net 1<br/><span className="font-normal text-muted-foreground">after D&R, no admin</span></TableHead>
-                              <TableHead className="text-[9px] py-1.5">Net 2<br/><span className="font-normal text-muted-foreground">w/ admin, after D&R</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5">Gross /wk<br/><span className="font-normal text-muted-foreground">we invoice this</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5">Net /wk<br/><span className="font-normal text-muted-foreground">= recommended</span></TableHead>
                               <TableHead className="text-[9px] py-1.5 text-center">Duration</TableHead>
                               <TableHead className="text-[9px] py-1.5 text-center">Invoices</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             <TableRow>
-                              <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(gross1Wk)}</TableCell>
-                              <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(gross2Wk)}</TableCell>
-                              <TableCell className="font-mono text-sm font-semibold text-emerald-600">{fmtC(net1Wk)}</TableCell>
-                              <TableCell className="font-mono text-sm font-semibold text-blue-600">{fmtC(net2Wk)}</TableCell>
+                              <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(grossWk)}</TableCell>
+                              <TableCell className="font-mono text-sm font-bold text-emerald-600">{fmtC(netWk)}</TableCell>
                               <TableCell className="text-sm text-center font-semibold">{effectiveDur}w</TableCell>
                               <TableCell className="text-sm text-center font-semibold">{invoiceCount}</TableCell>
                             </TableRow>
                           </TableBody>
                         </Table>
+                        <div className="px-3 py-1.5 text-[9px] text-muted-foreground border-t bg-muted/10">
+                          Gross = {formulaParts.join(" ")} = {fmtC(grossWk)}/wk
+                        </div>
                       </div>
 
                       {/* Row 2: Total project fees */}
@@ -4033,20 +4031,16 @@ export default function PricingTool() {
                         <Table>
                           <TableHeader>
                             <TableRow className="bg-muted/30">
-                              <TableHead className="text-[9px] py-1.5">Gross 1 Total</TableHead>
-                              <TableHead className="text-[9px] py-1.5">Gross 2 Total</TableHead>
-                              <TableHead className="text-[9px] py-1.5">Net 1 Total</TableHead>
-                              <TableHead className="text-[9px] py-1.5">Net 2 Total</TableHead>
+                              <TableHead className="text-[9px] py-1.5">Gross Total<br/><span className="font-normal text-muted-foreground">we invoice</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5">Net Total<br/><span className="font-normal text-muted-foreground">we communicate</span></TableHead>
                               <TableHead className="text-[9px] py-1.5">Gross / Invoice</TableHead>
                               <TableHead className="text-[9px] py-1.5">Variable Fee</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             <TableRow>
-                              <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(gross1Total)}</TableCell>
-                              <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(gross2Total)}</TableCell>
-                              <TableCell className="font-mono text-sm font-semibold text-emerald-600">{fmtC(net1Total)}</TableCell>
-                              <TableCell className="font-mono text-sm font-semibold text-blue-600">{fmtC(net2Total)}</TableCell>
+                              <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(grossTotal)}</TableCell>
+                              <TableCell className="font-mono text-sm font-bold text-emerald-600">{fmtC(netTotal)}</TableCell>
                               <TableCell className="font-mono text-sm font-semibold">{fmtC(grossPerInvoice)}</TableCell>
                               <TableCell className="font-mono text-sm text-amber-600">{fmtC(variableFeeTotal)}</TableCell>
                             </TableRow>
@@ -4065,7 +4059,7 @@ export default function PricingTool() {
                           <div className="border rounded-lg p-2.5 bg-background text-center">
                             <div className="text-[9px] text-muted-foreground uppercase font-semibold">Gross Margin</div>
                             <div className={`text-sm font-bold ${gmColor}`}>{fmtC(gmTotal)}</div>
-                            <div className="text-[9px] text-muted-foreground">Gross 1 − costs</div>
+                            <div className="text-[9px] text-muted-foreground">Gross − costs</div>
                           </div>
                           <div className="border rounded-lg p-2.5 bg-background text-center">
                             <div className="text-[9px] text-muted-foreground uppercase font-semibold">GM %</div>
@@ -4594,19 +4588,18 @@ export default function PricingTool() {
                       : 50;
                     const highMkt = recommendation.high_market_weekly;
 
-                    // Gross 1 = Rec + admin (built UP from recommended, not deducted from target)
-                    const gross1 = Math.round(rec * (1 + adminFeePct / 100));
-                    // Gross 2 = Gross 1 / (1-d1%) / (1-d2%) / ... (each discount builds UP)
+                    // Gross = Net × (1+admin%) / (1-disc%) / (1-rebate%) / (1-oneoff%)
                     const enabledDisc = caseDiscounts.filter(dd => dd.enabled && dd.pct > 0);
-                    let gross2 = gross1;
-                    for (const dd of enabledDisc) gross2 = Math.round(gross2 / (1 - dd.pct / 100));
+                    let grossRec = rec * (1 + adminFeePct / 100);
+                    for (const dd of enabledDisc) grossRec = grossRec / (1 - dd.pct / 100);
+                    grossRec = Math.round(grossRec);
 
                     return (
                       <div className="space-y-2">
                         <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-0.5">
                           Fee Range
                         </div>
-                        <div className="grid grid-cols-5 gap-1.5">
+                        <div className="grid grid-cols-4 gap-1.5">
                           {/* Low — 50% GM floor */}
                           <div className="text-center p-2 bg-muted/30 rounded-lg">
                             <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">Low</div>
@@ -4616,28 +4609,17 @@ export default function PricingTool() {
                             <div className="text-[8px] text-muted-foreground">/week</div>
                             <div className="text-[8px] text-emerald-600 font-semibold mt-0.5">GM {Math.round(low50GM)}%</div>
                           </div>
-                          {/* Center — Recommended (Net) */}
-                          <div className="text-center p-2 bg-primary/10 rounded-lg border border-primary/20">
-                            <div className="text-[9px] text-primary uppercase font-bold tracking-wide">Rec. (Net)</div>
-                            <div className="text-lg font-bold text-primary mt-0.5">{fmt(rec)}</div>
-                            <div className="text-[8px] text-muted-foreground">/week</div>
-                            {recGM != null && (
-                              <div className="text-[8px] text-emerald-600 font-semibold mt-0.5">GM {recGM.toFixed(0)}%</div>
-                            )}
+                          {/* Net = Recommended */}
+                          <div className="text-center p-2 bg-emerald-50 rounded-lg border border-emerald-200">
+                            <div className="text-[9px] text-emerald-700 uppercase font-bold tracking-wide">Net</div>
+                            <div className="text-lg font-bold text-emerald-700 mt-0.5">{fmt(rec)}</div>
+                            <div className="text-[8px] text-muted-foreground">we communicate</div>
                           </div>
-                          {/* Gross 1 — Rec + admin */}
-                          <div className="text-center p-2 bg-blue-50 rounded-lg border border-blue-200">
-                            <div className="text-[9px] text-blue-700 uppercase font-bold tracking-wide">Gross 1</div>
-                            <div className="text-sm font-bold text-blue-700 mt-0.5">{fmt(gross1)}</div>
-                            <div className="text-[8px] text-muted-foreground">+{adminFeePct}% admin</div>
-                          </div>
-                          {/* Gross 2 — Gross 1 + D&R */}
+                          {/* Gross = what we invoice */}
                           <div className="text-center p-2 bg-amber-50 rounded-lg border border-amber-200">
-                            <div className="text-[9px] text-amber-700 uppercase font-bold tracking-wide">Gross 2</div>
-                            <div className="text-sm font-bold text-amber-700 mt-0.5">{fmt(gross2)}</div>
-                            <div className="text-[8px] text-muted-foreground">
-                              {enabledDisc.length > 0 ? `+D&R` : "= Gross 1"}
-                            </div>
+                            <div className="text-[9px] text-amber-700 uppercase font-bold tracking-wide">Gross</div>
+                            <div className="text-lg font-bold text-amber-700 mt-0.5">{fmt(grossRec)}</div>
+                            <div className="text-[8px] text-muted-foreground">we invoice</div>
                           </div>
                           {/* High — market ceiling */}
                           <div className="text-center p-2 bg-muted/30 rounded-lg">
@@ -4658,18 +4640,12 @@ export default function PricingTool() {
                               : "Enter team build-up"}
                           </div>
                           <div>
-                            <span className="font-semibold text-foreground/70">Rec.:</span>{" "}
-                            {fmt(rec)}/wk = net recommended (waterfall output)
+                            <span className="font-semibold text-foreground/70">Net:</span>{" "}
+                            {fmt(rec)}/wk = recommended (waterfall output). We communicate this to the client.
                           </div>
                           <div>
-                            <span className="font-semibold text-foreground/70">Gross 1:</span>{" "}
-                            {fmt(rec)} × (1+{adminFeePct}%) = {fmt(gross1)}/wk (with admin, before D&R)
-                          </div>
-                          <div>
-                            <span className="font-semibold text-foreground/70">Gross 2:</span>{" "}
-                            {enabledDisc.length > 0
-                              ? `${fmt(gross1)}${enabledDisc.map(dd => ` ÷ (1−${dd.pct}%)`).join("")} = ${fmt(gross2)}/wk (price to quote)`
-                              : `= Gross 1 (no discounts)`}
+                            <span className="font-semibold text-foreground/70">Gross:</span>{" "}
+                            {fmt(rec)} × (1+{adminFeePct}%){enabledDisc.map(dd => ` ÷ (1−${dd.pct}%)`).join("")} = {fmt(grossRec)}/wk. We invoice this.
                           </div>
                           <div>
                             <span className="font-semibold text-foreground/70">High:</span>{" "}
