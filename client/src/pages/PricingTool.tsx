@@ -3293,53 +3293,6 @@ export default function PricingTool() {
                     )}
                   </div>
                 </div>
-                {/* Problem statement */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Problem Statement / Scope</Label>
-                  <Textarea value={form.problem_statement ?? ""}
-                    onChange={e => setForm(f => ({ ...f, problem_statement: e.target.value || null }))}
-                    placeholder="What business problem are we solving? E.g. 'Post-merger procurement consolidation across 3 BU targeting €8M savings in 6 months'"
-                    className="text-sm resize-none" rows={2} />
-                </div>
-                {/* Value driver */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Key Value Driver</Label>
-                  <Input placeholder="The one business lever this work moves — e.g. 'EBITDA +3pp via cost takeout'"
-                    value={form.value_driver ?? ""}
-                    onChange={e => setForm(f => ({ ...f, value_driver: e.target.value || null }))} />
-                </div>
-                {/* Differentiation */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Why Us vs Competition</Label>
-                  <Textarea value={form.differentiation ?? ""}
-                    onChange={e => setForm(f => ({ ...f, differentiation: e.target.value || null }))}
-                    placeholder="Our unique edge on this case — e.g. 'Prior work with this PE, sector IP, speed to impact'"
-                    className="text-sm resize-none" rows={2} />
-                </div>
-                {/* Risk flags */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Risk Flags</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {["regulatory", "timing", "team availability", "reputation", "payment risk", "scope creep"].map(flag => {
-                      const active = (form.risk_flags ?? []).includes(flag);
-                      return (
-                        <button key={flag} type="button"
-                          onClick={() => {
-                            const curr = form.risk_flags ?? [];
-                            const next = active ? curr.filter(f => f !== flag) : [...curr, flag];
-                            setForm(f => ({ ...f, risk_flags: next.length > 0 ? next : null }));
-                          }}
-                          className={`text-[10px] px-2 py-1 rounded border capitalize transition-colors ${
-                            active
-                              ? "bg-amber-100 border-amber-400 text-amber-800"
-                              : "bg-background border-border text-muted-foreground hover:bg-muted"
-                          }`}>
-                          {flag}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
               </div>
             </CardContent>
           </Card>
