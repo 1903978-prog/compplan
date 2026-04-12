@@ -118,6 +118,15 @@ export interface PricingSettings {
   competitor_type_adj?: PricingAdjustment[];
   strategic_intent_adj?: PricingAdjustment[];
   proposal_template?: string;
+  fund_defaults?: FundDefaults[];
+}
+
+export interface FundDefaults {
+  fund_name: string;
+  relationship_type?: string | null;     // new / repeat / strategic
+  strategic_intent?: string | null;      // enter / expand / harvest
+  competitive_intensity?: string | null; // sole_source / limited / competitive / crowded
+  price_sensitivity?: string | null;     // low / medium / high
 }
 
 export interface PricingAdjustment {

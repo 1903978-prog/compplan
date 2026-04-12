@@ -3167,7 +3167,16 @@ export default function PricingTool() {
                   <Label className="text-xs">PE Owner</Label>
                   <Select value={form.fund_name || "__none__"} onValueChange={v => {
                     const isPE = v !== "__none__";
-                    setForm(f => ({ ...f, fund_name: isPE ? v : "", pe_owned: isPE }));
+                    const fundDef = isPE ? (settings?.fund_defaults ?? []).find(fd => fd.fund_name === v) : null;
+                    setForm(f => ({
+                      ...f,
+                      fund_name: isPE ? v : "",
+                      pe_owned: isPE,
+                      ...(fundDef?.relationship_type ? { relationship_type: fundDef.relationship_type } : {}),
+                      ...(fundDef?.strategic_intent ? { strategic_intent: fundDef.strategic_intent } : {}),
+                      ...(fundDef?.competitive_intensity ? { competitive_intensity: fundDef.competitive_intensity } : {}),
+                      ...(fundDef?.price_sensitivity ? { price_sensitivity: fundDef.price_sensitivity } : {}),
+                    }));
                   }}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select PE owner…" /></SelectTrigger>
                     <SelectContent>
@@ -3200,9 +3209,33 @@ export default function PricingTool() {
                   <Select value={form.region} onValueChange={v => setForm(f => ({ ...f, region: v }))}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {REGIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                      {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).map(r => (
+                        <SelectItem key={r.region_name} value={r.region_name}>
+                          {r.region_name}{!r.is_baseline ? ` (×${r.multiplier.toFixed(2)})` : " (base)"}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                </div>
+                {/* Company Revenue → auto-fills Revenue Band */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Company Revenue (€M)</Label>
+                  <Input type="number" min="0" step="10" placeholder="e.g. 500" className="h-9 text-sm"
+                    value={form.company_revenue_m ?? ""}
+                    onChange={e => {
+                      const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                      setForm(f => {
+                        const updated = { ...f, company_revenue_m: val };
+                        // Auto-fill revenue band from revenue
+                        if (val != null && val > 0) {
+                          if (val >= 1000) updated.revenue_band = "above_1b";
+                          else if (val >= 200) updated.revenue_band = "200m_1b";
+                          else if (val >= 100) updated.revenue_band = "100m_200m";
+                          else updated.revenue_band = "below_100m";
+                        }
+                        return updated;
+                      });
+                    }} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Revenue Band</Label>
@@ -3303,21 +3336,13 @@ export default function PricingTool() {
                     </div>
                   );
                 })()}
-                {/* Company total revenue */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Company Revenue (€M)</Label>
-                  <Input type="number" min="0" step="10"
-                    placeholder="e.g. 500"
-                    value={form.company_revenue_m ?? ""}
-                    onChange={e => setForm(f => ({ ...f, company_revenue_m: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
-                  {form.company_revenue_m && form.ebitda_margin_pct ? (
-                    <div className="text-[9px] text-muted-foreground">
-                      Computed EBITDA: €{((form.company_revenue_m * form.ebitda_margin_pct / 100) * 1_000_000).toLocaleString("it-IT")}
-                    </div>
-                  ) : (
-                    <div className="text-[9px] text-muted-foreground">EBITDA = Revenue × Margin%</div>
-                  )}
-                </div>
+                {/* EBITDA computed display (revenue input moved to top) */}
+                {form.company_revenue_m && form.ebitda_margin_pct ? (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Computed EBITDA</Label>
+                    <div className="text-sm font-semibold text-emerald-700">€{((form.company_revenue_m * form.ebitda_margin_pct / 100) * 1_000_000).toLocaleString("it-IT")}</div>
+                  </div>
+                ) : null}
                 {/* Incremental aspiration EBITDA (% increase) */}
                 <div className="space-y-1">
                   <Label className="text-xs">Aspiration EBITDA increase (%)</Label>

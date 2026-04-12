@@ -131,6 +131,15 @@ interface PricingSettings {
   competitive_intensity_adj?: PricingAdjustment[];
   competitor_type_adj?: PricingAdjustment[];
   strategic_intent_adj?: PricingAdjustment[];
+  fund_defaults?: FundDefaults[];
+}
+
+interface FundDefaults {
+  fund_name: string;
+  relationship_type?: string | null;
+  strategic_intent?: string | null;
+  competitive_intensity?: string | null;
+  price_sensitivity?: string | null;
 }
 
 // ─── Default / fallback data ─────────────────────────────────────────────────
@@ -1556,7 +1565,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
 
 // ─── Tabs list ────────────────────────────────────────────────────────────────
 
-type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks" | "price_adjustments";
+type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks" | "price_adjustments" | "fund_defaults";
 
 // ─── Tab: Market Benchmarks ───────────────────────────────────────────────────
 
@@ -1687,6 +1696,125 @@ function PriceAdjustmentsTab({ settings, onChange, onSave, saving }: {
           </div>
         );
       })}
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={onSave} disabled={saving} size="sm">
+          <Save className="w-3.5 h-3.5 mr-1.5" />
+          {saving ? "Saving…" : "Save Settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Fund Defaults Tab ──────────────────────────────────────────────────────
+
+function FundDefaultsTab({ settings, onChange, onSave, saving }: {
+  settings: PricingSettings;
+  onChange: (patch: Partial<PricingSettings>) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  const funds = settings.funds ?? [];
+  const defaults: FundDefaults[] = (settings as any).fund_defaults ?? [];
+
+  const update = (idx: number, field: keyof FundDefaults, value: string | null) => {
+    const updated = defaults.map((d, i) => i === idx ? { ...d, [field]: value } : d);
+    onChange({ fund_defaults: updated } as any);
+  };
+
+  const addRow = (fundName: string) => {
+    if (defaults.some(d => d.fund_name === fundName)) return;
+    onChange({ fund_defaults: [...defaults, { fund_name: fundName }] } as any);
+  };
+
+  const removeRow = (idx: number) => {
+    onChange({ fund_defaults: defaults.filter((_, i) => i !== idx) } as any);
+  };
+
+  const OPT = (label: string, options: { value: string; label: string }[], current: string | null | undefined, onCh: (v: string | null) => void) => (
+    <Select value={current ?? "__none__"} onValueChange={v => onCh(v === "__none__" ? null : v)}>
+      <SelectTrigger className="h-7 text-xs"><SelectValue placeholder={label} /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">—</SelectItem>
+        {options.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Fund Defaults</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          When a fund is selected in a pricing case, these fields auto-fill. Leave blank to skip.
+        </p>
+      </div>
+
+      <div className="rounded-lg border overflow-hidden">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-muted/30 border-b">
+              <th className="text-left px-3 py-2 font-semibold w-32">Fund</th>
+              <th className="text-left px-2 py-2 font-semibold">Relationship</th>
+              <th className="text-left px-2 py-2 font-semibold">Strategic Intent</th>
+              <th className="text-left px-2 py-2 font-semibold">Competitive Intensity</th>
+              <th className="text-left px-2 py-2 font-semibold">Price Sensitivity</th>
+              <th className="w-8" />
+            </tr>
+          </thead>
+          <tbody>
+            {defaults.map((d, i) => (
+              <tr key={i} className="border-b last:border-0">
+                <td className="px-3 py-1.5 font-semibold">{d.fund_name}</td>
+                <td className="px-2 py-1.5">
+                  {OPT("Relationship", [
+                    { value: "new", label: "First-time" },
+                    { value: "repeat", label: "Repeat" },
+                    { value: "strategic", label: "Strategic" },
+                  ], d.relationship_type, v => update(i, "relationship_type", v))}
+                </td>
+                <td className="px-2 py-1.5">
+                  {OPT("Intent", [
+                    { value: "enter", label: "Enter" },
+                    { value: "expand", label: "Expand" },
+                    { value: "harvest", label: "Harvest" },
+                  ], d.strategic_intent, v => update(i, "strategic_intent", v))}
+                </td>
+                <td className="px-2 py-1.5">
+                  {OPT("Competition", [
+                    { value: "sole_source", label: "Sole source" },
+                    { value: "limited", label: "Limited" },
+                    { value: "competitive", label: "Competitive" },
+                    { value: "crowded", label: "Crowded" },
+                  ], d.competitive_intensity, v => update(i, "competitive_intensity", v))}
+                </td>
+                <td className="px-2 py-1.5">
+                  {OPT("Sensitivity", [
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ], d.price_sensitivity, v => update(i, "price_sensitivity", v))}
+                </td>
+                <td className="px-1 py-1.5">
+                  <button onClick={() => removeRow(i)} className="text-muted-foreground hover:text-destructive p-1">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add fund buttons */}
+      <div className="flex flex-wrap gap-2">
+        {funds.filter(f => !defaults.some(d => d.fund_name === f)).map(f => (
+          <Button key={f} size="sm" variant="outline" onClick={() => addRow(f)}>
+            <Plus className="w-3.5 h-3.5 mr-1" /> {f}
+          </Button>
+        ))}
+      </div>
 
       <div className="flex justify-end pt-2">
         <Button onClick={onSave} disabled={saving} size="sm">
@@ -1900,6 +2028,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "rate_matrix", label: "Rate Matrix" },
   { id: "market_benchmarks", label: "Market Benchmarks" },
   { id: "price_adjustments", label: "Price Adjustments" },
+  { id: "fund_defaults", label: "Fund Defaults" },
 ];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -2101,6 +2230,9 @@ export default function PricingAdmin() {
           )}
           {activeTab === "price_adjustments" && (
             <PriceAdjustmentsTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
+          )}
+          {activeTab === "fund_defaults" && (
+            <FundDefaultsTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
           )}
         </CardContent>
       </Card>
