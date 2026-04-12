@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -1365,76 +1365,62 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
   const peRows = matrix.filter(r => r.client_type.startsWith("PE"));
   const familyRows = matrix.filter(r => !r.client_type.startsWith("PE"));
 
+  const fmtK = (n: number) => n >= 1000 ? `€${Math.round(n / 1000)}k` : `€${n}`;
+
   const renderMatrixTable = (rows: RateMatrixRow[], title: string, colorClass: string) => (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className={`text-sm font-bold ${colorClass}`}>{title}</div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse">
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full text-xs border-collapse">
           <thead>
-            <tr>
-              <th className="text-left py-2 pr-4 font-medium text-muted-foreground text-xs uppercase tracking-wide w-44">Client Type</th>
-              {RATE_MATRIX_REGIONS.map((region) => (
-                <th key={region} className="text-center py-2 px-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">
+            <tr className="bg-[#1A3A4A] text-white">
+              <th rowSpan={2} className="text-left px-3 py-2 font-bold text-xs uppercase tracking-wide border-r border-white/20 min-w-[160px]">Client Type</th>
+              {RATE_MATRIX_REGIONS.map(region => (
+                <th key={region} colSpan={2} className="text-center px-2 py-1.5 font-bold text-xs uppercase tracking-wide border-r border-white/20 last:border-r-0">
                   {region}
                 </th>
               ))}
             </tr>
+            <tr className="bg-[#1A3A4A]/80 text-white/80">
+              {RATE_MATRIX_REGIONS.map(region => (
+                <React.Fragment key={region}>
+                  <th className="text-center px-1.5 py-1 text-[10px] font-semibold border-r border-white/10 w-20">Min</th>
+                  <th className="text-center px-1.5 py-1 text-[10px] font-semibold border-r border-white/20 last:border-r-0 w-20">Max</th>
+                </React.Fragment>
+              ))}
+            </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {rows.map((row, ri) => {
               const rowIdx = matrix.indexOf(row);
               return (
-                <tr key={row.client_type} className="border-t">
-                  <td className="py-3 pr-4 font-medium text-sm align-top">{row.client_type}</td>
-                  {RATE_MATRIX_REGIONS.map((region) => {
+                <tr key={row.client_type} className={ri % 2 === 0 ? "bg-background" : "bg-muted/20"}>
+                  <td className="px-3 py-2.5 font-semibold text-xs border-r border-border whitespace-nowrap">{row.client_type}</td>
+                  {RATE_MATRIX_REGIONS.map(region => {
                     const cell: RateMatrixCell = row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
-                    return (
-                      <td key={region} className="py-2 px-2 align-top">
-                        {cell.avoid ? (
-                          <div className="flex flex-col items-center gap-1">
-                            <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100 text-xs">AVOID</Badge>
-                            <button
-                              type="button"
-                              onClick={() => updateCell(rowIdx, region, "avoid", false)}
-                              className="text-xs text-muted-foreground hover:text-foreground underline"
-                            >
-                              set range
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-1 min-w-[110px]">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground w-5">Min</span>
-                              <Input
-                                type="number"
-                                step="1000"
-                                min="0"
-                                value={cell.min_weekly}
-                                onChange={(e) => updateCell(rowIdx, region, "min_weekly", parseInt(e.target.value) || 0)}
-                                className="h-8 text-xs text-center font-mono w-24 px-1"
-                              />
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground w-5">Max</span>
-                              <Input
-                                type="number"
-                                step="1000"
-                                min="0"
-                                value={cell.max_weekly}
-                                onChange={(e) => updateCell(rowIdx, region, "max_weekly", parseInt(e.target.value) || 0)}
-                                className="h-8 text-xs text-center font-mono w-24 px-1"
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => updateCell(rowIdx, region, "avoid", true)}
-                              className="text-xs text-muted-foreground hover:text-red-600 underline text-left"
-                            >
-                              mark avoid
-                            </button>
-                          </div>
-                        )}
+                    return cell.avoid ? (
+                      <td key={region} colSpan={2} className="text-center py-2 px-1 border-r border-border last:border-r-0">
+                        <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100 text-[10px]">AVOID</Badge>
+                        <button type="button" onClick={() => updateCell(rowIdx, region, "avoid", false)}
+                          className="block mx-auto text-[9px] text-muted-foreground hover:text-foreground underline mt-0.5">set range</button>
                       </td>
+                    ) : (
+                      <React.Fragment key={region}>
+                        <td className="py-1.5 px-1 border-r border-border/50 text-center">
+                          <Input type="number" step="1000" min="0" value={cell.min_weekly}
+                            onChange={e => updateCell(rowIdx, region, "min_weekly", parseInt(e.target.value) || 0)}
+                            className="h-7 text-xs text-center font-mono w-full px-1" />
+                        </td>
+                        <td className="py-1.5 px-1 border-r border-border last:border-r-0 text-center">
+                          <div className="flex flex-col items-center">
+                            <Input type="number" step="1000" min="0" value={cell.max_weekly}
+                              onChange={e => updateCell(rowIdx, region, "max_weekly", parseInt(e.target.value) || 0)}
+                              className="h-7 text-xs text-center font-mono w-full px-1" />
+                            <button type="button" onClick={() => updateCell(rowIdx, region, "avoid", true)}
+                              className="text-[8px] text-muted-foreground hover:text-red-600 underline mt-0.5">avoid</button>
+                          </div>
+                        </td>
+                      </React.Fragment>
                     );
                   })}
                 </tr>
