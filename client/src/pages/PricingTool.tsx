@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X,
+  Users, AlertTriangle, Eye, EyeOff, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
@@ -463,6 +463,10 @@ export default function PricingTool() {
   const [showTNFInfo, setShowTNFInfo] = useState(false);
   const [showL4Info, setShowL4Info] = useState(false);
 
+  // Proposals included in all analysis (filters out excluded_from_analysis)
+  const isExcluded = (p: PricingProposal): boolean => !!(p.excluded_from_analysis);
+  const analysisProposals = useMemo(() => proposals.filter(p => !isExcluded(p)), [proposals]);
+
   // Fees-by-country analysis
   const computeFeesByCountry = (ps: PricingProposal[]): CountryFeeRow[] => {
     const relevant = ps.filter(p => p.outcome === "won" || p.outcome === "lost");
@@ -569,7 +573,7 @@ export default function PricingTool() {
   // Auto-populate fees-by-country when proposals first load
   useEffect(() => {
     if (proposals.length > 0 && feesByCountry === null) {
-      setFeesByCountry(computeFeesByCountry(proposals));
+      setFeesByCountry(computeFeesByCountry(analysisProposals));
     }
   }, [proposals]);
 
@@ -1473,9 +1477,9 @@ export default function PricingTool() {
       ownership_type: form.ownership_type ?? null,
       strategic_intent: form.strategic_intent ?? null,
       procurement_involvement: form.procurement_involvement ?? null,
-    }, settings, proposals);
+    }, settings, analysisProposals);
   }, [form.region, form.pe_owned, form.revenue_band, form.price_sensitivity,
-      form.duration_weeks, form.fund_name, form.staffing, settings, proposals,
+      form.duration_weeks, form.fund_name, form.staffing, settings, analysisProposals,
       form.project_type, form.sector, form.ebitda_margin_pct, form.commercial_maturity,
       form.urgency, form.competitive_intensity, form.competitor_type, form.ownership_type,
       form.strategic_intent, form.procurement_involvement]);
@@ -2031,7 +2035,7 @@ export default function PricingTool() {
                     <TableBody>
                       {sortedProposals.map(p => (
                         <React.Fragment key={p.id}>
-                          <TableRow className="cursor-pointer hover:bg-muted/30" onClick={() => editProposal(p)}>
+                          <TableRow className={`cursor-pointer hover:bg-muted/30 ${isExcluded(p) ? "opacity-40 line-through" : ""}`} onClick={() => editProposal(p)}>
                             <TableCell className="text-xs text-muted-foreground">
                               {p.proposal_date ? new Date(p.proposal_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
                             </TableCell>
@@ -2109,6 +2113,20 @@ export default function PricingTool() {
                                     />
                                   </label>
                                 )}
+                                {/* Exclude from analysis toggle */}
+                                <button
+                                  onClick={() => patchProposalInline(p.id!, {
+                                    excluded_from_analysis: isExcluded(p) ? 0 : 1
+                                  } as any)}
+                                  className={`p-1 rounded transition-colors relative ${
+                                    isExcluded(p)
+                                      ? "text-amber-500 hover:text-amber-700"
+                                      : "text-muted-foreground hover:text-amber-500"
+                                  }`}
+                                  title={isExcluded(p) ? "Excluded from analysis — click to include" : "Exclude from analysis"}
+                                >
+                                  {isExcluded(p) ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
                                 <button onClick={() => deleteProposal(p.id!)} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors" title="Delete">
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -2351,7 +2369,7 @@ export default function PricingTool() {
               <CardContent className="space-y-4">
                 {/* Analysis table — always computed live from current proposals */}
                 {(() => {
-                  const liveFees = computeFeesByCountry(proposals);
+                  const liveFees = computeFeesByCountry(analysisProposals);
                   if (liveFees.length === 0) {
                     return <p className="text-xs text-muted-foreground text-center py-4">No win/loss data yet — mark projects as Won or Lost to populate this table.</p>;
                   }
@@ -2460,12 +2478,12 @@ export default function PricingTool() {
                     const fB = (n: number) => n >= 1000 ? `€${Math.round(n / 1000)}k` : `€${n}`;
                     const countries = [...new Set(benchmarks.map(b => b.country))];
 
-                    // Helper: find won proposals for a benchmark country
+                    // Helper: find won proposals for a benchmark country (excludes excluded_from_analysis)
                     const wonForCountry = (country: string) => {
                       const matchingRegions = Object.entries(REGION_TO_COUNTRY)
                         .filter(([, aliases]) => aliases.some(a => a.toLowerCase() === country.toLowerCase()))
                         .map(([code]) => code);
-                      return proposals.filter(p =>
+                      return analysisProposals.filter(p =>
                         p.outcome === "won" && (
                           matchingRegions.includes(p.region) ||
                           (p.country && p.country.toLowerCase() === country.toLowerCase())
@@ -2681,7 +2699,7 @@ export default function PricingTool() {
 
             {/* ── Win-Loss Scatter by Country ──────────────────────── */}
             {(() => {
-              const wl = proposals.filter(p => p.outcome === "won" || p.outcome === "lost");
+              const wl = analysisProposals.filter(p => p.outcome === "won" || p.outcome === "lost");
               if (wl.length === 0) return null;
               const byCountry = new Map<string, PricingProposal[]>();
               for (const p of wl) {
@@ -4674,7 +4692,7 @@ export default function PricingTool() {
 
                     // Benchmark: compute TNF/EBITDA and TNF/Aspiration ratios from past
                     // won proposals that have company_revenue_m + ebitda_margin_pct populated.
-                    const pastRatios = proposals
+                    const pastRatios = analysisProposals
                       .filter(p => p.outcome === "won"
                         && p.company_revenue_m != null && p.company_revenue_m > 0
                         && p.ebitda_margin_pct != null && p.ebitda_margin_pct > 0

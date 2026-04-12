@@ -387,6 +387,7 @@ export interface PricingProposal {
   team_size?: number | null;
   notes?: string | null;
   attachment_url?: string | null;
+  excluded_from_analysis?: boolean | number | null;
   created_at?: string;
 }
 

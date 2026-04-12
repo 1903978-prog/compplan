@@ -333,6 +333,7 @@ export async function seedDatabase() {
   `);
 
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS attachment_url TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS excluded_from_analysis INTEGER NOT NULL DEFAULT 0`);
 
   // API pause flag — default paused; reset to paused on every restart.
   // This runs unconditionally so the API cannot silently stay unpaused across deploys.

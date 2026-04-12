@@ -361,6 +361,7 @@ export const pricingProposals = pgTable("pricing_proposals", {
   team_size: real("team_size").notNull().default(1),
   notes: text("notes"),
   attachment_url: text("attachment_url"),
+  excluded_from_analysis: integer("excluded_from_analysis").notNull().default(0),
   created_at: text("created_at").notNull(),
 });
 
