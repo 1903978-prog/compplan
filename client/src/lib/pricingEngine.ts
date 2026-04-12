@@ -190,8 +190,42 @@ export const TNF_SCOPE_MULT: Record<string, { mult: number; label: string }> = {
   "transformation": { mult: 1.5, label: "Multi-workstream transformation" },
 };
 
+// Industry-typical EBITDA margin midpoints (fallback when no project data)
+const INDUSTRY_EBITDA_MARGIN_PCT: Record<string, number> = {
+  "Software / SaaS":            25,
+  "Pharma / Healthcare":        20,
+  "Financial Services":         25,
+  "Consumer / Retail":          12,
+  "Industrial / Manufacturing": 14,
+  "Energy / Utilities":         20,
+  "Business Services":          15,
+  "Other":                      15,
+};
+
+// Typical company revenue (€M) inferred from revenue_band (fallback when no
+// exact company_revenue_m provided). Midpoint-ish estimates.
+const REVENUE_BAND_MIDPOINT_M: Record<string, number> = {
+  "below_100m": 50,
+  "100m_200m":  150,
+  "200m_1b":    500,
+  "above_1b":   1500,
+};
+
+export type TNFBenchmarkSource =
+  | "project"          // company_revenue_m + ebitda_margin_pct both provided
+  | "mixed"            // revenue OR ebitda margin provided; the other imputed
+  | "industry_default" // both imputed from sector + revenue_band
+  | "none";            // nothing usable → benchmark unavailable
+
 export interface TNFBenchmark {
-  ebitda_eur: number;         // company EBITDA in €
+  source: TNFBenchmarkSource;
+  source_label: string;       // plain-English label for the UI
+  ebitda_eur: number;         // company EBITDA in € (actual or imputed)
+  ebitda_is_imputed: boolean;
+  revenue_m_used: number;     // revenue in €M used in the calc
+  revenue_is_imputed: boolean;
+  ebitda_margin_used_pct: number;
+  margin_is_imputed: boolean;
   sector: string;
   project_type: string;
   industry_base_low_pct: number;
@@ -206,31 +240,84 @@ export interface TNFBenchmark {
 
 /**
  * Compute the industry-calibrated TNF benchmark for a given project.
- * Returns null if we don't have enough data (EBITDA or sector missing).
+ * Always returns a result unless there's no sector AND no revenue_band
+ * to fall back on.
+ *
+ * Priority order:
+ *  1. Project data (actual company_revenue_m + ebitda_margin_pct) — "project"
+ *  2. Mixed: one of the two provided, the other imputed from sector/band — "mixed"
+ *  3. Industry defaults (sector midpoint margin × revenue_band midpoint) — "industry_default"
  */
 export function computeTNFBenchmark(
   company_revenue_m: number | null | undefined,
   ebitda_margin_pct: number | null | undefined,
   sector: string | null | undefined,
-  project_type: string | null | undefined
+  project_type: string | null | undefined,
+  revenue_band?: string | null,
 ): TNFBenchmark | null {
-  if (!company_revenue_m || company_revenue_m <= 0) return null;
-  if (!ebitda_margin_pct || ebitda_margin_pct <= 0) return null;
-  const ebitda_eur = company_revenue_m * 1_000_000 * ebitda_margin_pct / 100;
-  if (ebitda_eur <= 0) return null;
-
   const sectorKey = sector && TNF_INDUSTRY_BASE_PCT[sector] ? sector : "Other";
   const base = TNF_INDUSTRY_BASE_PCT[sectorKey];
-
   const typeKey = project_type ?? "other design";
   const stage = TNF_DEAL_STAGE_MULT[typeKey] ?? TNF_DEAL_STAGE_MULT["other design"];
   const scope = TNF_SCOPE_MULT[typeKey] ?? TNF_SCOPE_MULT["other design"];
 
+  const hasRevenue = !!company_revenue_m && company_revenue_m > 0;
+  const hasMargin  = !!ebitda_margin_pct && ebitda_margin_pct > 0;
+
+  // Decide revenue (€M)
+  let revenue_m_used: number;
+  let revenue_is_imputed: boolean;
+  if (hasRevenue) {
+    revenue_m_used = company_revenue_m as number;
+    revenue_is_imputed = false;
+  } else if (revenue_band && REVENUE_BAND_MIDPOINT_M[revenue_band]) {
+    revenue_m_used = REVENUE_BAND_MIDPOINT_M[revenue_band];
+    revenue_is_imputed = true;
+  } else {
+    return null;
+  }
+
+  // Decide EBITDA margin (%)
+  let ebitda_margin_used_pct: number;
+  let margin_is_imputed: boolean;
+  if (hasMargin) {
+    ebitda_margin_used_pct = ebitda_margin_pct as number;
+    margin_is_imputed = false;
+  } else {
+    ebitda_margin_used_pct = INDUSTRY_EBITDA_MARGIN_PCT[sectorKey];
+    margin_is_imputed = true;
+  }
+
+  const ebitda_eur = revenue_m_used * 1_000_000 * ebitda_margin_used_pct / 100;
+  if (ebitda_eur <= 0) return null;
+
   const tnf_low_eur  = ebitda_eur * (base.low  / 100) * stage.mult * scope.mult;
   const tnf_high_eur = ebitda_eur * (base.high / 100) * stage.mult * scope.mult;
 
+  let source: TNFBenchmarkSource;
+  let source_label: string;
+  if (!revenue_is_imputed && !margin_is_imputed) {
+    source = "project";
+    source_label = "Project data — actual revenue + EBITDA %";
+  } else if (revenue_is_imputed && margin_is_imputed) {
+    source = "industry_default";
+    source_label = "Industry defaults — sector margin × revenue band";
+  } else {
+    source = "mixed";
+    source_label = revenue_is_imputed
+      ? "Mixed — EBITDA % from project, revenue imputed from band"
+      : "Mixed — revenue from project, EBITDA % imputed from sector";
+  }
+
   return {
+    source,
+    source_label,
     ebitda_eur,
+    ebitda_is_imputed: revenue_is_imputed || margin_is_imputed,
+    revenue_m_used,
+    revenue_is_imputed,
+    ebitda_margin_used_pct,
+    margin_is_imputed,
     sector: sectorKey,
     project_type: typeKey,
     industry_base_low_pct: base.low,
@@ -917,6 +1004,16 @@ export function calculatePricing(
 
   // ── L1: Cost Floor ────────────────────────────────────────────────────────
   const cost_floor_weekly = computeCostFloor(input, settings);
+
+  // Raw delivery (team) cost — same math as inside computeCostFloor, kept here
+  // because we also need to expose it as `delivery_cost_weekly` for the
+  // 50% GM low-end calculation below.
+  let delivery_cost_weekly = 0;
+  for (const line of input.staffing) {
+    const costEntry = settings.staff_costs.find(c => c.role_id === line.role_id);
+    const daily_cost = costEntry?.daily_cost ?? 0;
+    delivery_cost_weekly += line.days_per_week * daily_cost * line.count;
+  }
 
   // ── Base staffing rate ────────────────────────────────────────────────────
   const base_weekly = input.staffing.reduce((sum, line) =>

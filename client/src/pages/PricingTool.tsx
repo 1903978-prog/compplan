@@ -4694,28 +4694,54 @@ export default function PricingTool() {
                             form.ebitda_margin_pct,
                             form.sector,
                             form.project_type,
+                            form.revenue_band,
                           );
                           if (!tnfBench) {
                             return (
                               <div className="border rounded-lg p-3 bg-muted/20 text-[10px] text-muted-foreground">
-                                Set company revenue, EBITDA margin, sector and project type to see the industry TNF benchmark.
+                                Select a sector and revenue band to see the industry TNF benchmark.
                               </div>
                             );
                           }
                           const netInBand = net >= tnfBench.tnf_low_eur && net <= tnfBench.tnf_high_eur;
                           const netBelow = net < tnfBench.tnf_low_eur;
+                          // Source badge styling
+                          const srcStyle = tnfBench.source === "project"
+                            ? { bg: "bg-emerald-100", text: "text-emerald-700", border: "border-emerald-300", label: "PROJECT DATA" }
+                            : tnfBench.source === "mixed"
+                            ? { bg: "bg-amber-100", text: "text-amber-700", border: "border-amber-300", label: "MIXED" }
+                            : { bg: "bg-slate-100", text: "text-slate-600", border: "border-slate-300", label: "INDUSTRY DEFAULTS" };
                           return (
                             <div className="border-2 border-blue-200 bg-blue-50/40 rounded-lg p-3 space-y-2">
-                              <div className="flex items-center justify-between">
+                              <div className="flex items-center justify-between flex-wrap gap-1">
                                 <div className="text-[10px] font-bold uppercase text-blue-700 tracking-wide flex items-center gap-1.5">
                                   <Info className="w-3 h-3" />
                                   Industry TNF Benchmark
                                 </div>
-                                <button onClick={() => setShowTNFInfo(v => !v)}
-                                  className="text-blue-500 hover:text-blue-700 transition-colors"
-                                  title="How is this computed?">
-                                  <Info className="w-3.5 h-3.5" />
-                                </button>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${srcStyle.bg} ${srcStyle.text} ${srcStyle.border}`}>
+                                    {srcStyle.label}
+                                  </span>
+                                  <button onClick={() => setShowTNFInfo(v => !v)}
+                                    className="text-blue-500 hover:text-blue-700 transition-colors"
+                                    title="How is this computed?">
+                                    <Info className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Source explanation */}
+                              <div className="text-[10px] text-muted-foreground leading-tight">
+                                {tnfBench.source_label}
+                                {tnfBench.source !== "project" && (
+                                  <span className="ml-1 text-blue-600 italic">
+                                    — enter {tnfBench.revenue_is_imputed && tnfBench.margin_is_imputed
+                                      ? "company revenue & EBITDA %"
+                                      : tnfBench.revenue_is_imputed
+                                      ? "company revenue"
+                                      : "EBITDA margin %"} for project-specific accuracy
+                                  </span>
+                                )}
                               </div>
 
                               {/* Range */}
@@ -4755,15 +4781,28 @@ export default function PricingTool() {
                               {/* Breakdown */}
                               <div className="text-[10px] text-muted-foreground space-y-0.5 leading-relaxed">
                                 <div>
-                                  EBITDA: <span className="font-semibold text-foreground/80">{fmtK2Local(tnfBench.ebitda_eur)}</span>
+                                  Revenue: <span className={`font-semibold ${tnfBench.revenue_is_imputed ? "text-slate-500 italic" : "text-foreground/80"}`}>
+                                    {fmtK2Local(tnfBench.revenue_m_used * 1_000_000)}
+                                    {tnfBench.revenue_is_imputed && " *"}
+                                  </span>
                                   {" × "}
-                                  {tnfBench.sector}: <span className="font-semibold text-foreground/80">{tnfBench.industry_base_low_pct}–{tnfBench.industry_base_high_pct}%</span>
+                                  EBITDA %: <span className={`font-semibold ${tnfBench.margin_is_imputed ? "text-slate-500 italic" : "text-foreground/80"}`}>
+                                    {tnfBench.ebitda_margin_used_pct}%
+                                    {tnfBench.margin_is_imputed && " *"}
+                                  </span>
+                                  {" = "}
+                                  EBITDA: <span className="font-semibold text-foreground/80">{fmtK2Local(tnfBench.ebitda_eur)}</span>
                                 </div>
                                 <div>
-                                  Deal stage ({tnfBench.deal_stage_label}): <span className="font-semibold text-foreground/80">×{tnfBench.deal_stage_mult}</span>
+                                  {tnfBench.sector}: <span className="font-semibold text-foreground/80">{tnfBench.industry_base_low_pct}–{tnfBench.industry_base_high_pct}%</span>
+                                  {" · "}
+                                  Stage ({tnfBench.deal_stage_label}): <span className="font-semibold text-foreground/80">×{tnfBench.deal_stage_mult}</span>
                                   {" · "}
                                   Scope ({tnfBench.scope_label}): <span className="font-semibold text-foreground/80">×{tnfBench.scope_mult}</span>
                                 </div>
+                                {(tnfBench.revenue_is_imputed || tnfBench.margin_is_imputed) && (
+                                  <div className="text-[9px] italic text-slate-500">* imputed from industry defaults</div>
+                                )}
                               </div>
 
                               {/* Info popup */}
@@ -4774,6 +4813,17 @@ export default function PricingTool() {
                                     <span className="font-semibold">Core formula:</span><br/>
                                     <span className="font-mono text-[10px]">TNF = EBITDA × Industry Base % × Deal-Stage × Scope</span>
                                   </p>
+                                  <div className="bg-emerald-50 border border-emerald-200 rounded p-2">
+                                    <div className="font-semibold text-emerald-800 mb-1">Priority order (which data is used)</div>
+                                    <ol className="list-decimal pl-4 text-[10px] space-y-0.5 text-slate-700">
+                                      <li><span className="font-semibold">PROJECT DATA</span> (preferred): actual company revenue + actual EBITDA margin from the case</li>
+                                      <li><span className="font-semibold">MIXED</span>: one of the two is available, the other is imputed from sector/band norms</li>
+                                      <li><span className="font-semibold">INDUSTRY DEFAULTS</span>: both imputed — sector-midpoint EBITDA margin × revenue-band midpoint</li>
+                                    </ol>
+                                    <div className="text-[9px] text-emerald-700 italic mt-1">
+                                      The engine always tries project data first. Imputed values are shown in italic with a *.
+                                    </div>
+                                  </div>
                                   <p>
                                     <span className="font-semibold">Why EBITDA?</span> Ties fees directly to the operational profit being optimised. Revenue-based metrics ignore margins; pure deal-size metrics ignore profitability.
                                   </p>
