@@ -3460,21 +3460,6 @@ export default function PricingTool() {
                       value={form.incumbent_advisor ?? ""}
                       onChange={e => setForm(f => ({ ...f, incumbent_advisor: e.target.value || null }))} />
                   </div>
-                  {/* Expected impact */}
-                  <div className="space-y-1">
-                    <Label className="text-xs">Expected Client Impact (€)</Label>
-                    <Input type="number" min="0" step="100000"
-                      placeholder="e.g. 15000000"
-                      value={form.expected_impact_eur ?? ""}
-                      onChange={e => setForm(f => ({ ...f, expected_impact_eur: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
-                    {form.expected_impact_eur && recommendation?.target_total ? (
-                      <div className="text-[9px] text-muted-foreground">
-                        Fees/Impact: {((recommendation.target_total / form.expected_impact_eur) * 100).toFixed(1)}%
-                      </div>
-                    ) : (
-                      <div className="text-[9px] text-muted-foreground">€ P&amp;L impact target — drives value-based pricing</div>
-                    )}
-                  </div>
                 </div>
               </div>
             </CardContent>
@@ -3847,7 +3832,7 @@ export default function PricingTool() {
 
             return (
               <div className="border rounded-lg p-5 bg-muted/10 space-y-3">
-                <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
+                <div className="text-sm font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
                 <div>
                   {/* Market benchmarks (combined box) */}
                   <div className="border rounded-lg p-3 bg-background space-y-3">
@@ -4746,59 +4731,55 @@ export default function PricingTool() {
                     const highMktLabel = highMkt && recommendation.high_market_context
                       ? `max won in ${recommendation.high_market_context}` : null;
 
+                    const dur = (waterfallDuration ?? form.duration_weeks) || 0;
+                    const totalNet = canonicalNetWeekly * dur;
+                    const totalGrossR = canonicalGrossWeekly * dur;
+                    const teamCostR = (recommendation.delivery_cost_weekly ?? 0) * dur;
+                    const totalGMR = totalGrossR - teamCostR;
+                    const gmPctR = totalGrossR > 0 ? (totalGMR / totalGrossR * 100) : 0;
+                    const gmColorR = gmPctR >= 50 ? "text-emerald-600" : gmPctR >= 30 ? "text-amber-600" : "text-red-600";
+
                     return (
                       <div className="space-y-2">
-                        <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-0.5">
-                          Fee Range
+                        <div className="text-sm font-bold uppercase tracking-wide text-muted-foreground px-0.5">
+                          Fee Range (weekly)
                         </div>
                         <div className="grid grid-cols-3 gap-1.5">
-                          {/* Low — 50% GM floor */}
                           <div className="text-center p-2.5 bg-muted/30 rounded-lg">
-                            <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">Low</div>
-                            <div className="text-base font-bold text-muted-foreground mt-0.5">
-                              {low50 ? fmt(low50) : "—"}
-                            </div>
-                            <div className="text-[8px] text-muted-foreground">/week · GM {Math.round(low50GM)}%</div>
+                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Low</div>
+                            <div className="text-base font-bold text-muted-foreground mt-0.5">{low50 ? fmt(low50) : "—"}</div>
+                            <div className="text-[9px] text-muted-foreground">50% GM floor</div>
                           </div>
-                          {/* Net = Recommended (mirrors waterfall) */}
                           <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-                            <div className="text-[9px] text-emerald-700 uppercase font-bold tracking-wide">Net</div>
+                            <div className="text-[10px] text-emerald-700 uppercase font-bold">Net</div>
                             <div className="text-xl font-bold text-emerald-700 mt-0.5">{fmt(canonicalNetWeekly)}</div>
-                            <div className="text-[8px] text-muted-foreground">/week · recommended</div>
+                            <div className="text-[9px] text-emerald-600">recommended</div>
                           </div>
-                          {/* Max — highest weekly from similar projects */}
                           <div className="text-center p-2.5 bg-muted/30 rounded-lg">
-                            <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">Max</div>
-                            <div className="text-base font-bold text-muted-foreground mt-0.5">
-                              {highMkt ? fmt(highMkt) : "—"}
-                            </div>
-                            <div className="text-[8px] text-muted-foreground">/week</div>
+                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Max</div>
+                            <div className="text-base font-bold text-muted-foreground mt-0.5">{highMkt ? fmt(highMkt) : "—"}</div>
+                            <div className="text-[9px] text-muted-foreground">similar projects</div>
                           </div>
                         </div>
 
-                        {/* Net + Gross + Total Gross boxes */}
+                        {/* Total Net / Total Gross / Total GM */}
+                        <div className="text-sm font-bold uppercase tracking-wide text-muted-foreground px-0.5 pt-1">
+                          Project Totals ({dur}w)
+                        </div>
                         <div className="grid grid-cols-3 gap-1.5">
                           <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-                            <div className="text-[9px] text-emerald-700 uppercase font-bold">Net /wk</div>
-                            <div className="text-base font-bold text-emerald-700">{fmt(canonicalNetWeekly)}</div>
+                            <div className="text-[10px] text-emerald-700 uppercase font-bold">Total Net</div>
+                            <div className="text-base font-bold text-emerald-700">{fmt(totalNet)}</div>
                           </div>
                           <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-200">
-                            <div className="text-[9px] text-amber-700 uppercase font-bold">Gross /wk</div>
-                            <div className="text-base font-bold text-amber-700">{fmt(canonicalGrossWeekly)}</div>
+                            <div className="text-[10px] text-amber-700 uppercase font-bold">Total Gross</div>
+                            <div className="text-base font-bold text-amber-700">{fmt(totalGrossR)}</div>
                           </div>
-                          <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-200">
-                            <div className="text-[9px] text-amber-700 uppercase font-bold">Total Gross</div>
-                            <div className="text-base font-bold text-amber-700">{fmt(canonicalGrossWeekly * (form.duration_weeks || 0))}</div>
-                            <div className="text-[8px] text-muted-foreground">{form.duration_weeks || 0}w</div>
+                          <div className={`text-center p-2.5 rounded-lg border ${gmPctR >= 50 ? "bg-emerald-50 border-emerald-200" : gmPctR >= 30 ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200"}`}>
+                            <div className={`text-[10px] uppercase font-bold ${gmColorR}`}>Total GM</div>
+                            <div className={`text-base font-bold ${gmColorR}`}>{fmt(totalGMR)}</div>
+                            <div className={`text-[9px] font-semibold ${gmColorR}`}>{gmPctR.toFixed(0)}%</div>
                           </div>
-                        </div>
-
-                        {/* Explanations */}
-                        <div className="text-[9px] text-muted-foreground space-y-0.5 px-0.5 leading-relaxed">
-                          <div><span className="font-semibold text-foreground/70">Low:</span> {low50 ? `${fmt(low50)}/wk = 50% GM floor` : "Enter team build-up"}</div>
-                          <div><span className="font-semibold text-foreground/70">Net:</span> {fmt(canonicalNetWeekly)}/wk = waterfall recommended</div>
-                          <div><span className="font-semibold text-foreground/70">Max:</span> {highMktLabel ? `${fmt(highMkt!)}/wk = ${highMktLabel}` : "No comparable data"}</div>
-                          <div><span className="font-semibold text-foreground/70">Gross:</span> Net × (1+{adminFeePct}%){caseDiscounts.filter(d => d.enabled && d.pct > 0).map(d => ` ÷ (1−${d.pct}%)`).join("")} = {fmt(canonicalGrossWeekly)}/wk (we invoice)</div>
                         </div>
                       </div>
                     );
@@ -5024,80 +5005,59 @@ export default function PricingTool() {
                     </div>
                   )}
 
-                  {/* ── Historical Intelligence (L4) — reference only ────── */}
+                  {/* ── Historical Intelligence — by Country / Client / Fund ── */}
                   {(() => {
-                    const hasData = fundProposals.length > 0 || (recommendation.comparable_wins?.length ?? 0) > 0;
-                    if (!hasData) return null;
+                    // Section 1: Same country/region
+                    const regionKey = proposalRegionKey(form as any);
+                    const countryProposals = analysisProposals.filter(p =>
+                      proposalRegionKey(p) === regionKey && p.outcome === "won" && p.weekly_price > 0
+                    ).sort((a, b) => b.proposal_date.localeCompare(a.proposal_date)).slice(0, 5);
+
+                    // Section 2: Same client
+                    const clientLc = (form.client_name ?? "").trim().toLowerCase();
+                    const clientProposals = clientLc ? analysisProposals.filter(p =>
+                      (p.client_name ?? "").trim().toLowerCase() === clientLc && p.weekly_price > 0
+                    ).sort((a, b) => b.proposal_date.localeCompare(a.proposal_date)).slice(0, 5) : [];
+
+                    // Section 3: Same fund
+                    const hasAny = countryProposals.length > 0 || clientProposals.length > 0 || fundProposals.length > 0;
+                    if (!hasAny) return null;
+
+                    const MiniTable = ({ items, label }: { items: PricingProposal[]; label: string }) => (
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-bold text-blue-700">{label} ({items.length})</div>
+                        {items.map(p => (
+                          <div key={p.id} className="flex items-center justify-between text-xs bg-white/70 rounded px-2 py-1">
+                            <span className="text-muted-foreground w-16">{p.proposal_date?.slice(0, 7)}</span>
+                            <span className="truncate max-w-[80px] mx-1 text-muted-foreground">{p.project_name}</span>
+                            <span className="font-semibold font-mono">{fmt(p.weekly_price)}</span>
+                            <OutcomeBadge outcome={p.outcome} />
+                          </div>
+                        ))}
+                      </div>
+                    );
+
                     return (
-                      <div className="border border-blue-100 rounded-lg bg-blue-50/40 p-3 space-y-2">
-                        {/* Header with info button */}
+                      <div className="border border-blue-100 rounded-lg bg-blue-50/40 p-3 space-y-3">
                         <div className="flex items-center justify-between">
-                          <div className="text-[10px] uppercase font-bold text-blue-700 tracking-wide">
+                          <div className="text-sm uppercase font-bold text-blue-700 tracking-wide">
                             Historical Intelligence
                           </div>
-                          <div className="relative">
-                            <button
-                              onClick={() => setShowL4Info(v => !v)}
-                              className="text-blue-400 hover:text-blue-600 transition-colors"
-                              title="How is this computed?"
-                            >
-                              <Info className="w-3.5 h-3.5" />
-                            </button>
-                            {showL4Info && (
-                              <div className="absolute right-0 top-5 z-50 w-72 bg-white border border-blue-200 rounded-lg shadow-xl p-3 text-[11px] text-slate-700 leading-relaxed space-y-2">
-                                <div className="font-bold text-blue-700 text-xs">How Historical Intelligence works</div>
-                                <p>
-                                  <span className="font-semibold">Fund anchor:</span> All past proposals for the same fund are retrieved and averaged using time-decay (recent deals count more) and outcome weighting (won deals count 2× vs lost). Requires ≥2 proposals to activate.
-                                </p>
-                                <p>
-                                  <span className="font-semibold">Comparable wins:</span> Every past project is scored for similarity — fund match (40 pts), same region (25 pts), same PE/non-PE (15 pts), same revenue band (20 pts). The top 8 scoring projects with ≥25 pts are used. Win prices are averaged.
-                                </p>
-                                <p>
-                                  <span className="font-semibold">Why not used in the price:</span> Historical data is shown here as a reference only. It is <span className="font-semibold">not blended into the recommendation</span> because past prices reflect the context of those deals (team, scope, market moment) — using them mechanically can anchor you too low or too high. Use these numbers as a sanity check, not as a target.
-                                </p>
-                                <button onClick={() => setShowL4Info(false)} className="text-blue-500 underline text-[10px]">Close</button>
-                              </div>
-                            )}
-                          </div>
+                          <button onClick={() => setShowL4Info(v => !v)} className="text-blue-400 hover:text-blue-600">
+                            <Info className="w-3.5 h-3.5" />
+                          </button>
                         </div>
 
-                        {/* Fund anchor summary */}
-                        {recommendation.history_anchor != null && (
-                          <div className="flex items-center gap-3 text-xs">
-                            <div>
-                              <span className="text-muted-foreground">Fund anchor</span>
-                              <span className="ml-1.5 font-bold text-blue-700">{fmt(recommendation.history_anchor)}/wk</span>
-                              <span className="text-muted-foreground ml-1">(time-decayed avg of {recommendation.fund_proposals_count} proposals)</span>
-                            </div>
-                            {recommendation.fund_win_rate != null && (
-                              <span className="text-muted-foreground">Win rate: <span className="font-semibold">{Math.round(recommendation.fund_win_rate * 100)}%</span></span>
-                            )}
+                        {showL4Info && (
+                          <div className="bg-white border border-blue-200 rounded-lg p-3 text-[11px] text-slate-700 leading-relaxed space-y-1">
+                            <p>Past projects shown as reference only — <span className="font-semibold">not blended into the recommendation</span>. Use as a sanity check.</p>
+                            <button onClick={() => setShowL4Info(false)} className="text-blue-500 underline text-[10px]">Close</button>
                           </div>
                         )}
 
-                        {/* Comparable wins anchor */}
-                        {recommendation.comparable_avg_win_weekly != null && (
-                          <div className="text-xs">
-                            <span className="text-muted-foreground">Comparable wins avg</span>
-                            <span className="ml-1.5 font-bold text-blue-700">{fmt(recommendation.comparable_avg_win_weekly)}/wk</span>
-                            <span className="text-muted-foreground ml-1">({recommendation.comparable_wins.length} similar won projects)</span>
-                          </div>
-                        )}
-
-                        {/* Fund proposals mini-table */}
-                        {fundProposals.length > 0 && (
-                          <div className="space-y-1 pt-1">
-                            <div className="text-[10px] text-muted-foreground font-semibold">Prior proposals — {form.fund_name}</div>
-                            {fundProposals.map(p => (
-                              <div key={p.id} className="flex items-center justify-between text-xs bg-white/70 rounded px-2 py-1">
-                                <span className="text-muted-foreground">{p.proposal_date?.slice(0, 7)}</span>
-                                <span className="truncate max-w-[90px] mx-1 text-muted-foreground">{p.project_name}</span>
-                                <span className="font-semibold">{fmt(p.weekly_price)}</span>
-                                <OutcomeBadge outcome={p.outcome} />
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        {countryProposals.length > 0 && <MiniTable items={countryProposals} label={`Same region (${regionKey})`} />}
+                        {clientProposals.length > 0 && <MiniTable items={clientProposals} label={`Same client (${form.client_name})`} />}
+                        {fundProposals.length > 0 && <MiniTable items={fundProposals} label={`Same fund (${form.fund_name})`} />}
                       </div>
                     );
                   })()}
