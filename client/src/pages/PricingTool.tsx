@@ -962,7 +962,7 @@ export default function PricingTool() {
       <div className="grid grid-cols-4 gap-3">
         <div className="space-y-1">
           <Label className="text-xs">Date</Label>
-          <Input type="date" value={historyForm.proposal_date} onChange={e => setHistoryForm(f => ({ ...f, proposal_date: e.target.value }))} className="h-8 text-sm" />
+          <Input type="date" min="2019-01-01" max={`${new Date().getFullYear()}-12-31`} value={historyForm.proposal_date} onChange={e => setHistoryForm(f => ({ ...f, proposal_date: e.target.value }))} className="h-8 text-sm" />
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Outcome</Label>
