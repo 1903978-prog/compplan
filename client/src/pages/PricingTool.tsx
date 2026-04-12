@@ -1437,8 +1437,8 @@ export default function PricingTool() {
       const baseWeekly = nwfClamped + manualDelta + negotiationDelta;
       // weekly_price = gross+admin (variable fee is tracked separately as a success fee)
       const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
-      const grossTotal = Math.round(baseWeekly * form.duration_weeks);
-      const netTotal = Math.round(grossTotal * (1 - totalDiscountPct / 100));
+      // Net = recommended price (what we receive)
+      const netTotal = Math.round(baseWeekly * form.duration_weeks);
       const payload = {
         proposal_date: new Date().toISOString().slice(0, 10),
         project_name: form.project_name || "CLI01",
@@ -3751,10 +3751,12 @@ export default function PricingTool() {
             const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
             const finalWeekly = weeklyGrossAdmin; // kept name used elsewhere in this block
             const effectiveDur = (waterfallDuration ?? form.duration_weeks) || 0;
-            // Gross Project Fees = recommended (base) weekly × number of weeks
-            const grossFees = Math.round(baseWeekly * effectiveDur);
-            // Net Project Fees = Gross × (1 − discount% − rebate% − one-off%)
-            const netFees = Math.round(grossFees * (1 - totalDiscountPct / 100));
+            // Net = recommended price (what we actually receive)
+            const netFees = Math.round(baseWeekly * effectiveDur);
+            // Gross = Net / (1 − discount%) — goes up to absorb discounts
+            const grossFees = totalDiscountPct > 0
+              ? Math.round(netFees / (1 - totalDiscountPct / 100))
+              : netFees;
             const variableFeeTotal = Math.round(baseWeekly * variableFeePct / 100 * effectiveDur);
             const invoiceCount = Math.max(1, Math.floor(1 + effectiveDur / 4));
             const perInvoice = invoiceCount > 0 ? Math.round(netFees / invoiceCount) : 0;
@@ -4739,10 +4741,12 @@ export default function PricingTool() {
                     const fmtK2Local = (n: number) => n >= 1_000_000 ? `${cur.symbol}${(n / 1_000_000).toFixed(1)}M` : `${cur.symbol}${Math.round(n / 1000)}k`;
                     const effDur = (waterfallDuration ?? form.duration_weeks) || 0;
                     const baseWkly = nwfClamped + manualDelta + negotiationDelta;
-                    // Gross Project Fees = recommended weekly × nb of weeks
-                    const gross = Math.round(baseWkly * effDur);
-                    // Net Project Fees = Gross − (discount + rebate + one-off)
-                    const net = Math.round(gross * (1 - totalDiscountPct / 100));
+                    // Net = recommended price (fixed — discounts don't reduce it)
+                    const net = Math.round(baseWkly * effDur);
+                    // Gross = Net / (1 − discount%) — goes UP when discounts are added
+                    const gross = totalDiscountPct > 0
+                      ? Math.round(net / (1 - totalDiscountPct / 100))
+                      : net;
                     // TNF / EBITDA ratios
                     const revenueMLocal = form.company_revenue_m ?? 0;
                     const ebitdaPctLocal = form.ebitda_margin_pct ?? 0;
@@ -4783,18 +4787,20 @@ export default function PricingTool() {
                         {/* Fee boxes */}
                         <div className="grid grid-cols-2 gap-2">
                           <div className="border rounded-lg p-3 bg-background space-y-0.5">
-                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
-                            <div className="text-[10px] text-muted-foreground">before discounts & rebates</div>
-                            <div className="text-xl font-bold text-foreground">{fmtFee(gross)}</div>
+                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
+                            <div className="text-[10px] text-muted-foreground">recommended price (what we receive)</div>
+                            <div className="text-xl font-bold text-emerald-600">{fmtFee(net)}</div>
                             <div className="text-[10px] text-muted-foreground">{fmtFee(baseWkly)}/wk × {effDur}w</div>
                           </div>
                           <div className="border rounded-lg p-3 bg-background space-y-0.5">
-                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
+                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
                             <div className="text-[10px] text-muted-foreground">
-                              {totalDiscountPct > 0 ? `after ${totalDiscountPct.toFixed(1)}% discount/rebate/one-off` : "no discount applied"}
+                              {totalDiscountPct > 0 ? `price to quote (+${totalDiscountPct.toFixed(1)}% disc/rebate/one-off built in)` : "= net (no discounts)"}
                             </div>
-                            <div className="text-xl font-bold text-emerald-600">{fmtFee(net)}</div>
-                            <div className="text-[10px] text-muted-foreground">{fmtFee(gross)} − {totalDiscountPct.toFixed(1)}%</div>
+                            <div className="text-xl font-bold text-foreground">{fmtFee(gross)}</div>
+                            {totalDiscountPct > 0 && (
+                              <div className="text-[10px] text-muted-foreground">{fmtFee(net)} ÷ (1 − {totalDiscountPct.toFixed(1)}%)</div>
+                            )}
                           </div>
                         </div>
 
