@@ -150,22 +150,33 @@ function clientPrefix(name: string): string {
 
 // ── Benchmark helpers ─────────────────────────────────────────────────────────
 
+// Maps admin region codes → country names that belong to that region.
+// Country Benchmarks, Fees by Country, and Win-Loss scatter all group by region.
 const REGION_TO_COUNTRY: Record<string, string[]> = {
-  IT: ["Italy", "IT"],
-  FR: ["France", "FR"],
-  DE: ["Germany", "DACH", "DE"],
-  UK: ["United Kingdom", "UK"],
-  US: ["United States", "US"],
-  NL: ["Netherlands", "NL"],
-  CH: ["Switzerland", "CH"],
-  PH: ["Philippines", "PH"],
-  LU: ["Luxembourg", "LU"],
-  AE: ["UAE", "AE"],
-  SA: ["Saudi Arabia", "SA"],
-  CZ: ["Czech Republic", "CZ"],
-  Asia: ["Asia"],
-  "Middle East": ["Middle East"],
+  IT:            ["Italy", "IT"],
+  FR:            ["France", "FR", "Belgium", "Luxembourg", "LU"],
+  DACH:          ["Germany", "DE", "Switzerland", "CH", "Austria", "AT", "Czech Republic", "CZ", "DACH"],
+  Nordics:       ["Netherlands", "NL", "Sweden", "SE", "Denmark", "DK", "Norway", "NO", "Finland", "FI"],
+  UK:            ["United Kingdom", "UK"],
+  US:            ["United States", "US"],
+  "Middle East": ["UAE", "AE", "Saudi Arabia", "SA", "Middle East"],
+  Asia:          ["Philippines", "PH", "Japan", "Indonesia", "Asia"],
 };
+
+// Reverse lookup: country name → region code
+function countryToRegion(country: string): string | null {
+  const lc = country.toLowerCase();
+  for (const [region, aliases] of Object.entries(REGION_TO_COUNTRY)) {
+    if (aliases.some(a => a.toLowerCase() === lc)) return region;
+  }
+  return null;
+}
+
+// Resolve a proposal's display region: use p.region if it matches an admin region,
+// or map p.country → region via REGION_TO_COUNTRY.
+function proposalRegionKey(p: { region: string; country?: string | null }): string {
+  return p.region || (p.country ? countryToRegion(p.country) ?? p.country : "—");
+}
 
 function getBandForPrice(
   weeklyPrice: number,
@@ -467,12 +478,12 @@ export default function PricingTool() {
   const isExcluded = (p: PricingProposal): boolean => !!(p.excluded_from_analysis);
   const analysisProposals = useMemo(() => proposals.filter(p => !isExcluded(p)), [proposals]);
 
-  // Fees-by-country analysis
+  // Fees-by-region analysis (groups by admin region, not individual country)
   const computeFeesByCountry = (ps: PricingProposal[]): CountryFeeRow[] => {
     const relevant = ps.filter(p => p.outcome === "won" || p.outcome === "lost");
-    const countries = [...new Set(relevant.map(p => p.country || p.region))].sort();
-    return countries.map(country => {
-      const cp = relevant.filter(p => (p.country || p.region) === country);
+    const regions = [...new Set(relevant.map(p => proposalRegionKey(p)))].sort();
+    return regions.map(country => {
+      const cp = relevant.filter(p => proposalRegionKey(p) === country);
       const won = cp.filter(p => p.outcome === "won");
       const lost = cp.filter(p => p.outcome === "lost");
       const total = won.length + lost.length;
@@ -2486,19 +2497,47 @@ export default function PricingTool() {
                     <p className="text-xs text-muted-foreground text-center py-2">No benchmarks yet — paste analysis text above to import.</p>
                   ) : (() => {
                     const fB = (n: number) => n >= 1000 ? `€${Math.round(n / 1000)}k` : `€${n}`;
-                    const countries = [...new Set(benchmarks.map(b => b.country))];
+                    // Group benchmark rows by admin region (merge countries in same region)
+                    const benchmarkCountries = [...new Set(benchmarks.map(b => b.country))];
+                    const countryToReg = (c: string) => countryToRegion(c) ?? c;
+                    const countries = [...new Set(benchmarkCountries.map(c => countryToReg(c)))];
 
-                    // Helper: find won proposals for a benchmark country (excludes excluded_from_analysis)
-                    const wonForCountry = (country: string) => {
-                      const matchingRegions = Object.entries(REGION_TO_COUNTRY)
-                        .filter(([, aliases]) => aliases.some(a => a.toLowerCase() === country.toLowerCase()))
-                        .map(([code]) => code);
+                    // Helper: find won proposals for a region (all countries in that region)
+                    const wonForCountry = (regionKey: string) => {
+                      const aliases = REGION_TO_COUNTRY[regionKey] ?? [regionKey];
                       return analysisProposals.filter(p =>
                         p.outcome === "won" && (
-                          matchingRegions.includes(p.region) ||
-                          (p.country && p.country.toLowerCase() === country.toLowerCase())
+                          p.region === regionKey ||
+                          aliases.some(a => a.toLowerCase() === (p.country ?? "").toLowerCase())
                         )
                       );
+                    };
+
+                    // Merge benchmark rows from multiple countries into one region.
+                    // For the same parameter, take the union (widest band).
+                    const benchmarksByRegion = (regionKey: string): CountryBenchmarkRow[] => {
+                      const regionCountries = benchmarkCountries.filter(c => countryToReg(c) === regionKey);
+                      const params = [...new Set(regionCountries.flatMap(c =>
+                        benchmarks.filter(b => b.country === c).map(b => b.parameter)
+                      ))];
+                      return params.map(param => {
+                        const rows = regionCountries
+                          .map(c => benchmarks.find(b => b.country === c && b.parameter === param))
+                          .filter(Boolean) as CountryBenchmarkRow[];
+                        if (rows.length === 0) return null;
+                        // Merge: widest bands = min of lows, max of highs; avg decisiveness
+                        const nonZero = rows.filter(r => r.yellow_high > 0);
+                        if (nonZero.length === 0) return { ...rows[0], country: regionKey };
+                        return {
+                          country: regionKey,
+                          parameter: param,
+                          yellow_low:  Math.min(...nonZero.map(r => r.yellow_low)),
+                          green_low:   Math.min(...nonZero.map(r => r.green_low)),
+                          green_high:  Math.max(...nonZero.map(r => r.green_high)),
+                          yellow_high: Math.max(...nonZero.map(r => r.yellow_high)),
+                          decisiveness_pct: Math.round(nonZero.reduce((s, r) => s + r.decisiveness_pct, 0) / nonZero.length),
+                        };
+                      }).filter(Boolean) as CountryBenchmarkRow[];
                     };
 
                     // Global shared scales per parameter type (so bars are comparable across countries)
@@ -2506,7 +2545,7 @@ export default function PricingTool() {
                     const weeklyRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"));
                     const totalRows = benchmarks.filter(b => b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"));
                     const syntheticWeeklyHighs = countries
-                      .filter(c => weeklyRows.filter(b => b.country === c && b.yellow_high > 0).length === 0)
+                      .filter(c => benchmarksByRegion(c).filter(r => (r.parameter.toLowerCase().includes("weekly") || r.parameter.toLowerCase().includes("fee")) && r.yellow_high > 0).length === 0)
                       .map(c => {
                         const wp = wonForCountry(c);
                         return wp.length > 0 ? (wp.reduce((s, p) => s + p.weekly_price, 0) / wp.length) * 1.1 : 0;
@@ -2521,8 +2560,10 @@ export default function PricingTool() {
                       (row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee"))
                         ? weeklyScale : totalScale;
 
-                    const deleteCountry = (country: string) => {
-                      const updated = benchmarks.filter(b => b.country !== country);
+                    const deleteCountry = (regionKey: string) => {
+                      // Delete all benchmark rows for countries in this region
+                      const regionCountryNames = benchmarkCountries.filter(c => countryToReg(c) === regionKey);
+                      const updated = benchmarks.filter(b => !regionCountryNames.includes(b.country));
                       saveBenchmarks(updated);
                     };
 
@@ -2539,7 +2580,7 @@ export default function PricingTool() {
                           </span>
                         </div>
                         {countries.map(country => {
-                          const rows = benchmarks.filter(b => b.country === country);
+                          const rows = benchmarksByRegion(country);
                           const wonProposals = wonForCountry(country);
                           const avgWonWeekly = wonProposals.length > 0
                             ? wonProposals.reduce((s, p) => s + p.weekly_price, 0) / wonProposals.length
@@ -2713,7 +2754,7 @@ export default function PricingTool() {
               if (wl.length === 0) return null;
               const byCountry = new Map<string, PricingProposal[]>();
               for (const p of wl) {
-                const key = p.country || p.region || "—";
+                const key = proposalRegionKey(p);
                 if (!byCountry.has(key)) byCountry.set(key, []);
                 byCountry.get(key)!.push(p);
               }
