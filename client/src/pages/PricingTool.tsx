@@ -1759,14 +1759,42 @@ export default function PricingTool() {
   const tnf = nwfClamped * (form.duration_weeks || 0);
 
   // ── Single source of truth: canonical Net and Gross weekly ────────────
-  // Net = nwfClamped + adjustments (same as waterfall output before green-band clamping)
-  // These are used everywhere: Fee Range boxes, fee summary table, right column
-  const canonicalNetWeekly = nwfClamped + manualDelta + negotiationDelta;
-  const canonicalGrossWeekly = (() => {
+  // These MUST match the waterfall's Net and Gross bars exactly.
+  // Net = waterfall adjustedFinal clamped to green band (same as recommendedNwf)
+  // Gross = Net × (1+admin%) / (1-d1%) / (1-d2%) / ...
+  const canonicalNetWeekly = useMemo(() => {
+    if (!recommendation) return 0;
+    // Reproduce waterfall: start from base, apply layer deltas
+    const trace = recommendation.layer_trace;
+    const base = recommendation.base_weekly;
+    const CANONICAL_KEYS = ["Geography", "Sector", "Client Profile", "Strategic Intent"];
+    let running = base;
+    for (const lt of trace) {
+      const key = lt.label.replace(/\s*\(.*?\)\s*$/, "").trim();
+      if (CANONICAL_KEYS.some(k => key.startsWith(k))) {
+        running += (lt.value - running); // apply delta to get to lt.value
+      }
+    }
+    running += manualDelta + negotiationDelta;
+    // Clamp to green band
+    const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
+    const weeklyBench = benchmarks.find(b =>
+      countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+      (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+    );
+    const gLow = weeklyBench?.green_low ?? 0;
+    const gHigh = weeklyBench?.green_high ?? 0;
+    if (gLow > 0 && gHigh > 0) {
+      running = Math.min(gHigh, Math.max(gLow, running));
+    }
+    return Math.round(running);
+  }, [recommendation, manualDelta, negotiationDelta, form.region, benchmarks]);
+
+  const canonicalGrossWeekly = useMemo(() => {
     let g = canonicalNetWeekly * (1 + adminFeePct / 100);
     for (const d of caseDiscounts.filter(d => d.enabled && d.pct > 0)) g /= (1 - d.pct / 100);
     return Math.round(g);
-  })();
+  }, [canonicalNetWeekly, adminFeePct, caseDiscounts]);
 
   // Stats for list view
   const avgTarget = cases.length
@@ -3535,16 +3563,14 @@ export default function PricingTool() {
             const greenHigh = weeklyBenchW?.green_high ?? 0;
             const hasGreenBand = greenLow > 0 && greenHigh > 0;
 
-            // Recommended NWF: clamp to green band (this is the NET price we target)
-            const recommendedNwf = hasGreenBand
-              ? Math.min(greenHigh, Math.max(greenLow, adjustedFinal))
-              : adjustedFinal;
+            // Net and Gross from canonical single source of truth
+            const recommendedNwf = canonicalNetWeekly;
+            const grossWeeklyWaterfall = canonicalGrossWeekly;
 
             // Duration & fee calculation for right panel
             const effectiveDuration = waterfallDuration ?? form.duration_weeks;
 
             // Build markup bars: admin + each enabled discount → Gross
-            // Gross = Net × (1+admin%) / (1-d1%) / (1-d2%) / ...
             let markupRunning = recommendedNwf;
             const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
             if (adminFeePct > 0) {
@@ -3554,11 +3580,9 @@ export default function PricingTool() {
             }
             for (const d of enabledDisc) {
               const newVal = Math.round(markupRunning / (1 - d.pct / 100));
-              const delta = newVal - markupRunning;
               markupBars.push({ label: `${d.name} +${d.pct}%`, start: markupRunning, end: newVal, deltaPct: d.pct });
               markupRunning = newVal;
             }
-            const grossWeeklyWaterfall = markupRunning;
             const hasMarkups = markupBars.length > 0;
 
             // Y-scale — include markup bars in range
@@ -3922,20 +3946,12 @@ export default function PricingTool() {
 
           {/* SECTION D: Price Finalization */}
           {recommendation && nwfClamped > 0 && (() => {
-            const baseWeekly = nwfClamped + manualDelta + negotiationDelta;
             const effectiveDur = (waterfallDuration ?? form.duration_weeks) || 0;
 
-            // Net weekly = recommended price (what we receive)
-            const netWeekly = baseWeekly;
-
-            // Gross weekly = net × (1 + admin%) / (1 - d1%) / (1 - d2%) / ...
-            // Each discount compounds multiplicatively (not additive)
+            // Use canonical single source of truth (same as waterfall Net/Gross)
+            const netWeekly = canonicalNetWeekly;
+            const grossWeekly = canonicalGrossWeekly;
             const enabledDiscounts = caseDiscounts.filter(d => d.enabled && d.pct > 0);
-            let grossWeekly = netWeekly * (1 + adminFeePct / 100);
-            for (const d of enabledDiscounts) {
-              grossWeekly /= (1 - d.pct / 100);
-            }
-            grossWeekly = Math.round(grossWeekly);
 
             const totalGross = Math.round(grossWeekly * effectiveDur);
             const netFees = Math.round(netWeekly * effectiveDur);
@@ -4715,13 +4731,13 @@ export default function PricingTool() {
 
                   {/* ── FEE RANGE ────────────────────────────────────────── */}
                   {(() => {
-                    const d = manualDelta;
-                    const rec = recommendation.target_weekly + d;
+                    // Use canonical values — single source of truth (= waterfall)
+                    const rec = canonicalNetWeekly;
                     const recGM = recommendation.cost_floor_weekly > 0
                       ? ((rec - recommendation.cost_floor_weekly) / rec * 100)
                       : null;
                     const low50 = recommendation.low_50gm_weekly > 0
-                      ? recommendation.low_50gm_weekly + d
+                      ? recommendation.low_50gm_weekly
                       : null;
                     const low50GM = low50 && recommendation.delivery_cost_weekly > 0
                       ? ((low50 - recommendation.delivery_cost_weekly) / low50 * 100)
