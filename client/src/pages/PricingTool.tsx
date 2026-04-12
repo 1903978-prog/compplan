@@ -4244,6 +4244,7 @@ export default function PricingTool() {
                           <TableHeader>
                             <TableRow className="bg-muted/30">
                               <TableHead className="text-[9px] py-1.5">Gross Total<br/><span className="font-normal text-muted-foreground">we invoice</span></TableHead>
+                              <TableHead className="text-[9px] py-1.5">GrossV Total<br/><span className="font-normal text-muted-foreground">incl. var. fee</span></TableHead>
                               <TableHead className="text-[9px] py-1.5">Net Total<br/><span className="font-normal text-muted-foreground">we communicate</span></TableHead>
                               <TableHead className="text-[9px] py-1.5">Gross / Invoice</TableHead>
                               <TableHead className="text-[9px] py-1.5">Variable Fee</TableHead>
@@ -4252,6 +4253,7 @@ export default function PricingTool() {
                           <TableBody>
                             <TableRow>
                               <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(grossTotal)}</TableCell>
+                              <TableCell className="font-mono text-sm font-bold text-amber-700">{fmtC(grossTotal + variableFeeTotal)}</TableCell>
                               <TableCell className="font-mono text-sm font-bold text-emerald-600">{fmtC(netTotal)}</TableCell>
                               <TableCell className="font-mono text-sm font-semibold">{fmtC(grossPerInvoice)}</TableCell>
                               <TableCell className="font-mono text-sm text-amber-600">{fmtC(variableFeeTotal)}</TableCell>
