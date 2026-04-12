@@ -4062,23 +4062,36 @@ export default function PricingTool() {
                         <span className="text-[9px] font-normal text-muted-foreground ml-1">{form.duration_weeks}w × {fmtC(nwfClamped)}/wk</span>
                       </span>
                     </div>
-                    {/* TNF vs Market bars */}
-                    {benchRows.length > 0 && (
-                      <div className="space-y-1.5">
-                        <div className="text-[10px] font-bold uppercase text-muted-foreground">TNF vs Market — {matrixRegion2}</div>
-                        {[...benchRows, { label: "Our TNF", color: "#1A6571", avg: tnf, isOurs: true }].map((t, i) => (
-                          <div key={i} className="space-y-0.5">
-                            <div className="flex justify-between text-[9px] text-muted-foreground">
-                              <span className={(t as any).isOurs ? "font-bold text-[#1A6571]" : ""}>{t.label}</span>
-                              <span className="font-mono">{fmtK2(t.avg)}</span>
-                            </div>
-                            <div className="h-2 bg-muted rounded-full overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width: pctBar(t.avg), backgroundColor: t.color, opacity: (t as any).isOurs ? 1 : 0.7 }} />
-                            </div>
+                    {/* TNF vs Market — single line with dots */}
+                    {benchRows.length > 0 && (() => {
+                      const allPoints = [...benchRows, { label: "Our TNF", color: "#1A6571", avg: tnf, isOurs: true }];
+                      const maxVal = Math.max(...allPoints.map(p => p.avg)) * 1.1;
+                      const pctDot = (v: number) => Math.min(100, Math.max(0, (v / maxVal) * 100));
+                      return (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-bold uppercase text-muted-foreground">TNF vs Market — {matrixRegion2}</div>
+                          <div className="relative h-6 bg-muted/30 rounded-full border border-border/30">
+                            {allPoints.map((t, i) => (
+                              <div key={i} className="absolute top-1/2 -translate-y-1/2" style={{ left: `${pctDot(t.avg)}%` }}>
+                                <div className="relative">
+                                  <div className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${(t as any).isOurs ? "ring-1 ring-[#1A6571]" : ""}`}
+                                    style={{ backgroundColor: t.color, marginLeft: "-7px" }}
+                                    title={`${t.label}: ${fmtK2(t.avg)}`} />
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                          <div className="flex justify-between flex-wrap gap-x-3 gap-y-0.5">
+                            {allPoints.map((t, i) => (
+                              <span key={i} className="text-[8px] flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: t.color }} />
+                                <span className={(t as any).isOurs ? "font-bold text-[#1A6571]" : "text-muted-foreground"}>{t.label} {fmtK2(t.avg)}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {/* Band bars */}
                     <BandBar bench={weeklyBench} marker={canonicalNetWeekly} label={`Weekly — ${weeklyBench?.country ?? form.region} · PE >${form.revenue_band === "above_1b" ? "€1B" : "€500M"}`} />
                     <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total cost — ${totalBench?.country ?? form.region}`} />
