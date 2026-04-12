@@ -75,13 +75,29 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
 
 function Navigation() {
   const [apiPaused, setApiPaused] = useState<boolean | null>(null);
+  const [location] = useLocation();
 
+  // Load initial state
   useEffect(() => {
     fetch("/api/api-pause", { credentials: "include" })
       .then(r => r.json())
       .then(d => setApiPaused(!!d.paused))
       .catch(() => {});
   }, []);
+
+  // Auto-pause API every time the user navigates to a different page
+  const prevLocation = useRef(location);
+  useEffect(() => {
+    if (prevLocation.current !== location) {
+      prevLocation.current = location;
+      // Fire-and-forget: pause the API on navigation
+      fetch("/api/api-pause", {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused: true }),
+      }).then(() => setApiPaused(true)).catch(() => {});
+    }
+  }, [location]);
 
   const toggleApiPause = async () => {
     const newState = !apiPaused;
