@@ -4216,7 +4216,17 @@ export default function PricingTool() {
                           toast({ title: "Template saved" });
                         }}>Save Template</Button>
                         <Button size="sm" variant="ghost" onClick={() => setEditingTemplate(false)}>Cancel</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setTemplateLocal(DEFAULT_PROPOSAL_TEMPLATE)}>Reset to Default</Button>
+                        <Button size="sm" variant="ghost" onClick={async () => {
+                          setTemplateLocal(DEFAULT_PROPOSAL_TEMPLATE);
+                          const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), proposal_template: DEFAULT_PROPOSAL_TEMPLATE };
+                          await fetch("/api/pricing/settings", {
+                            method: "PUT", credentials: "include",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(updated),
+                          });
+                          setSettings(updated);
+                          toast({ title: "Template reset to default and saved" });
+                        }}>Reset to Default</Button>
                       </div>
                     </div>
                   )}
