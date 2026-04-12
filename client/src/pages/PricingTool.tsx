@@ -3941,7 +3941,7 @@ export default function PricingTool() {
                         return <>
                           <line x1={25} x2={W - 5} y1={lowY} y2={lowY}
                             stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.6" />
-                          <text x={W - 6} y={lowY - 2} textAnchor="end" fontSize="7" fill="#94a3b8" opacity="0.8">
+                          <text x={W - 6} y={lowY + 10} textAnchor="end" fontSize="7" fill="#94a3b8" opacity="0.9">
                             Low {fmt(recommendation.low_50gm_weekly)}
                           </text>
                         </>;
