@@ -443,7 +443,7 @@ export default function PricingTool() {
   const [markingOutcome, setMarkingOutcome] = useState(false);
   const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
-  const [teamPreset, setTeamPreset] = useState<string>("full");
+  const [teamPreset, setTeamPreset] = useState<string>("1+2");
   const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
   const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
   const [editingBenchmarks, setEditingBenchmarks] = useState(false);
@@ -610,8 +610,8 @@ export default function PricingTool() {
 
   const openNewForm = () => {
     const base = emptyCase();
-    if (settings) base.staffing = buildStaffingFromPreset("full", settings);
-    setTeamPreset("full");
+    if (settings) base.staffing = buildStaffingFromPreset("1+2", settings);
+    setTeamPreset("1+2");
     setForm(base);
     setView("form");
     setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
@@ -3854,6 +3854,39 @@ export default function PricingTool() {
                     </TableBody>
                   </Table>
                 </div>
+
+                {/* GM boxes — below fee table */}
+                {recommendation && recommendation.delivery_cost_weekly > 0 && (() => {
+                  const teamCostWk = recommendation.delivery_cost_weekly;
+                  const teamCostTotal = Math.round(teamCostWk * effectiveDur);
+                  const gmWeekly = netWeekly - teamCostWk;
+                  const gmTotal = netFees - teamCostTotal;
+                  const gmPctWk = netWeekly > 0 ? (gmWeekly / netWeekly * 100) : 0;
+                  const gmPctTotal = netFees > 0 ? (gmTotal / netFees * 100) : 0;
+                  const gmColor = gmPctTotal >= 50 ? "text-emerald-600" : gmPctTotal >= 30 ? "text-amber-600" : "text-red-600";
+                  return (
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="border rounded-lg p-2.5 bg-background text-center">
+                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">GM /wk</div>
+                        <div className={`text-base font-bold ${gmColor}`}>{fmtC(gmWeekly)}</div>
+                        <div className="text-[9px] text-muted-foreground">net {fmtC(netWeekly)} − cost {fmtC(teamCostWk)}</div>
+                      </div>
+                      <div className="border rounded-lg p-2.5 bg-background text-center">
+                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">GM %</div>
+                        <div className={`text-base font-bold ${gmColor}`}>{gmPctWk.toFixed(0)}%</div>
+                      </div>
+                      <div className="border rounded-lg p-2.5 bg-background text-center">
+                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">Total GM</div>
+                        <div className={`text-base font-bold ${gmColor}`}>{fmtC(gmTotal)}</div>
+                        <div className="text-[9px] text-muted-foreground">{fmtC(netFees)} − {fmtC(teamCostTotal)}</div>
+                      </div>
+                      <div className="border rounded-lg p-2.5 bg-background text-center">
+                        <div className="text-[9px] text-muted-foreground uppercase font-semibold">Total GM %</div>
+                        <div className={`text-base font-bold ${gmColor}`}>{gmPctTotal.toFixed(0)}%</div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Won / Lost buttons */}
                 <div className="flex items-center gap-3 pt-1">
