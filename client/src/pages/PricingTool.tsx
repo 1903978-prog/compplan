@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil, RefreshCw,
+  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
@@ -776,6 +776,46 @@ export default function PricingTool() {
     setShowEditProposalForm(true);
   };
 
+  const downloadProposalsCsv = () => {
+    const cols: { key: keyof PricingProposal; label: string }[] = [
+      { key: "proposal_date", label: "Date" },
+      { key: "project_name", label: "Project" },
+      { key: "client_name", label: "Client" },
+      { key: "fund_name", label: "Fund" },
+      { key: "region", label: "Region" },
+      { key: "country", label: "Country" },
+      { key: "sector", label: "Sector" },
+      { key: "project_type", label: "Type" },
+      { key: "pe_owned", label: "PE owned" },
+      { key: "revenue_band", label: "Revenue band" },
+      { key: "duration_weeks", label: "Duration (w)" },
+      { key: "currency", label: "Currency" },
+      { key: "weekly_price", label: "Weekly price" },
+      { key: "total_fee", label: "Total fee" },
+      { key: "outcome", label: "Outcome" },
+      { key: "loss_reason", label: "Loss reason" },
+      { key: "notes", label: "Notes" },
+    ];
+    const esc = (v: unknown): string => {
+      if (v === null || v === undefined) return "";
+      const s = typeof v === "boolean" ? (v ? "true" : "false") : String(v);
+      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = cols.map(c => c.label).join(";");
+    const rows = proposals.map(p => cols.map(c => esc((p as any)[c.key])).join(";"));
+    const csv = "\ufeff" + [header, ...rows].join("\n"); // BOM for Excel UTF-8
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `past_projects_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({ title: "CSV downloaded", description: `${proposals.length} projects exported.` });
+  };
+
   const markProjectOutcome = async (outcome: "won" | "lost") => {
     if (!recommendation) return;
     setMarkingOutcome(true);
@@ -1000,9 +1040,14 @@ export default function PricingTool() {
               <Plus className="w-4 h-4 mr-2" /> New Pricing Case
             </Button>
           ) : mainTab === "history" ? (
-            <Button onClick={() => setShowHistoryForm(true)}>
-              <Plus className="w-4 h-4 mr-2" /> Import Excel / Paste
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={downloadProposalsCsv} disabled={proposals.length === 0}>
+                <Download className="w-4 h-4 mr-2" /> Download CSV
+              </Button>
+              <Button onClick={() => setShowHistoryForm(true)}>
+                <Plus className="w-4 h-4 mr-2" /> Import Excel / Paste
+              </Button>
+            </div>
           ) : null}
         </div>
 
