@@ -1885,6 +1885,134 @@ export default function PricingTool() {
               </CardContent>
             </Card>
 
+            {/* ── Win-Loss Scatter by Country ──────────────────────── */}
+            {(() => {
+              const wl = proposals.filter(p => p.outcome === "won" || p.outcome === "lost");
+              if (wl.length === 0) return null;
+              const byCountry = new Map<string, PricingProposal[]>();
+              for (const p of wl) {
+                const key = p.country || p.region || "—";
+                if (!byCountry.has(key)) byCountry.set(key, []);
+                byCountry.get(key)!.push(p);
+              }
+              const countries = [...byCountry.entries()]
+                .filter(([, ps]) => ps.length > 0)
+                .sort((a, b) => b[1].length - a[1].length);
+              if (countries.length === 0) return null;
+
+              return (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold uppercase tracking-wide">Win-Loss Distribution by Country</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4">
+                      {countries.map(([country, cps]) => {
+                        const won = cps.filter(p => p.outcome === "won");
+                        const lost = cps.filter(p => p.outcome === "lost");
+                        const prices = cps.map(p => p.weekly_price);
+                        const minP = Math.min(...prices);
+                        const maxP = Math.max(...prices);
+                        const range = maxP - minP || Math.max(maxP, 1);
+                        const pad = range * 0.1;
+                        const sMin = Math.max(0, minP - pad);
+                        const sMax = maxP + pad;
+                        const sRange = sMax - sMin || 1;
+                        const avgWon = won.length ? won.reduce((s, p) => s + p.weekly_price, 0) / won.length : null;
+                        const avgLost = lost.length ? lost.reduce((s, p) => s + p.weekly_price, 0) / lost.length : null;
+                        const sym = getCurrencyForRegion(cps[0].region).symbol;
+                        const fmtK2 = (n: number) => `${sym}${Math.round(n / 1000)}k`;
+                        const W = 320, H = 90;
+                        const padL = 6, padR = 6, padT = 8, padB = 18;
+                        const plotW = W - padL - padR;
+                        const xAt = (v: number) => padL + ((v - sMin) / sRange) * plotW;
+
+                        return (
+                          <div key={country} className="border rounded-lg p-2.5 bg-background">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[11px] font-bold uppercase tracking-wide">{country}</span>
+                              <div className="flex items-center gap-1.5 text-[9px]">
+                                <span className="text-emerald-600 font-semibold">{won.length}W</span>
+                                <span className="text-muted-foreground">·</span>
+                                <span className="text-red-500 font-semibold">{lost.length}L</span>
+                              </div>
+                            </div>
+                            <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+                              <rect x={padL} y={padT} width={plotW} height={H - padT - padB}
+                                fill="#f8fafc" stroke="#e2e8f0" strokeWidth="0.5" rx="2" />
+                              {/* won band (avg ±10%) */}
+                              {avgWon != null && (
+                                <rect
+                                  x={xAt(avgWon * 0.9)}
+                                  y={padT}
+                                  width={Math.max(2, xAt(avgWon * 1.1) - xAt(avgWon * 0.9))}
+                                  height={H - padT - padB}
+                                  fill="#dcfce7" opacity="0.7"
+                                />
+                              )}
+                              {/* avg markers */}
+                              {avgWon != null && (
+                                <line x1={xAt(avgWon)} y1={padT} x2={xAt(avgWon)} y2={H - padB}
+                                  stroke="#10b981" strokeWidth="1.2" strokeDasharray="2,2" />
+                              )}
+                              {avgLost != null && (
+                                <line x1={xAt(avgLost)} y1={padT} x2={xAt(avgLost)} y2={H - padB}
+                                  stroke="#ef4444" strokeWidth="1.2" strokeDasharray="2,2" />
+                              )}
+                              {/* won dots */}
+                              {won.map((p, i) => (
+                                <circle key={`w${i}`} cx={xAt(p.weekly_price)}
+                                  cy={padT + 12 + (i % 3) * 10} r="3.5"
+                                  fill="#10b981" opacity="0.85" stroke="#065f46" strokeWidth="0.4">
+                                  <title>{p.project_name} · Won · {fmtK2(p.weekly_price)}/wk</title>
+                                </circle>
+                              ))}
+                              {/* lost dots */}
+                              {lost.map((p, i) => (
+                                <circle key={`l${i}`} cx={xAt(p.weekly_price)}
+                                  cy={padT + 42 + (i % 3) * 10} r="3.5"
+                                  fill="#ef4444" opacity="0.85" stroke="#7f1d1d" strokeWidth="0.4">
+                                  <title>{p.project_name} · Lost · {fmtK2(p.weekly_price)}/wk</title>
+                                </circle>
+                              ))}
+                              {/* scale labels */}
+                              <text x={padL} y={H - 4} fontSize="7" fill="#94a3b8">{fmtK2(sMin)}</text>
+                              <text x={W - padR} y={H - 4} fontSize="7" fill="#94a3b8" textAnchor="end">{fmtK2(sMax)}</text>
+                              <text x={W / 2} y={H - 4} fontSize="7" fill="#94a3b8" textAnchor="middle">{fmtK2((sMin + sMax) / 2)}</text>
+                            </svg>
+                            <div className="flex items-center justify-between text-[9px] mt-0.5">
+                              <span className="text-emerald-700 font-mono">
+                                {avgWon != null ? `avg won ${fmtK2(avgWon)}` : "—"}
+                              </span>
+                              <span className="text-red-600 font-mono">
+                                {avgLost != null ? `avg lost ${fmtK2(avgLost)}` : "—"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center gap-4 mt-3 text-[10px] text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Won
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-2.5 h-2.5 rounded-full bg-red-500" /> Lost
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-2 bg-emerald-200 rounded-sm" /> Won avg ±10%
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-0.5 bg-emerald-500" /> Avg won
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-0.5 bg-red-500" /> Avg lost
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
 
             {/* ── Regions Admin ──────────────────────────────────────── */}
             <Card>
