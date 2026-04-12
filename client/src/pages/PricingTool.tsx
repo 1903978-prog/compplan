@@ -346,7 +346,7 @@ function emptyCase(): PricingCase {
     project_name: "CLI01", client_name: "", fund_name: "CARLYLE",
     region: "IT", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
-    project_type: "transformation", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
+    project_type: "spark", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
     commercial_maturity: null, urgency: null, competitive_intensity: "limited",
     competitor_type: "none", ownership_type: null, strategic_intent: "enter",
     procurement_involvement: null,
@@ -3368,7 +3368,7 @@ export default function PricingTool() {
                 {form.company_revenue_m && form.ebitda_margin_pct ? (
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Computed EBITDA</Label>
-                    <div className="text-sm font-semibold text-emerald-700">€{((form.company_revenue_m * form.ebitda_margin_pct / 100) * 1_000_000).toLocaleString("it-IT")}</div>
+                    <div className="text-sm font-semibold text-emerald-700">€{(form.company_revenue_m * form.ebitda_margin_pct / 100).toFixed(1)}M</div>
                   </div>
                 ) : null}
                 {/* Incremental aspiration EBITDA (% increase) */}
@@ -3751,13 +3751,23 @@ export default function PricingTool() {
                       <Label className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Duration</Label>
                       <Select
                         value={String(waterfallDuration ?? form.duration_weeks)}
-                        onValueChange={v => setWaterfallDuration(Number(v))}
+                        onValueChange={v => {
+                          if (v === "other") {
+                            const weeks = window.prompt("Enter number of weeks:", "10");
+                            if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) {
+                              setWaterfallDuration(Number(weeks));
+                            }
+                          } else {
+                            setWaterfallDuration(Number(v));
+                          }
+                        }}
                       >
                         <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {[6, 8, 12, 16, 24].map(w => (
                             <SelectItem key={w} value={String(w)}>{w} weeks</SelectItem>
                           ))}
+                          <SelectItem value="other">Other…</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -4809,34 +4819,12 @@ export default function PricingTool() {
                     </span>
                   </div>
 
-                  {/* ── WIN PROBABILITY + MARGIN + COST FLOOR ────────────── */}
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <div className="text-center rounded-lg bg-muted/30 px-2 py-2">
-                      <div className="text-[9px] uppercase font-bold text-muted-foreground">Win Prob</div>
-                      <div className={`text-base font-bold mt-0.5 ${recommendation.win_probability != null && recommendation.win_probability >= 0.5 ? "text-emerald-600" : "text-amber-600"}`}>
-                        {recommendation.win_probability != null ? `${Math.round(recommendation.win_probability * 100)}%` : "—"}
-                      </div>
-                      {recommendation.win_probability != null && (
-                        <div className="mt-1 h-1 bg-muted rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${recommendation.win_probability >= 0.5 ? "bg-emerald-500" : "bg-amber-500"}`}
-                            style={{ width: `${recommendation.win_probability * 100}%` }} />
-                        </div>
-                      )}
+                  {/* Cost floor reference */}
+                  {recommendation.cost_floor_weekly > 0 && (
+                    <div className="text-[10px] text-muted-foreground px-0.5">
+                      Cost floor: <span className="font-semibold">{fmt(recommendation.cost_floor_weekly)}/wk</span>
                     </div>
-                    <div className="text-center rounded-lg bg-muted/30 px-2 py-2">
-                      <div className="text-[9px] uppercase font-bold text-muted-foreground">Exp. Margin</div>
-                      <div className="text-base font-bold text-emerald-600 mt-0.5">
-                        {recommendation.expected_margin_pct != null && recommendation.expected_margin_pct > 0
-                          ? `${recommendation.expected_margin_pct.toFixed(0)}%` : "—"}
-                      </div>
-                    </div>
-                    <div className="text-center rounded-lg bg-muted/30 px-2 py-2">
-                      <div className="text-[9px] uppercase font-bold text-muted-foreground">Cost Floor</div>
-                      <div className="text-xs font-bold mt-0.5 text-muted-foreground">
-                        {recommendation.cost_floor_weekly > 0 ? fmt(recommendation.cost_floor_weekly) : "—"}
-                      </div>
-                    </div>
-                  </div>
+                  )}
 
                   {/* ── LAYER TRACE ──────────────────────────────────────── */}
                   {recommendation.layer_trace.length > 0 && (
