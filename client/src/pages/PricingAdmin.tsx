@@ -1351,8 +1351,29 @@ interface RateMatrixTabProps {
 }
 
 function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProps) {
-  const matrix: RateMatrixRow[] = settings.rate_matrix ?? [];
   const regions = settings.regions ?? [];
+
+  // Ensure all 6 default rows exist (3 PE + 3 Family). If the saved matrix
+  // is missing rows (e.g. old "PE/LBO" single row), fill in from defaults.
+  const REQUIRED_ROWS = [
+    "PE >€1B", "PE €200M-€1B", "PE <€200M",
+    "Family >€200M", "Family €100M-€200M", "Family <€100M",
+  ];
+  const rawMatrix: RateMatrixRow[] = settings.rate_matrix ?? [];
+  const matrix: RateMatrixRow[] = REQUIRED_ROWS.map(ct => {
+    const existing = rawMatrix.find(r => r.client_type === ct);
+    if (existing) return existing;
+    // Pull from defaults
+    const def = DEFAULT_ADMIN_SETTINGS.rate_matrix.find(r => r.client_type === ct);
+    return def ?? { client_type: ct, rates: {} };
+  });
+  // Also keep any custom rows the user added beyond the 6 defaults
+  const extraRows = rawMatrix.filter(r => !REQUIRED_ROWS.includes(r.client_type));
+  const fullMatrix = [...matrix, ...extraRows];
+  // If we added missing rows, persist them
+  if (fullMatrix.length !== rawMatrix.length || REQUIRED_ROWS.some(ct => !rawMatrix.find(r => r.client_type === ct))) {
+    setTimeout(() => onChange({ rate_matrix: fullMatrix }), 0);
+  }
 
   // Find the baseline region (Italy by default)
   const baselineRegion = regions.find(r => r.is_baseline) ?? regions[0];
@@ -1371,7 +1392,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
 
   // When user edits the baseline, auto-compute all other regions
   const updateBaselineCell = (rowIdx: number, field: "min_weekly" | "max_weekly", value: number) => {
-    const newMatrix = matrix.map((row, i) => {
+    const newMatrix = fullMatrix.map((row, i) => {
       if (i !== rowIdx) return row;
       const newRates = { ...row.rates };
       // Update baseline
@@ -1396,7 +1417,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
   };
 
   const toggleAvoid = (rowIdx: number, region: string, avoid: boolean) => {
-    const newMatrix = matrix.map((row, i) => {
+    const newMatrix = fullMatrix.map((row, i) => {
       if (i !== rowIdx) return row;
       const cell = row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
       const newRates = { ...row.rates, [region]: { ...cell, avoid } };
@@ -1415,8 +1436,8 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
     onChange({ rate_matrix: newMatrix });
   };
 
-  const peRows = matrix.filter(r => r.client_type.startsWith("PE"));
-  const familyRows = matrix.filter(r => !r.client_type.startsWith("PE"));
+  const peRows = fullMatrix.filter(r => r.client_type.startsWith("PE"));
+  const familyRows = fullMatrix.filter(r => !r.client_type.startsWith("PE"));
 
   const fmtK = (n: number) => n >= 1000 ? `€${Math.round(n / 1000)}k` : `€${n}`;
   const fmtN = (n: number) => n.toLocaleString("it-IT");
@@ -1452,7 +1473,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
           </thead>
           <tbody>
             {rows.map((row, ri) => {
-              const rowIdx = matrix.indexOf(row);
+              const rowIdx = fullMatrix.indexOf(row);
               const isBase = (region: string) => region === baselineLabel;
               return (
                 <tr key={row.client_type} className={ri % 2 === 0 ? "bg-background" : "bg-muted/20"}>
