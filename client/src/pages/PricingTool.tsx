@@ -1386,14 +1386,24 @@ export default function PricingTool() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Region</Label>
-                      <Select value={historyForm.region || ""} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select region" /></SelectTrigger>
-                        <SelectContent>
-                          {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).filter(r => r.region_name).map(r => (
-                            <SelectItem key={r.region_name} value={r.region_name}>{r.region_name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      {(() => {
+                        const regionList = (settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).filter(r => r.region_name);
+                        const currentRegion = historyForm.region || "";
+                        const inList = regionList.some(r => r.region_name === currentRegion);
+                        return (
+                          <Select value={currentRegion} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
+                            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select region" /></SelectTrigger>
+                            <SelectContent>
+                              {!inList && currentRegion && (
+                                <SelectItem key={currentRegion} value={currentRegion}>{currentRegion}</SelectItem>
+                              )}
+                              {regionList.map(r => (
+                                <SelectItem key={r.region_name} value={r.region_name}>{r.region_name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        );
+                      })()}
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Sector</Label>
