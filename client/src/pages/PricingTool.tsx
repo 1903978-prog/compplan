@@ -301,8 +301,8 @@ function emptyCase(): PricingCase {
     competitor_type: "none", ownership_type: null, strategic_intent: "enter",
     procurement_involvement: null,
     target_roi: 10, max_fees_ebitda_pct: 3,
-    aspiration_ebitda_pct: null,
-    company_revenue_m: 300, aspiration_ebitda_eur: 5000000,
+    aspiration_ebitda_pct: 10,
+    company_revenue_m: 300, aspiration_ebitda_eur: null,
     relationship_type: "new", decision_maker: "ceo", budget_disclosed_eur: null,
     incumbent_advisor: null, geographic_scope: "multi", value_driver: null,
     differentiation: null, risk_flags: null, problem_statement: null,
@@ -1764,14 +1764,14 @@ export default function PricingTool() {
                     <div className="text-[9px] text-muted-foreground">EBITDA = Revenue × Margin%</div>
                   )}
                 </div>
-                {/* Incremental aspiration EBITDA (absolute €) */}
+                {/* Incremental aspiration EBITDA (% increase) */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Incremental Aspiration EBITDA (€)</Label>
-                  <Input type="number" min="0" step="100000"
-                    placeholder="e.g. 5000000"
-                    value={form.aspiration_ebitda_eur ?? ""}
-                    onChange={e => setForm(f => ({ ...f, aspiration_ebitda_eur: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
-                  <div className="text-[9px] text-muted-foreground">Absolute €, not %. Used in TNF/Aspiration ratio below.</div>
+                  <Label className="text-xs">Aspiration EBITDA increase (%)</Label>
+                  <Input type="number" min="0" max="200" step="1"
+                    placeholder="e.g. 10"
+                    value={form.aspiration_ebitda_pct ?? ""}
+                    onChange={e => setForm(f => ({ ...f, aspiration_ebitda_pct: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
+                  <div className="text-[9px] text-muted-foreground">% increase in EBITDA targeted by the project. Used in TNF/Aspiration ratio below.</div>
                 </div>
                 {/* Strategic intent */}
                 <div className="space-y-1">
@@ -2122,7 +2122,8 @@ export default function PricingTool() {
             const revenueM = form.company_revenue_m ?? 0;
             const ebitdaPct = form.ebitda_margin_pct ?? 0;
             const currentEbitda = revenueM > 0 && ebitdaPct > 0 ? revenueM * 1_000_000 * ebitdaPct / 100 : 0;
-            const aspirationEur = form.aspiration_ebitda_eur ?? 0;
+            const aspirationIncreasePct = form.aspiration_ebitda_pct ?? 0;
+            const aspirationEur = currentEbitda > 0 && aspirationIncreasePct > 0 ? currentEbitda * aspirationIncreasePct / 100 : 0;
             const tnfEbitdaRatio = currentEbitda > 0 ? tnf / currentEbitda : null;
             const tnfAspirationRatio = aspirationEur > 0 ? tnf / aspirationEur : null;
 
@@ -2184,10 +2185,10 @@ export default function PricingTool() {
                       {tnfAspirationRatio != null ? (
                         <span className="text-sm font-bold">
                           {(tnfAspirationRatio * 100).toFixed(1)}%
-                          <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(aspirationEur)}</span>
+                          <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(aspirationEur)} ({aspirationIncreasePct}% incr.)</span>
                         </span>
                       ) : (
-                        <span className="text-[10px] text-muted-foreground italic">Set Incremental Aspiration EBITDA above</span>
+                        <span className="text-[10px] text-muted-foreground italic">Set Revenue, EBITDA margin + aspiration % above</span>
                       )}
                     </div>
                   </div>
