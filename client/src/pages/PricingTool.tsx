@@ -405,7 +405,7 @@ function ArcGauge({ ratio, label, denomLabel, maxRatio = 0.2, benchmark }: {
   );
 }
 
-type CountryFeeRow = { country: string; won: number; lost: number; winRate: number | null; avgWon: number | null; avgLost: number | null; };
+type CountryFeeRow = { country: string; won: number; lost: number; winRate: number | null; avgWon: number | null; avgLost: number | null; avgWonWeekly: number | null; avgLostWeekly: number | null; };
 
 export default function PricingTool() {
   const { toast } = useToast();
@@ -483,6 +483,8 @@ export default function PricingTool() {
         winRate: total > 0 ? won.length / total : null,
         avgWon: won.length > 0 ? won.reduce((s, p) => s + totalFee(p), 0) / won.length : null,
         avgLost: lost.length > 0 ? lost.reduce((s, p) => s + totalFee(p), 0) / lost.length : null,
+        avgWonWeekly: won.length > 0 ? won.reduce((s, p) => s + p.weekly_price, 0) / won.length : null,
+        avgLostWeekly: lost.length > 0 ? lost.reduce((s, p) => s + p.weekly_price, 0) / lost.length : null,
       };
     });
   };
@@ -2383,6 +2385,8 @@ export default function PricingTool() {
                             <TableHead className="text-white text-xs font-bold py-2 text-center">Won</TableHead>
                             <TableHead className="text-white text-xs font-bold py-2 text-center">Lost</TableHead>
                             <TableHead className="text-white text-xs font-bold py-2 text-center">Win Rate</TableHead>
+                            <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Won /wk</TableHead>
+                            <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Lost /wk</TableHead>
                             <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Won (€)</TableHead>
                             <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Lost (€)</TableHead>
                           </TableRow>
@@ -2397,6 +2401,12 @@ export default function PricingTool() {
                                 <TableCell className="text-xs text-center font-semibold text-red-500 py-2">{r.lost}</TableCell>
                                 <TableCell className="text-xs text-center py-2">
                                   {!hasData ? "—" : r.winRate != null ? `${Math.round(r.winRate * 100)}%` : "—"}
+                                </TableCell>
+                                <TableCell className="text-xs text-right font-mono font-semibold text-emerald-700 py-2">
+                                  {r.avgWonWeekly != null ? fmtFee(r.avgWonWeekly) : <span className="text-muted-foreground font-normal">-</span>}
+                                </TableCell>
+                                <TableCell className="text-xs text-right font-mono font-semibold text-red-600 py-2">
+                                  {r.avgLostWeekly != null ? fmtFee(r.avgLostWeekly) : <span className="text-muted-foreground font-normal">-</span>}
                                 </TableCell>
                                 <TableCell className="text-xs text-right font-mono py-2">
                                   {r.won > 0 ? fmtFee(r.avgWon) : <span className="text-muted-foreground">-</span>}
