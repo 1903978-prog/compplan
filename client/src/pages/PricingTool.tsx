@@ -872,7 +872,9 @@ export default function PricingTool() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        toast({ title: "Proposal updated" });
+        // Auto-sync client fields to sibling projects
+        const synced = await syncClientFields(historyForm);
+        toast({ title: "Proposal updated", description: synced > 0 ? `${synced} sibling project${synced > 1 ? "s" : ""} synced.` : undefined });
       } else {
         await fetch("/api/pricing/proposals", {
           method: "POST", credentials: "include",
@@ -1098,10 +1100,27 @@ export default function PricingTool() {
           </Select>
         </div>
       )}
-      <div className="flex gap-2 pt-1">
+      <div className="flex gap-2 pt-1 flex-wrap">
         <Button size="sm" onClick={saveProposal} disabled={savingProposal}>
           {savingProposal ? "Saving…" : "Save"}
         </Button>
+        {editingProposalId && (
+          <Button size="sm" variant="outline" onClick={async () => {
+            const siblings = proposals.filter(p =>
+              p.id !== editingProposalId &&
+              (p.client_name || "").trim().toLowerCase() === (historyForm.client_name || "").trim().toLowerCase()
+            );
+            if (!siblings.length) {
+              toast({ title: "No other projects for this client" });
+              return;
+            }
+            const count = await syncClientFields(historyForm);
+            toast({ title: `Synced to ${count} sibling project${count !== 1 ? "s" : ""}`, description: "Region, fund, revenue and EBITDA % copied." });
+          }} title="Copy region, fund, revenue and EBITDA % to all projects of same client">
+            <Users className="w-3.5 h-3.5 mr-1.5" />
+            Sync to client
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={() => { setShowEditProposalForm(false); setEditingProposalId(null); setHistoryForm(emptyProposal()); }}>
           Cancel
         </Button>
@@ -1196,6 +1215,40 @@ export default function PricingTool() {
     if (!confirm("Delete this past proposal?")) return;
     await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
     loadAll();
+  };
+
+  // Propagate region / fund / revenue / ebitda from one proposal to all same-client proposals.
+  // Only overwrites fields that are non-null/non-empty in `source`.
+  const syncClientFields = async (source: PricingProposal, currentProposals?: PricingProposal[]) => {
+    const clientName = (source.client_name || "").trim().toLowerCase();
+    if (!clientName) return 0;
+    const pool = currentProposals ?? proposals;
+    const siblings = pool.filter(p => p.id !== source.id && (p.client_name || "").trim().toLowerCase() === clientName);
+    if (!siblings.length) return 0;
+
+    // Build the patch (only include fields that have a value in source)
+    const patch: Partial<PricingProposal> = {};
+    if (source.region) patch.region = source.region;
+    if (source.fund_name) patch.fund_name = source.fund_name;
+    if (source.company_revenue_m != null) patch.company_revenue_m = source.company_revenue_m;
+    if (source.ebitda_margin_pct != null) patch.ebitda_margin_pct = source.ebitda_margin_pct;
+    if (!Object.keys(patch).length) return 0;
+
+    // Optimistic local update
+    setProposals(prev => prev.map(p =>
+      siblings.some(s => s.id === p.id) ? { ...p, ...patch } : p
+    ));
+
+    // Fire PUTs in parallel (fire-and-forget, no blocking)
+    await Promise.all(siblings.map(sib =>
+      fetch(`/api/pricing/proposals/${sib.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...sib, ...patch, pe_owned: sib.pe_owned ? 1 : 0 }),
+      }).catch(() => {})
+    ));
+
+    return siblings.length;
   };
 
   // Inline one-field update for the past-projects table (e.g. team_size).
