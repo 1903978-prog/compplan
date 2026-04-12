@@ -4379,9 +4379,11 @@ export default function PricingTool() {
                     const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
                     const hasDiscounts = enabledDisc.length > 0 || variableFeePct > 0;
 
-                    // Headline gross = gross total + success fees, / (1-oneoff) if applicable
-                    const successFeeTotal = variableFeePct > 0 ? Math.round(netTotal * variableFeePct / 100) : 0;
-                    const headlineGross = grossTotal + successFeeTotal;
+                    // GROSSV total = gross total + variable fee (same base as waterfall)
+                    const varFeeTotal = Math.round(grossWk * variableFeePct / 100 * dur);
+                    const grossVTotal = grossTotal + varFeeTotal;
+                    // Headline = GROSSV (the all-inclusive number we report)
+                    const headlineGross = grossVTotal;
 
                     // Identify specific discount types by name pattern
                     const promptPayment = enabledDisc.find(d => /prompt|payment/i.test(d.name));
@@ -4419,7 +4421,7 @@ export default function PricingTool() {
                       REBATE_PERCENT: rebatePct > 0 ? String(rebatePct) : "",
                       REBATE_AMOUNT: rebatePct > 0 ? fmtP(rebateAmt) : "",
                       SUCCESS_FEE_PERCENT: variableFeePct > 0 ? String(variableFeePct) : "",
-                      SUCCESS_FEE_AMOUNT: variableFeePct > 0 ? fmtP(successFeeTotal) : "",
+                      SUCCESS_FEE_AMOUNT: variableFeePct > 0 ? fmtP(varFeeTotal) : "",
                       NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE: fmtP(netTotal),
                       NUMBER_OF_INVOICES: String(invoiceCount),
                       ADMINISTRATION_FEE_PERCENT: String(adminFeePct),
