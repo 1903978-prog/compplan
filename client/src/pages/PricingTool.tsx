@@ -4361,7 +4361,7 @@ export default function PricingTool() {
                       ? recommendation.low_50gm_weekly + d
                       : null;
                     const low50GM = low50 && recommendation.delivery_cost_weekly > 0
-                      ? ((low50 - recommendation.delivery_cost_weekly * (1 + 0.15)) / low50 * 100)
+                      ? ((low50 - recommendation.delivery_cost_weekly) / low50 * 100)
                       : 50;
                     const highMkt = recommendation.high_market_weekly;
                     return (
@@ -4408,7 +4408,7 @@ export default function PricingTool() {
                           <div>
                             <span className="font-semibold text-foreground/70">Low:</span>{" "}
                             {low50
-                              ? `${fmt(low50)}/wk = minimum to achieve 50% GM on team costs (staff ${fmt(recommendation.delivery_cost_weekly)}/wk + 15% overhead = ${fmt(Math.round(recommendation.delivery_cost_weekly * 1.15))}/wk × 2)`
+                              ? `${fmt(low50)}/wk = minimum to achieve 50% GM on team daily costs (${fmt(recommendation.delivery_cost_weekly)}/wk × 2)`
                               : "No staffing cost data — enter team build-up to compute"}
                           </div>
                           <div>

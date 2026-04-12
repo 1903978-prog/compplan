@@ -422,7 +422,7 @@ export interface PricingRecommendation {
   high_total: number;
   // Cost-based low and market-based high
   delivery_cost_weekly: number;       // raw staff cost (before overhead/margin)
-  low_50gm_weekly: number;            // price at exactly 50% GM on team+overhead costs
+  low_50gm_weekly: number;            // price at exactly 50% GM on raw team daily costs
   high_market_weekly: number | null;  // highest won price in same region+fund/client context
   high_market_context: string | null; // description of what data was used for high end
   posture: "Defensive" | "Balanced" | "Assertive";
@@ -1161,12 +1161,11 @@ export function calculatePricing(
   const target_total = target_weekly * input.duration_weeks;
   const high_total   = high_weekly   * input.duration_weeks;
 
-  // ── Cost-based low: 50% GM on team+overhead costs ────────────────────────
-  // delivery_cost_weekly = raw staff cost; team+overhead = staff × (1+OVERHEAD_PCT)
-  // 50% GM → price = team_cost_with_overhead / (1 - 0.5) = team_cost_with_overhead × 2
-  const team_cost_with_overhead = delivery_cost_weekly * (1 + OVERHEAD_PCT);
+  // ── Cost-based low: 50% GM on raw team daily costs ───────────────────────
+  // delivery_cost_weekly = raw staff cost (days × daily_rate × headcount)
+  // 50% GM → price = delivery_cost_weekly / (1 - 0.5) = delivery_cost_weekly × 2
   const low_50gm_weekly = delivery_cost_weekly > 0
-    ? Math.round((team_cost_with_overhead / 0.5) / 500) * 500
+    ? Math.round((delivery_cost_weekly * 2) / 500) * 500
     : 0;
 
   // ── Market-based high: max won price in best available context ───────────
