@@ -1404,6 +1404,7 @@ export default function PricingTool() {
       // Pick the "best source" per field — first non-empty value found
       const bestRegion  = group.map(p => p.region).find(v => v && v.trim());
       const bestFund    = group.map(p => p.fund_name).find(v => v && v.trim());
+      const bestSector  = group.map(p => p.sector).find(v => v && v.trim());
       const bestRevenue = group.map(p => p.company_revenue_m).find(v => v != null && v > 0);
       const bestEbitda  = group.map(p => p.ebitda_margin_pct).find(v => v != null && v > 0);
 
@@ -1411,6 +1412,7 @@ export default function PricingTool() {
         const patch: Partial<PricingProposal> = {};
         if (bestRegion  && !(p.region ?? "").trim())                     patch.region = bestRegion;
         if (bestFund    && !(p.fund_name ?? "").trim())                  patch.fund_name = bestFund;
+        if (bestSector  && !(p.sector ?? "").trim())                     patch.sector = bestSector;
         if (bestRevenue != null && !(p.company_revenue_m != null && p.company_revenue_m > 0)) patch.company_revenue_m = bestRevenue;
         if (bestEbitda  != null && !(p.ebitda_margin_pct != null && p.ebitda_margin_pct > 0)) patch.ebitda_margin_pct = bestEbitda;
         if (Object.keys(patch).length > 0) {
@@ -1530,9 +1532,11 @@ export default function PricingTool() {
     if (!siblings.length) return 0;
 
     // Build the patch (only include fields that have a value in source)
+    // Note: sector is synced (same for all projects of a client) but project_type is NOT (can vary)
     const patch: Partial<PricingProposal> = {};
     if (source.region) patch.region = source.region;
     if (source.fund_name) patch.fund_name = source.fund_name;
+    if (source.sector) patch.sector = source.sector;
     if (source.company_revenue_m != null) patch.company_revenue_m = source.company_revenue_m;
     if (source.ebitda_margin_pct != null) patch.ebitda_margin_pct = source.ebitda_margin_pct;
     if (!Object.keys(patch).length) return 0;
