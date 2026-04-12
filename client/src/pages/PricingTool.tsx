@@ -99,12 +99,12 @@ const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees for this State
 
 In consideration of the parties' intention to establish a long-term partnership, the following commercial incentives may apply, where applicable:
 
-{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}
-A1. Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
+{{#if ONE_OFF_DISCOUNT_PERCENT}}
+A1. One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{PE_FUND_CLAUSE}}.
 {{/if}}
 
-{{#if ONE_OFF_DISCOUNT_PERCENT}}
-A2. One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{#if PE_FUND_NAME}}, granted in connection with {{PE_FUND_NAME}}{{/if}}.
+{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}
+A2. Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
 {{/if}}
 
 {{#if REBATE_PERCENT}}
@@ -4379,6 +4379,7 @@ export default function PricingTool() {
                       ONE_OFF_DISCOUNT_PERCENT: oneOffPct > 0 ? String(oneOffPct) : "",
                       ONE_OFF_DISCOUNT_AMOUNT: oneOffPct > 0 ? fmtP(oneOffAmt) : "",
                       PE_FUND_NAME: form.fund_name || "",
+                      PE_FUND_CLAUSE: form.fund_name ? `, granted in connection with ${form.fund_name}` : "",
                       REBATE_PERCENT: rebatePct > 0 ? String(rebatePct) : "",
                       REBATE_AMOUNT: rebatePct > 0 ? fmtP(rebateAmt) : "",
                       SUCCESS_FEE_PERCENT: variableFeePct > 0 ? String(variableFeePct) : "",
