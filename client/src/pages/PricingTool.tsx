@@ -99,12 +99,12 @@ const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees for this State
 
 In consideration of the parties' intention to establish a long-term partnership, the following commercial incentives may apply, where applicable:
 
-{{#if ONE_OFF_DISCOUNT_PERCENT}}
-A1. One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{PE_FUND_CLAUSE}}.
+{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}
+A1. Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
 {{/if}}
 
-{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}
-A2. Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
+{{#if ONE_OFF_DISCOUNT_PERCENT}}
+A2. One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{PE_FUND_CLAUSE}}.
 {{/if}}
 
 {{#if REBATE_PERCENT}}
@@ -4429,11 +4429,13 @@ export default function PricingTool() {
 
                     let text = template;
 
-                    // Process {{#if VAR}}...{{/if}} conditionals
-                    text = text.replace(/\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g, (_match, varName, content) => {
-                      const val = vars[varName] ?? "";
-                      return val ? content : "";
-                    });
+                    // Process {{#if VAR}}...{{/if}} conditionals (run twice for nested)
+                    for (let pass = 0; pass < 2; pass++) {
+                      text = text.replace(/\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g, (_match, varName, content) => {
+                        const val = vars[varName] ?? "";
+                        return val ? content : "";
+                      });
+                    }
 
                     // Process {{IF_DISCOUNTS}}...{{END_IF_DISCOUNTS}} (legacy)
                     if (hasDiscounts) {
