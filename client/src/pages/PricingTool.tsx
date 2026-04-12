@@ -27,6 +27,7 @@ interface PricingCase {
   client_name: string;
   fund_name: string;
   region: string;
+  currency?: string;
   pe_owned: boolean;
   revenue_band: string;
   price_sensitivity: string;
@@ -94,15 +95,13 @@ function emptyProposal(): PricingProposal {
   };
 }
 
-const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees outlined for this Statement of Work, spanning over {{DURATION_WEEKS}} weeks with a team of {{TEAM_COUNT}} professionals ({{TEAM_ROLES}}), amount to {{GROSS_TOTAL}}.
-
+const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees outlined for this Statement of Work, spanning over {{DURATION_WEEKS}} weeks with a team of {{TEAM_COUNT}} professionals ({{TEAM_ROLES}}), amount to {{HEADLINE_GROSS}}.
+{{IF_DISCOUNTS}}
 In recognition of the mutual intention to build a long-term partnership, we are pleased to extend the following commercial incentives:
-
-Our standard professional-fee rate card is {{GROSS_TOTAL}}. In recognition of the mutual intention to build a long-term partnership, we are pleased to extend the following commercial incentives:
 
 {{DISCOUNT_ITEMS}}
 
-Net Professional Fees (all incentives achieved, excluding any success fee): {{NET_TOTAL}}`;
+Therefore in consideration of the above, the Net Professional Fees (all incentives achieved, excluding any success fee) is {{NET_TOTAL}}.{{END_IF_DISCOUNTS}} There will be {{INVOICES_COUNT}} invoices, each of an amount of {{INVOICE_AMOUNT}} including the {{ADMIN_PCT}}% administration fee.`;
 
 // Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
 // Default full Eendigo team = 2 ASC INT + 3 EM EXT (5 people)
@@ -344,7 +343,7 @@ function parsePricePaste(text: string): CountryBenchmarkRow[] {
 function emptyCase(): PricingCase {
   return {
     project_name: "CLI01", client_name: "", fund_name: "CARLYLE",
-    region: "IT", pe_owned: true, revenue_band: "above_1b",
+    region: "IT", currency: "EUR", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
     project_type: "spark", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
     commercial_maturity: null, urgency: null, competitive_intensity: "limited",
@@ -1121,6 +1120,7 @@ export default function PricingTool() {
               <SelectItem value="EUR">EUR €</SelectItem>
               <SelectItem value="USD">USD $</SelectItem>
               <SelectItem value="GBP">GBP £</SelectItem>
+              <SelectItem value="CHF">CHF Fr.</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -3267,6 +3267,18 @@ export default function PricingTool() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Currency</Label>
+                  <Select value={form.currency ?? "EUR"} onValueChange={v => setForm(f => ({ ...f, currency: v }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="EUR">EUR €</SelectItem>
+                      <SelectItem value="USD">USD $</SelectItem>
+                      <SelectItem value="GBP">GBP £</SelectItem>
+                      <SelectItem value="CHF">CHF Fr.</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 {/* Company Revenue → auto-fills Revenue Band */}
                 <div className="space-y-1">
                   <Label className="text-xs">Company Revenue (€M)</Label>
@@ -4174,7 +4186,8 @@ export default function PricingTool() {
                     <div className="space-y-2 border rounded-lg p-3 bg-muted/10">
                       <div className="text-[10px] font-bold uppercase text-muted-foreground">Edit Proposal Template</div>
                       <p className="text-[9px] text-muted-foreground">
-                        Variables: {"{{DURATION_WEEKS}}"} {"{{TEAM_COUNT}}"} {"{{TEAM_ROLES}}"} {"{{GROSS_WEEKLY}}"} {"{{NET_WEEKLY}}"} {"{{GROSS_TOTAL}}"} {"{{NET_TOTAL}}"} {"{{DISCOUNT_ITEMS}}"} {"{{CLIENT_NAME}}"} {"{{PROJECT_NAME}}"} {"{{ADMIN_PCT}}"} {"{{VARIABLE_PCT}}"} {"{{CURRENCY}}"}
+                        Variables: {"{{DURATION_WEEKS}}"} {"{{TEAM_COUNT}}"} {"{{TEAM_ROLES}}"} {"{{GROSS_WEEKLY}}"} {"{{NET_WEEKLY}}"} {"{{GROSS_TOTAL}}"} {"{{NET_TOTAL}}"} {"{{HEADLINE_GROSS}}"} {"{{DISCOUNT_ITEMS}}"} {"{{CLIENT_NAME}}"} {"{{PROJECT_NAME}}"} {"{{FUND_NAME}}"} {"{{ADMIN_PCT}}"} {"{{VARIABLE_PCT}}"} {"{{CURRENCY}}"} {"{{INVOICES_COUNT}}"} {"{{INVOICE_AMOUNT}}"}
+                        Conditional: {"{{IF_DISCOUNTS}}"}...{"{{END_IF_DISCOUNTS}}"} (only shown if discounts/success fee active)
                       </p>
                       <Textarea value={templateLocal}
                         onChange={e => setTemplateLocal(e.target.value)}
@@ -4199,37 +4212,59 @@ export default function PricingTool() {
 
                   {/* Generated text */}
                   {showProposalText && !editingTemplate && (() => {
-                    const cur = getCurrencyForRegion(form.region);
+                    const curMap: Record<string, { symbol: string; code: string }> = {
+                      EUR: { symbol: "€", code: "EUR" }, USD: { symbol: "$", code: "USD" },
+                      GBP: { symbol: "£", code: "GBP" }, CHF: { symbol: "CHF ", code: "CHF" },
+                    };
+                    const cur = curMap[form.currency ?? "EUR"] ?? curMap.EUR;
                     const fmtP = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
                     const template = settings?.proposal_template ?? DEFAULT_PROPOSAL_TEMPLATE;
                     const dur = (waterfallDuration ?? form.duration_weeks) || 0;
-                    const netWk = nwfClamped + manualDelta;
-                    let grossWk = netWk * (1 + adminFeePct / 100);
-                    const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
-                    for (const d of enabledDisc) grossWk = grossWk / (1 - d.pct / 100);
-                    grossWk = Math.round(grossWk);
+                    // Use canonical values (= waterfall)
+                    const netWk = canonicalNetWeekly;
+                    const grossWk = canonicalGrossWeekly;
                     const netTotal = netWk * dur;
                     const grossTotal = grossWk * dur;
                     const teamCount = form.staffing.filter(s => s.days_per_week > 0 && s.count > 0)
                       .reduce((s, l) => s + l.count, 0);
                     const teamRoles = form.staffing.filter(s => s.days_per_week > 0 && s.count > 0)
                       .map(s => s.role_name || s.resource_label || "").join(", ");
+                    const invoiceCount = Math.max(1, Math.floor(1 + dur / 4));
+                    const invoiceAmount = invoiceCount > 0 ? Math.round(grossTotal / invoiceCount) : 0;
+                    const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
+                    const hasDiscounts = enabledDisc.length > 0 || variableFeePct > 0;
 
-                    // Build discount items text
+                    // Headline gross = gross total + success fees, / (1-oneoff) if applicable
+                    const successFeeTotal = variableFeePct > 0 ? Math.round(netTotal * variableFeePct / 100) : 0;
+                    const headlineGross = grossTotal + successFeeTotal;
+
+                    // Build smart discount items
                     const discountLines: string[] = [];
                     let itemNum = 1;
-                    for (const d of caseDiscounts) {
-                      if (!d.enabled) continue;
-                      const amount = d.pct > 0 ? Math.round(grossTotal * d.pct / 100) : 0;
-                      discountLines.push(`A${itemNum}. ${d.name} – ${d.pct}% (${fmtP(amount)})`);
+                    // One-off discount (check for name containing "one off" or "one-off")
+                    const oneOff = enabledDisc.find(d => /one.?off/i.test(d.name));
+                    if (oneOff) {
+                      const fundLabel = form.fund_name ? ` ${form.fund_name}` : "";
+                      const amt = Math.round(grossTotal * oneOff.pct / 100);
+                      discountLines.push(`A${itemNum}. One-off${fundLabel} discount – ${oneOff.pct}% (${fmtP(amt)})`);
                       itemNum++;
                     }
+                    // Prompt payment / other discounts
+                    for (const d of enabledDisc) {
+                      if (d === oneOff) continue;
+                      const amt = Math.round(grossTotal * d.pct / 100);
+                      discountLines.push(`A${itemNum}. ${d.name} – ${d.pct}% (${fmtP(amt)})`);
+                      itemNum++;
+                    }
+                    // Rebate (check for name containing "rebate")
+                    // already handled above in generic loop
+
+                    // Success fee
                     if (variableFeePct > 0) {
-                      const varAmount = Math.round(netWk * variableFeePct / 100 * dur);
-                      discountLines.push(`A${itemNum}. Success Fee – ${variableFeePct}% of Base Fees (${fmtP(varAmount)})\nA success fee equal to ${variableFeePct}% of the base fees will be invoiced only upon formal written e-mail confirmation of satisfaction by the Project Commissioner at the close of the engagement.`);
+                      discountLines.push(`A${itemNum}. Success Fee – ${variableFeePct}% of Base Fees (${fmtP(successFeeTotal)})\n${variableFeePct}% of the professional fees will be due only upon achievement of objectives which will be jointly defined if not specified in this document. The success fee will be invoiced only upon formal written e-mail confirmation of satisfaction by the Project Commissioner during or at the close of the engagement.`);
                     }
 
-                    const text = template
+                    let text = template
                       .replace(/\{\{DURATION_WEEKS\}\}/g, String(dur))
                       .replace(/\{\{TEAM_COUNT\}\}/g, String(teamCount))
                       .replace(/\{\{TEAM_ROLES\}\}/g, teamRoles)
@@ -4237,12 +4272,23 @@ export default function PricingTool() {
                       .replace(/\{\{NET_WEEKLY\}\}/g, fmtP(netWk))
                       .replace(/\{\{GROSS_TOTAL\}\}/g, fmtP(grossTotal))
                       .replace(/\{\{NET_TOTAL\}\}/g, fmtP(netTotal))
+                      .replace(/\{\{HEADLINE_GROSS\}\}/g, fmtP(headlineGross))
                       .replace(/\{\{DISCOUNT_ITEMS\}\}/g, discountLines.join("\n\n"))
                       .replace(/\{\{CLIENT_NAME\}\}/g, form.client_name || "[Client]")
                       .replace(/\{\{PROJECT_NAME\}\}/g, form.project_name || "[Project]")
+                      .replace(/\{\{FUND_NAME\}\}/g, form.fund_name || "[Fund]")
                       .replace(/\{\{ADMIN_PCT\}\}/g, String(adminFeePct))
                       .replace(/\{\{VARIABLE_PCT\}\}/g, String(variableFeePct))
-                      .replace(/\{\{CURRENCY\}\}/g, cur.code);
+                      .replace(/\{\{CURRENCY\}\}/g, cur.code)
+                      .replace(/\{\{INVOICES_COUNT\}\}/g, String(invoiceCount))
+                      .replace(/\{\{INVOICE_AMOUNT\}\}/g, fmtP(invoiceAmount));
+
+                    // Conditional blocks: {{IF_DISCOUNTS}}...{{END_IF_DISCOUNTS}}
+                    if (hasDiscounts) {
+                      text = text.replace(/\{\{IF_DISCOUNTS\}\}/g, "").replace(/\{\{END_IF_DISCOUNTS\}\}/g, "");
+                    } else {
+                      text = text.replace(/\{\{IF_DISCOUNTS\}\}[\s\S]*?\{\{END_IF_DISCOUNTS\}\}/g, "");
+                    }
 
                     return (
                       <div className="border rounded-lg p-4 bg-white space-y-2">
