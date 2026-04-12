@@ -1767,7 +1767,7 @@ export default function PricingTool() {
     // respecting disabledBars (toggle state). This ensures Net here = Net bar in waterfall.
     const trace = recommendation.layer_trace;
     const base = recommendation.base_weekly;
-    const CANONICAL_KEYS = ["Geography", "Sector", "Client Profile", "Strategic Intent"];
+    const CANONICAL_KEYS = ["Geography", "Sector", "Ownership", "Client Size", "Client Profile", "Strategic Intent"];
 
     // First compute deltas from trace (same as waterfall traceByKey logic)
     const traceByKey: Record<string, { value: number }> = {};
@@ -1837,12 +1837,12 @@ export default function PricingTool() {
               <p className="text-sm text-muted-foreground">Commercial pricing decision support</p>
             </div>
           </div>
-          {mainTab === "cases" ? (
+          <div className="flex gap-2 flex-wrap">
             <Button onClick={openNewForm} disabled={loading}>
               <Plus className="w-4 h-4 mr-2" /> New Pricing Case
             </Button>
-          ) : mainTab === "history" ? (
-            <div className="flex gap-2 flex-wrap">
+          {mainTab === "history" ? (
+            <>
               <Button variant="outline" onClick={runSmartPopulate} disabled={proposals.length === 0}
                 title="Copy region / fund / revenue / EBITDA across all projects of the same client">
                 <Users className="w-4 h-4 mr-2" /> Smart Populate
@@ -1865,8 +1865,9 @@ export default function PricingTool() {
               <Button onClick={() => setShowHistoryForm(true)}>
                 <Plus className="w-4 h-4 mr-2" /> Import Excel / Paste
               </Button>
-            </div>
+            </>
           ) : null}
+          </div>
         </div>
 
         {/* Tab navigation */}
@@ -3527,6 +3528,68 @@ export default function PricingTool() {
             </CardContent>
           </Card>
 
+          {/* PROJECT SPECS — duration, adjustments, fees (before waterfall) */}
+          {recommendation && (
+            <div className="border rounded-lg p-4 bg-muted/10 space-y-3">
+              <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Project Specs</div>
+              <div className="grid grid-cols-4 gap-3">
+                {/* Duration */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Duration</Label>
+                  <Select
+                    value={String(waterfallDuration ?? form.duration_weeks)}
+                    onValueChange={v => {
+                      if (v === "other") {
+                        const weeks = window.prompt("Enter number of weeks:", "10");
+                        if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) setWaterfallDuration(Number(weeks));
+                      } else {
+                        setWaterfallDuration(Number(v));
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[6, 8, 12, 16, 24].map(w => <SelectItem key={w} value={String(w)}>{w} weeks</SelectItem>)}
+                      <SelectItem value="other">Other…</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Model adjustment */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Model adj. (±500)</Label>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setManualDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
+                    <span className={`text-sm font-mono font-bold flex-1 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                      {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
+                    </span>
+                    <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
+                    {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[9px] text-muted-foreground hover:text-foreground underline ml-1">reset</button>}
+                  </div>
+                </div>
+                {/* Variable fee */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Variable fee</Label>
+                  <Select value={String(variableFeePct)} onValueChange={v => setVariableFeePct(Number(v))}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[0, 10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Admin fees */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Admin fees</Label>
+                  <Select value={String(adminFeePct)} onValueChange={v => setAdminFeePct(Number(v))}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[0, 2, 4, 6, 8].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* SECTION B: Pricing Waterfall Chart */}
           {recommendation && (() => {
             const trace = recommendation.layer_trace;
@@ -3540,8 +3603,8 @@ export default function PricingTool() {
             }
 
             const CANONICAL = [
-              "Geography", "Sector", "Client Profile",
-              "Strategic Intent",
+              "Geography", "Sector", "Ownership", "Client Size",
+              "Client Profile", "Strategic Intent",
             ];
 
             // Compute absolute deltas from original trace
@@ -3640,8 +3703,8 @@ export default function PricingTool() {
             const hOf = (v1: number, v2: number) => Math.abs(yOf(v1) - yOf(v2));
 
             const SHORT: Record<string, string> = {
-              "Geography": "Geo", "Sector": "Sector", "Client Profile": "Client",
-              "Strategic Intent": "Intent",
+              "Geography": "Geo", "Sector": "Sector", "Ownership": "PE/Corp",
+              "Client Size": "Size", "Client Profile": "Client", "Strategic Intent": "Intent",
             };
 
             const toggleBar = (label: string) => setDisabledBars(prev => {
@@ -3779,37 +3842,14 @@ export default function PricingTool() {
                     </svg>
                   </div>
 
-                  {/* Right: duration only */}
-                  <div className="w-36 shrink-0 flex flex-col gap-3 pt-6">
-                    <div className="space-y-1">
-                      <Label className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Duration</Label>
-                      <Select
-                        value={String(waterfallDuration ?? form.duration_weeks)}
-                        onValueChange={v => {
-                          if (v === "other") {
-                            const weeks = window.prompt("Enter number of weeks:", "10");
-                            if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) {
-                              setWaterfallDuration(Number(weeks));
-                            }
-                          } else {
-                            setWaterfallDuration(Number(v));
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {[6, 8, 12, 16, 24].map(w => (
-                            <SelectItem key={w} value={String(w)}>{w} weeks</SelectItem>
-                          ))}
-                          <SelectItem value="other">Other…</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  {/* Right: green band info */}
+                  <div className="w-28 shrink-0 flex flex-col gap-2 pt-6 text-center">
                     {hasGreenBand && (
-                      <div className="text-[10px] text-emerald-600 text-center">
+                      <div className="text-[10px] text-emerald-600">
                         🟢 {fmt(greenLow)}–{fmt(greenHigh)}
                       </div>
                     )}
+                    <div className="text-[10px] text-muted-foreground">{effectiveDuration}w</div>
                   </div>
                 </div>
               </div>
@@ -3988,15 +4028,12 @@ export default function PricingTool() {
             );
           })()}
 
-          {/* SECTION D: Price Finalization */}
+          {/* SECTION D: Fee Summary + Won/Lost + Proposal */}
           {recommendation && nwfClamped > 0 && (() => {
             const effectiveDur = (waterfallDuration ?? form.duration_weeks) || 0;
-
-            // Use canonical single source of truth (same as waterfall Net/Gross)
             const netWeekly = canonicalNetWeekly;
             const grossWeekly = canonicalGrossWeekly;
             const enabledDiscounts = caseDiscounts.filter(d => d.enabled && d.pct > 0);
-
             const totalGross = Math.round(grossWeekly * effectiveDur);
             const netFees = Math.round(netWeekly * effectiveDur);
             const grossFees = totalGross;
@@ -4007,49 +4044,7 @@ export default function PricingTool() {
             const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
             return (
               <div className="border rounded-lg p-4 bg-muted/10 space-y-4">
-                <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Price Finalization</div>
-
-                {/* Controls row */}
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Left: adjustments */}
-                  <div className="space-y-3">
-                    {/* Manual adjustment */}
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold text-muted-foreground uppercase">Model adjustment (±500)</div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => setManualDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
-                        <span className={`text-sm font-mono font-bold w-24 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
-                          {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
-                        </span>
-                        <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
-                        {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[10px] text-muted-foreground hover:text-foreground underline">reset</button>}
-                      </div>
-                    </div>
-                  </div>
-                  {/* Right: fee %s */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Variable fee</Label>
-                      <Select value={String(variableFeePct)} onValueChange={v => setVariableFeePct(Number(v))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {[0, 10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(netWeekly * variableFeePct / 100))}/wk</div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Admin fees</Label>
-                      <Select value={String(adminFeePct)} onValueChange={v => setAdminFeePct(Number(v))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {[0, 2, 4, 6, 8].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(netWeekly * adminFeePct / 100))}/wk</div>
-                    </div>
-                  </div>
-                </div>
+                <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Fee Summary</div>
 
                 {/* Fee summary tables */}
                 {(() => {

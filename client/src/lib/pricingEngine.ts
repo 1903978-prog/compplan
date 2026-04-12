@@ -1123,6 +1123,39 @@ export function calculatePricing(
   }
   working_price = after_sector;
 
+  // ── PE / non-PE ownership multiplier (from admin) ──────────────────────
+  const ownershipKey = input.pe_owned ? "pe" : "non_pe";
+  const ownershipEntry = settings.ownership_multipliers.find(o => o.value === ownershipKey);
+  const ownership_multiplier = ownershipEntry?.multiplier ?? 1.0;
+  const after_ownership = working_price * ownership_multiplier;
+
+  if (Math.abs(ownership_multiplier - 1.0) > 0.001) {
+    layer_trace.push({
+      layer: "L2",
+      label: `Ownership (${input.pe_owned ? "PE" : "Non-PE"})`,
+      value: after_ownership,
+      delta_pct: (ownership_multiplier - 1) * 100,
+      note: `${ownershipEntry?.label ?? ownershipKey} ×${ownership_multiplier.toFixed(2)}`,
+    });
+  }
+  working_price = after_ownership;
+
+  // ── Client size / revenue band multiplier (from admin) ─────────────────
+  const sizeEntry = settings.revenue_band_multipliers.find(s => s.value === input.revenue_band);
+  const size_multiplier = sizeEntry?.multiplier ?? 1.0;
+  const after_size = working_price * size_multiplier;
+
+  if (Math.abs(size_multiplier - 1.0) > 0.001) {
+    layer_trace.push({
+      layer: "L2",
+      label: `Client Size (${sizeEntry?.label ?? input.revenue_band})`,
+      value: after_size,
+      delta_pct: (size_multiplier - 1) * 100,
+      note: `Revenue band ×${size_multiplier.toFixed(2)}`,
+    });
+  }
+  working_price = after_size;
+
   // ── L2: Market adjustments (competitive context) — computed but NOT in waterfall
   // These still feed into the total_market_adj for backward compat / drivers
   const { competitive_adj, competitor_adj, interaction_adj, market_notes } = computeMarketAdjustments(input, settings);
@@ -1137,19 +1170,12 @@ export function calculatePricing(
   const after_client = working_price * (1 + total_client_adj);
   working_price = after_client;
 
-  // Backward compat multipliers
-  const ownershipKey = input.pe_owned ? "pe" : "non_pe";
-  const ownershipEntry = settings.ownership_multipliers.find(o => o.value === ownershipKey);
-  const ownership_multiplier = ownershipEntry?.multiplier ?? 1.0;
-  const ownership_adjusted = geo_adjusted * ownership_multiplier;
-
-  const sizeEntry = settings.revenue_band_multipliers.find(s => s.value === input.revenue_band);
-  const size_multiplier = sizeEntry?.multiplier ?? 1.0;
-  const size_adjusted = ownership_adjusted * size_multiplier;
-
+  // Backward compat: sensitivity_adjusted used for posture
+  const ownership_adjusted = after_ownership;
   const sensitivityEntry = settings.sensitivity_multipliers.find(s => s.value === input.price_sensitivity);
   const sensitivity_multiplier = sensitivityEntry?.multiplier ?? 1.0;
-  const sensitivity_adjusted = size_adjusted * sensitivity_multiplier;
+  const size_adjusted = after_size;
+  const sensitivity_adjusted = after_size * sensitivity_multiplier;
 
   if (Math.abs(total_client_adj) > 0.001) {
     layer_trace.push({
