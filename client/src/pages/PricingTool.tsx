@@ -1016,15 +1016,17 @@ export default function PricingTool() {
             const isOther = !!historyForm.fund_name && !knownFunds.includes(historyForm.fund_name);
             const selectVal = historyForm.fund_name
               ? (knownFunds.includes(historyForm.fund_name) ? historyForm.fund_name : "other")
-              : "";
+              : "__none__";
             return (
               <div className="space-y-1">
                 <Select value={selectVal} onValueChange={v => {
-                  if (v === "other") setHistoryForm(f => ({ ...f, fund_name: "" }));
-                  else setHistoryForm(f => ({ ...f, fund_name: v }));
+                  if (v === "__none__") setHistoryForm(f => ({ ...f, fund_name: "", pe_owned: false }));
+                  else if (v === "other") setHistoryForm(f => ({ ...f, fund_name: "" }));
+                  else setHistoryForm(f => ({ ...f, fund_name: v, pe_owned: true }));
                 }}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select fund" /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="__none__">— No fund —</SelectItem>
                     {knownFunds.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
                     <SelectItem value="other">Other…</SelectItem>
                   </SelectContent>
@@ -1046,13 +1048,14 @@ export default function PricingTool() {
           <Label className="text-xs">Region</Label>
           {(() => {
             const regionList = (settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).filter(r => r.region_name);
-            const currentRegion = historyForm.region || "";
+            const currentRegion = historyForm.region || "__none__";
             const inList = regionList.some(r => r.region_name === currentRegion);
             return (
-              <Select value={currentRegion} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
+              <Select value={currentRegion} onValueChange={v => setHistoryForm(f => ({ ...f, region: v === "__none__" ? "" : v }))}>
                 <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select region" /></SelectTrigger>
                 <SelectContent>
-                  {!inList && currentRegion && (
+                  <SelectItem value="__none__">— Not set —</SelectItem>
+                  {!inList && currentRegion !== "__none__" && (
                     <SelectItem key={currentRegion} value={currentRegion}>{currentRegion}</SelectItem>
                   )}
                   {regionList.map(r => (
@@ -1065,9 +1068,10 @@ export default function PricingTool() {
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Sector</Label>
-          <Select value={historyForm.sector || ""} onValueChange={v => setHistoryForm(f => ({ ...f, sector: v || null }))}>
+          <Select value={historyForm.sector || "__none__"} onValueChange={v => setHistoryForm(f => ({ ...f, sector: v === "__none__" ? null : v }))}>
             <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select sector" /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="__none__">— Not set —</SelectItem>
               {(settings?.sectors ?? [...SECTORS]).map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
