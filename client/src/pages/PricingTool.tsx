@@ -1416,10 +1416,10 @@ export default function PricingTool() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Project type</Label>
-                      <Select value={historyForm.project_type || ""} onValueChange={v => setHistoryForm(f => ({ ...f, project_type: v || null }))}>
+                      <Select value={historyForm.project_type || "__none__"} onValueChange={v => setHistoryForm(f => ({ ...f, project_type: v === "__none__" ? null : v }))}>
                         <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select type" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">— Not set —</SelectItem>
+                          <SelectItem value="__none__">— Not set —</SelectItem>
                           {projectTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                         </SelectContent>
                       </Select>
@@ -1452,10 +1452,10 @@ export default function PricingTool() {
                   {historyForm.outcome === "lost" && (
                     <div className="space-y-1">
                       <Label className="text-xs">Loss reason</Label>
-                      <Select value={historyForm.loss_reason || ""} onValueChange={v => setHistoryForm(f => ({ ...f, loss_reason: v || null }))}>
+                      <Select value={historyForm.loss_reason || "__unknown__"} onValueChange={v => setHistoryForm(f => ({ ...f, loss_reason: v === "__unknown__" ? null : v }))}>
                         <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select reason" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">— Unknown —</SelectItem>
+                          <SelectItem value="__unknown__">— Unknown —</SelectItem>
                           <SelectItem value="price">Price</SelectItem>
                           <SelectItem value="brand">Brand</SelectItem>
                           <SelectItem value="team">Team</SelectItem>
