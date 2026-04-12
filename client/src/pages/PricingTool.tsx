@@ -440,6 +440,16 @@ export default function PricingTool() {
   const [excelPasteResult, setExcelPasteResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [importingExcel, setImportingExcel] = useState(false);
 
+  // Weekly price recalc review dialog
+  type WeeklyRecalcRow = {
+    proposal: PricingProposal;
+    oldWeekly: number;
+    newWeekly: number;
+    delta: number;
+  };
+  const [weeklyRecalcRows, setWeeklyRecalcRows] = useState<WeeklyRecalcRow[] | null>(null);
+  const [weeklyRecalcSelected, setWeeklyRecalcSelected] = useState<Set<number>>(new Set());
+
   // Fees-by-country analysis
   const computeFeesByCountry = (ps: PricingProposal[]): CountryFeeRow[] => {
     const relevant = ps.filter(p => p.outcome === "won" || p.outcome === "lost");
@@ -1172,6 +1182,55 @@ export default function PricingTool() {
     toast({ title: "CSV downloaded", description: `${proposals.length} projects exported.` });
   };
 
+  // Recalculate weekly_price from total_fee / duration_weeks / team_size
+  // and open a review dialog showing the differences.
+  const runWeeklyRecalc = () => {
+    const discrepancies: WeeklyRecalcRow[] = [];
+    for (const p of proposals) {
+      if (!p.id || !p.total_fee || !p.duration_weeks || p.duration_weeks <= 0) continue;
+      const team = p.team_size && p.team_size > 0 ? p.team_size : 1;
+      const computed = Math.round(p.total_fee / p.duration_weeks / team);
+      const current = Math.round(p.weekly_price || 0);
+      const delta = computed - current;
+      // Flag rows where the discrepancy is ≥ €100 AND ≥ 1% of the current value
+      if (Math.abs(delta) >= 100 && Math.abs(delta) / Math.max(current, 1) >= 0.01) {
+        discrepancies.push({ proposal: p, oldWeekly: current, newWeekly: computed, delta });
+      }
+    }
+    if (discrepancies.length === 0) {
+      toast({ title: "All weekly prices already correct", description: "No discrepancies found." });
+      return;
+    }
+    setWeeklyRecalcRows(discrepancies);
+    setWeeklyRecalcSelected(new Set(discrepancies.map(d => d.proposal.id!)));
+  };
+
+  const applyWeeklyRecalc = async () => {
+    if (!weeklyRecalcRows) return;
+    const toApply = weeklyRecalcRows.filter(r => weeklyRecalcSelected.has(r.proposal.id!));
+    if (toApply.length === 0) {
+      setWeeklyRecalcRows(null);
+      return;
+    }
+    // Optimistic local update
+    setProposals(prev => prev.map(p => {
+      const match = toApply.find(r => r.proposal.id === p.id);
+      return match ? { ...p, weekly_price: match.newWeekly } : p;
+    }));
+    // Persist in parallel
+    await Promise.all(toApply.map(r => {
+      const payload = { ...r.proposal, weekly_price: r.newWeekly, pe_owned: r.proposal.pe_owned ? 1 : 0 };
+      return fetch(`/api/pricing/proposals/${r.proposal.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    }));
+    toast({ title: `${toApply.length} weekly price${toApply.length > 1 ? "s" : ""} updated` });
+    setWeeklyRecalcRows(null);
+    setWeeklyRecalcSelected(new Set());
+  };
+
   const markProjectOutcome = async (outcome: "won" | "lost") => {
     if (!recommendation) return;
     setMarkingOutcome(true);
@@ -1453,6 +1512,10 @@ export default function PricingTool() {
             </Button>
           ) : mainTab === "history" ? (
             <div className="flex gap-2">
+              <Button variant="outline" onClick={runWeeklyRecalc} disabled={proposals.length === 0}
+                title="Recalculate weekly price = total fee / weeks / team size">
+                <RefreshCw className="w-4 h-4 mr-2" /> Recalc Weekly
+              </Button>
               <Button variant="outline" onClick={downloadProposalsCsv} disabled={proposals.length === 0}>
                 <Download className="w-4 h-4 mr-2" /> Download CSV
               </Button>
@@ -1685,6 +1748,91 @@ export default function PricingTool() {
                       </div>
                     </div>
                   ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Weekly price recalc review */}
+            {weeklyRecalcRows && weeklyRecalcRows.length > 0 && (
+              <Card className="border-blue-300 bg-blue-50/30">
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-sm text-blue-800">
+                        Weekly Price Recalculation — {weeklyRecalcRows.length} discrepanc{weeklyRecalcRows.length === 1 ? "y" : "ies"} found
+                      </CardTitle>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Formula: <span className="font-mono bg-white px-1 rounded">weekly = total_fee ÷ weeks ÷ team_size</span>.
+                        Review the proposed changes and select which rows to update.
+                      </p>
+                    </div>
+                    <button onClick={() => setWeeklyRecalcRows(null)} className="text-muted-foreground hover:text-foreground p-1">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <button onClick={() => setWeeklyRecalcSelected(new Set(weeklyRecalcRows.map(r => r.proposal.id!)))}
+                      className="text-blue-600 hover:underline">Select all</button>
+                    <span className="text-muted-foreground">·</span>
+                    <button onClick={() => setWeeklyRecalcSelected(new Set())}
+                      className="text-blue-600 hover:underline">Clear</button>
+                    <span className="text-muted-foreground ml-auto">{weeklyRecalcSelected.size} selected</span>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto border rounded bg-white">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/50 border-b">
+                        <tr>
+                          <th className="p-2 text-left w-8"></th>
+                          <th className="p-2 text-left">Project</th>
+                          <th className="p-2 text-left">Client</th>
+                          <th className="p-2 text-right">Total Fee</th>
+                          <th className="p-2 text-right">Weeks</th>
+                          <th className="p-2 text-right">Team</th>
+                          <th className="p-2 text-right">Current</th>
+                          <th className="p-2 text-right">Computed</th>
+                          <th className="p-2 text-right">Δ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {weeklyRecalcRows.map(r => {
+                          const selected = weeklyRecalcSelected.has(r.proposal.id!);
+                          return (
+                            <tr key={r.proposal.id} className={selected ? "bg-blue-50/50" : ""}>
+                              <td className="p-2">
+                                <input type="checkbox" checked={selected}
+                                  onChange={e => setWeeklyRecalcSelected(prev => {
+                                    const next = new Set(prev);
+                                    e.target.checked ? next.add(r.proposal.id!) : next.delete(r.proposal.id!);
+                                    return next;
+                                  })}
+                                />
+                              </td>
+                              <td className="p-2 font-semibold">{r.proposal.project_name}</td>
+                              <td className="p-2 text-muted-foreground truncate max-w-[140px]">{r.proposal.client_name || "—"}</td>
+                              <td className="p-2 text-right font-mono">{fmt(r.proposal.total_fee ?? 0)}</td>
+                              <td className="p-2 text-right font-mono">{r.proposal.duration_weeks}</td>
+                              <td className="p-2 text-right font-mono">{r.proposal.team_size ?? 1}</td>
+                              <td className="p-2 text-right font-mono text-muted-foreground">{fmt(r.oldWeekly)}</td>
+                              <td className="p-2 text-right font-mono font-semibold text-blue-700">{fmt(r.newWeekly)}</td>
+                              <td className={`p-2 text-right font-mono font-semibold ${r.delta > 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                {r.delta > 0 ? "+" : ""}{fmt(r.delta)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" onClick={applyWeeklyRecalc} disabled={weeklyRecalcSelected.size === 0}>
+                      Apply {weeklyRecalcSelected.size > 0 ? `(${weeklyRecalcSelected.size})` : ""} changes
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => { setWeeklyRecalcRows(null); setWeeklyRecalcSelected(new Set()); }}>
+                      Cancel
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
