@@ -111,6 +111,7 @@ export interface PricingSettings {
   fund_anchor_weight: number;
   win_loss_weight: number;
   competitor_benchmarks: CompetitorBenchmark[];
+  project_types?: string[];
 }
 
 export interface StaffingLine {
@@ -124,7 +125,8 @@ export interface StaffingLine {
 
 // ── New types for upgraded engine ─────────────────────────────────────────────
 
-export type ProjectType = "diagnostic" | "implementation" | "transformation";
+export type ProjectType = "spark" | "sfe" | "pricing" | "other_design" | "war_room" | "diagnostic" | "implementation" | "transformation";
+export const DEFAULT_PROJECT_TYPES = ["spark", "SFE", "pricing", "other design", "war room"];
 export type CompetitiveIntensity = "sole_source" | "limited" | "competitive" | "crowded";
 export type CompetitorType = "none" | "boutiques" | "tier2" | "mbb";
 export type OwnershipType = "pe" | "corporate" | "founder";
@@ -192,6 +194,7 @@ export interface PricingProposal {
   loss_reason?: string | null;
   sector?: string | null;
   project_type?: string | null;
+  currency?: string | null;
   notes?: string | null;
   created_at?: string;
 }

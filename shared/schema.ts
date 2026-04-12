@@ -354,6 +354,7 @@ export const pricingProposals = pgTable("pricing_proposals", {
   loss_reason: text("loss_reason"),
   sector: text("sector"),
   project_type: text("project_type"),
+  currency: text("currency").notNull().default("EUR"),
   notes: text("notes"),
   created_at: text("created_at").notNull(),
 });

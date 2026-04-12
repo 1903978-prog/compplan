@@ -259,6 +259,7 @@ export async function seedDatabase() {
   // New columns for pricing_proposals
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS sector TEXT`);
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS project_type TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'EUR'`);
 
   // Time tracking tables
   await db.execute(sql`

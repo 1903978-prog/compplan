@@ -10,15 +10,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil,
+  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil, RefreshCw,
 } from "lucide-react";
 import {
-  calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS,
+  calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
   getCurrencyForRegion, formatWithCurrency,
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
   type CompetitorBenchmark, type ProjectType, type CompetitiveIntensity, type CompetitorType,
   type OwnershipType, type StrategicIntent, type ProcurementInvolvement, type LayerTrace,
-  type CountryBenchmarkRow,
+  type CountryBenchmarkRow, type PricingRegion,
 } from "@/lib/pricingEngine";
 
 interface PricingCase {
@@ -85,6 +85,7 @@ function emptyProposal(): PricingProposal {
     total_fee: null,
     outcome: "won",
     loss_reason: "",
+    currency: "EUR",
     notes: "",
   };
 }
@@ -327,6 +328,8 @@ function ConfidenceBadge({ label }: { label: string }) {
   return <span className={`text-xs font-semibold ${cls}`}>{label}</span>;
 }
 
+type CountryFeeRow = { country: string; won: number; lost: number; winRate: number | null; avgWon: number | null; avgLost: number | null; };
+
 export default function PricingTool() {
   const { toast } = useToast();
   const [view, setView] = useState<"list" | "form">("list");
@@ -357,11 +360,38 @@ export default function PricingTool() {
   const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
   const [editingBenchmarks, setEditingBenchmarks] = useState(false);
   const [savingBenchmarks, setSavingBenchmarks] = useState(false);
+  const [projectTypesLocal, setProjectTypesLocal] = useState<string[]>([]);
+  const [editingProjectTypes, setEditingProjectTypes] = useState(false);
+  const [regionsLocal, setRegionsLocal] = useState<PricingRegion[]>([]);
+  const [editingRegions, setEditingRegions] = useState(false);
   const [pasteInput, setPasteInput] = useState("");
   const [pasteResult, setPasteResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [excelPaste, setExcelPaste] = useState("");
   const [excelPasteResult, setExcelPasteResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [importingExcel, setImportingExcel] = useState(false);
+
+  // Fees-by-country analysis
+  const computeFeesByCountry = (ps: PricingProposal[]): CountryFeeRow[] => {
+    const relevant = ps.filter(p => p.outcome === "won" || p.outcome === "lost");
+    const countries = [...new Set(relevant.map(p => p.country || p.region))].sort();
+    return countries.map(country => {
+      const cp = relevant.filter(p => (p.country || p.region) === country);
+      const won = cp.filter(p => p.outcome === "won");
+      const lost = cp.filter(p => p.outcome === "lost");
+      const total = won.length + lost.length;
+      const totalFee = (p: PricingProposal) => p.weekly_price * (p.duration_weeks || 1);
+      return {
+        country,
+        won: won.length, lost: lost.length,
+        winRate: total > 0 ? won.length / total : null,
+        avgWon: won.length > 0 ? won.reduce((s, p) => s + totalFee(p), 0) / won.length : null,
+        avgLost: lost.length > 0 ? lost.reduce((s, p) => s + totalFee(p), 0) / lost.length : null,
+      };
+    });
+  };
+  const [feesByCountry, setFeesByCountry] = useState<CountryFeeRow[] | null>(null);
+  const [pendingFeesByCountry, setPendingFeesByCountry] = useState<CountryFeeRow[] | null>(null);
+  const [selectedCountryUpdates, setSelectedCountryUpdates] = useState<Set<string>>(new Set());
 
   const loadAll = async () => {
     setLoading(true);
@@ -397,7 +427,16 @@ export default function PricingTool() {
 
   useEffect(() => {
     setBenchmarks(settings?.country_benchmarks ?? DEFAULT_PRICING_SETTINGS.country_benchmarks ?? []);
+    setProjectTypesLocal(settings?.project_types ?? DEFAULT_PROJECT_TYPES);
+    setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions);
   }, [settings]);
+
+  // Auto-populate fees-by-country when proposals first load
+  useEffect(() => {
+    if (proposals.length > 0 && feesByCountry === null) {
+      setFeesByCountry(computeFeesByCountry(proposals));
+    }
+  }, [proposals]);
 
   // Initialise staffing from settings when opening form
   const initStaffing = (s: PricingSettings): StaffingLine[] => {
@@ -460,6 +499,30 @@ export default function PricingTool() {
     } finally {
       setSavingBenchmarks(false);
     }
+  };
+
+  const saveRegions = async (regions: PricingRegion[]) => {
+    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), regions };
+    await fetch("/api/pricing/settings", {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    });
+    setSettings(updated);
+    setEditingRegions(false);
+    toast({ title: "Regions saved" });
+  };
+
+  const saveProjectTypes = async (types: string[]) => {
+    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), project_types: types };
+    await fetch("/api/pricing/settings", {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    });
+    setSettings(updated);
+    setEditingProjectTypes(false);
+    toast({ title: "Project types saved" });
   };
 
   const handleParsePaste = () => {
@@ -900,6 +963,9 @@ export default function PricingTool() {
     };
   }, [settings, form.region, form.pe_owned, form.revenue_band]);
 
+  // Project types list (from settings or defaults)
+  const projectTypes = settings?.project_types ?? DEFAULT_PROJECT_TYPES;
+
   // NWF = target after discounts, clamped to country min/max
   const nwfRaw = recommendation ? Math.round(recommendation.target_weekly * netMultiplier) : 0;
   const nwfClamped = nwfRaw > 0
@@ -1068,7 +1134,7 @@ export default function PricingTool() {
               </Card>
             )}
           </>
-        ) : (
+        ) : mainTab === "history" ? (
           /* ── PAST PROJECTS TAB ─────────────────────────────────────── */
           <div className="space-y-4">
             {/* Stats */}
@@ -1208,6 +1274,7 @@ export default function PricingTool() {
                         {sortHeader("sector", "Sector")}
                         {sortHeader("project_type", "Type")}
                         {sortHeader("duration_weeks", "Dur.")}
+                        {sortHeader("currency", "Cur.")}
                         {sortHeader("weekly_price", "Weekly price")}
                         {sortHeader("outcome", "Outcome")}
                         <TableHead className="w-16">Actions</TableHead>
@@ -1226,6 +1293,7 @@ export default function PricingTool() {
                           <TableCell className="text-xs text-muted-foreground">{p.sector || "—"}</TableCell>
                           <TableCell className="text-xs">{p.project_type ? <Badge variant="outline" className="text-xs capitalize">{p.project_type}</Badge> : "—"}</TableCell>
                           <TableCell className="text-sm">{p.duration_weeks ? `${p.duration_weeks}w` : "—"}</TableCell>
+                          <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
                           <TableCell className="font-semibold text-sm font-mono">{fmt(p.weekly_price)}</TableCell>
                           <TableCell>
                             {p.outcome === "won"
@@ -1285,14 +1353,45 @@ export default function PricingTool() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Fund</Label>
-                      <Input value={historyForm.fund_name || ""} onChange={e => setHistoryForm(f => ({ ...f, fund_name: e.target.value }))} className="h-8 text-sm" />
+                      {(() => {
+                        const knownFunds = settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds;
+                        const isOther = !!historyForm.fund_name && !knownFunds.includes(historyForm.fund_name);
+                        const selectVal = historyForm.fund_name
+                          ? (knownFunds.includes(historyForm.fund_name) ? historyForm.fund_name : "other")
+                          : "";
+                        return (
+                          <div className="space-y-1">
+                            <Select value={selectVal} onValueChange={v => {
+                              if (v === "other") setHistoryForm(f => ({ ...f, fund_name: "" }));
+                              else setHistoryForm(f => ({ ...f, fund_name: v }));
+                            }}>
+                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select fund" /></SelectTrigger>
+                              <SelectContent>
+                                {knownFunds.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                                <SelectItem value="other">Other…</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {(isOther || selectVal === "other") && (
+                              <Input
+                                value={historyForm.fund_name || ""}
+                                onChange={e => setHistoryForm(f => ({ ...f, fund_name: e.target.value }))}
+                                className="h-8 text-sm"
+                                placeholder="Enter fund name"
+                                autoFocus
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Region</Label>
-                      <Select value={historyForm.region} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                      <Select value={historyForm.region || ""} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select region" /></SelectTrigger>
                         <SelectContent>
-                          {REGIONS.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                          {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).filter(r => r.region_name).map(r => (
+                            <SelectItem key={r.region_name} value={r.region_name}>{r.region_name}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1310,9 +1409,19 @@ export default function PricingTool() {
                       <Select value={historyForm.project_type || ""} onValueChange={v => setHistoryForm(f => ({ ...f, project_type: v || null }))}>
                         <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select type" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="spark">Spark</SelectItem>
-                          <SelectItem value="design">Design</SelectItem>
-                          <SelectItem value="execution">Execution</SelectItem>
+                          <SelectItem value="">— Not set —</SelectItem>
+                          {projectTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Currency</Label>
+                      <Select value={historyForm.currency || "EUR"} onValueChange={v => setHistoryForm(f => ({ ...f, currency: v }))}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="EUR">EUR €</SelectItem>
+                          <SelectItem value="USD">USD $</SelectItem>
+                          <SelectItem value="GBP">GBP £</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1321,14 +1430,29 @@ export default function PricingTool() {
                       <Input type="number" min="1" value={historyForm.duration_weeks ?? ""} onChange={e => setHistoryForm(f => ({ ...f, duration_weeks: +e.target.value || 0 }))} className="h-8 text-sm" />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">Weekly price (€)</Label>
-                      <Input type="number" min="0" value={historyForm.weekly_price || ""} onChange={e => setHistoryForm(f => ({ ...f, weekly_price: +e.target.value || 0 }))} className="h-8 text-sm font-mono" />
+                      <Label className="text-xs">Weekly price</Label>
+                      <div className="flex gap-1">
+                        <span className="flex items-center px-2 text-sm font-semibold bg-muted border rounded-l border-r-0">
+                          {historyForm.currency === "USD" ? "$" : historyForm.currency === "GBP" ? "£" : "€"}
+                        </span>
+                        <Input type="number" min="0" value={historyForm.weekly_price || ""} onChange={e => setHistoryForm(f => ({ ...f, weekly_price: +e.target.value || 0 }))} className="h-8 text-sm font-mono rounded-l-none" />
+                      </div>
                     </div>
                   </div>
                   {historyForm.outcome === "lost" && (
                     <div className="space-y-1">
                       <Label className="text-xs">Loss reason</Label>
-                      <Input value={historyForm.loss_reason || ""} onChange={e => setHistoryForm(f => ({ ...f, loss_reason: e.target.value }))} className="h-8 text-sm" placeholder="Price / Scope / Relationship / …" />
+                      <Select value={historyForm.loss_reason || ""} onValueChange={v => setHistoryForm(f => ({ ...f, loss_reason: v || null }))}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select reason" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">— Unknown —</SelectItem>
+                          <SelectItem value="price">Price</SelectItem>
+                          <SelectItem value="brand">Brand</SelectItem>
+                          <SelectItem value="team">Team</SelectItem>
+                          <SelectItem value="quality">Quality</SelectItem>
+                          <SelectItem value="relationship">Relationship</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   )}
                   <div className="flex gap-2 pt-1">
@@ -1343,11 +1467,143 @@ export default function PricingTool() {
               </Card>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* ── WIN-LOSS ANALYSIS TAB ──────────────────────────────── */}
         {mainTab === "winloss" && (
           <div className="space-y-6">
+
+            {/* ── Fees by Country ──────────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold uppercase tracking-wide">Fees by Country</CardTitle>
+                  <Button size="sm" variant="outline" onClick={() => {
+                    const fresh = computeFeesByCountry(proposals);
+                    const current = feesByCountry ?? [];
+                    // Find rows that differ from current
+                    const changed = fresh.filter(r => {
+                      const existing = current.find(c => c.country === r.country);
+                      if (!existing) return true;
+                      return existing.won !== r.won || existing.lost !== r.lost ||
+                        existing.avgWon !== r.avgWon || existing.avgLost !== r.avgLost;
+                    });
+                    if (changed.length === 0) {
+                      toast({ title: "Already up to date", description: "No changes detected." });
+                      return;
+                    }
+                    setPendingFeesByCountry(fresh);
+                    setSelectedCountryUpdates(new Set(changed.map(r => r.country)));
+                  }}>
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Pending confirmation UI */}
+                {pendingFeesByCountry && (
+                  <div className="border border-amber-300 rounded-lg p-4 bg-amber-50 space-y-3">
+                    <div className="text-xs font-semibold text-amber-800">New analysis computed — select which countries to update:</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {pendingFeesByCountry.filter(r => {
+                        const existing = feesByCountry?.find(c => c.country === r.country);
+                        if (!existing) return true;
+                        return existing.won !== r.won || existing.lost !== r.lost ||
+                          existing.avgWon !== r.avgWon || existing.avgLost !== r.avgLost;
+                      }).map(r => {
+                        const existing = feesByCountry?.find(c => c.country === r.country);
+                        const isSelected = selectedCountryUpdates.has(r.country);
+                        const fmtA = (n: number | null) => n != null ? "€" + Math.round(n).toLocaleString("it-IT") : "—";
+                        return (
+                          <label key={r.country} className={`flex items-start gap-2 p-2 rounded border cursor-pointer text-xs ${isSelected ? "bg-white border-amber-400" : "bg-amber-50/50 border-amber-200"}`}>
+                            <input type="checkbox" className="mt-0.5" checked={isSelected} onChange={e => {
+                              setSelectedCountryUpdates(prev => {
+                                const next = new Set(prev);
+                                e.target.checked ? next.add(r.country) : next.delete(r.country);
+                                return next;
+                              });
+                            }} />
+                            <div>
+                              <div className="font-semibold">{r.country}</div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {existing ? (
+                                  <>
+                                    {existing.won}W/{existing.lost}L → <span className="text-emerald-700">{r.won}W/{r.lost}L</span>
+                                    {r.avgWon != null && <span className="ml-1">Won: {fmtA(r.avgWon)}</span>}
+                                    {r.avgLost != null && <span className="ml-1">Lost: {fmtA(r.avgLost)}</span>}
+                                  </>
+                                ) : (
+                                  <span className="text-emerald-700">New — {r.won}W/{r.lost}L</span>
+                                )}
+                              </div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={selectedCountryUpdates.size === 0} onClick={() => {
+                        setFeesByCountry(prev => {
+                          const base = prev ? [...prev] : [];
+                          for (const r of pendingFeesByCountry) {
+                            if (!selectedCountryUpdates.has(r.country)) continue;
+                            const idx = base.findIndex(c => c.country === r.country);
+                            idx >= 0 ? (base[idx] = r) : base.push(r);
+                          }
+                          return base.sort((a, b) => a.country.localeCompare(b.country));
+                        });
+                        setPendingFeesByCountry(null);
+                        setSelectedCountryUpdates(new Set());
+                        toast({ title: "Analysis updated", description: `${selectedCountryUpdates.size} countries updated.` });
+                      }}>Apply selected ({selectedCountryUpdates.size})</Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setPendingFeesByCountry(null); setSelectedCountryUpdates(new Set()); }}>Cancel</Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Analysis table */}
+                {feesByCountry && feesByCountry.length > 0 ? (
+                  <div className="rounded-lg border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-[#1A3A4A] text-white">
+                          <TableHead className="text-white text-xs font-bold py-2">Country</TableHead>
+                          <TableHead className="text-white text-xs font-bold py-2 text-center">Won</TableHead>
+                          <TableHead className="text-white text-xs font-bold py-2 text-center">Lost</TableHead>
+                          <TableHead className="text-white text-xs font-bold py-2 text-center">Win Rate</TableHead>
+                          <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Won (€)</TableHead>
+                          <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Lost (€)</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {feesByCountry.map((r, i) => {
+                          const fmtFee = (n: number | null) => n != null ? Math.round(n).toLocaleString("it-IT") : "—";
+                          const hasData = r.won > 0 || r.lost > 0;
+                          return (
+                            <TableRow key={r.country} className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}>
+                              <TableCell className="text-xs font-medium py-2">{r.country}</TableCell>
+                              <TableCell className="text-xs text-center font-semibold text-emerald-600 py-2">{r.won}</TableCell>
+                              <TableCell className="text-xs text-center font-semibold text-red-500 py-2">{r.lost}</TableCell>
+                              <TableCell className="text-xs text-center py-2">
+                                {!hasData ? "—" : r.winRate != null ? `${Math.round(r.winRate * 100)}%` : "—"}
+                              </TableCell>
+                              <TableCell className="text-xs text-right font-mono py-2">
+                                {r.won > 0 ? fmtFee(r.avgWon) : <span className="text-muted-foreground">-</span>}
+                              </TableCell>
+                              <TableCell className="text-xs text-right font-mono py-2">
+                                {r.lost > 0 ? fmtFee(r.avgLost) : <span className="text-muted-foreground">-</span>}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-4">No win/loss data yet — mark projects as Won or Lost to populate this table.</p>
+                )}
+              </CardContent>
+            </Card>
 
             {/* ── Country Benchmarks ──────────────────────────────── */}
             <Card>
@@ -1420,6 +1676,24 @@ export default function PricingTool() {
                       (row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee"))
                         ? weeklyScale : totalScale;
 
+                    // Helper: find won proposals for a benchmark country
+                    const wonForCountry = (country: string) => {
+                      const matchingRegions = Object.entries(REGION_TO_COUNTRY)
+                        .filter(([, aliases]) => aliases.some(a => a.toLowerCase() === country.toLowerCase()))
+                        .map(([code]) => code);
+                      return proposals.filter(p =>
+                        p.outcome === "won" && (
+                          matchingRegions.includes(p.region) ||
+                          (p.country && p.country.toLowerCase() === country.toLowerCase())
+                        )
+                      );
+                    };
+
+                    const deleteCountry = (country: string) => {
+                      const updated = benchmarks.filter(b => b.country !== country);
+                      saveBenchmarks(updated);
+                    };
+
                     return (
                       <div className="space-y-5">
                         {/* Scale legend */}
@@ -1427,18 +1701,34 @@ export default function PricingTool() {
                           <span>Weekly scale: 0 – {fB(weeklyScale)}</span>
                           <span>Total scale: 0 – {fB(totalScale)}</span>
                           <span className="ml-auto flex gap-3">
-                            <span><span className="inline-block w-3 h-2 bg-red-400/50 rounded-sm mr-1" />Red</span>
                             <span><span className="inline-block w-3 h-2 bg-amber-300/70 rounded-sm mr-1" />Yellow</span>
                             <span><span className="inline-block w-3 h-2 bg-emerald-400/80 rounded-sm mr-1" />Green</span>
+                            <span><span className="inline-block w-3 h-2 bg-red-400/50 rounded-sm mr-1" />Red (high)</span>
                           </span>
                         </div>
                         {countries.map(country => {
                           const rows = benchmarks.filter(b => b.country === country);
+                          const wonProposals = wonForCountry(country);
+                          const avgWonWeekly = wonProposals.length > 0
+                            ? wonProposals.reduce((s, p) => s + p.weekly_price, 0) / wonProposals.length
+                            : null;
                           return (
                             <div key={country}>
                               <div className="flex items-center gap-2 mb-1.5">
                                 <span className="text-xs font-bold uppercase tracking-wide">{country}</span>
+                                {wonProposals.length > 0 && (
+                                  <span className="text-[9px] text-emerald-600 font-medium">
+                                    {wonProposals.length} won · avg {fB(avgWonWeekly!)}/wk
+                                  </span>
+                                )}
                                 <div className="flex-1 border-t border-border" />
+                                <button
+                                  onClick={() => deleteCountry(country)}
+                                  className="text-muted-foreground hover:text-destructive p-0.5 rounded transition-colors"
+                                  title={`Remove ${country}`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
                               </div>
                               <div className="grid grid-cols-[280px,1fr] gap-3 items-start">
                                 {/* Left: compact number table */}
@@ -1455,7 +1745,11 @@ export default function PricingTool() {
                                       <tr key={i} className="border-b last:border-0">
                                         <td className="px-2 py-1 font-medium text-muted-foreground">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</td>
                                         <td className="px-2 py-1 text-center font-mono text-emerald-700">
-                                          {row.green_high === 0 ? <span className="text-muted-foreground italic">n/a</span> : `${fB(row.green_low)}–${fB(row.green_high)}`}
+                                          {row.green_high === 0
+                                            ? (avgWonWeekly && row.parameter.toLowerCase().includes("weekly")
+                                                ? <span className="text-emerald-600 italic">{fB(avgWonWeekly * 0.9)}–{fB(avgWonWeekly * 1.1)}</span>
+                                                : <span className="text-muted-foreground italic">n/a</span>)
+                                            : `${fB(row.green_low)}–${fB(row.green_high)}`}
                                         </td>
                                         <td className="px-2 py-1 text-center font-semibold">{row.decisiveness_pct}%</td>
                                       </tr>
@@ -1468,28 +1762,54 @@ export default function PricingTool() {
                                     const scale = getScale(row);
                                     const pct = (v: number) => `${Math.min(100, Math.max(0, (v / scale) * 100)).toFixed(2)}%`;
                                     const noData = row.yellow_high === 0;
+                                    const isWeekly = row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee");
+                                    // Synthetic band from won proposals when no benchmark data
+                                    const synthLow = noData && avgWonWeekly && isWeekly ? avgWonWeekly * 0.9 : null;
+                                    const synthHigh = noData && avgWonWeekly && isWeekly ? avgWonWeekly * 1.1 : null;
                                     return (
                                       <div key={i} className="space-y-0.5">
                                         <div className="text-[9px] text-muted-foreground">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</div>
-                                        {noData ? (
+                                        {noData && !synthLow ? (
                                           <div className="h-5 rounded bg-muted/30 flex items-center px-2">
                                             <span className="text-[9px] text-muted-foreground italic">No data</span>
                                           </div>
                                         ) : (
-                                          <div className="relative h-5 rounded overflow-hidden bg-muted/20 border border-border/50">
-                                            {/* red left zone: 0 → yellow_low */}
-                                            <div className="absolute inset-y-0 bg-red-400/50" style={{ left: 0, width: pct(row.yellow_low) }} />
-                                            {/* yellow left: yellow_low → green_low */}
-                                            <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.yellow_low), width: `${Math.max(0, (row.green_low - row.yellow_low) / scale * 100).toFixed(2)}%` }} />
-                                            {/* green: green_low → green_high */}
-                                            <div className="absolute inset-y-0 bg-emerald-400/80" style={{ left: pct(row.green_low), width: `${Math.max(0, (row.green_high - row.green_low) / scale * 100).toFixed(2)}%` }} />
-                                            {/* yellow right: green_high → yellow_high */}
-                                            <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.green_high), width: `${Math.max(0, (row.yellow_high - row.green_high) / scale * 100).toFixed(2)}%` }} />
-                                            {/* red right: yellow_high → scale */}
-                                            <div className="absolute inset-y-0 bg-red-400/50" style={{ left: pct(row.yellow_high), right: 0 }} />
+                                          <div className="relative h-7 rounded overflow-hidden bg-white border border-border/50">
+                                            {noData && synthLow && synthHigh ? (
+                                              /* Synthetic green band from won projects ±10% */
+                                              <>
+                                                <div className="absolute inset-y-0 bg-emerald-400/70"
+                                                  style={{ left: pct(synthLow), width: `${Math.max(0, (synthHigh - synthLow) / scale * 100).toFixed(2)}%` }} />
+                                                {/* value label above green band */}
+                                                <span className="absolute text-[8px] font-semibold text-emerald-700 leading-none"
+                                                  style={{ left: pct(synthLow), top: 1 }}>
+                                                  {fB(synthLow)}–{fB(synthHigh)}
+                                                </span>
+                                                <div className="absolute bottom-0.5 text-[7px] text-emerald-600 italic w-full text-center leading-none">
+                                                  estimated ±10%
+                                                </div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                {/* left zone: 0 → yellow_low — white (no colour) */}
+                                                {/* yellow left: yellow_low → green_low */}
+                                                <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.yellow_low), width: `${Math.max(0, (row.green_low - row.yellow_low) / scale * 100).toFixed(2)}%` }} />
+                                                {/* green: green_low → green_high */}
+                                                <div className="absolute inset-y-0 bg-emerald-400/80" style={{ left: pct(row.green_low), width: `${Math.max(0, (row.green_high - row.green_low) / scale * 100).toFixed(2)}%` }} />
+                                                {/* yellow right: green_high → yellow_high */}
+                                                <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.green_high), width: `${Math.max(0, (row.yellow_high - row.green_high) / scale * 100).toFixed(2)}%` }} />
+                                                {/* red right: yellow_high → scale */}
+                                                <div className="absolute inset-y-0 bg-red-400/50" style={{ left: pct(row.yellow_high), right: 0 }} />
+                                                {/* Green band value label */}
+                                                <span className="absolute text-[8px] font-semibold text-emerald-800 leading-none pointer-events-none"
+                                                  style={{ left: `calc(${pct(row.green_low)} + 2px)`, top: 2 }}>
+                                                  {fB(row.green_low)}–{fB(row.green_high)}
+                                                </span>
+                                              </>
+                                            )}
                                             {/* Scale tick marks */}
                                             {[0.25, 0.5, 0.75].map(t => (
-                                              <div key={t} className="absolute inset-y-0 w-px bg-white/40" style={{ left: `${t * 100}%` }} />
+                                              <div key={t} className="absolute inset-y-0 w-px bg-black/10" style={{ left: `${t * 100}%` }} />
                                             ))}
                                           </div>
                                         )}
@@ -1555,158 +1875,118 @@ export default function PricingTool() {
               </CardContent>
             </Card>
 
-            {(() => {
-              const wonProposals = proposals.filter(p => p.outcome === "won");
-              const lostProposals = proposals.filter(p => p.outcome === "lost");
 
-              // Group by region
-              const allRegions = [...new Set(proposals.map(p => p.region))].sort();
-
-              if (wonProposals.length === 0 && lostProposals.length === 0) {
-                return (
-                  <Card className="py-16">
-                    <CardContent className="flex flex-col items-center gap-4">
-                      <TrendingUp className="w-12 h-12 text-muted-foreground/30" />
-                      <div className="text-center">
-                        <p className="font-semibold text-lg">No win/loss data available</p>
-                        <p className="text-sm text-muted-foreground">Log past projects with outcomes to see win-loss analysis</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              }
-
-              return (
-                <>
-                  {/* Summary stats */}
-                  <div className="grid grid-cols-4 gap-4">
-                    {(() => {
-                      const avgWon = wonProposals.length ? wonProposals.reduce((s, p) => s + p.weekly_price, 0) / wonProposals.length : 0;
-                      const avgLost = lostProposals.length ? lostProposals.reduce((s, p) => s + p.weekly_price, 0) / lostProposals.length : 0;
-                      const winRate = (wonProposals.length + lostProposals.length) > 0
-                        ? (wonProposals.length / (wonProposals.length + lostProposals.length) * 100) : 0;
-                      return [
-                        { label: "Won", value: wonProposals.length, cls: "text-emerald-600" },
-                        { label: "Lost", value: lostProposals.length, cls: "text-red-500" },
-                        { label: "Win Rate", value: `${winRate.toFixed(0)}%`, cls: "" },
-                        { label: "Avg Won vs Lost", value: avgWon > 0 && avgLost > 0 ? `${((avgLost - avgWon) / avgWon * 100).toFixed(0)}% gap` : "--", cls: "" },
-                      ].map(stat => (
-                        <Card key={stat.label} className="p-4">
-                          <div className="text-xs text-muted-foreground uppercase font-bold mb-1">{stat.label}</div>
-                          <div className={`text-2xl font-bold ${stat.cls}`}>{stat.value}</div>
-                        </Card>
-                      ));
-                    })()}
+            {/* ── Regions Admin ──────────────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">Regions</CardTitle>
+                  <div className="flex gap-2">
+                    {editingRegions ? (
+                      <>
+                        <Button size="sm" onClick={() => saveRegions(regionsLocal)}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions); setEditingRegions(false); }}>Cancel</Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => { setRegionsLocal([...(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions)]); setEditingRegions(true); }}>
+                        Edit
+                      </Button>
+                    )}
                   </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {editingRegions ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[1fr,80px,60px,32px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase px-1">
+                      <span>Region code</span><span>Multiplier</span><span>Baseline</span><span />
+                    </div>
+                    {regionsLocal.map((r, i) => (
+                      <div key={i} className="grid grid-cols-[1fr,80px,60px,32px] gap-2 items-center">
+                        <Input value={r.region_name}
+                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, region_name: e.target.value } : v))}
+                          className="h-7 text-sm" placeholder="e.g. IT" />
+                        <Input type="number" step="0.01" min="0.5" max="3" value={r.multiplier}
+                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, multiplier: parseFloat(e.target.value) || 1 } : v))}
+                          className="h-7 text-sm font-mono" />
+                        <div className="flex justify-center">
+                          <input type="checkbox" checked={r.is_baseline}
+                            onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, is_baseline: e.target.checked } : v))}
+                          />
+                        </div>
+                        <button onClick={() => setRegionsLocal(prev => prev.filter((_, j) => j !== i))}
+                          className="text-muted-foreground hover:text-destructive p-1">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" onClick={() => setRegionsLocal(prev => [
+                      ...prev,
+                      { id: `region_${Date.now()}`, region_name: "", multiplier: 1.0, is_baseline: false }
+                    ])}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add region
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).map(r => (
+                      <Badge key={r.id} variant={r.is_baseline ? "default" : "secondary"} className="text-xs">
+                        {r.region_name}
+                        {!r.is_baseline && <span className="text-muted-foreground ml-1">×{r.multiplier.toFixed(2)}</span>}
+                        {r.is_baseline && <span className="ml-1 opacity-60">baseline</span>}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-                  {/* Scatter plot per region */}
-                  {allRegions.map(region => {
-                    const regionWon = wonProposals.filter(p => p.region === region);
-                    const regionLost = lostProposals.filter(p => p.region === region);
-                    if (regionWon.length === 0 && regionLost.length === 0) return null;
+            {/* ── Project Types Admin ────────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">Project Types</CardTitle>
+                  <div className="flex gap-2">
+                    {editingProjectTypes ? (
+                      <>
+                        <Button size="sm" onClick={() => saveProjectTypes(projectTypesLocal)}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setProjectTypesLocal(projectTypes); setEditingProjectTypes(false); }}>Cancel</Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => { setProjectTypesLocal([...projectTypes]); setEditingProjectTypes(true); }}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {editingProjectTypes ? (
+                  <div className="space-y-2">
+                    {projectTypesLocal.map((t, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <Input value={t} onChange={e => setProjectTypesLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                          className="h-7 text-sm flex-1" />
+                        <button onClick={() => setProjectTypesLocal(prev => prev.filter((_, j) => j !== i))}
+                          className="text-muted-foreground hover:text-destructive p-1">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" onClick={() => setProjectTypesLocal(prev => [...prev, ""])}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add type
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {projectTypes.map(t => (
+                      <Badge key={t} variant="secondary" className="text-xs capitalize">{t}</Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-                    const allPrices = [...regionWon, ...regionLost].map(p => p.weekly_price);
-                    const minPrice = Math.min(...allPrices);
-                    const maxPrice = Math.max(...allPrices);
-                    const range = maxPrice - minPrice || 1;
-                    const padding = range * 0.1;
-                    const scaleMin = Math.max(0, minPrice - padding);
-                    const scaleMax = maxPrice + padding;
-                    const scaleRange = scaleMax - scaleMin || 1;
-
-                    const suggestedMin = regionWon.length > 0 ? Math.min(...regionWon.map(p => p.weekly_price)) : null;
-                    const suggestedMax = regionWon.length > 0 ? Math.max(...regionWon.map(p => p.weekly_price)) : null;
-                    const avgWon = regionWon.length > 0 ? regionWon.reduce((s, p) => s + p.weekly_price, 0) / regionWon.length : null;
-                    const avgLost = regionLost.length > 0 ? regionLost.reduce((s, p) => s + p.weekly_price, 0) / regionLost.length : null;
-
-                    const cSym = getCurrencyForRegion(region).symbol;
-                    const fmtR = (n: number) => `${cSym}${Math.round(n / 1000)}k`;
-
-                    return (
-                      <Card key={region}>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            {region}
-                            <Badge variant="secondary" className="text-xs">{regionWon.length + regionLost.length} deals</Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          {/* SVG scatter */}
-                          <div className="relative">
-                            <svg viewBox="0 0 600 120" className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
-                              {/* Background */}
-                              <rect x="40" y="10" width="540" height="80" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="1" rx="4" />
-
-                              {/* Suggested range */}
-                              {suggestedMin != null && suggestedMax != null && (
-                                <rect
-                                  x={40 + ((suggestedMin - scaleMin) / scaleRange) * 540}
-                                  y="10" width={Math.max(4, ((suggestedMax - suggestedMin) / scaleRange) * 540)}
-                                  height="80" fill="#dcfce7" opacity="0.6"
-                                />
-                              )}
-
-                              {/* Won dots (blue) */}
-                              {regionWon.map((p, i) => {
-                                const x = 40 + ((p.weekly_price - scaleMin) / scaleRange) * 540;
-                                const y = 30 + (i % 4) * 15;
-                                return <circle key={`w${i}`} cx={x} cy={y} r="5" fill="#3b82f6" opacity="0.8">
-                                  <title>Won: {fmtR(p.weekly_price)} - {p.project_name}</title>
-                                </circle>;
-                              })}
-
-                              {/* Lost dots (red) */}
-                              {regionLost.map((p, i) => {
-                                const x = 40 + ((p.weekly_price - scaleMin) / scaleRange) * 540;
-                                const y = 55 + (i % 4) * 15;
-                                return <circle key={`l${i}`} cx={x} cy={y} r="5" fill="#ef4444" opacity="0.8">
-                                  <title>Lost: {fmtR(p.weekly_price)} - {p.project_name}</title>
-                                </circle>;
-                              })}
-
-                              {/* Avg markers */}
-                              {avgWon != null && (
-                                <line x1={40 + ((avgWon - scaleMin) / scaleRange) * 540} y1="10"
-                                  x2={40 + ((avgWon - scaleMin) / scaleRange) * 540} y2="90"
-                                  stroke="#3b82f6" strokeWidth="2" strokeDasharray="4,4" />
-                              )}
-                              {avgLost != null && (
-                                <line x1={40 + ((avgLost - scaleMin) / scaleRange) * 540} y1="10"
-                                  x2={40 + ((avgLost - scaleMin) / scaleRange) * 540} y2="90"
-                                  stroke="#ef4444" strokeWidth="2" strokeDasharray="4,4" />
-                              )}
-
-                              {/* Scale labels */}
-                              <text x="40" y="108" fontSize="10" fill="#94a3b8">{fmtR(scaleMin)}</text>
-                              <text x="580" y="108" fontSize="10" fill="#94a3b8" textAnchor="end">{fmtR(scaleMax)}</text>
-                              <text x="310" y="108" fontSize="10" fill="#94a3b8" textAnchor="middle">{fmtR((scaleMin + scaleMax) / 2)}</text>
-                            </svg>
-                          </div>
-
-                          {/* Legend */}
-                          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <div className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Won
-                              {avgWon != null && <span className="font-mono text-blue-600 ml-1">(avg {fmtR(avgWon)})</span>}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <div className="w-2.5 h-2.5 rounded-full bg-red-500" /> Lost
-                              {avgLost != null && <span className="font-mono text-red-600 ml-1">(avg {fmtR(avgLost)})</span>}
-                            </div>
-                            {suggestedMin != null && suggestedMax != null && (
-                              <div className="flex items-center gap-1">
-                                <div className="w-3 h-2.5 bg-emerald-200 rounded-sm" />
-                                Suggested: {fmtR(suggestedMin)} - {fmtR(suggestedMax)}
-                              </div>
-                            )}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </>
-              );
-            })()}
           </div>
         )}
       </div>
@@ -1865,9 +2145,7 @@ export default function PricingTool() {
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
-                      <SelectItem value="diagnostic">Diagnostic</SelectItem>
-                      <SelectItem value="implementation">Implementation</SelectItem>
-                      <SelectItem value="transformation">Transformation</SelectItem>
+                      {projectTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2125,7 +2403,7 @@ export default function PricingTool() {
 
             const CANONICAL = [
               "Geography", "Market Context", "Client Profile",
-              "Cost Floor Applied", "Fund History", "Win/Loss Comparables", "Strategic Intent",
+              "Cost Floor Applied", "Fund History", "Strategic Intent",
             ];
 
             // Compute absolute deltas from original trace
@@ -2218,7 +2496,7 @@ export default function PricingTool() {
 
             const SHORT: Record<string, string> = {
               "Geography": "Geo", "Market Context": "Market", "Client Profile": "Client",
-              "Cost Floor Applied": "Floor", "Fund History": "Fund", "Win/Loss Comparables": "W/L", "Strategic Intent": "Intent",
+              "Cost Floor Applied": "Floor", "Fund History": "Fund", "Strategic Intent": "Intent",
             };
 
             const toggleBar = (label: string) => setDisabledBars(prev => {
@@ -2359,8 +2637,8 @@ export default function PricingTool() {
                     </svg>
                   </div>
 
-                  {/* Right: fees summary */}
-                  <div className="w-48 shrink-0 flex flex-col gap-4 pt-6">
+                  {/* Right: duration only */}
+                  <div className="w-36 shrink-0 flex flex-col gap-3 pt-6">
                     <div className="space-y-1">
                       <Label className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Duration</Label>
                       <Select
@@ -2375,22 +2653,11 @@ export default function PricingTool() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1 border rounded-lg p-3 bg-background">
-                      <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
-                      <div className="text-[10px] text-muted-foreground">before discounts & rebates</div>
-                      <div className="text-2xl font-bold text-foreground">{fmt(grossFees)}</div>
-                      <div className="text-[10px] text-muted-foreground">{fmt(adjustedFinal)}/wk × {effectiveDuration}w</div>
-                    </div>
-                    <div className="space-y-1 border rounded-lg p-3 bg-background">
-                      <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
-                      <div className="text-[10px] text-muted-foreground">after discounts, within band</div>
-                      <div className="text-2xl font-bold text-emerald-600">{fmt(netFees)}</div>
-                      <div className="text-[10px] text-muted-foreground">{fmt(recommendedNwf)}/wk × {effectiveDuration}w</div>
-                    </div>
-                    <div className="text-[10px] text-muted-foreground text-center">
-                      {effectiveDuration}w project
-                      {hasGreenBand && <span className="block text-emerald-600">🟢 band {fmt(greenLow)}–{fmt(greenHigh)}</span>}
-                    </div>
+                    {hasGreenBand && (
+                      <div className="text-[10px] text-emerald-600 text-center">
+                        🟢 {fmt(greenLow)}–{fmt(greenHigh)}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2420,8 +2687,15 @@ export default function PricingTool() {
               const minW = (b.rates as any)[matrixRegion2]?.min_weekly ?? 0;
               const maxW = (b.rates as any)[matrixRegion2]?.max_weekly ?? 0;
               const avg = ((minW + maxW) / 2) * (form.duration_weeks || 12);
-              return { label: b.label, color: b.color, avg };
+              return { label: b.label, color: "#94a3b8", avg }; // competitor bars always grey
             }).filter(r => r.avg > 0);
+
+            // Gross / Net fees for display in Section C
+            const secCEffDur = waterfallDuration ?? form.duration_weeks ?? 0;
+            const secCBaseWkly = nwfClamped + manualDelta + negotiationDelta;
+            const secCFinalWkly = Math.round(secCBaseWkly * (1 + variableFeePct / 100 + adminFeePct / 100));
+            const secCGross = Math.round(secCBaseWkly * secCEffDur);
+            const secCNet = Math.round(secCFinalWkly * secCEffDur);
             const allBenchVals = [...benchRows.map(r => r.avg), tnf];
             const benchScale = Math.max(...allBenchVals, 1) * 1.1;
             const pctBar = (v: number) => `${Math.min(100, (v / benchScale) * 100).toFixed(1)}%`;
@@ -2514,9 +2788,9 @@ export default function PricingTool() {
             };
 
             return (
-              <div className="border rounded-lg p-4 bg-muted/10 space-y-3">
+              <div className="border rounded-lg p-5 bg-muted/10 space-y-3">
                 <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
-                <div className="grid grid-cols-2 gap-4 items-start">
+                <div className="grid grid-cols-[1fr,220px] gap-5 items-start">
                   {/* Left col: market benchmarks (combined box) */}
                   <div className="border rounded-lg p-3 bg-background space-y-3">
                     {/* TNF total */}
@@ -2531,14 +2805,14 @@ export default function PricingTool() {
                     {benchRows.length > 0 && (
                       <div className="space-y-1.5">
                         <div className="text-[10px] font-bold uppercase text-muted-foreground">TNF vs Market — {matrixRegion2}</div>
-                        {[...benchRows, { label: "Our TNF", color: "#f59e0b", avg: tnf, isOurs: true }].map((t, i) => (
+                        {[...benchRows, { label: "Our TNF", color: "#1A6571", avg: tnf, isOurs: true }].map((t, i) => (
                           <div key={i} className="space-y-0.5">
                             <div className="flex justify-between text-[9px] text-muted-foreground">
-                              <span className={(t as any).isOurs ? "font-bold text-amber-700" : ""}>{t.label}</span>
+                              <span className={(t as any).isOurs ? "font-bold text-[#1A6571]" : ""}>{t.label}</span>
                               <span className="font-mono">{fmtK2(t.avg)}</span>
                             </div>
                             <div className="h-2 bg-muted rounded-full overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width: pctBar(t.avg), backgroundColor: t.color, opacity: (t as any).isOurs ? 1 : 0.55 }} />
+                              <div className="h-full rounded-full" style={{ width: pctBar(t.avg), backgroundColor: t.color, opacity: (t as any).isOurs ? 1 : 0.7 }} />
                             </div>
                           </div>
                         ))}
@@ -2547,6 +2821,56 @@ export default function PricingTool() {
                     {/* Band bars */}
                     <BandBar bench={weeklyBench} marker={nwfClamped} label={`Weekly — ${weeklyBench?.country ?? form.region} · PE >${form.revenue_band === "above_1b" ? "€1B" : "€500M"}`} />
                     <BandBar bench={totalBench} marker={tnf} label={`Total cost — ${totalBench?.country ?? form.region}`} />
+
+                    {/* W/L Comparables */}
+                    {(() => {
+                      const wins = recommendation.comparable_wins ?? [];
+                      const losses = recommendation.comparable_losses ?? [];
+                      const avgWin = recommendation.comparable_avg_win_weekly;
+                      const avgLoss = recommendation.comparable_avg_loss_weekly;
+                      if (wins.length === 0 && losses.length === 0) return (
+                        <div className="text-[9px] text-muted-foreground italic">No W/L comparables found</div>
+                      );
+                      const allAvgs = [avgWin, avgLoss, nwfClamped].filter(Boolean) as number[];
+                      const compScale = Math.max(...allAvgs) * 1.2;
+                      const pctW = (v: number) => `${Math.min(100, (v / compScale) * 100).toFixed(1)}%`;
+                      return (
+                        <div className="space-y-1.5 pt-1 border-t border-border">
+                          <div className="text-[10px] font-bold uppercase text-muted-foreground">W/L Comparables ({wins.length}W / {losses.length}L)</div>
+                          {avgWin != null && (
+                            <div className="space-y-0.5">
+                              <div className="flex justify-between text-[9px]">
+                                <span className="text-emerald-700 font-semibold">Avg Won ({wins.length})</span>
+                                <span className="font-mono">{fmtC(avgWin)}/wk</span>
+                              </div>
+                              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                <div className="h-full rounded-full bg-emerald-500" style={{ width: pctW(avgWin) }} />
+                              </div>
+                            </div>
+                          )}
+                          {avgLoss != null && (
+                            <div className="space-y-0.5">
+                              <div className="flex justify-between text-[9px]">
+                                <span className="text-red-600 font-semibold">Avg Lost ({losses.length})</span>
+                                <span className="font-mono">{fmtC(avgLoss)}/wk</span>
+                              </div>
+                              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                <div className="h-full rounded-full bg-red-400" style={{ width: pctW(avgLoss) }} />
+                              </div>
+                            </div>
+                          )}
+                          <div className="space-y-0.5">
+                            <div className="flex justify-between text-[9px]">
+                              <span className="text-[#1A6571] font-bold">Our NWF</span>
+                              <span className="font-mono">{fmtC(nwfClamped)}/wk</span>
+                            </div>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full rounded-full bg-[#1A6571]" style={{ width: pctW(nwfClamped) }} />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Right col: TNF ratio gauges */}
@@ -2576,9 +2900,10 @@ export default function PricingTool() {
           {recommendation && nwfClamped > 0 && (() => {
             const baseWeekly = nwfClamped + manualDelta + negotiationDelta;
             const finalWeekly = Math.round(baseWeekly * (1 + variableFeePct / 100 + adminFeePct / 100));
-            const effectiveDur = form.duration_weeks || 0;
+            const effectiveDur = (waterfallDuration ?? form.duration_weeks) || 0;
             const grossFees = Math.round(baseWeekly * effectiveDur);
             const netFees = Math.round(finalWeekly * effectiveDur);
+            const variableFeeTotal = Math.round(baseWeekly * variableFeePct / 100 * effectiveDur);
             const invoiceCount = Math.max(1, Math.floor(1 + effectiveDur / 4));
             const perInvoice = invoiceCount > 0 ? Math.round(netFees / invoiceCount) : 0;
             const cur = getCurrencyForRegion(form.region);
@@ -2623,7 +2948,7 @@ export default function PricingTool() {
                       <Select value={String(variableFeePct)} onValueChange={v => setVariableFeePct(Number(v))}>
                         <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {[10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
+                          {[0, 10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
                         </SelectContent>
                       </Select>
                       <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(baseWeekly * variableFeePct / 100))}/wk</div>
@@ -2647,12 +2972,13 @@ export default function PricingTool() {
                     <TableHeader>
                       <TableRow className="bg-muted/30">
                         <TableHead className="text-[10px] py-1.5">Weekly (base)</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Weekly (all-in)</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Weekly gross+admin</TableHead>
                         <TableHead className="text-[10px] py-1.5">Duration</TableHead>
                         <TableHead className="text-[10px] py-1.5">Gross Fees</TableHead>
-                        <TableHead className="text-[10px] py-1.5">Net Fees (all-in)</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Net total (after D&R)</TableHead>
                         <TableHead className="text-[10px] py-1.5 text-center">Invoices</TableHead>
                         <TableHead className="text-[10px] py-1.5 text-right">Per Invoice</TableHead>
+                        <TableHead className="text-[10px] py-1.5 text-right">Variable fee</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -2664,6 +2990,7 @@ export default function PricingTool() {
                         <TableCell className="font-mono text-sm font-bold text-emerald-600">{fmtC(netFees)}</TableCell>
                         <TableCell className="text-sm text-center font-semibold">{invoiceCount}</TableCell>
                         <TableCell className="font-mono text-sm font-semibold text-right">{fmtC(perInvoice)}</TableCell>
+                        <TableCell className="font-mono text-sm text-right text-amber-600">{fmtC(variableFeeTotal)}</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -3464,6 +3791,33 @@ export default function PricingTool() {
                     </div>
                     <p className="text-xs text-blue-800 leading-relaxed">{recommendation.advisory}</p>
                   </div>
+
+                  {/* Gross / Net Project Fees */}
+                  {nwfClamped > 0 && (() => {
+                    const cur = getCurrencyForRegion(form.region);
+                    const fmtFee = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
+                    const effDur = (waterfallDuration ?? form.duration_weeks) || 0;
+                    const baseWkly = nwfClamped + manualDelta + negotiationDelta;
+                    const finalWkly = Math.round(baseWkly * (1 + variableFeePct / 100 + adminFeePct / 100));
+                    const gross = Math.round(baseWkly * effDur);
+                    const net = Math.round(finalWkly * effDur);
+                    return (
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="border rounded-lg p-3 bg-background space-y-0.5">
+                          <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
+                          <div className="text-[10px] text-muted-foreground">before discounts & rebates</div>
+                          <div className="text-xl font-bold text-foreground">{fmtFee(gross)}</div>
+                          <div className="text-[10px] text-muted-foreground">{fmtFee(baseWkly)}/wk × {effDur}w</div>
+                        </div>
+                        <div className="border rounded-lg p-3 bg-background space-y-0.5">
+                          <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
+                          <div className="text-[10px] text-muted-foreground">after discounts, within band</div>
+                          <div className="text-xl font-bold text-emerald-600">{fmtFee(net)}</div>
+                          <div className="text-[10px] text-muted-foreground">{fmtFee(nwfClamped)}/wk × {effDur}w</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                 </div>
               )}
