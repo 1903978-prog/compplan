@@ -3722,8 +3722,10 @@ export default function PricingTool() {
 
             // Y-scale — include markup bars in range
             const grossV = variableFeePct > 0 ? Math.round(grossWeeklyWaterfall * (1 + variableFeePct / 100)) : grossWeeklyWaterfall;
+            const low50gm = recommendation.low_50gm_weekly ?? 0;
             const allVals = [base, adjustedFinal, ...bars.flatMap(b => [b.start, b.end]),
               recommendedNwf, grossWeeklyWaterfall, grossV,
+              ...(low50gm > 0 ? [low50gm] : []),
               ...(hasGreenBand ? [greenLow, greenHigh] : [])];
             const minV = Math.min(...allVals) * 0.92;
             const maxV = Math.max(...allVals) * 1.08;
@@ -3907,6 +3909,18 @@ export default function PricingTool() {
                           <text x={x + barW/2} y={y - 2} textAnchor="middle" fontSize="5.5" fill="#94a3b8">+{variableFeePct}%</text>
                           <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#166534" fontWeight="600">GROSSV</text>
                           <text x={x + barW/2} y={chartBot + 18} textAnchor="middle" fontSize="5.5" fill="#166534">{fmt(totalGrossV)}</text>
+                        </>;
+                      })()}
+
+                      {/* Low 50% GM floor reference line */}
+                      {recommendation.low_50gm_weekly > 0 && recommendation.low_50gm_weekly < maxV && (() => {
+                        const lowY = yOf(recommendation.low_50gm_weekly);
+                        return <>
+                          <line x1={25} x2={W - 5} y1={lowY} y2={lowY}
+                            stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.6" />
+                          <text x={W - 6} y={lowY - 2} textAnchor="end" fontSize="5.5" fill="#94a3b8" opacity="0.8">
+                            Low {fmt(recommendation.low_50gm_weekly)}
+                          </text>
                         </>;
                       })()}
 
@@ -5120,14 +5134,20 @@ export default function PricingTool() {
                     const MiniTable = ({ items, label }: { items: PricingProposal[]; label: string }) => (
                       <div className="space-y-1">
                         <div className="text-[11px] font-bold text-blue-700">{label} ({items.length})</div>
-                        {items.map(p => (
-                          <div key={p.id} className="flex items-center justify-between text-xs bg-white/70 rounded px-2 py-1">
-                            <span className="text-muted-foreground w-16">{p.proposal_date?.slice(0, 7)}</span>
-                            <span className="truncate max-w-[80px] mx-1 text-muted-foreground">{p.project_name}</span>
-                            <span className="font-semibold font-mono">{fmt(p.weekly_price)}</span>
-                            <OutcomeBadge outcome={p.outcome} />
-                          </div>
-                        ))}
+                        <div className="grid grid-cols-[auto,1fr,auto,auto,auto] gap-x-2 gap-y-0.5 text-xs">
+                          {items.map(p => {
+                            const totalFee = p.total_fee ?? (p.weekly_price * (p.duration_weeks || 1));
+                            return (
+                              <React.Fragment key={p.id}>
+                                <span className="text-muted-foreground">{p.proposal_date?.slice(0, 7)}</span>
+                                <span className="truncate text-muted-foreground">{p.project_name}</span>
+                                <span className="font-semibold font-mono text-right">{fmt(p.weekly_price)}/wk</span>
+                                <span className="font-mono text-muted-foreground text-right">{fmt(totalFee)}</span>
+                                <OutcomeBadge outcome={p.outcome} />
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
 
