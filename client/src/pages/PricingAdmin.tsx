@@ -1364,7 +1364,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
     const existing = rawMatrix.find(r => r.client_type === ct);
     if (existing) return existing;
     // Pull from defaults
-    const def = DEFAULT_ADMIN_SETTINGS.rate_matrix.find(r => r.client_type === ct);
+    const def = DEFAULT_SETTINGS.rate_matrix.find(r => r.client_type === ct);
     return def ?? { client_type: ct, rates: {} };
   });
   // Also keep any custom rows the user added beyond the 6 defaults
