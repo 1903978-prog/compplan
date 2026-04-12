@@ -1763,19 +1763,42 @@ export default function PricingTool() {
   // Gross = Net × (1+admin%) / (1-d1%) / (1-d2%) / ...
   const canonicalNetWeekly = useMemo(() => {
     if (!recommendation) return 0;
-    // Reproduce waterfall: start from base, apply layer deltas
+    // Reproduce waterfall EXACTLY: start from base, apply layer deltas
+    // respecting disabledBars (toggle state). This ensures Net here = Net bar in waterfall.
     const trace = recommendation.layer_trace;
     const base = recommendation.base_weekly;
     const CANONICAL_KEYS = ["Geography", "Sector", "Client Profile", "Strategic Intent"];
-    let running = base;
+
+    // First compute deltas from trace (same as waterfall traceByKey logic)
+    const traceByKey: Record<string, { value: number }> = {};
     for (const lt of trace) {
       const key = lt.label.replace(/\s*\(.*?\)\s*$/, "").trim();
-      if (CANONICAL_KEYS.some(k => key.startsWith(k))) {
-        running += (lt.value - running); // apply delta to get to lt.value
+      traceByKey[key] = lt;
+    }
+    const deltas: Record<string, number> = {};
+    let prevOrig = base;
+    for (const key of CANONICAL_KEYS) {
+      const lt = traceByKey[key];
+      if (lt) {
+        deltas[key] = lt.value - prevOrig;
+        prevOrig = lt.value;
+      } else {
+        deltas[key] = 0;
+      }
+    }
+
+    // Apply deltas respecting disabled bars (same as waterfall runningValue logic)
+    let running = base;
+    for (const key of CANONICAL_KEYS) {
+      const delta = deltas[key] ?? 0;
+      const isDisabled = disabledBars.has(key);
+      if (!isDisabled && Math.abs(delta) >= 1) {
+        running += delta;
       }
     }
     running += manualDelta;
-    // Clamp to green band
+
+    // Clamp to green band (same as waterfall recommendedNwf logic)
     const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
     const weeklyBench = benchmarks.find(b =>
       countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
@@ -1787,7 +1810,7 @@ export default function PricingTool() {
       running = Math.min(gHigh, Math.max(gLow, running));
     }
     return Math.round(running);
-  }, [recommendation, manualDelta, form.region, benchmarks]);
+  }, [recommendation, manualDelta, form.region, benchmarks, disabledBars]);
 
   const canonicalGrossWeekly = useMemo(() => {
     let g = canonicalNetWeekly * (1 + adminFeePct / 100);
