@@ -2671,30 +2671,6 @@ export default function PricingTool() {
               </CardHeader>
               <CardContent className="space-y-4">
 
-                {/* ── Paste import — always visible ──────────────────── */}
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground">Paste win-loss analysis text to import</p>
-                  <Textarea
-                    value={pasteInput}
-                    onChange={e => { setPasteInput(e.target.value); setPasteResult(null); }}
-                    placeholder={
-                      "Pipe format:\nItaly | Weekly fee | €28k–34k | €25k–28k / €34k–38k | <€25k / >€38k | 25%\nItaly | Total project cost | €300k–410k | €150k–300k / €410k–600k | <€150k / >€600k | 25%\n\nFree-form format:\nItaly\nWeekly fee: green €28k–34k, yellow €25k–28k / €34k–38k, 25% decisiveness\nTotal project cost: strongest wins €300k–410k, mixed €150k–300k and €410k–600k, red above €600k, 25%"
-                    }
-                    className="text-xs font-mono resize-none"
-                    rows={5}
-                  />
-                  <div className="flex items-center gap-3">
-                    <Button size="sm" onClick={handleParsePaste} disabled={!pasteInput.trim() || savingBenchmarks}>
-                      {savingBenchmarks ? "Saving…" : "Import & Save"}
-                    </Button>
-                    {pasteResult && (
-                      <span className={`text-xs font-medium ${pasteResult.ok ? "text-emerald-600" : "text-destructive"}`}>
-                        {pasteResult.msg}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
                 {/* ── Display: per-country tables ─────────────────────── */}
                 {!editingBenchmarks && (
                   benchmarks.length === 0 ? (
@@ -2771,6 +2747,32 @@ export default function PricingTool() {
                       saveBenchmarks(updated);
                     };
 
+                    // Italy green zone for weekly fee — used as base for market benchmark bars
+                    const italyWeekly = benchmarks.find(b =>
+                      b.country === "Italy" && (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+                    );
+                    const italyGreenLow = italyWeekly?.green_low ?? 0;
+                    const italyGreenHigh = italyWeekly?.green_high ?? 0;
+
+                    // Compute market benchmark for a region: Italy green × region multiplier
+                    const getMarketBenchmark = (regionKey: string): { low: number; high: number; mult: number } | null => {
+                      if (!italyGreenLow || !italyGreenHigh) return null;
+                      // Try direct match on admin region name, then reverse-map through REGION_TO_COUNTRY
+                      let adminRegion = (settings?.regions ?? []).find(r => r.region_name === regionKey);
+                      if (!adminRegion) {
+                        // Map region display names to codes: "DACH" → "DE", "Nordics" → "NL", etc.
+                        const codeMap: Record<string, string> = { Italy: "IT", France: "FR", DACH: "DE", Nordics: "NL", UK: "UK", US: "US", "Middle East": "Middle East", Asia: "Asia" };
+                        const code = codeMap[regionKey] ?? regionKey;
+                        adminRegion = (settings?.regions ?? []).find(r => r.region_name === code);
+                      }
+                      const mult = adminRegion?.multiplier ?? 1;
+                      return {
+                        low: Math.round(italyGreenLow * mult),
+                        high: Math.round(italyGreenHigh * mult),
+                        mult,
+                      };
+                    };
+
                     return (
                       <div className="space-y-5">
                         {/* Scale legend */}
@@ -2779,8 +2781,8 @@ export default function PricingTool() {
                           <span>Total scale: 0 – {fB(totalScale)}</span>
                           <span className="ml-auto flex gap-3">
                             <span><span className="inline-block w-3 h-2 bg-amber-300/70 rounded-sm mr-1" />Yellow</span>
-                            <span><span className="inline-block w-3 h-2 bg-emerald-400/80 rounded-sm mr-1" />Green</span>
-                            <span><span className="inline-block w-3 h-2 bg-red-400/50 rounded-sm mr-1" />Red (high)</span>
+                            <span><span className="inline-block w-3 h-2 bg-emerald-400/80 rounded-sm mr-1" />Green (W/L)</span>
+                            <span><span className="inline-block w-3 h-2 bg-blue-400/60 rounded-sm mr-1" />Mkt (IT×mult)</span>
                           </span>
                         </div>
                         {countries.map(country => {
@@ -2789,6 +2791,7 @@ export default function PricingTool() {
                           const avgWonWeekly = wonProposals.length > 0
                             ? wonProposals.reduce((s, p) => s + p.weekly_price, 0) / wonProposals.length
                             : null;
+                          const mktBench = getMarketBenchmark(country);
                           return (
                             <div key={country}>
                               <div className="flex items-center gap-2 mb-1.5">
@@ -2835,6 +2838,26 @@ export default function PricingTool() {
                                 </table>
                                 {/* Right: visual band bars (shared scale) */}
                                 <div className="space-y-2 pt-1">
+                                  {/* Market benchmark bar (Italy green × country multiplier) — weekly only */}
+                                  {mktBench && mktBench.low > 0 && (() => {
+                                    const scale = weeklyScale;
+                                    const pctM = (v: number) => `${Math.min(100, Math.max(0, (v / scale) * 100)).toFixed(2)}%`;
+                                    return (
+                                      <div className="space-y-0.5">
+                                        <div className="text-[9px] text-blue-600 font-semibold">
+                                          Mkt benchmark (IT ×{mktBench.mult.toFixed(2)})
+                                        </div>
+                                        <div className="relative h-6 rounded overflow-hidden bg-blue-50 border border-blue-200/50">
+                                          <div className="absolute inset-y-0 bg-blue-400/50"
+                                            style={{ left: pctM(mktBench.low), width: `${Math.max(0, (mktBench.high - mktBench.low) / scale * 100).toFixed(2)}%` }} />
+                                          <span className="absolute text-[11px] font-bold text-blue-800 leading-none px-1"
+                                            style={{ left: `calc(${pctM(mktBench.low)} + 2px)`, top: 3 }}>
+                                            {fB(mktBench.low)}–{fB(mktBench.high)}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                   {rows.map((row, i) => {
                                     const scale = getScale(row);
                                     const pct = (v: number) => `${Math.min(100, Math.max(0, (v / scale) * 100)).toFixed(2)}%`;
@@ -2948,6 +2971,30 @@ export default function PricingTool() {
                     </Table>
                   </div>
                 )}
+
+                {/* ── Paste import — at bottom ────────────────────────── */}
+                <div className="space-y-2 border-t pt-3">
+                  <p className="text-xs font-semibold text-muted-foreground">Paste win-loss analysis text to import</p>
+                  <Textarea
+                    value={pasteInput}
+                    onChange={e => { setPasteInput(e.target.value); setPasteResult(null); }}
+                    placeholder={
+                      "Pipe format:\nItaly | Weekly fee | €28k–34k | €25k–28k / €34k–38k | <€25k / >€38k | 25%\n\nFree-form format:\nItaly\nWeekly fee: green €28k–34k, yellow €25k–28k / €34k–38k, 25% decisiveness"
+                    }
+                    className="text-xs font-mono resize-none"
+                    rows={4}
+                  />
+                  <div className="flex items-center gap-3">
+                    <Button size="sm" onClick={handleParsePaste} disabled={!pasteInput.trim() || savingBenchmarks}>
+                      {savingBenchmarks ? "Saving…" : "Import & Save"}
+                    </Button>
+                    {pasteResult && (
+                      <span className={`text-xs font-medium ${pasteResult.ok ? "text-emerald-600" : "text-destructive"}`}>
+                        {pasteResult.msg}
+                      </span>
+                    )}
+                  </div>
+                </div>
 
               </CardContent>
             </Card>
