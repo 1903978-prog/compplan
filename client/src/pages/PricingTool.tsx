@@ -95,13 +95,29 @@ function emptyProposal(): PricingProposal {
   };
 }
 
-const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees outlined for this Statement of Work, spanning over {{DURATION_WEEKS}} weeks with a team of {{TEAM_COUNT}} professionals ({{TEAM_ROLES}}), amount to {{HEADLINE_GROSS}}.
-{{IF_DISCOUNTS}}
-In recognition of the mutual intention to build a long-term partnership, we are pleased to extend the following commercial incentives:
+const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees for this Statement of Work, covering a {{ENGAGEMENT_DURATION_WEEKS}}-week engagement and a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}), amount to {{STANDARD_PROFESSIONAL_FEES}}.
 
-{{DISCOUNT_ITEMS}}
+In consideration of the parties' intention to establish a long-term partnership, the following commercial incentives may apply, where applicable:
 
-Therefore in consideration of the above, the Net Professional Fees (all incentives achieved, excluding any success fee) is {{NET_TOTAL}}.{{END_IF_DISCOUNTS}} There will be {{INVOICES_COUNT}} invoices, each of an amount of {{INVOICE_AMOUNT}} including the {{ADMIN_PCT}}% administration fee.`;
+{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}
+A1. Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
+{{/if}}
+
+{{#if ONE_OFF_DISCOUNT_PERCENT}}
+A2. One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{#if PE_FUND_NAME}}, granted in connection with {{PE_FUND_NAME}}{{/if}}.
+{{/if}}
+
+{{#if REBATE_PERCENT}}
+A3. Rebate: {{REBATE_PERCENT}}% (equal to {{REBATE_AMOUNT}}), subject to the conditions set out in this Statement of Work.
+{{/if}}
+
+{{#if SUCCESS_FEE_PERCENT}}
+A4. Success Fee: {{SUCCESS_FEE_PERCENT}}% of the Base Fees (equal to {{SUCCESS_FEE_AMOUNT}}). This portion of the professional fees shall become due only upon achievement of the relevant objectives, as jointly defined by the parties if not otherwise specified in this Statement of Work. The success fee shall be invoiced only upon formal written confirmation by email from the Project Commissioner confirming satisfaction with the relevant outcomes, whether during or at the conclusion of the engagement.
+{{/if}}
+
+Accordingly, assuming all applicable incentives are achieved and excluding any success fee, the Net Professional Fees amount to {{NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE}}.
+
+The fees shall be invoiced in {{NUMBER_OF_INVOICES}} instalments, each in the amount of {{INVOICE_AMOUNT}}, inclusive of the {{ADMINISTRATION_FEE_PERCENT}}% administration fee.`;
 
 // Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
 // Default full Eendigo team = 2 ASC INT + 3 EM EXT (5 people)
@@ -4180,9 +4196,9 @@ export default function PricingTool() {
                   {editingTemplate && (
                     <div className="space-y-2 border rounded-lg p-3 bg-muted/10">
                       <div className="text-[10px] font-bold uppercase text-muted-foreground">Edit Proposal Template</div>
-                      <p className="text-[9px] text-muted-foreground">
-                        Variables: {"{{DURATION_WEEKS}}"} {"{{TEAM_COUNT}}"} {"{{TEAM_ROLES}}"} {"{{GROSS_WEEKLY}}"} {"{{NET_WEEKLY}}"} {"{{GROSS_TOTAL}}"} {"{{NET_TOTAL}}"} {"{{HEADLINE_GROSS}}"} {"{{DISCOUNT_ITEMS}}"} {"{{CLIENT_NAME}}"} {"{{PROJECT_NAME}}"} {"{{FUND_NAME}}"} {"{{ADMIN_PCT}}"} {"{{VARIABLE_PCT}}"} {"{{CURRENCY}}"} {"{{INVOICES_COUNT}}"} {"{{INVOICE_AMOUNT}}"}
-                        Conditional: {"{{IF_DISCOUNTS}}"}...{"{{END_IF_DISCOUNTS}}"} (only shown if discounts/success fee active)
+                      <p className="text-[9px] text-muted-foreground leading-relaxed">
+                        <span className="font-semibold">Variables:</span> {"{{ENGAGEMENT_DURATION_WEEKS}}"} {"{{TEAM_SIZE}}"} {"{{TEAM_COMPOSITION}}"} {"{{STANDARD_PROFESSIONAL_FEES}}"} {"{{NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE}}"} {"{{NUMBER_OF_INVOICES}}"} {"{{INVOICE_AMOUNT}}"} {"{{ADMINISTRATION_FEE_PERCENT}}"} {"{{PROMPT_PAYMENT_DISCOUNT_PERCENT}}"} {"{{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}"} {"{{ONE_OFF_DISCOUNT_PERCENT}}"} {"{{ONE_OFF_DISCOUNT_AMOUNT}}"} {"{{REBATE_PERCENT}}"} {"{{REBATE_AMOUNT}}"} {"{{SUCCESS_FEE_PERCENT}}"} {"{{SUCCESS_FEE_AMOUNT}}"} {"{{PE_FUND_NAME}}"} {"{{CLIENT_NAME}}"} {"{{CURRENCY}}"}
+                        <br/><span className="font-semibold">Conditionals:</span> {"{{#if VAR}}"}...{"{{/if}}"} — section only appears if VAR has a value
                       </p>
                       <Textarea value={templateLocal}
                         onChange={e => setTemplateLocal(e.target.value)}
@@ -4233,57 +4249,67 @@ export default function PricingTool() {
                     const successFeeTotal = variableFeePct > 0 ? Math.round(netTotal * variableFeePct / 100) : 0;
                     const headlineGross = grossTotal + successFeeTotal;
 
-                    // Build smart discount items
-                    const discountLines: string[] = [];
-                    let itemNum = 1;
-                    // One-off discount (check for name containing "one off" or "one-off")
+                    // Identify specific discount types by name pattern
+                    const promptPayment = enabledDisc.find(d => /prompt|payment/i.test(d.name));
                     const oneOff = enabledDisc.find(d => /one.?off/i.test(d.name));
-                    if (oneOff) {
-                      const fundLabel = form.fund_name ? ` ${form.fund_name}` : "";
-                      const amt = Math.round(grossTotal * oneOff.pct / 100);
-                      discountLines.push(`A${itemNum}. One-off${fundLabel} discount – ${oneOff.pct}% (${fmtP(amt)})`);
-                      itemNum++;
-                    }
-                    // Prompt payment / other discounts
-                    for (const d of enabledDisc) {
-                      if (d === oneOff) continue;
-                      const amt = Math.round(grossTotal * d.pct / 100);
-                      discountLines.push(`A${itemNum}. ${d.name} – ${d.pct}% (${fmtP(amt)})`);
-                      itemNum++;
-                    }
-                    // Rebate (check for name containing "rebate")
-                    // already handled above in generic loop
+                    const rebate = enabledDisc.find(d => /rebate/i.test(d.name));
 
-                    // Success fee
-                    if (variableFeePct > 0) {
-                      discountLines.push(`A${itemNum}. Success Fee – ${variableFeePct}% of Base Fees (${fmtP(successFeeTotal)})\n${variableFeePct}% of the professional fees will be due only upon achievement of objectives which will be jointly defined if not specified in this document. The success fee will be invoiced only upon formal written e-mail confirmation of satisfaction by the Project Commissioner during or at the close of the engagement.`);
-                    }
+                    const promptPct = promptPayment?.pct ?? 0;
+                    const oneOffPct = oneOff?.pct ?? 0;
+                    const rebatePct = rebate?.pct ?? 0;
+                    const promptAmt = promptPct > 0 ? Math.round(grossTotal * promptPct / 100) : 0;
+                    const oneOffAmt = oneOffPct > 0 ? Math.round(grossTotal * oneOffPct / 100) : 0;
+                    const rebateAmt = rebatePct > 0 ? Math.round(grossTotal * rebatePct / 100) : 0;
 
-                    let text = template
-                      .replace(/\{\{DURATION_WEEKS\}\}/g, String(dur))
-                      .replace(/\{\{TEAM_COUNT\}\}/g, String(teamCount))
-                      .replace(/\{\{TEAM_ROLES\}\}/g, teamRoles)
-                      .replace(/\{\{GROSS_WEEKLY\}\}/g, fmtP(grossWk))
-                      .replace(/\{\{NET_WEEKLY\}\}/g, fmtP(netWk))
-                      .replace(/\{\{GROSS_TOTAL\}\}/g, fmtP(grossTotal))
-                      .replace(/\{\{NET_TOTAL\}\}/g, fmtP(netTotal))
-                      .replace(/\{\{HEADLINE_GROSS\}\}/g, fmtP(headlineGross))
-                      .replace(/\{\{DISCOUNT_ITEMS\}\}/g, discountLines.join("\n\n"))
-                      .replace(/\{\{CLIENT_NAME\}\}/g, form.client_name || "[Client]")
-                      .replace(/\{\{PROJECT_NAME\}\}/g, form.project_name || "[Project]")
-                      .replace(/\{\{FUND_NAME\}\}/g, form.fund_name || "[Fund]")
-                      .replace(/\{\{ADMIN_PCT\}\}/g, String(adminFeePct))
-                      .replace(/\{\{VARIABLE_PCT\}\}/g, String(variableFeePct))
-                      .replace(/\{\{CURRENCY\}\}/g, cur.code)
-                      .replace(/\{\{INVOICES_COUNT\}\}/g, String(invoiceCount))
-                      .replace(/\{\{INVOICE_AMOUNT\}\}/g, fmtP(invoiceAmount));
+                    // Build variable map for all replacements
+                    const vars: Record<string, string> = {
+                      // Legacy compat
+                      DURATION_WEEKS: String(dur), TEAM_COUNT: String(teamCount), TEAM_ROLES: teamRoles,
+                      GROSS_WEEKLY: fmtP(grossWk), NET_WEEKLY: fmtP(netWk), GROSS_TOTAL: fmtP(grossTotal),
+                      NET_TOTAL: fmtP(netTotal), HEADLINE_GROSS: fmtP(headlineGross),
+                      CLIENT_NAME: form.client_name || "[Client]", PROJECT_NAME: form.project_name || "[Project]",
+                      FUND_NAME: form.fund_name || "", ADMIN_PCT: String(adminFeePct),
+                      VARIABLE_PCT: String(variableFeePct), CURRENCY: cur.code,
+                      INVOICES_COUNT: String(invoiceCount), INVOICE_AMOUNT: fmtP(invoiceAmount),
+                      // New structured variables
+                      ENGAGEMENT_DURATION_WEEKS: String(dur),
+                      TEAM_SIZE: String(teamCount),
+                      TEAM_COMPOSITION: teamRoles,
+                      STANDARD_PROFESSIONAL_FEES: fmtP(headlineGross),
+                      PROMPT_PAYMENT_DISCOUNT_PERCENT: promptPct > 0 ? String(promptPct) : "",
+                      PROMPT_PAYMENT_DISCOUNT_AMOUNT: promptPct > 0 ? fmtP(promptAmt) : "",
+                      ONE_OFF_DISCOUNT_PERCENT: oneOffPct > 0 ? String(oneOffPct) : "",
+                      ONE_OFF_DISCOUNT_AMOUNT: oneOffPct > 0 ? fmtP(oneOffAmt) : "",
+                      PE_FUND_NAME: form.fund_name || "",
+                      REBATE_PERCENT: rebatePct > 0 ? String(rebatePct) : "",
+                      REBATE_AMOUNT: rebatePct > 0 ? fmtP(rebateAmt) : "",
+                      SUCCESS_FEE_PERCENT: variableFeePct > 0 ? String(variableFeePct) : "",
+                      SUCCESS_FEE_AMOUNT: variableFeePct > 0 ? fmtP(successFeeTotal) : "",
+                      NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE: fmtP(netTotal),
+                      NUMBER_OF_INVOICES: String(invoiceCount),
+                      ADMINISTRATION_FEE_PERCENT: String(adminFeePct),
+                    };
 
-                    // Conditional blocks: {{IF_DISCOUNTS}}...{{END_IF_DISCOUNTS}}
+                    let text = template;
+
+                    // Process {{#if VAR}}...{{/if}} conditionals
+                    text = text.replace(/\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g, (_match, varName, content) => {
+                      const val = vars[varName] ?? "";
+                      return val ? content : "";
+                    });
+
+                    // Process {{IF_DISCOUNTS}}...{{END_IF_DISCOUNTS}} (legacy)
                     if (hasDiscounts) {
                       text = text.replace(/\{\{IF_DISCOUNTS\}\}/g, "").replace(/\{\{END_IF_DISCOUNTS\}\}/g, "");
                     } else {
                       text = text.replace(/\{\{IF_DISCOUNTS\}\}[\s\S]*?\{\{END_IF_DISCOUNTS\}\}/g, "");
                     }
+
+                    // Replace all {{VAR}} placeholders
+                    text = text.replace(/\{\{(\w+)\}\}/g, (_match, varName) => vars[varName] ?? "");
+
+                    // Clean up double blank lines
+                    text = text.replace(/\n{3,}/g, "\n\n").trim();
 
                     return (
                       <div className="border rounded-lg p-4 bg-white space-y-2">
