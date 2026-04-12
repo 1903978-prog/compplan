@@ -195,6 +195,9 @@ export interface PricingProposal {
   sector?: string | null;
   project_type?: string | null;
   currency?: string | null;
+  company_revenue_m?: number | null;
+  ebitda_margin_pct?: number | null;
+  expected_ebitda_growth_pct?: number | null;
   notes?: string | null;
   created_at?: string;
 }

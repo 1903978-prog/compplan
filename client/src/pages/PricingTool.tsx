@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo } from "react";
+﻿import React, { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +86,9 @@ function emptyProposal(): PricingProposal {
     outcome: "won",
     loss_reason: "",
     currency: "EUR",
+    company_revenue_m: null,
+    ebitda_margin_pct: null,
+    expected_ebitda_growth_pct: null,
     notes: "",
   };
 }
@@ -840,6 +843,201 @@ export default function PricingTool() {
     setShowEditProposalForm(true);
   };
 
+  const renderProposalEditForm = () => (
+    <div className="space-y-3">
+      <div className="text-xs font-bold uppercase tracking-wide text-primary mb-1">
+        {editingProposalId ? "Edit Past Project" : "Add Past Project"}
+      </div>
+      <div className="grid grid-cols-4 gap-3">
+        <div className="space-y-1">
+          <Label className="text-xs">Date</Label>
+          <Input type="date" value={historyForm.proposal_date} onChange={e => setHistoryForm(f => ({ ...f, proposal_date: e.target.value }))} className="h-8 text-sm" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Outcome</Label>
+          <Select value={historyForm.outcome} onValueChange={v => setHistoryForm(f => ({ ...f, outcome: v }))}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="won">Won</SelectItem>
+              <SelectItem value="lost">Lost</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Project name</Label>
+          <Input value={historyForm.project_name} onChange={e => setHistoryForm(f => ({ ...f, project_name: e.target.value }))} className="h-8 text-sm" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Client name</Label>
+          <Input value={historyForm.client_name || ""} onChange={e => setHistoryForm(f => ({ ...f, client_name: e.target.value }))} className="h-8 text-sm" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Fund</Label>
+          {(() => {
+            const knownFunds = settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds;
+            const isOther = !!historyForm.fund_name && !knownFunds.includes(historyForm.fund_name);
+            const selectVal = historyForm.fund_name
+              ? (knownFunds.includes(historyForm.fund_name) ? historyForm.fund_name : "other")
+              : "";
+            return (
+              <div className="space-y-1">
+                <Select value={selectVal} onValueChange={v => {
+                  if (v === "other") setHistoryForm(f => ({ ...f, fund_name: "" }));
+                  else setHistoryForm(f => ({ ...f, fund_name: v }));
+                }}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select fund" /></SelectTrigger>
+                  <SelectContent>
+                    {knownFunds.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                    <SelectItem value="other">Other…</SelectItem>
+                  </SelectContent>
+                </Select>
+                {(isOther || selectVal === "other") && (
+                  <Input
+                    value={historyForm.fund_name || ""}
+                    onChange={e => setHistoryForm(f => ({ ...f, fund_name: e.target.value }))}
+                    className="h-8 text-sm"
+                    placeholder="Enter fund name"
+                    autoFocus
+                  />
+                )}
+              </div>
+            );
+          })()}
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Region</Label>
+          {(() => {
+            const regionList = (settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).filter(r => r.region_name);
+            const currentRegion = historyForm.region || "";
+            const inList = regionList.some(r => r.region_name === currentRegion);
+            return (
+              <Select value={currentRegion} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select region" /></SelectTrigger>
+                <SelectContent>
+                  {!inList && currentRegion && (
+                    <SelectItem key={currentRegion} value={currentRegion}>{currentRegion}</SelectItem>
+                  )}
+                  {regionList.map(r => (
+                    <SelectItem key={r.region_name} value={r.region_name}>{r.region_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            );
+          })()}
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Sector</Label>
+          <Select value={historyForm.sector || ""} onValueChange={v => setHistoryForm(f => ({ ...f, sector: v || null }))}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select sector" /></SelectTrigger>
+            <SelectContent>
+              {SECTORS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Project type</Label>
+          <Select value={historyForm.project_type || "__none__"} onValueChange={v => setHistoryForm(f => ({ ...f, project_type: v === "__none__" ? null : v }))}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select type" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">— Not set —</SelectItem>
+              {projectTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Currency</Label>
+          <Select value={historyForm.currency || "EUR"} onValueChange={v => setHistoryForm(f => ({ ...f, currency: v }))}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="EUR">EUR €</SelectItem>
+              <SelectItem value="USD">USD $</SelectItem>
+              <SelectItem value="GBP">GBP £</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Duration (weeks)</Label>
+          <Input type="number" min="1" value={historyForm.duration_weeks ?? ""} onChange={e => setHistoryForm(f => ({ ...f, duration_weeks: +e.target.value || 0 }))} className="h-8 text-sm" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Weekly price</Label>
+          <div className="flex gap-1">
+            <span className="flex items-center px-2 text-sm font-semibold bg-muted border rounded-l border-r-0">
+              {historyForm.currency === "USD" ? "$" : historyForm.currency === "GBP" ? "£" : "€"}
+            </span>
+            <Input type="number" min="0" value={historyForm.weekly_price || ""} onChange={e => setHistoryForm(f => ({ ...f, weekly_price: +e.target.value || 0 }))} className="h-8 text-sm font-mono rounded-l-none" />
+          </div>
+        </div>
+        {/* New: company financials — useful for TNF/EBITDA benchmarking */}
+        <div className="space-y-1">
+          <Label className="text-xs">Company revenue (M€)</Label>
+          <Input type="number" min="0" step="0.1" value={historyForm.company_revenue_m ?? ""}
+            onChange={e => setHistoryForm(f => ({ ...f, company_revenue_m: e.target.value === "" ? null : +e.target.value }))}
+            className="h-8 text-sm font-mono" placeholder="e.g. 250" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">EBITDA margin</Label>
+          <Select
+            value={historyForm.ebitda_margin_pct != null ? String(historyForm.ebitda_margin_pct) : "__none__"}
+            onValueChange={v => setHistoryForm(f => ({ ...f, ebitda_margin_pct: v === "__none__" ? null : Number(v) }))}
+          >
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select margin" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">— Not set —</SelectItem>
+              <SelectItem value="10">10%</SelectItem>
+              <SelectItem value="12.5">12.5%</SelectItem>
+              <SelectItem value="15">15%</SelectItem>
+              <SelectItem value="17.5">17.5%</SelectItem>
+              <SelectItem value="20">20%</SelectItem>
+              <SelectItem value="25">25%</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Expected EBITDA growth</Label>
+          <Select
+            value={historyForm.expected_ebitda_growth_pct != null ? String(historyForm.expected_ebitda_growth_pct) : "__none__"}
+            onValueChange={v => setHistoryForm(f => ({ ...f, expected_ebitda_growth_pct: v === "__none__" ? null : Number(v) }))}
+          >
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select growth" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">N/A</SelectItem>
+              <SelectItem value="5">5%</SelectItem>
+              <SelectItem value="10">10%</SelectItem>
+              <SelectItem value="20">20%</SelectItem>
+              <SelectItem value="30">30%</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      {historyForm.outcome === "lost" && (
+        <div className="space-y-1 max-w-xs">
+          <Label className="text-xs">Loss reason</Label>
+          <Select value={historyForm.loss_reason || "__unknown__"} onValueChange={v => setHistoryForm(f => ({ ...f, loss_reason: v === "__unknown__" ? null : v }))}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select reason" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__unknown__">— Unknown —</SelectItem>
+              <SelectItem value="price">Price</SelectItem>
+              <SelectItem value="brand">Brand</SelectItem>
+              <SelectItem value="team">Team</SelectItem>
+              <SelectItem value="quality">Quality</SelectItem>
+              <SelectItem value="relationship">Relationship</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <div className="flex gap-2 pt-1">
+        <Button size="sm" onClick={saveProposal} disabled={savingProposal}>
+          {savingProposal ? "Saving…" : "Save"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => { setShowEditProposalForm(false); setEditingProposalId(null); setHistoryForm(emptyProposal()); }}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+
   const downloadProposalsCsv = () => {
     const cols: { key: keyof PricingProposal; label: string }[] = [
       { key: "proposal_date", label: "Date" },
@@ -858,6 +1056,9 @@ export default function PricingTool() {
       { key: "total_fee", label: "Total fee" },
       { key: "outcome", label: "Outcome" },
       { key: "loss_reason", label: "Loss reason" },
+      { key: "company_revenue_m", label: "Company revenue (M€)" },
+      { key: "ebitda_margin_pct", label: "EBITDA margin %" },
+      { key: "expected_ebitda_growth_pct", label: "Expected EBITDA growth %" },
       { key: "notes", label: "Notes" },
     ];
     const esc = (v: unknown): string => {
@@ -1394,37 +1595,46 @@ export default function PricingTool() {
                     </TableHeader>
                     <TableBody>
                       {sortedProposals.map(p => (
-                        <TableRow key={p.id} className="cursor-pointer hover:bg-muted/30" onClick={() => editProposal(p)}>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {p.proposal_date ? new Date(p.proposal_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
-                          </TableCell>
-                          <TableCell className="font-semibold text-sm">{p.project_name}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{p.client_name || "—"}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{p.fund_name || "—"}</TableCell>
-                          <TableCell><Badge variant="secondary" className="text-xs">{p.region}</Badge></TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{p.sector || "—"}</TableCell>
-                          <TableCell className="text-xs">{p.project_type ? <Badge variant="outline" className="text-xs capitalize">{p.project_type}</Badge> : "—"}</TableCell>
-                          <TableCell className="text-sm">{p.duration_weeks ? `${p.duration_weeks}w` : "—"}</TableCell>
-                          <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
-                          <TableCell className="font-semibold text-sm font-mono">{fmt(p.weekly_price)}</TableCell>
-                          <TableCell>
-                            {p.outcome === "won"
-                              ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
-                              : p.outcome === "lost"
-                              ? <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>
-                              : <Badge variant="secondary" className="text-xs">Pending</Badge>}
-                          </TableCell>
-                          <TableCell onClick={e => e.stopPropagation()}>
-                            <div className="flex gap-1">
-                              <button onClick={() => editProposal(p)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Edit">
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button onClick={() => deleteProposal(p.id!)} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors" title="Delete">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
+                        <React.Fragment key={p.id}>
+                          <TableRow className="cursor-pointer hover:bg-muted/30" onClick={() => editProposal(p)}>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {p.proposal_date ? new Date(p.proposal_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                            </TableCell>
+                            <TableCell className="font-semibold text-sm">{p.project_name}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{p.client_name || "—"}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{p.fund_name || "—"}</TableCell>
+                            <TableCell><Badge variant="secondary" className="text-xs">{p.region}</Badge></TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{p.sector || "—"}</TableCell>
+                            <TableCell className="text-xs">{p.project_type ? <Badge variant="outline" className="text-xs capitalize">{p.project_type}</Badge> : "—"}</TableCell>
+                            <TableCell className="text-sm">{p.duration_weeks ? `${p.duration_weeks}w` : "—"}</TableCell>
+                            <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
+                            <TableCell className="font-semibold text-sm font-mono">{fmt(p.weekly_price)}</TableCell>
+                            <TableCell>
+                              {p.outcome === "won"
+                                ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
+                                : p.outcome === "lost"
+                                ? <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>
+                                : <Badge variant="secondary" className="text-xs">Pending</Badge>}
+                            </TableCell>
+                            <TableCell onClick={e => e.stopPropagation()}>
+                              <div className="flex gap-1">
+                                <button onClick={() => editProposal(p)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Edit">
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => deleteProposal(p.id!)} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors" title="Delete">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {showEditProposalForm && editingProposalId === p.id && (
+                            <TableRow className="bg-primary/5 hover:bg-primary/5">
+                              <TableCell colSpan={12} className="p-4 border-t-2 border-primary/30">
+                                {renderProposalEditForm()}
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
                       ))}
                     </TableBody>
                   </Table>
@@ -1432,162 +1642,6 @@ export default function PricingTool() {
               );
             })()}
 
-            {/* Edit proposal form (inline modal) */}
-            {showEditProposalForm && (
-              <Card className="border-primary/30">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">{editingProposalId ? "Edit Past Project" : "Add Past Project"}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Date</Label>
-                      <Input type="date" value={historyForm.proposal_date} onChange={e => setHistoryForm(f => ({ ...f, proposal_date: e.target.value }))} className="h-8 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Outcome</Label>
-                      <Select value={historyForm.outcome} onValueChange={v => setHistoryForm(f => ({ ...f, outcome: v }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="won">Won</SelectItem>
-                          <SelectItem value="lost">Lost</SelectItem>
-                          <SelectItem value="pending">Pending</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Project name</Label>
-                      <Input value={historyForm.project_name} onChange={e => setHistoryForm(f => ({ ...f, project_name: e.target.value }))} className="h-8 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Client name</Label>
-                      <Input value={historyForm.client_name || ""} onChange={e => setHistoryForm(f => ({ ...f, client_name: e.target.value }))} className="h-8 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Fund</Label>
-                      {(() => {
-                        const knownFunds = settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds;
-                        const isOther = !!historyForm.fund_name && !knownFunds.includes(historyForm.fund_name);
-                        const selectVal = historyForm.fund_name
-                          ? (knownFunds.includes(historyForm.fund_name) ? historyForm.fund_name : "other")
-                          : "";
-                        return (
-                          <div className="space-y-1">
-                            <Select value={selectVal} onValueChange={v => {
-                              if (v === "other") setHistoryForm(f => ({ ...f, fund_name: "" }));
-                              else setHistoryForm(f => ({ ...f, fund_name: v }));
-                            }}>
-                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select fund" /></SelectTrigger>
-                              <SelectContent>
-                                {knownFunds.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
-                                <SelectItem value="other">Other…</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            {(isOther || selectVal === "other") && (
-                              <Input
-                                value={historyForm.fund_name || ""}
-                                onChange={e => setHistoryForm(f => ({ ...f, fund_name: e.target.value }))}
-                                className="h-8 text-sm"
-                                placeholder="Enter fund name"
-                                autoFocus
-                              />
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Region</Label>
-                      {(() => {
-                        const regionList = (settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).filter(r => r.region_name);
-                        const currentRegion = historyForm.region || "";
-                        const inList = regionList.some(r => r.region_name === currentRegion);
-                        return (
-                          <Select value={currentRegion} onValueChange={v => setHistoryForm(f => ({ ...f, region: v }))}>
-                            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select region" /></SelectTrigger>
-                            <SelectContent>
-                              {!inList && currentRegion && (
-                                <SelectItem key={currentRegion} value={currentRegion}>{currentRegion}</SelectItem>
-                              )}
-                              {regionList.map(r => (
-                                <SelectItem key={r.region_name} value={r.region_name}>{r.region_name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        );
-                      })()}
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Sector</Label>
-                      <Select value={historyForm.sector || ""} onValueChange={v => setHistoryForm(f => ({ ...f, sector: v || null }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select sector" /></SelectTrigger>
-                        <SelectContent>
-                          {SECTORS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Project type</Label>
-                      <Select value={historyForm.project_type || "__none__"} onValueChange={v => setHistoryForm(f => ({ ...f, project_type: v === "__none__" ? null : v }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select type" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">— Not set —</SelectItem>
-                          {projectTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Currency</Label>
-                      <Select value={historyForm.currency || "EUR"} onValueChange={v => setHistoryForm(f => ({ ...f, currency: v }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="EUR">EUR €</SelectItem>
-                          <SelectItem value="USD">USD $</SelectItem>
-                          <SelectItem value="GBP">GBP £</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Duration (weeks)</Label>
-                      <Input type="number" min="1" value={historyForm.duration_weeks ?? ""} onChange={e => setHistoryForm(f => ({ ...f, duration_weeks: +e.target.value || 0 }))} className="h-8 text-sm" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Weekly price</Label>
-                      <div className="flex gap-1">
-                        <span className="flex items-center px-2 text-sm font-semibold bg-muted border rounded-l border-r-0">
-                          {historyForm.currency === "USD" ? "$" : historyForm.currency === "GBP" ? "£" : "€"}
-                        </span>
-                        <Input type="number" min="0" value={historyForm.weekly_price || ""} onChange={e => setHistoryForm(f => ({ ...f, weekly_price: +e.target.value || 0 }))} className="h-8 text-sm font-mono rounded-l-none" />
-                      </div>
-                    </div>
-                  </div>
-                  {historyForm.outcome === "lost" && (
-                    <div className="space-y-1">
-                      <Label className="text-xs">Loss reason</Label>
-                      <Select value={historyForm.loss_reason || "__unknown__"} onValueChange={v => setHistoryForm(f => ({ ...f, loss_reason: v === "__unknown__" ? null : v }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select reason" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__unknown__">— Unknown —</SelectItem>
-                          <SelectItem value="price">Price</SelectItem>
-                          <SelectItem value="brand">Brand</SelectItem>
-                          <SelectItem value="team">Team</SelectItem>
-                          <SelectItem value="quality">Quality</SelectItem>
-                          <SelectItem value="relationship">Relationship</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  <div className="flex gap-2 pt-1">
-                    <Button size="sm" onClick={saveProposal} disabled={savingProposal}>
-                      {savingProposal ? "Saving…" : "Save"}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => { setShowEditProposalForm(false); setEditingProposalId(null); setHistoryForm(emptyProposal()); }}>
-                      Cancel
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
           </div>
         ) : null}
 
@@ -4021,21 +4075,27 @@ export default function PricingTool() {
                     const tnfEbitdaRatioLocal = currentEbitdaLocal > 0 ? tnfLocal / currentEbitdaLocal : null;
                     const tnfAspirationRatioLocal = aspirationEurLocal > 0 ? tnfLocal / aspirationEurLocal : null;
 
-                    // Benchmark (past projects) — placeholders for now; will populate when we log
-                    // EBITDA metadata alongside past proposals. Reading any *_ratio field if present.
-                    const pastWithEbitda = proposals.filter(p =>
-                      p.outcome === "won" &&
-                      (p as any).tnf_ebitda_ratio != null
-                    );
-                    const pastWithAspir = proposals.filter(p =>
-                      p.outcome === "won" &&
-                      (p as any).tnf_aspiration_ratio != null
-                    );
-                    const avgPastEbitda = pastWithEbitda.length > 0
-                      ? pastWithEbitda.reduce((s, p) => s + ((p as any).tnf_ebitda_ratio as number), 0) / pastWithEbitda.length
+                    // Benchmark: compute TNF/EBITDA and TNF/Aspiration ratios from past
+                    // won proposals that have company_revenue_m + ebitda_margin_pct populated.
+                    const pastRatios = proposals
+                      .filter(p => p.outcome === "won"
+                        && p.company_revenue_m != null && p.company_revenue_m > 0
+                        && p.ebitda_margin_pct != null && p.ebitda_margin_pct > 0
+                        && p.total_fee != null && p.total_fee > 0)
+                      .map(p => {
+                        const ebitda = (p.company_revenue_m as number) * 1_000_000 * (p.ebitda_margin_pct as number) / 100;
+                        const ratio = (p.total_fee as number) / ebitda;
+                        const growth = p.expected_ebitda_growth_pct ?? 0;
+                        const aspiration = ebitda * growth / 100;
+                        const aspRatio = aspiration > 0 ? (p.total_fee as number) / aspiration : null;
+                        return { ratio, aspRatio };
+                      });
+                    const avgPastEbitda = pastRatios.length > 0
+                      ? pastRatios.reduce((s, r) => s + r.ratio, 0) / pastRatios.length
                       : null;
-                    const avgPastAspir = pastWithAspir.length > 0
-                      ? pastWithAspir.reduce((s, p) => s + ((p as any).tnf_aspiration_ratio as number), 0) / pastWithAspir.length
+                    const asps = pastRatios.filter(r => r.aspRatio != null).map(r => r.aspRatio as number);
+                    const avgPastAspir = asps.length > 0
+                      ? asps.reduce((s, v) => s + v, 0) / asps.length
                       : null;
 
                     return (

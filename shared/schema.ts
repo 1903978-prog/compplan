@@ -355,6 +355,9 @@ export const pricingProposals = pgTable("pricing_proposals", {
   sector: text("sector"),
   project_type: text("project_type"),
   currency: text("currency").notNull().default("EUR"),
+  company_revenue_m: real("company_revenue_m"),
+  ebitda_margin_pct: real("ebitda_margin_pct"),
+  expected_ebitda_growth_pct: real("expected_ebitda_growth_pct"),
   notes: text("notes"),
   created_at: text("created_at").notNull(),
 });
