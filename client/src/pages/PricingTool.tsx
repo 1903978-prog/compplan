@@ -3732,9 +3732,9 @@ export default function PricingTool() {
             const range = maxV - minV || 1;
 
             // Layout: base + layers + target + rec + markup bars + (gross bar if has markups)
-            // base + layers + (adj?) + NET1 + markups + (GROSS1?) + (GROSSV if variable>0 & markups)
+            // base + layers + (adj?) + NET1 + markups + (GROSS1?) + (VarFee + GROSSV if variable>0 & markups)
             const hasGrossV = hasMarkups && variableFeePct > 0;
-            const totalBarCount = 1 + bars.length + (manualDelta !== 0 ? 1 : 0) + 1 + markupBars.length + (hasMarkups ? 1 : 0) + (hasGrossV ? 1 : 0);
+            const totalBarCount = 1 + bars.length + (manualDelta !== 0 ? 1 : 0) + 1 + markupBars.length + (hasMarkups ? 1 : 0) + (hasGrossV ? 2 : 0);
             const W = 660; const H = 225;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
@@ -3893,22 +3893,38 @@ export default function PricingTool() {
                         </>;
                       })()}
 
-                      {/* GROSSV bar = GROSS1 × (1 + variable%) — only if variable fee > 0 */}
+                      {/* Variable fee delta bar + GROSSV total bar */}
                       {hasMarkups && variableFeePct > 0 && (() => {
-                        const grossV = Math.round(grossWeeklyWaterfall * (1 + variableFeePct / 100));
-                        const bi = bars.length + 3 + (manualDelta !== 0 ? 1 : 0) + markupBars.length;
-                        const x = xOf(bi);
-                        const y = yOf(grossV);
-                        const h = hOf(minV, grossV);
-                        const delta = grossV - grossWeeklyWaterfall;
-                        const totalGrossV = grossV * effectiveDuration;
+                        const grossVVal = Math.round(grossWeeklyWaterfall * (1 + variableFeePct / 100));
+                        const varDelta = grossVVal - grossWeeklyWaterfall;
+                        const totalGrossV = grossVVal * effectiveDuration;
+
+                        // Bar 1: Variable fee delta (dark green, shows +€X)
+                        const bi1 = bars.length + 3 + (manualDelta !== 0 ? 1 : 0) + markupBars.length;
+                        const x1 = xOf(bi1);
+                        const y1 = yOf(grossWeeklyWaterfall + varDelta);
+                        const h1 = Math.max(2, hOf(grossWeeklyWaterfall, grossWeeklyWaterfall + varDelta));
+
+                        // Bar 2: GROSSV total (light green)
+                        const bi2 = bi1 + 1;
+                        const x2 = xOf(bi2);
+                        const y2 = yOf(grossVVal);
+                        const h2 = hOf(minV, grossVVal);
+
                         return <>
-                          <line x1={xOf(bi - 1) + barW} y1={yOf(grossWeeklyWaterfall)} x2={x} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x} y={y} width={barW} height={h} fill="#86efac" rx="2" />
-                          <text x={x + barW/2} y={y - 9} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="bold">+{fmt(delta)}</text>
-                          <text x={x + barW/2} y={y - 2} textAnchor="middle" fontSize="5.5" fill="#94a3b8">+{variableFeePct}%</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#166534" fontWeight="600">GROSSV</text>
-                          <text x={x + barW/2} y={chartBot + 18} textAnchor="middle" fontSize="5.5" fill="#166534">{fmt(totalGrossV)}</text>
+                          {/* Var fee delta bar */}
+                          <line x1={xOf(bi1 - 1) + barW} y1={yOf(grossWeeklyWaterfall)} x2={x1} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <rect x={x1} y={y1} width={barW} height={h1} fill="#166534" rx="2" opacity="0.7" />
+                          <text x={x1 + barW/2} y={y1 - 9} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="bold">+{fmt(varDelta)}</text>
+                          <text x={x1 + barW/2} y={y1 - 2} textAnchor="middle" fontSize="5.5" fill="#94a3b8">+{variableFeePct}%</text>
+                          <text x={x1 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6" fill="#64748b">Var. Fee</text>
+
+                          {/* GROSSV total bar */}
+                          <line x1={x1 + barW} y1={yOf(grossVVal)} x2={x2} y2={yOf(grossVVal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <rect x={x2} y={y2} width={barW} height={h2} fill="#86efac" rx="2" />
+                          <text x={x2 + barW/2} y={y2 - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(grossVVal)}</text>
+                          <text x={x2 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#166534" fontWeight="600">GROSSV</text>
+                          <text x={x2 + barW/2} y={chartBot + 18} textAnchor="middle" fontSize="5.5" fill="#166534">{fmt(totalGrossV)}</text>
                         </>;
                       })()}
 
