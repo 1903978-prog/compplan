@@ -103,6 +103,12 @@ interface CompetitorBenchmark {
   sources: string[];
 }
 
+interface PricingAdjustment {
+  value: string;
+  label: string;
+  adj_pct: number;
+}
+
 interface PricingSettings {
   roles: PricingRole[];
   regions: PricingRegion[];
@@ -122,6 +128,9 @@ interface PricingSettings {
   fund_anchor_weight: number;
   win_loss_weight: number;
   competitor_benchmarks: CompetitorBenchmark[];
+  competitive_intensity_adj?: PricingAdjustment[];
+  competitor_type_adj?: PricingAdjustment[];
+  strategic_intent_adj?: PricingAdjustment[];
 }
 
 // ─── Default / fallback data ─────────────────────────────────────────────────
@@ -1547,7 +1556,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
 
 // ─── Tabs list ────────────────────────────────────────────────────────────────
 
-type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks";
+type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks" | "price_adjustments";
 
 // ─── Tab: Market Benchmarks ───────────────────────────────────────────────────
 
@@ -1562,6 +1571,132 @@ const SOURCE_OPTIONS = [
   { label: "Staffing Industry Analysts Fee Survey", url: "https://www2.staffingindustry.com" },
   { label: "Heidrick & Struggles Leadership Consulting Survey", url: "https://www.heidrick.com" },
 ];
+
+// ─── Price Adjustments Tab ──────────────────────────────────────────────────
+
+const DEFAULT_COMP_INTENSITY: PricingAdjustment[] = [
+  { value: "sole_source", label: "Sole source",        adj_pct: 15  },
+  { value: "limited",     label: "Limited competition", adj_pct: 5   },
+  { value: "competitive", label: "Competitive",         adj_pct: 0   },
+  { value: "crowded",     label: "Crowded market",      adj_pct: -15 },
+];
+const DEFAULT_COMP_TYPE: PricingAdjustment[] = [
+  { value: "none",      label: "No competitor",  adj_pct: 0   },
+  { value: "boutiques", label: "Boutiques",      adj_pct: -5  },
+  { value: "tier2",     label: "Tier 2 firms",   adj_pct: 0   },
+  { value: "mbb",       label: "MBB present",    adj_pct: 15  },
+];
+const DEFAULT_STRAT_INTENT: PricingAdjustment[] = [
+  { value: "enter",   label: "Enter new client (beachhead)", adj_pct: -15 },
+  { value: "expand",  label: "Expand relationship",          adj_pct: 0   },
+  { value: "harvest", label: "Harvest (optimise margin)",    adj_pct: 15  },
+];
+
+function PriceAdjustmentsTab({ settings, onChange, onSave, saving }: {
+  settings: PricingSettings;
+  onChange: (patch: Partial<PricingSettings>) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  const SECTIONS: {
+    title: string;
+    key: "competitive_intensity_adj" | "competitor_type_adj" | "strategic_intent_adj";
+    defaults: PricingAdjustment[];
+    description: string;
+  }[] = [
+    { title: "Competitive Intensity (L2)", key: "competitive_intensity_adj", defaults: DEFAULT_COMP_INTENSITY,
+      description: "How crowded the market is for this deal. Applied as % adjustment to the base price." },
+    { title: "Competitor Type (L2)", key: "competitor_type_adj", defaults: DEFAULT_COMP_TYPE,
+      description: "Who we're competing against. E.g. MBB presence validates a premium." },
+    { title: "Strategic Intent (L5)", key: "strategic_intent_adj", defaults: DEFAULT_STRAT_INTENT,
+      description: "Our strategic goal for this client relationship." },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Price Adjustments</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Configure the % adjustments applied by the pricing engine layers. These values are used directly in the waterfall calculation.
+        </p>
+      </div>
+
+      {SECTIONS.map(sec => {
+        const items: PricingAdjustment[] = (settings as any)[sec.key] ?? sec.defaults;
+        return (
+          <div key={sec.key} className="space-y-3">
+            <div>
+              <h4 className="text-sm font-semibold">{sec.title}</h4>
+              <p className="text-xs text-muted-foreground">{sec.description}</p>
+            </div>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-muted/30 border-b">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground w-36">Key</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Label</th>
+                    <th className="text-center px-3 py-2 text-xs font-semibold text-muted-foreground w-24">Adj %</th>
+                    <th className="w-10" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((a, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="px-3 py-1.5">
+                        <Input value={a.value}
+                          onChange={e => {
+                            const updated = items.map((v, j) => j === i ? { ...v, value: e.target.value } : v);
+                            onChange({ [sec.key]: updated });
+                          }}
+                          className="h-7 text-xs font-mono" placeholder="key" />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <Input value={a.label}
+                          onChange={e => {
+                            const updated = items.map((v, j) => j === i ? { ...v, label: e.target.value } : v);
+                            onChange({ [sec.key]: updated });
+                          }}
+                          className="h-7 text-xs" placeholder="Label" />
+                      </td>
+                      <td className="px-3 py-1.5 text-center">
+                        <Input type="number" step="1" value={a.adj_pct}
+                          onChange={e => {
+                            const updated = items.map((v, j) => j === i ? { ...v, adj_pct: parseFloat(e.target.value) || 0 } : v);
+                            onChange({ [sec.key]: updated });
+                          }}
+                          className="h-7 text-xs font-mono text-center w-20 mx-auto" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <button onClick={() => {
+                          const updated = items.filter((_, j) => j !== i);
+                          onChange({ [sec.key]: updated });
+                        }} className="text-muted-foreground hover:text-destructive p-1">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => {
+              onChange({ [sec.key]: [...items, { value: "", label: "", adj_pct: 0 }] });
+            }}>
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add
+            </Button>
+          </div>
+        );
+      })}
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={onSave} disabled={saving} size="sm">
+          <Save className="w-3.5 h-3.5 mr-1.5" />
+          {saving ? "Saving…" : "Save Settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 interface MarketBenchmarksTabProps {
   settings: PricingSettings;
@@ -1764,6 +1899,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "funds", label: "PE Funds" },
   { id: "rate_matrix", label: "Rate Matrix" },
   { id: "market_benchmarks", label: "Market Benchmarks" },
+  { id: "price_adjustments", label: "Price Adjustments" },
 ];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -1962,6 +2098,9 @@ export default function PricingAdmin() {
           )}
           {activeTab === "market_benchmarks" && (
             <MarketBenchmarksTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
+          )}
+          {activeTab === "price_adjustments" && (
+            <PriceAdjustmentsTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
           )}
         </CardContent>
       </Card>
