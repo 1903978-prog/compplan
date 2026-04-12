@@ -345,9 +345,9 @@ function emptyCase(): PricingCase {
     project_name: "CLI01", client_name: "", fund_name: "CARLYLE",
     region: "IT", currency: "EUR", pe_owned: true, revenue_band: "above_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
-    project_type: "spark", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
+    project_type: "sfe", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
     commercial_maturity: null, urgency: null, competitive_intensity: "limited",
-    competitor_type: "none", ownership_type: null, strategic_intent: "enter",
+    competitor_type: "none", ownership_type: null, strategic_intent: "expand",
     procurement_involvement: null,
     target_roi: 10, max_fees_ebitda_pct: 3,
     aspiration_ebitda_pct: 10,
@@ -4036,7 +4036,7 @@ export default function PricingTool() {
                           {[0, 10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
                         </SelectContent>
                       </Select>
-                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(baseWeekly * variableFeePct / 100))}/wk</div>
+                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(netWeekly * variableFeePct / 100))}/wk</div>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Admin fees</Label>
@@ -4046,7 +4046,7 @@ export default function PricingTool() {
                           {[0, 2, 4, 6, 8].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
                         </SelectContent>
                       </Select>
-                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(baseWeekly * adminFeePct / 100))}/wk</div>
+                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(netWeekly * adminFeePct / 100))}/wk</div>
                     </div>
                   </div>
                 </div>
