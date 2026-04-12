@@ -359,7 +359,7 @@ function parsePricePaste(text: string): CountryBenchmarkRow[] {
 function emptyCase(): PricingCase {
   return {
     project_name: "CLI01", client_name: "", fund_name: "CARLYLE",
-    region: "IT", currency: "EUR", pe_owned: true, revenue_band: "above_1b",
+    region: "IT", currency: "EUR", pe_owned: true, revenue_band: "200m_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
     project_type: "sfe", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
     commercial_maturity: null, urgency: null, competitive_intensity: "limited",
