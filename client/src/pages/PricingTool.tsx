@@ -4003,32 +4003,78 @@ export default function PricingTool() {
                   })()}
 
 
-                  {/* ── RECOMMENDATION BRACKET ───────────────────────────── */}
+                  {/* ── FEE RANGE ────────────────────────────────────────── */}
                   {(() => {
                     const d = manualDelta;
+                    const rec = recommendation.target_weekly + d;
+                    const recGM = recommendation.cost_floor_weekly > 0
+                      ? ((rec - recommendation.cost_floor_weekly) / rec * 100)
+                      : null;
+                    const low50 = recommendation.low_50gm_weekly > 0
+                      ? recommendation.low_50gm_weekly + d
+                      : null;
+                    const low50GM = low50 && recommendation.delivery_cost_weekly > 0
+                      ? ((low50 - recommendation.delivery_cost_weekly * (1 + 0.15)) / low50 * 100)
+                      : 50;
+                    const highMkt = recommendation.high_market_weekly;
                     return (
-                      <div>
-                        <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
-                          Negotiation range
+                      <div className="space-y-2">
+                        <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-0.5">
+                          Fee Range
                         </div>
                         <div className="grid grid-cols-3 gap-1.5">
+                          {/* Low — 50% GM floor */}
                           <div className="text-center p-2.5 bg-muted/30 rounded-lg">
-                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Low</div>
-                            <div className="text-base font-bold text-muted-foreground">{fmt(recommendation.low_weekly + d)}</div>
-                            <div className="text-[10px] text-muted-foreground">/week</div>
+                            <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">Low</div>
+                            <div className="text-base font-bold text-muted-foreground mt-0.5">
+                              {low50 ? fmt(low50) : "—"}
+                            </div>
+                            <div className="text-[9px] text-muted-foreground">/week</div>
+                            <div className="text-[9px] text-emerald-600 font-semibold mt-0.5">GM {Math.round(low50GM)}%</div>
                           </div>
+                          {/* Center — Recommended Fees */}
                           <div className="text-center p-2.5 bg-primary/10 rounded-lg border border-primary/20">
-                            <div className="text-[10px] text-primary uppercase font-bold">Target</div>
-                            <div className="text-xl font-bold text-primary">{fmt(recommendation.target_weekly + d)}</div>
-                            <div className="text-[10px] text-muted-foreground">/week</div>
+                            <div className="text-[9px] text-primary uppercase font-bold tracking-wide">Recommended Fees</div>
+                            <div className="text-xl font-bold text-primary mt-0.5">{fmt(rec)}</div>
+                            <div className="text-[9px] text-muted-foreground">/week</div>
+                            {recGM != null && (
+                              <div className="text-[9px] text-emerald-600 font-semibold mt-0.5">GM {recGM.toFixed(0)}%</div>
+                            )}
                           </div>
+                          {/* High — market ceiling */}
                           <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-100">
-                            <div className="text-[10px] text-amber-700 uppercase font-bold">High</div>
-                            <div className="text-base font-bold text-amber-600">{fmt(recommendation.high_weekly + d)}</div>
-                            <div className="text-[10px] text-muted-foreground">/week</div>
+                            <div className="text-[9px] text-amber-700 uppercase font-bold tracking-wide">High</div>
+                            <div className="text-base font-bold text-amber-600 mt-0.5">
+                              {highMkt ? fmt(highMkt) : "—"}
+                            </div>
+                            <div className="text-[9px] text-muted-foreground">/week</div>
+                            {highMkt && recommendation.cost_floor_weekly > 0 && (
+                              <div className="text-[9px] text-emerald-600 font-semibold mt-0.5">
+                                GM {((highMkt - recommendation.cost_floor_weekly) / highMkt * 100).toFixed(0)}%
+                              </div>
+                            )}
                           </div>
                         </div>
 
+                        {/* Calculation explanations */}
+                        <div className="text-[9px] text-muted-foreground space-y-0.5 px-0.5 leading-relaxed">
+                          <div>
+                            <span className="font-semibold text-foreground/70">Low:</span>{" "}
+                            {low50
+                              ? `${fmt(low50)}/wk = minimum to achieve 50% GM on team costs (staff ${fmt(recommendation.delivery_cost_weekly)}/wk + 15% overhead = ${fmt(Math.round(recommendation.delivery_cost_weekly * 1.15))}/wk × 2)`
+                              : "No staffing cost data — enter team build-up to compute"}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-foreground/70">Recommended:</span>{" "}
+                            {fmt(rec)}/wk = last bar of waterfall (rule-based layers applied to staffing base). GM {recGM != null ? `${recGM.toFixed(0)}%` : "—"} vs cost floor {fmt(recommendation.cost_floor_weekly)}/wk.
+                          </div>
+                          <div>
+                            <span className="font-semibold text-foreground/70">High:</span>{" "}
+                            {highMkt && recommendation.high_market_context
+                              ? `${fmt(highMkt)}/wk = highest won deal in ${recommendation.high_market_context}`
+                              : "No comparable won deals found — increase past project data for this region"}
+                          </div>
+                        </div>
                       </div>
                     );
                   })()}

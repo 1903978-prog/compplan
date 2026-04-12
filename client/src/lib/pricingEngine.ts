@@ -233,6 +233,11 @@ export interface PricingRecommendation {
   low_total: number;
   target_total: number;
   high_total: number;
+  // Cost-based low and market-based high
+  delivery_cost_weekly: number;       // raw staff cost (before overhead/margin)
+  low_50gm_weekly: number;            // price at exactly 50% GM on team+overhead costs
+  high_market_weekly: number | null;  // highest won price in same region+fund/client context
+  high_market_context: string | null; // description of what data was used for high end
   posture: "Defensive" | "Balanced" | "Assertive";
   confidence: number;
   confidence_label: "Low" | "Medium" | "High";
@@ -950,12 +955,65 @@ export function calculatePricing(
   const expected_margin_pct = cost_floor_weekly > 0 && target_weekly > 0
     ? ((target_weekly - cost_floor_weekly) / target_weekly) * 100
     : 0;
+
+  // Legacy bracket fields (kept for compatibility, no longer shown in main UI)
   const low_weekly  = Math.round((target_weekly * (1 - settings.bracket_low_pct / 100)) / 500) * 500;
   const high_weekly = Math.round((target_weekly * (1 + settings.bracket_high_pct / 100)) / 500) * 500;
 
   const low_total    = low_weekly    * input.duration_weeks;
   const target_total = target_weekly * input.duration_weeks;
   const high_total   = high_weekly   * input.duration_weeks;
+
+  // ── Cost-based low: 50% GM on team+overhead costs ────────────────────────
+  // delivery_cost_weekly = raw staff cost; team+overhead = staff × (1+OVERHEAD_PCT)
+  // 50% GM → price = team_cost_with_overhead / (1 - 0.5) = team_cost_with_overhead × 2
+  const team_cost_with_overhead = delivery_cost_weekly * (1 + OVERHEAD_PCT);
+  const low_50gm_weekly = delivery_cost_weekly > 0
+    ? Math.round((team_cost_with_overhead / 0.5) / 500) * 500
+    : 0;
+
+  // ── Market-based high: max won price in best available context ───────────
+  const inputFundL = (input.fund_name ?? "").trim().toLowerCase();
+  const inputRegionL = input.region.toLowerCase();
+  // Priority 1: same region + same fund
+  const wonRegionFund = inputFundL
+    ? historicalProposals.filter(p =>
+        p.outcome === "won" &&
+        p.region.toLowerCase() === inputRegionL &&
+        (p.fund_name ?? "").trim().toLowerCase() === inputFundL &&
+        p.weekly_price > 0
+      )
+    : [];
+  // Priority 2: same region + same client
+  const inputClientL = (input.client_name ?? "").trim().toLowerCase();
+  const wonRegionClient = inputClientL
+    ? historicalProposals.filter(p =>
+        p.outcome === "won" &&
+        p.region.toLowerCase() === inputRegionL &&
+        (p.client_name ?? "").trim().toLowerCase() === inputClientL &&
+        p.weekly_price > 0
+      )
+    : [];
+  // Priority 3: same region only
+  const wonRegion = historicalProposals.filter(p =>
+    p.outcome === "won" &&
+    p.region.toLowerCase() === inputRegionL &&
+    p.weekly_price > 0
+  );
+
+  let high_market_weekly: number | null = null;
+  let high_market_context: string | null = null;
+
+  if (wonRegionFund.length > 0) {
+    high_market_weekly = Math.max(...wonRegionFund.map(p => p.weekly_price));
+    high_market_context = `${input.region} + ${input.fund_name} (${wonRegionFund.length} won deal${wonRegionFund.length > 1 ? "s" : ""})`;
+  } else if (wonRegionClient.length > 0) {
+    high_market_weekly = Math.max(...wonRegionClient.map(p => p.weekly_price));
+    high_market_context = `${input.region} + ${input.client_name} (${wonRegionClient.length} won deal${wonRegionClient.length > 1 ? "s" : ""})`;
+  } else if (wonRegion.length > 0) {
+    high_market_weekly = Math.max(...wonRegion.map(p => p.weekly_price));
+    high_market_context = `${input.region} only (${wonRegion.length} won deal${wonRegion.length > 1 ? "s" : ""})`;
+  }
 
   layer_trace.push({
     layer: "OUT",
@@ -1115,5 +1173,9 @@ export function calculatePricing(
     expected_margin_pct,
     ev_optimized_weekly: null,
     layer_trace,
+    delivery_cost_weekly,
+    low_50gm_weekly,
+    high_market_weekly,
+    high_market_context,
   };
 }
