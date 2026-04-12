@@ -3187,7 +3187,7 @@ export default function PricingTool() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr,700px] gap-6 items-start">
+      <div className="grid lg:grid-cols-[1fr,350px] gap-6 items-start">
         {/* ── LEFT COLUMN ──────────────────────────────────────────────────── */}
         <div className="space-y-5">
 
@@ -5085,25 +5085,33 @@ export default function PricingTool() {
                     const hasAny = countryProposals.length > 0 || clientProposals.length > 0 || fundProposals.length > 0;
                     if (!hasAny) return null;
 
-                    const MiniTable = ({ items, label }: { items: PricingProposal[]; label: string }) => (
-                      <div className="space-y-1">
-                        <div className="text-[11px] font-bold text-blue-700">{label} ({items.length})</div>
-                        <div className="grid grid-cols-[auto,1fr,auto,auto,auto] gap-x-2 gap-y-0.5 text-xs">
-                          {items.map(p => {
-                            const totalFee = p.total_fee ?? (p.weekly_price * (p.duration_weeks || 1));
-                            return (
-                              <React.Fragment key={p.id}>
-                                <span className="text-muted-foreground">{p.proposal_date?.slice(0, 7)}</span>
-                                <span className="truncate text-muted-foreground">{p.project_name}</span>
-                                <span className="font-semibold font-mono text-right">{fmt(p.weekly_price)}/wk</span>
-                                <span className="font-mono text-muted-foreground text-right">{fmt(totalFee)}</span>
-                                <OutcomeBadge outcome={p.outcome} />
-                              </React.Fragment>
-                            );
-                          })}
+                    const MiniTable = ({ items, label }: { items: PricingProposal[]; label: string }) => {
+                      // Items already sorted by highest weekly (from earlier sort)
+                      const maxWeekly = items.length > 0 ? Math.max(...items.map(p => p.weekly_price)) : 0;
+                      const totals = items.map(p => p.total_fee ?? (p.weekly_price * (p.duration_weeks || 1)));
+                      const maxTotal = totals.length > 0 ? Math.max(...totals) : 0;
+                      return (
+                        <div className="space-y-1">
+                          <div className="text-[11px] font-bold text-blue-700">{label} ({items.length})</div>
+                          <div className="grid grid-cols-[auto,1fr,auto,auto,auto] gap-x-2 gap-y-0.5 text-xs">
+                            {items.map((p, idx) => {
+                              const totalFee = p.total_fee ?? (p.weekly_price * (p.duration_weeks || 1));
+                              const isMaxWeekly = p.weekly_price === maxWeekly;
+                              const isMaxTotal = totalFee === maxTotal;
+                              return (
+                                <React.Fragment key={p.id}>
+                                  <span className="text-muted-foreground">{p.proposal_date?.slice(0, 7)}</span>
+                                  <span className="truncate text-muted-foreground">{p.project_name}</span>
+                                  <span className={`font-semibold font-mono text-right ${isMaxWeekly ? "underline decoration-2 decoration-emerald-500" : ""}`}>{fmt(p.weekly_price)}/wk</span>
+                                  <span className={`font-mono text-right ${isMaxTotal ? "underline decoration-2 decoration-amber-500 font-semibold" : "text-muted-foreground"}`}>{fmt(totalFee)}</span>
+                                  <OutcomeBadge outcome={p.outcome} />
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    );
+                      );
+                    };
 
                     return (
                       <div className="border border-blue-100 rounded-lg bg-blue-50/40 p-3 space-y-3">
