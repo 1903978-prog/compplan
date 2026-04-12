@@ -337,20 +337,15 @@ export async function seedDatabase() {
   await db.execute(sql`UPDATE app_settings SET api_paused = 1 WHERE id = 1`);
 
   // Seed pricing_proposals from historical win/loss Excel (idempotent by project_name)
+  // Note: no count-gate here — the WHERE NOT EXISTS guard ensures deleted rows stay deleted.
   try {
-    const existing = await db.execute(sql`SELECT COUNT(*) AS c FROM pricing_proposals`);
-    const currentCount = Number((existing as any).rows?.[0]?.c ?? 0);
-    if (currentCount < SEED_PROPOSALS.length) {
-      for (const p of SEED_PROPOSALS) {
-        // Insert only if no row with this project_name already exists
-        await db.execute(sql`
-          INSERT INTO pricing_proposals
-            (proposal_date, project_name, client_name, fund_name, region, country, pe_owned, revenue_band, duration_weeks, weekly_price, total_fee, outcome, notes, created_at)
-          SELECT ${p.proposal_date}, ${p.project_name}, ${p.client_name}, ${p.fund_name}, ${p.region}, ${p.country}, ${p.pe_owned}, ${p.revenue_band}, ${p.duration_weeks}, ${p.weekly_price}, ${p.total_fee}, ${p.outcome}, ${p.notes}, ${new Date().toISOString()}
-          WHERE NOT EXISTS (SELECT 1 FROM pricing_proposals WHERE project_name = ${p.project_name})
-        `);
-      }
-      console.log(`Seeded pricing_proposals (target: ${SEED_PROPOSALS.length} rows)`);
+    for (const p of SEED_PROPOSALS) {
+      await db.execute(sql`
+        INSERT INTO pricing_proposals
+          (proposal_date, project_name, client_name, fund_name, region, country, pe_owned, revenue_band, duration_weeks, weekly_price, total_fee, outcome, notes, created_at)
+        SELECT ${p.proposal_date}, ${p.project_name}, ${p.client_name}, ${p.fund_name}, ${p.region}, ${p.country}, ${p.pe_owned}, ${p.revenue_band}, ${p.duration_weeks}, ${p.weekly_price}, ${p.total_fee}, ${p.outcome}, ${p.notes}, ${new Date().toISOString()}
+        WHERE NOT EXISTS (SELECT 1 FROM pricing_proposals WHERE project_name = ${p.project_name})
+      `);
     }
   } catch (e) {
     console.error("Failed to seed pricing_proposals:", e);
