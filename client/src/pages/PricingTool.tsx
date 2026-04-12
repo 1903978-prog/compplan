@@ -3492,8 +3492,12 @@ export default function PricingTool() {
             }
             const adjustedFinal = runningValue;
 
-            // No discount bars in the waterfall — discounts only affect Gross price
-            // in the fee summary. The waterfall shows the clean Net recommended price.
+            // Discount/rebate/one-off bars: these ADD UP after the Rec. bar to show
+            // the Gross price. Each enabled discount increases the price (so the client
+            // sees a higher quote, and after applying the discount lands back at Net).
+            // admin fee also adds on top.
+            const markupBars: { label: string; start: number; end: number; deltaPct: number }[] = [];
+            // We'll compute these after recommendedNwf is known (see below).
             const extraBars: { label: string; start: number; end: number; color?: string; deltaPct: number }[] = [];
 
             // Green band from country benchmarks
@@ -3514,16 +3518,34 @@ export default function PricingTool() {
             // Duration & fee calculation for right panel
             const effectiveDuration = waterfallDuration ?? form.duration_weeks;
 
-            // Y-scale
+            // Build markup bars: admin + each enabled discount → Gross
+            // Gross = Net × (1+admin%) / (1-d1%) / (1-d2%) / ...
+            let markupRunning = recommendedNwf;
+            const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
+            if (adminFeePct > 0) {
+              const newVal = Math.round(markupRunning * (1 + adminFeePct / 100));
+              markupBars.push({ label: `Admin +${adminFeePct}%`, start: markupRunning, end: newVal, deltaPct: adminFeePct });
+              markupRunning = newVal;
+            }
+            for (const d of enabledDisc) {
+              const newVal = Math.round(markupRunning / (1 - d.pct / 100));
+              const delta = newVal - markupRunning;
+              markupBars.push({ label: `${d.name} +${d.pct}%`, start: markupRunning, end: newVal, deltaPct: d.pct });
+              markupRunning = newVal;
+            }
+            const grossWeeklyWaterfall = markupRunning;
+            const hasMarkups = markupBars.length > 0;
+
+            // Y-scale — include markup bars in range
             const allVals = [base, adjustedFinal, ...bars.flatMap(b => [b.start, b.end]),
-              recommendedNwf,
+              recommendedNwf, grossWeeklyWaterfall,
               ...(hasGreenBand ? [greenLow, greenHigh] : [])];
             const minV = Math.min(...allVals) * 0.92;
             const maxV = Math.max(...allVals) * 1.08;
             const range = maxV - minV || 1;
 
-            // Layout — no NWP bar anymore, just: base + layers + target + rec
-            const totalBarCount = 1 + bars.length + 1 + extraBars.length + 1;
+            // Layout: base + layers + target + rec + markup bars + (gross bar if has markups)
+            const totalBarCount = 1 + bars.length + 1 + 1 + markupBars.length + (hasMarkups ? 1 : 0);
             const W = 620; const H = 210;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
@@ -3634,7 +3656,40 @@ export default function PricingTool() {
                           <line x1={xOf(bi - 1) + barW} y1={yOf(adjustedFinal)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill={recColor} rx="2" />
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill={recColor} fontWeight="bold">{fmt(recommendedNwf)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill={recColor} fontWeight="600">Rec.</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill={recColor} fontWeight="600">Net</text>
+                        </>;
+                      })()}
+
+                      {/* Markup bars: admin + discounts/rebates/one-off build UP to Gross */}
+                      {markupBars.map((mb, i) => {
+                        const bi = bars.length + 3 + i;
+                        const x = xOf(bi);
+                        const y = yOf(mb.end);
+                        const h = Math.max(2, hOf(mb.start, mb.end));
+                        const delta = mb.end - mb.start;
+                        return (
+                          <g key={`markup-${i}`}>
+                            <line x1={xOf(bi - 1) + barW} y1={yOf(mb.start)} x2={x} y2={yOf(mb.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                            <rect x={x} y={y} width={barW} height={h} fill="#f59e0b" rx="2" opacity="0.85" />
+                            <text x={x + barW/2} y={y - 9} textAnchor="middle" fontSize="7" fill="#d97706" fontWeight="bold">+{fmt(delta)}</text>
+                            <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="5.5" fill="#94a3b8">+{mb.deltaPct}%</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="5.5" fill="#64748b">{mb.label.length > 8 ? mb.label.slice(0, 8) + "…" : mb.label}</text>
+                          </g>
+                        );
+                      })}
+
+                      {/* Final Gross bar (only if markups exist) */}
+                      {hasMarkups && (() => {
+                        const bi = bars.length + 3 + markupBars.length;
+                        const x = xOf(bi);
+                        const y = yOf(grossWeeklyWaterfall);
+                        const h = hOf(minV, grossWeeklyWaterfall);
+                        const prevEnd = markupBars[markupBars.length - 1].end;
+                        return <>
+                          <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                          <rect x={x} y={y} width={barW} height={h} fill="#d97706" rx="2" />
+                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="7" fill="#d97706" fontWeight="bold">{fmt(grossWeeklyWaterfall)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#d97706" fontWeight="600">Gross</text>
                         </>;
                       })()}
 
