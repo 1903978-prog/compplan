@@ -4122,12 +4122,15 @@ export default function PricingTool() {
                           )}
                           <div className="space-y-0.5">
                             <div className="flex justify-between text-[9px]">
-                              <span className="text-[#1A6571] font-bold">Our NWF</span>
-                              <span className="font-mono">{fmtC(nwfClamped)}/wk</span>
+                              <span className="text-[#1A6571] font-bold">Our Net1</span>
+                              <span className="font-mono">{fmtC(canonicalNetWeekly)}/wk</span>
                             </div>
                             <div className="h-2 bg-muted rounded-full overflow-hidden">
-                              <div className="h-full rounded-full bg-[#1A6571]" style={{ width: pctW(nwfClamped) }} />
+                              <div className="h-full rounded-full bg-[#1A6571]" style={{ width: pctW(canonicalNetWeekly) }} />
                             </div>
+                          </div>
+                          <div className="text-[9px] text-muted-foreground leading-relaxed pt-1 border-t border-border/50">
+                            Comparables are scored by similarity: same fund (40 pts), same region (25 pts), same PE/non-PE ownership (15 pts), same revenue band (20 pts). Top 8 projects with score ≥25 are selected. Won and lost averages shown above.
                           </div>
                         </div>
                       );
