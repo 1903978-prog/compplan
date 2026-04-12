@@ -198,6 +198,7 @@ export interface PricingProposal {
   company_revenue_m?: number | null;
   ebitda_margin_pct?: number | null;
   expected_ebitda_growth_pct?: number | null;
+  team_size?: number | null;
   notes?: string | null;
   created_at?: string;
 }

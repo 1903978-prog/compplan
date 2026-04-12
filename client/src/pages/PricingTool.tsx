@@ -89,6 +89,7 @@ function emptyProposal(): PricingProposal {
     company_revenue_m: null,
     ebitda_margin_pct: null,
     expected_ebitda_growth_pct: null,
+    team_size: 1,
     notes: "",
   };
 }
@@ -961,6 +962,21 @@ export default function PricingTool() {
           <Input type="number" min="1" value={historyForm.duration_weeks ?? ""} onChange={e => setHistoryForm(f => ({ ...f, duration_weeks: +e.target.value || 0 }))} className="h-8 text-sm" />
         </div>
         <div className="space-y-1">
+          <Label className="text-xs">Team size</Label>
+          <Select
+            value={String(historyForm.team_size ?? 1)}
+            onValueChange={v => setHistoryForm(f => ({ ...f, team_size: Number(v) }))}
+          >
+            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0.5">0.5</SelectItem>
+              <SelectItem value="1">1</SelectItem>
+              <SelectItem value="1.5">1.5</SelectItem>
+              <SelectItem value="2">2</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
           <Label className="text-xs">Weekly price</Label>
           <div className="flex gap-1">
             <span className="flex items-center px-2 text-sm font-semibold bg-muted border rounded-l border-r-0">
@@ -1051,6 +1067,7 @@ export default function PricingTool() {
       { key: "pe_owned", label: "PE owned" },
       { key: "revenue_band", label: "Revenue band" },
       { key: "duration_weeks", label: "Duration (w)" },
+      { key: "team_size", label: "Team size" },
       { key: "currency", label: "Currency" },
       { key: "weekly_price", label: "Weekly price" },
       { key: "total_fee", label: "Total fee" },
@@ -1124,6 +1141,25 @@ export default function PricingTool() {
     if (!confirm("Delete this past proposal?")) return;
     await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
     loadAll();
+  };
+
+  // Inline one-field update for the past-projects table (e.g. team_size).
+  // Optimistic: we patch local state immediately, then PUT the row.
+  const patchProposalInline = async (id: number, patch: Partial<PricingProposal>) => {
+    setProposals(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
+    const current = proposals.find(p => p.id === id);
+    if (!current) return;
+    const payload = { ...current, ...patch, pe_owned: (current.pe_owned ? 1 : 0) };
+    try {
+      await fetch(`/api/pricing/proposals/${id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      toast({ title: "Failed to update", variant: "destructive" });
+      loadAll();
+    }
   };
 
   // Live recommendation
@@ -1587,6 +1623,7 @@ export default function PricingTool() {
                         {sortHeader("sector", "Sector")}
                         {sortHeader("project_type", "Type")}
                         {sortHeader("duration_weeks", "Dur.")}
+                        {sortHeader("team_size", "Team")}
                         {sortHeader("currency", "Cur.")}
                         {sortHeader("weekly_price", "Weekly price")}
                         {sortHeader("outcome", "Outcome")}
@@ -1607,6 +1644,20 @@ export default function PricingTool() {
                             <TableCell className="text-xs text-muted-foreground">{p.sector || "—"}</TableCell>
                             <TableCell className="text-xs">{p.project_type ? <Badge variant="outline" className="text-xs capitalize">{p.project_type}</Badge> : "—"}</TableCell>
                             <TableCell className="text-sm">{p.duration_weeks ? `${p.duration_weeks}w` : "—"}</TableCell>
+                            <TableCell onClick={e => e.stopPropagation()}>
+                              <Select
+                                value={String(p.team_size ?? 1)}
+                                onValueChange={v => patchProposalInline(p.id!, { team_size: Number(v) })}
+                              >
+                                <SelectTrigger className="h-7 w-16 text-xs px-2"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="0.5">0.5</SelectItem>
+                                  <SelectItem value="1">1</SelectItem>
+                                  <SelectItem value="1.5">1.5</SelectItem>
+                                  <SelectItem value="2">2</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
                             <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
                             <TableCell className="font-semibold text-sm font-mono">{fmt(p.weekly_price)}</TableCell>
                             <TableCell>
@@ -1629,7 +1680,7 @@ export default function PricingTool() {
                           </TableRow>
                           {showEditProposalForm && editingProposalId === p.id && (
                             <TableRow className="bg-primary/5 hover:bg-primary/5">
-                              <TableCell colSpan={12} className="p-4 border-t-2 border-primary/30">
+                              <TableCell colSpan={13} className="p-4 border-t-2 border-primary/30">
                                 {renderProposalEditForm()}
                               </TableCell>
                             </TableRow>
