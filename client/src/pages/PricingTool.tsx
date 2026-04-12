@@ -346,6 +346,10 @@ export default function PricingTool() {
   const [propSort, setPropSort] = useState<{ field: string; dir: "asc" | "desc" }>({ field: "proposal_date", dir: "desc" });
   const [disabledBars, setDisabledBars] = useState<Set<string>>(new Set());
   const [waterfallDuration, setWaterfallDuration] = useState<number | null>(null);
+  const [negotiationDelta, setNegotiationDelta] = useState(0);
+  const [variableFeePct, setVariableFeePct] = useState(10);
+  const [adminFeePct, setAdminFeePct] = useState(8);
+  const [markingOutcome, setMarkingOutcome] = useState(false);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
   const [teamPreset, setTeamPreset] = useState<string>("1+2");
   const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
@@ -666,6 +670,42 @@ export default function PricingTool() {
     setHistoryForm({ ...p, pe_owned: p.pe_owned === (1 as any) || p.pe_owned === true });
     setEditingProposalId(p.id ?? null);
     setShowEditProposalForm(true);
+  };
+
+  const markProjectOutcome = async (outcome: "won" | "lost") => {
+    if (!recommendation) return;
+    setMarkingOutcome(true);
+    try {
+      const baseWeekly = nwfClamped + manualDelta + negotiationDelta;
+      const finalWeekly = Math.round(baseWeekly * (1 + variableFeePct / 100 + adminFeePct / 100));
+      const payload = {
+        proposal_date: new Date().toISOString().slice(0, 10),
+        project_name: form.project_name || "CLI01",
+        client_name: form.client_name || null,
+        fund_name: form.fund_name || null,
+        region: form.region,
+        pe_owned: form.pe_owned ? 1 : 0,
+        revenue_band: form.revenue_band,
+        price_sensitivity: form.price_sensitivity,
+        duration_weeks: form.duration_weeks,
+        weekly_price: finalWeekly,
+        total_fee: finalWeekly * form.duration_weeks,
+        outcome,
+        sector: form.sector || null,
+        project_type: form.project_type || null,
+      };
+      await fetch("/api/pricing/proposals", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      toast({ title: `Project marked as ${outcome}`, description: `${payload.project_name} saved to win/loss history` });
+      loadAll();
+    } catch {
+      toast({ title: "Failed to save", variant: "destructive" });
+    } finally {
+      setMarkingOutcome(false);
+    }
   };
 
   const deleteProposal = async (id: number) => {
@@ -2232,7 +2272,7 @@ export default function PricingTool() {
             );
           })()}
 
-          {/* SECTION C: Commercial Analysis (TNF rows + probability curve) */}
+          {/* SECTION C: Commercial Analysis */}
           {recommendation && nwfClamped > 0 && (() => {
             const cur = getCurrencyForRegion(form.region);
             const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
@@ -2261,137 +2301,263 @@ export default function PricingTool() {
             const benchScale = Math.max(...allBenchVals, 1) * 1.1;
             const pctBar = (v: number) => `${Math.min(100, (v / benchScale) * 100).toFixed(1)}%`;
 
+            // Country band bars
+            const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
+            const weeklyBench = benchmarks.find(b =>
+              countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+              (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+            );
+            const totalBench = benchmarks.find(b =>
+              countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+              (b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"))
+            );
+
+            const BandBar = ({ bench, marker, label }: { bench: CountryBenchmarkRow | undefined; marker: number; label: string }) => {
+              if (!bench || bench.yellow_high === 0) {
+                return (
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
+                    <div className="text-[9px] text-muted-foreground italic">No benchmark</div>
+                  </div>
+                );
+              }
+              const rangeLow = Math.min(bench.yellow_low * 0.75, marker * 0.85);
+              const rangeHigh = Math.max(bench.yellow_high * 1.15, marker * 1.15);
+              const span = rangeHigh - rangeLow;
+              const pct = (v: number) => Math.max(0, Math.min(100, ((v - rangeLow) / span) * 100));
+              const markerPct = pct(marker);
+              const band = marker >= bench.green_low && marker <= bench.green_high ? "green"
+                : marker >= bench.yellow_low && marker <= bench.yellow_high ? "yellow" : "red";
+              const bandColor = band === "green" ? "text-emerald-600" : band === "yellow" ? "text-amber-600" : "text-red-600";
+              return (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
+                    <div className={`text-[10px] font-bold ${bandColor}`}>{band === "green" ? "🟢" : band === "yellow" ? "🟡" : "🔴"}</div>
+                  </div>
+                  <div className="relative h-5 rounded overflow-hidden border border-border">
+                    <div className="absolute inset-y-0 bg-red-400/40" style={{ left: 0, width: `${pct(bench.yellow_low)}%` }} />
+                    <div className="absolute inset-y-0 bg-amber-300/60" style={{ left: `${pct(bench.yellow_low)}%`, width: `${pct(bench.green_low) - pct(bench.yellow_low)}%` }} />
+                    <div className="absolute inset-y-0 bg-emerald-400/70" style={{ left: `${pct(bench.green_low)}%`, width: `${pct(bench.green_high) - pct(bench.green_low)}%` }} />
+                    <div className="absolute inset-y-0 bg-amber-300/60" style={{ left: `${pct(bench.green_high)}%`, width: `${pct(bench.yellow_high) - pct(bench.green_high)}%` }} />
+                    <div className="absolute inset-y-0 bg-red-400/40" style={{ left: `${pct(bench.yellow_high)}%`, right: 0 }} />
+                    <div className="absolute inset-y-0 w-0.5 bg-foreground" style={{ left: `calc(${markerPct}% - 1px)` }} />
+                  </div>
+                  <div className="flex justify-between text-[8px] text-muted-foreground font-mono">
+                    <span>{fmtK2(rangeLow)}</span>
+                    <span className="text-emerald-700">{fmtK2(bench.green_low)}–{fmtK2(bench.green_high)}</span>
+                    <span>{fmtK2(rangeHigh)}</span>
+                  </div>
+                  <div className="text-[9px] text-center font-semibold">{fmtC(marker)}<span className="text-muted-foreground font-normal ml-1">({bench.decisiveness_pct}% decisive)</span></div>
+                </div>
+              );
+            };
+
+            // Arc gauge helper
+            const ArcGauge = ({ ratio, label, denomLabel, maxRatio = 0.2 }: { ratio: number | null; label: string; denomLabel: string; maxRatio?: number }) => {
+              const CX = 60; const CY = 52; const R = 42; const SW = 9;
+              const clampedP = ratio != null ? Math.min(1, Math.max(0, ratio / maxRatio)) : 0;
+              const angle = Math.PI * (1 - clampedP);
+              const ex = CX + R * Math.cos(angle); const ey = CY - R * Math.sin(angle);
+              const largeArc = clampedP > 0.5 ? 1 : 0;
+              const color = ratio == null ? "#94a3b8"
+                : ratio < 0.05 ? "#16a34a"
+                : ratio < 0.10 ? "#f59e0b"
+                : "#ef4444";
+              const bgPath = `M ${CX - R} ${CY} A ${R} ${R} 0 0 0 ${CX + R} ${CY}`;
+              const valPath = clampedP > 0.001
+                ? `M ${CX - R} ${CY} A ${R} ${R} 0 ${largeArc} 0 ${ex} ${ey}`
+                : "";
+              return (
+                <div className="border rounded-lg p-3 bg-background flex flex-col items-center">
+                  <div className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide text-center mb-1">{label}</div>
+                  <svg width="120" height="62" viewBox={`0 0 ${CX * 2} 62`}>
+                    <path d={bgPath} fill="none" stroke="#e2e8f0" strokeWidth={SW} strokeLinecap="round" />
+                    {valPath && <path d={valPath} fill="none" stroke={color} strokeWidth={SW} strokeLinecap="round" />}
+                    <text x={CX} y={CY - 4} textAnchor="middle" fontSize="16" fontWeight="bold" fill={color}>
+                      {ratio != null ? `${(ratio * 100).toFixed(1)}%` : "—"}
+                    </text>
+                    <text x={CX} y={CY + 10} textAnchor="middle" fontSize="7" fill="#94a3b8">{denomLabel}</text>
+                  </svg>
+                  <div className="flex justify-between w-full text-[8px] text-muted-foreground mt-0.5 px-1">
+                    <span>0%</span>
+                    <span className="text-amber-500">{(maxRatio * 50).toFixed(0)}%</span>
+                    <span className="text-red-500">{(maxRatio * 100).toFixed(0)}%+</span>
+                  </div>
+                </div>
+              );
+            };
+
             return (
               <div className="border rounded-lg p-4 bg-muted/10 space-y-3">
                 <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
-                <div className="grid grid-cols-[1fr,268px] gap-4 items-start">
-                  {/* 4 rows */}
-                  <div className="space-y-2">
-                    {/* Row 1: TNF */}
-                    <div className="flex items-center justify-between rounded bg-primary/5 border border-primary/15 px-3 py-2">
-                      <span className="text-xs font-semibold text-muted-foreground">Total Net Fees (TNF)</span>
+                <div className="grid grid-cols-2 gap-4 items-start">
+                  {/* Left col: market benchmarks (combined box) */}
+                  <div className="border rounded-lg p-3 bg-background space-y-3">
+                    {/* TNF total */}
+                    <div className="flex items-center justify-between rounded bg-primary/5 border border-primary/15 px-2 py-1.5">
+                      <span className="text-[10px] font-semibold text-muted-foreground">Total Net Fees (TNF)</span>
                       <span className="text-sm font-bold text-primary">
                         {fmtC(tnf)}
-                        <span className="text-[10px] font-normal text-muted-foreground ml-1">({form.duration_weeks}w × {fmtC(nwfClamped)}/wk)</span>
+                        <span className="text-[9px] font-normal text-muted-foreground ml-1">{form.duration_weeks}w × {fmtC(nwfClamped)}/wk</span>
                       </span>
                     </div>
-                    {/* Row 2: Benchmark bar */}
-                    <div className="rounded border px-3 py-2 space-y-1.5">
-                      <div className="text-[10px] font-bold uppercase text-muted-foreground">TNF vs Market (total project, {matrixRegion2})</div>
-                      {[...benchRows, { label: "Our TNF", color: "#f59e0b", avg: tnf, isOurs: true }].map((t, i) => (
-                        <div key={i} className="space-y-0.5">
-                          <div className="flex justify-between text-[10px] text-muted-foreground">
-                            <span className={(t as any).isOurs ? "font-bold text-amber-700" : ""}>{t.label}</span>
-                            <span className="font-mono">{fmtK2(t.avg)}</span>
-                          </div>
-                          <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                            <div className="h-full rounded-full transition-all" style={{ width: pctBar(t.avg), backgroundColor: t.color, opacity: (t as any).isOurs ? 1 : 0.55 }} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Row 3: TNF/EBITDA */}
-                    <div className="flex items-center justify-between rounded bg-muted/20 border px-3 py-2">
-                      <span className="text-xs text-muted-foreground">TNF / Company EBITDA</span>
-                      {tnfEbitdaRatio != null ? (
-                        <span className="text-sm font-bold">
-                          {(tnfEbitdaRatio * 100).toFixed(1)}%
-                          <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(currentEbitda)}</span>
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground italic">Set Revenue + EBITDA margin above</span>
-                      )}
-                    </div>
-                    {/* Row 4: TNF/Aspiration */}
-                    <div className="flex items-center justify-between rounded bg-muted/20 border px-3 py-2">
-                      <span className="text-xs text-muted-foreground">TNF / Aspiration EBITDA increase</span>
-                      {tnfAspirationRatio != null ? (
-                        <span className="text-sm font-bold">
-                          {(tnfAspirationRatio * 100).toFixed(1)}%
-                          <span className="text-[10px] font-normal text-muted-foreground ml-1">of {fmtK2(aspirationEur)} ({aspirationIncreasePct}% incr.)</span>
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground italic">Set Revenue, EBITDA margin + aspiration % above</span>
-                      )}
-                    </div>
-                  </div>
-                  {/* Band visualization (replaces Win Probability chart) */}
-                  {(() => {
-                    const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
-                    const weeklyBench = benchmarks.find(b =>
-                      countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
-                      (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
-                    );
-                    const totalBench = benchmarks.find(b =>
-                      countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
-                      (b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"))
-                    );
-
-                    const BandBar = ({ bench, marker, label }: { bench: CountryBenchmarkRow | undefined; marker: number; label: string }) => {
-                      if (!bench || bench.yellow_high === 0) {
-                        return (
-                          <div className="space-y-0.5">
-                            <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
-                            <div className="text-[9px] text-muted-foreground italic">No benchmark for {form.region}</div>
-                          </div>
-                        );
-                      }
-                      const rangeLow = Math.min(bench.yellow_low * 0.75, marker * 0.85);
-                      const rangeHigh = Math.max(bench.yellow_high * 1.15, marker * 1.15);
-                      const span = rangeHigh - rangeLow;
-                      const pct = (v: number) => Math.max(0, Math.min(100, ((v - rangeLow) / span) * 100));
-                      const markerPct = pct(marker);
-                      const band = marker >= bench.green_low && marker <= bench.green_high
-                        ? "green"
-                        : marker >= bench.yellow_low && marker <= bench.yellow_high
-                        ? "yellow"
-                        : "red";
-                      const bandLabel = band === "green" ? "In Green band" : band === "yellow" ? "In Yellow band" : "In Red band";
-                      const bandColor = band === "green" ? "text-emerald-600" : band === "yellow" ? "text-amber-600" : "text-red-600";
-                      return (
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
-                            <div className={`text-[10px] font-bold ${bandColor}`}>{bandLabel}</div>
-                          </div>
-                          <div className="relative h-6 rounded overflow-hidden border border-border">
-                            {/* Red left */}
-                            <div className="absolute top-0 bottom-0 bg-red-400/40" style={{ left: 0, width: `${pct(bench.yellow_low)}%` }} />
-                            {/* Yellow left */}
-                            <div className="absolute top-0 bottom-0 bg-amber-300/60" style={{ left: `${pct(bench.yellow_low)}%`, width: `${pct(bench.green_low) - pct(bench.yellow_low)}%` }} />
-                            {/* Green middle */}
-                            <div className="absolute top-0 bottom-0 bg-emerald-400/70" style={{ left: `${pct(bench.green_low)}%`, width: `${pct(bench.green_high) - pct(bench.green_low)}%` }} />
-                            {/* Yellow right */}
-                            <div className="absolute top-0 bottom-0 bg-amber-300/60" style={{ left: `${pct(bench.green_high)}%`, width: `${pct(bench.yellow_high) - pct(bench.green_high)}%` }} />
-                            {/* Red right */}
-                            <div className="absolute top-0 bottom-0 bg-red-400/40" style={{ left: `${pct(bench.yellow_high)}%`, right: 0 }} />
-                            {/* Marker */}
-                            <div className="absolute top-0 bottom-0 w-0.5 bg-foreground" style={{ left: `calc(${markerPct}% - 1px)` }} />
-                            <div className="absolute -top-0.5 text-[9px] font-bold text-foreground whitespace-nowrap"
-                                 style={{ left: `${markerPct}%`, transform: "translate(-50%, -100%)" }}>
-                              ▼
+                    {/* TNF vs Market bars */}
+                    {benchRows.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-bold uppercase text-muted-foreground">TNF vs Market — {matrixRegion2}</div>
+                        {[...benchRows, { label: "Our TNF", color: "#f59e0b", avg: tnf, isOurs: true }].map((t, i) => (
+                          <div key={i} className="space-y-0.5">
+                            <div className="flex justify-between text-[9px] text-muted-foreground">
+                              <span className={(t as any).isOurs ? "font-bold text-amber-700" : ""}>{t.label}</span>
+                              <span className="font-mono">{fmtK2(t.avg)}</span>
+                            </div>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: pctBar(t.avg), backgroundColor: t.color, opacity: (t as any).isOurs ? 1 : 0.55 }} />
                             </div>
                           </div>
-                          <div className="flex justify-between text-[8px] text-muted-foreground font-mono">
-                            <span>{fmtK2(rangeLow)}</span>
-                            <span className="text-emerald-700">🟢 {fmtK2(bench.green_low)}–{fmtK2(bench.green_high)}</span>
-                            <span>{fmtK2(rangeHigh)}</span>
-                          </div>
-                          <div className="text-[9px] text-center">
-                            <span className="font-semibold">{fmtC(marker)}</span>
-                            <span className="text-muted-foreground ml-1">({bench.decisiveness_pct}% decisiveness)</span>
-                          </div>
-                        </div>
-                      );
-                    };
-
-                    return (
-                      <div className="space-y-3">
-                        <BandBar bench={weeklyBench} marker={nwfClamped} label={`Weekly fee band — ${weeklyBench?.country ?? form.region}`} />
-                        <BandBar bench={totalBench} marker={tnf} label={`Total project cost band — ${totalBench?.country ?? form.region}`} />
+                        ))}
                       </div>
-                    );
-                  })()}
+                    )}
+                    {/* Band bars */}
+                    <BandBar bench={weeklyBench} marker={nwfClamped} label={`Weekly — ${weeklyBench?.country ?? form.region} · PE >${form.revenue_band === "above_1b" ? "€1B" : "€500M"}`} />
+                    <BandBar bench={totalBench} marker={tnf} label={`Total cost — ${totalBench?.country ?? form.region}`} />
+                  </div>
+
+                  {/* Right col: TNF ratio gauges */}
+                  <div className="space-y-3">
+                    <ArcGauge
+                      ratio={tnfEbitdaRatio}
+                      label="TNF / Company EBITDA"
+                      denomLabel={currentEbitda > 0 ? `of ${fmtK2(currentEbitda)} EBITDA` : "set revenue + margin"}
+                      maxRatio={0.20}
+                    />
+                    <ArcGauge
+                      ratio={tnfAspirationRatio}
+                      label="TNF / Aspiration EBITDA"
+                      denomLabel={aspirationEur > 0 ? `of ${fmtK2(aspirationEur)} (${aspirationIncreasePct}% incr.)` : "set aspiration % above"}
+                      maxRatio={0.20}
+                    />
+                    <div className="text-[8px] text-muted-foreground text-center px-2">
+                      🟢 &lt;5% · 🟡 5–10% · 🔴 &gt;10% of base
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* SECTION D: Price Finalization */}
+          {recommendation && nwfClamped > 0 && (() => {
+            const baseWeekly = nwfClamped + manualDelta + negotiationDelta;
+            const finalWeekly = Math.round(baseWeekly * (1 + variableFeePct / 100 + adminFeePct / 100));
+            const effectiveDur = form.duration_weeks || 0;
+            const grossFees = Math.round(baseWeekly * effectiveDur);
+            const netFees = Math.round(finalWeekly * effectiveDur);
+            const invoiceCount = Math.max(1, Math.floor(1 + effectiveDur / 4));
+            const perInvoice = invoiceCount > 0 ? Math.round(netFees / invoiceCount) : 0;
+            const cur = getCurrencyForRegion(form.region);
+            const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
+            return (
+              <div className="border rounded-lg p-4 bg-muted/10 space-y-4">
+                <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Price Finalization</div>
+
+                {/* Controls row */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Left: adjustments */}
+                  <div className="space-y-3">
+                    {/* Manual adjustment */}
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase">Model adjustment (±500)</div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setManualDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
+                        <span className={`text-sm font-mono font-bold w-24 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                          {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
+                        </span>
+                        <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
+                        {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[10px] text-muted-foreground hover:text-foreground underline">reset</button>}
+                      </div>
+                    </div>
+                    {/* Post-negotiation adjustment */}
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase">Post-negotiation adjustment (±500)</div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setNegotiationDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
+                        <span className={`text-sm font-mono font-bold w-24 text-center ${negotiationDelta > 0 ? "text-emerald-600" : negotiationDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                          {negotiationDelta === 0 ? "±€0" : `${negotiationDelta > 0 ? "+" : ""}€${Math.abs(negotiationDelta).toLocaleString("it-IT")}`}
+                        </span>
+                        <button onClick={() => setNegotiationDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
+                        {negotiationDelta !== 0 && <button onClick={() => setNegotiationDelta(0)} className="text-[10px] text-muted-foreground hover:text-foreground underline">reset</button>}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Right: fee %s */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Variable fee</Label>
+                      <Select value={String(variableFeePct)} onValueChange={v => setVariableFeePct(Number(v))}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {[10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(baseWeekly * variableFeePct / 100))}/wk</div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Admin fees</Label>
+                      <Select value={String(adminFeePct)} onValueChange={v => setAdminFeePct(Number(v))}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {[0, 2, 4, 6, 8].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <div className="text-[9px] text-muted-foreground">= {fmtC(Math.round(baseWeekly * adminFeePct / 100))}/wk</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fee summary table */}
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/30">
+                        <TableHead className="text-[10px] py-1.5">Weekly (base)</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Weekly (all-in)</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Duration</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Gross Fees</TableHead>
+                        <TableHead className="text-[10px] py-1.5">Net Fees (all-in)</TableHead>
+                        <TableHead className="text-[10px] py-1.5 text-center">Invoices</TableHead>
+                        <TableHead className="text-[10px] py-1.5 text-right">Per Invoice</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell className="font-mono text-sm font-semibold">{fmtC(baseWeekly)}</TableCell>
+                        <TableCell className="font-mono text-sm font-bold text-primary">{fmtC(finalWeekly)}</TableCell>
+                        <TableCell className="text-sm">{effectiveDur}w</TableCell>
+                        <TableCell className="font-mono text-sm text-muted-foreground">{fmtC(grossFees)}</TableCell>
+                        <TableCell className="font-mono text-sm font-bold text-emerald-600">{fmtC(netFees)}</TableCell>
+                        <TableCell className="text-sm text-center font-semibold">{invoiceCount}</TableCell>
+                        <TableCell className="font-mono text-sm font-semibold text-right">{fmtC(perInvoice)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Won / Lost buttons */}
+                <div className="flex items-center gap-3 pt-1">
+                  <span className="text-[10px] text-muted-foreground uppercase font-semibold">Record outcome:</span>
+                  <Button size="sm" disabled={markingOutcome}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    onClick={() => markProjectOutcome("won")}>
+                    ✓ Mark as Won
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={markingOutcome}
+                    className="border-red-300 text-red-600 hover:bg-red-50"
+                    onClick={() => markProjectOutcome("lost")}>
+                    ✗ Mark as Lost
+                  </Button>
+                  {markingOutcome && <span className="text-[10px] text-muted-foreground">Saving…</span>}
                 </div>
               </div>
             );
