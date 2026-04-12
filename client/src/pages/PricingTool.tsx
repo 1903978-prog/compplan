@@ -430,6 +430,8 @@ export default function PricingTool() {
   const [savingBenchmarks, setSavingBenchmarks] = useState(false);
   const [projectTypesLocal, setProjectTypesLocal] = useState<string[]>([]);
   const [editingProjectTypes, setEditingProjectTypes] = useState(false);
+  const [fundsLocal, setFundsLocal] = useState<string[]>([]);
+  const [editingFunds, setEditingFunds] = useState(false);
   const [regionsLocal, setRegionsLocal] = useState<PricingRegion[]>([]);
   const [editingRegions, setEditingRegions] = useState(false);
   const [pasteInput, setPasteInput] = useState("");
@@ -483,7 +485,47 @@ export default function PricingTool() {
       if (!merged.sensitivity_multipliers?.length) merged.sensitivity_multipliers = DEFAULT_PRICING_SETTINGS.sensitivity_multipliers;
       setSettings(merged);
       setCases(Array.isArray(cData) ? cData : []);
-      setProposals(Array.isArray(pData) ? pData.map((p: any) => ({ ...p, pe_owned: p.pe_owned === 1 || p.pe_owned === true })) : []);
+      const rawProposals: PricingProposal[] = Array.isArray(pData)
+        ? pData.map((p: any) => ({ ...p, pe_owned: p.pe_owned === 1 || p.pe_owned === true }))
+        : [];
+
+      // Auto-normalize fund names against canonical list
+      const canonicalFunds: string[] = merged.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? [];
+      const toNormalize = rawProposals.filter(p => {
+        if (!p.fund_name) return false;
+        const lName = p.fund_name.toLowerCase().trim();
+        const exact = canonicalFunds.find(c => c.toLowerCase() === lName);
+        if (exact) return false; // already canonical
+        const sub = canonicalFunds.find(c => {
+          const lc = c.toLowerCase();
+          return lName.includes(lc) || lc.includes(lName);
+        });
+        if (sub) return true;
+        const token = canonicalFunds.find(c => {
+          const tokens = c.toLowerCase().split(/\s+/);
+          return tokens.some(t => t.length >= 3 && lName.includes(t));
+        });
+        return !!token;
+      });
+
+      // Patch non-canonical proposals silently
+      for (const p of toNormalize) {
+        const lName = (p.fund_name ?? "").toLowerCase().trim();
+        const normalized =
+          canonicalFunds.find(c => c.toLowerCase() === lName) ??
+          canonicalFunds.find(c => { const lc = c.toLowerCase(); return lName.includes(lc) || lc.includes(lName); }) ??
+          canonicalFunds.find(c => c.toLowerCase().split(/\s+/).some(t => t.length >= 3 && lName.includes(t)));
+        if (normalized && p.id) {
+          rawProposals.forEach(r => { if (r.id === p.id) r.fund_name = normalized; });
+          fetch(`/api/pricing/proposals/${p.id}`, {
+            method: "PUT", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...p, fund_name: normalized, pe_owned: p.pe_owned ? 1 : 0 }),
+          }).catch(() => {});
+        }
+      }
+
+      setProposals(rawProposals);
     } catch {
       setSettings(DEFAULT_PRICING_SETTINGS);
     } finally {
@@ -496,6 +538,7 @@ export default function PricingTool() {
   useEffect(() => {
     setBenchmarks(settings?.country_benchmarks ?? DEFAULT_PRICING_SETTINGS.country_benchmarks ?? []);
     setProjectTypesLocal(settings?.project_types ?? DEFAULT_PROJECT_TYPES);
+    setFundsLocal(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []);
     setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions);
   }, [settings]);
 
@@ -591,6 +634,18 @@ export default function PricingTool() {
     setSettings(updated);
     setEditingProjectTypes(false);
     toast({ title: "Project types saved" });
+  };
+
+  const saveFunds = async (funds: string[]) => {
+    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), funds };
+    await fetch("/api/pricing/settings", {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    });
+    setSettings(updated);
+    setEditingFunds(false);
+    toast({ title: "Funds saved" });
   };
 
   const handleParsePaste = () => {
@@ -1693,6 +1748,163 @@ export default function PricingTool() {
               );
             })()}
 
+            {/* ── Admin: Funds ─────────────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">Funds</CardTitle>
+                  <div className="flex gap-2">
+                    {editingFunds ? (
+                      <>
+                        <Button size="sm" onClick={() => saveFunds(fundsLocal)}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setFundsLocal(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []); setEditingFunds(false); }}>Cancel</Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => { setFundsLocal([...(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? [])]); setEditingFunds(true); }}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {editingFunds ? (
+                  <div className="space-y-2">
+                    {fundsLocal.map((f, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <Input value={f} onChange={e => setFundsLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                          className="h-7 text-sm flex-1 font-mono uppercase" />
+                        <button onClick={() => setFundsLocal(prev => prev.filter((_, j) => j !== i))}
+                          className="text-muted-foreground hover:text-destructive p-1">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" onClick={() => setFundsLocal(prev => [...prev, ""])}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add fund
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []).map(f => (
+                      <Badge key={f} variant="secondary" className="text-xs font-mono">{f}</Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ── Admin: Regions ───────────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">Regions</CardTitle>
+                  <div className="flex gap-2">
+                    {editingRegions ? (
+                      <>
+                        <Button size="sm" onClick={() => saveRegions(regionsLocal)}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions); setEditingRegions(false); }}>Cancel</Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => { setRegionsLocal([...(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions)]); setEditingRegions(true); }}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {editingRegions ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[1fr,80px,60px,32px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase px-1">
+                      <span>Region code</span><span>Multiplier</span><span>Baseline</span><span />
+                    </div>
+                    {regionsLocal.map((r, i) => (
+                      <div key={i} className="grid grid-cols-[1fr,80px,60px,32px] gap-2 items-center">
+                        <Input value={r.region_name}
+                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, region_name: e.target.value } : v))}
+                          className="h-7 text-sm" placeholder="e.g. IT" />
+                        <Input type="number" step="0.01" min="0.5" max="3" value={r.multiplier}
+                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, multiplier: parseFloat(e.target.value) || 1 } : v))}
+                          className="h-7 text-sm font-mono" />
+                        <div className="flex justify-center">
+                          <input type="checkbox" checked={r.is_baseline}
+                            onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, is_baseline: e.target.checked } : v))}
+                          />
+                        </div>
+                        <button onClick={() => setRegionsLocal(prev => prev.filter((_, j) => j !== i))}
+                          className="text-muted-foreground hover:text-destructive p-1">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" onClick={() => setRegionsLocal(prev => [
+                      ...prev,
+                      { id: `region_${Date.now()}`, region_name: "", multiplier: 1.0, is_baseline: false }
+                    ])}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add region
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).map(r => (
+                      <Badge key={r.id} variant={r.is_baseline ? "default" : "secondary"} className="text-xs">
+                        {r.region_name}
+                        {!r.is_baseline && <span className="text-muted-foreground ml-1">×{r.multiplier.toFixed(2)}</span>}
+                        {r.is_baseline && <span className="ml-1 opacity-60">baseline</span>}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ── Admin: Project Types ─────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">Project Types</CardTitle>
+                  <div className="flex gap-2">
+                    {editingProjectTypes ? (
+                      <>
+                        <Button size="sm" onClick={() => saveProjectTypes(projectTypesLocal)}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setProjectTypesLocal(projectTypes); setEditingProjectTypes(false); }}>Cancel</Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => { setProjectTypesLocal([...projectTypes]); setEditingProjectTypes(true); }}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {editingProjectTypes ? (
+                  <div className="space-y-2">
+                    {projectTypesLocal.map((t, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <Input value={t} onChange={e => setProjectTypesLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                          className="h-7 text-sm flex-1" />
+                        <button onClick={() => setProjectTypesLocal(prev => prev.filter((_, j) => j !== i))}
+                          className="text-muted-foreground hover:text-destructive p-1">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" onClick={() => setProjectTypesLocal(prev => [...prev, ""])}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add type
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {projectTypes.map(t => (
+                      <Badge key={t} variant="secondary" className="text-xs capitalize">{t}</Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
           </div>
         ) : null}
 
@@ -2243,116 +2455,6 @@ export default function PricingTool() {
               );
             })()}
 
-            {/* ── Regions Admin ──────────────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold">Regions</CardTitle>
-                  <div className="flex gap-2">
-                    {editingRegions ? (
-                      <>
-                        <Button size="sm" onClick={() => saveRegions(regionsLocal)}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions); setEditingRegions(false); }}>Cancel</Button>
-                      </>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => { setRegionsLocal([...(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions)]); setEditingRegions(true); }}>
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingRegions ? (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-[1fr,80px,60px,32px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase px-1">
-                      <span>Region code</span><span>Multiplier</span><span>Baseline</span><span />
-                    </div>
-                    {regionsLocal.map((r, i) => (
-                      <div key={i} className="grid grid-cols-[1fr,80px,60px,32px] gap-2 items-center">
-                        <Input value={r.region_name}
-                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, region_name: e.target.value } : v))}
-                          className="h-7 text-sm" placeholder="e.g. IT" />
-                        <Input type="number" step="0.01" min="0.5" max="3" value={r.multiplier}
-                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, multiplier: parseFloat(e.target.value) || 1 } : v))}
-                          className="h-7 text-sm font-mono" />
-                        <div className="flex justify-center">
-                          <input type="checkbox" checked={r.is_baseline}
-                            onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, is_baseline: e.target.checked } : v))}
-                          />
-                        </div>
-                        <button onClick={() => setRegionsLocal(prev => prev.filter((_, j) => j !== i))}
-                          className="text-muted-foreground hover:text-destructive p-1">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    <Button size="sm" variant="outline" onClick={() => setRegionsLocal(prev => [
-                      ...prev,
-                      { id: `region_${Date.now()}`, region_name: "", multiplier: 1.0, is_baseline: false }
-                    ])}>
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add region
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).map(r => (
-                      <Badge key={r.id} variant={r.is_baseline ? "default" : "secondary"} className="text-xs">
-                        {r.region_name}
-                        {!r.is_baseline && <span className="text-muted-foreground ml-1">×{r.multiplier.toFixed(2)}</span>}
-                        {r.is_baseline && <span className="ml-1 opacity-60">baseline</span>}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* ── Project Types Admin ────────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold">Project Types</CardTitle>
-                  <div className="flex gap-2">
-                    {editingProjectTypes ? (
-                      <>
-                        <Button size="sm" onClick={() => saveProjectTypes(projectTypesLocal)}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setProjectTypesLocal(projectTypes); setEditingProjectTypes(false); }}>Cancel</Button>
-                      </>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => { setProjectTypesLocal([...projectTypes]); setEditingProjectTypes(true); }}>
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingProjectTypes ? (
-                  <div className="space-y-2">
-                    {projectTypesLocal.map((t, i) => (
-                      <div key={i} className="flex gap-2 items-center">
-                        <Input value={t} onChange={e => setProjectTypesLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
-                          className="h-7 text-sm flex-1" />
-                        <button onClick={() => setProjectTypesLocal(prev => prev.filter((_, j) => j !== i))}
-                          className="text-muted-foreground hover:text-destructive p-1">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    <Button size="sm" variant="outline" onClick={() => setProjectTypesLocal(prev => [...prev, ""])}>
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add type
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {projectTypes.map(t => (
-                      <Badge key={t} variant="secondary" className="text-xs capitalize">{t}</Badge>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
 
           </div>
         )}
