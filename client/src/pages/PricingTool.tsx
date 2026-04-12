@@ -3742,7 +3742,7 @@ export default function PricingTool() {
             // base + layers + (adj?) + NET1 + markups + (GROSS1?) + (VarFee + GROSSV if variable>0 & markups)
             const hasGrossV = hasMarkups && variableFeePct > 0;
             const totalBarCount = 1 + bars.length + (manualDelta !== 0 ? 1 : 0) + 1 + markupBars.length + (hasMarkups ? 1 : 0) + (hasGrossV ? 2 : 0);
-            const W = 660; const H = 225;
+            const W = 700; const H = 240;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
             const chartH = chartBot - chartTop;
@@ -3778,8 +3778,8 @@ export default function PricingTool() {
                       {hasGreenBand && <>
                         <line x1={25} x2={W - 5} y1={yOf(greenHigh)} y2={yOf(greenHigh)} stroke="#22c55e" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.55" />
                         <line x1={25} x2={W - 5} y1={yOf(greenLow)} y2={yOf(greenLow)} stroke="#22c55e" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.55" />
-                        <text x={W - 6} y={yOf(greenHigh) - 2} textAnchor="end" fontSize="5" fill="#16a34a" opacity="0.8">{fmt(greenHigh)}</text>
-                        <text x={W - 6} y={yOf(greenLow) + 7} textAnchor="end" fontSize="5" fill="#16a34a" opacity="0.8">{fmt(greenLow)}</text>
+                        <text x={W - 6} y={yOf(greenHigh) - 2} textAnchor="end" fontSize="7" fill="#16a34a" opacity="0.8">{fmt(greenHigh)}</text>
+                        <text x={W - 6} y={yOf(greenLow) + 8} textAnchor="end" fontSize="7" fill="#16a34a" opacity="0.8">{fmt(greenLow)}</text>
                       </>}
 
                       {/* Base bar */}
@@ -3788,7 +3788,7 @@ export default function PricingTool() {
                         return <>
                           <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" />
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(base)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#64748b">Staffing</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#64748b">Staffing</text>
                         </>;
                       })()}
 
@@ -3818,11 +3818,11 @@ export default function PricingTool() {
                               {b.isDisabled ? "—" : (isZero ? "—" : `${sign}${fmt(deltaEur)}`)}
                             </text>
                             {!b.isDisabled && !isZero && (
-                              <text x={x + barW/2} y={textY + 7} textAnchor="middle" fontSize="6" fill="#94a3b8">
+                              <text x={x + barW/2} y={textY + 8} textAnchor="middle" fontSize="7" fill="#94a3b8">
                                 {sign}{b.deltaPct.toFixed(0)}%
                               </text>
                             )}
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill={b.isDisabled ? "#cbd5e1" : "#64748b"}>{SHORT[b.label] ?? b.label}</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill={b.isDisabled ? "#cbd5e1" : "#64748b"}>{SHORT[b.label] ?? b.label}</text>
                           </g>
                         );
                       })}
@@ -3860,8 +3860,8 @@ export default function PricingTool() {
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="9" fill="#166534" fontWeight="bold">{fmt(recommendedNwf)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#166534" fontWeight="700">NET1</text>
-                          <text x={x + barW/2} y={chartBot + 18} textAnchor="middle" fontSize="5.5" fill="#166534">{fmt(totalNet1)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8.5" fill="#166534" fontWeight="700">NET1</text>
+                          <text x={x + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalNet1)}</text>
                         </>;
                       })()}
 
@@ -3877,8 +3877,8 @@ export default function PricingTool() {
                             <line x1={xOf(bi - 1) + barW} y1={yOf(mb.start)} x2={x} y2={yOf(mb.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                             <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" opacity="0.7" />
                             <text x={x + barW/2} y={y - 9} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">+{fmt(delta)}</text>
-                            <text x={x + barW/2} y={y - 2} textAnchor="middle" fontSize="6" fill="#94a3b8">+{mb.deltaPct}%</text>
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">{mb.label.length > 8 ? mb.label.slice(0, 8) + "…" : mb.label}</text>
+                            <text x={x + barW/2} y={y - 2} textAnchor="middle" fontSize="7" fill="#94a3b8">+{mb.deltaPct}%</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#64748b">{mb.label.length > 10 ? mb.label.slice(0, 10) + "…" : mb.label}</text>
                           </g>
                         );
                       })}
@@ -3895,8 +3895,8 @@ export default function PricingTool() {
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(grossWeeklyWaterfall)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="600">GROSS1</text>
-                          <text x={x + barW/2} y={chartBot + 18} textAnchor="middle" fontSize="5.5" fill="#166534">{fmt(totalGross1)}</text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="600">GROSS1</text>
+                          <text x={x + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalGross1)}</text>
                         </>;
                       })()}
 
@@ -3922,16 +3922,16 @@ export default function PricingTool() {
                           {/* Var fee delta bar */}
                           <line x1={xOf(bi1 - 1) + barW} y1={yOf(grossWeeklyWaterfall)} x2={x1} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x1} y={y1} width={barW} height={h1} fill="#166534" rx="2" opacity="0.7" />
-                          <text x={x1 + barW/2} y={y1 - 9} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="bold">+{fmt(varDelta)}</text>
-                          <text x={x1 + barW/2} y={y1 - 2} textAnchor="middle" fontSize="5.5" fill="#94a3b8">+{variableFeePct}%</text>
-                          <text x={x1 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6" fill="#64748b">Var. Fee</text>
+                          <text x={x1 + barW/2} y={y1 - 9} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">+{fmt(varDelta)}</text>
+                          <text x={x1 + barW/2} y={y1 - 2} textAnchor="middle" fontSize="7" fill="#94a3b8">+{variableFeePct}%</text>
+                          <text x={x1 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#64748b">Var. Fee</text>
 
                           {/* GROSSV total bar */}
                           <line x1={x1 + barW} y1={yOf(grossVVal)} x2={x2} y2={yOf(grossVVal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x2} y={y2} width={barW} height={h2} fill="#86efac" rx="2" />
                           <text x={x2 + barW/2} y={y2 - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(grossVVal)}</text>
-                          <text x={x2 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#166534" fontWeight="600">GROSSV</text>
-                          <text x={x2 + barW/2} y={chartBot + 18} textAnchor="middle" fontSize="5.5" fill="#166534">{fmt(totalGrossV)}</text>
+                          <text x={x2 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="600">GROSSV</text>
+                          <text x={x2 + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalGrossV)}</text>
                         </>;
                       })()}
 
@@ -3941,7 +3941,7 @@ export default function PricingTool() {
                         return <>
                           <line x1={25} x2={W - 5} y1={lowY} y2={lowY}
                             stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.6" />
-                          <text x={W - 6} y={lowY - 2} textAnchor="end" fontSize="5.5" fill="#94a3b8" opacity="0.8">
+                          <text x={W - 6} y={lowY - 2} textAnchor="end" fontSize="7" fill="#94a3b8" opacity="0.8">
                             Low {fmt(recommendation.low_50gm_weekly)}
                           </text>
                         </>;
@@ -3996,16 +3996,27 @@ export default function PricingTool() {
             const benchScale = Math.max(...allBenchVals, 1) * 1.1;
             const pctBar = (v: number) => `${Math.min(100, (v / benchScale) * 100).toFixed(1)}%`;
 
-            // Country band bars
-            const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
-            const weeklyBench = benchmarks.find(b =>
-              countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
-              (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
-            );
-            const totalBench = benchmarks.find(b =>
-              countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
-              (b.parameter.toLowerCase().includes("total") || b.parameter.toLowerCase().includes("cost"))
-            );
+            // Region band bars — merge all countries in the region (same as Win-Loss tab)
+            const regionKey = countryToRegion(form.region) ?? form.region;
+            const regionCountries = benchmarks.map(b => b.country).filter(c => (countryToRegion(c) ?? c) === regionKey);
+            const mergeRegionBench = (param: string): CountryBenchmarkRow | undefined => {
+              const rows = [...new Set(regionCountries)].map(c =>
+                benchmarks.find(b => b.country === c && b.parameter.toLowerCase().includes(param))
+              ).filter(Boolean) as CountryBenchmarkRow[];
+              const nonZero = rows.filter(r => r.yellow_high > 0);
+              if (nonZero.length === 0) return rows[0]; // return first even if zero
+              return {
+                country: regionKey,
+                parameter: nonZero[0].parameter,
+                yellow_low: Math.min(...nonZero.map(r => r.yellow_low)),
+                green_low: Math.min(...nonZero.map(r => r.green_low)),
+                green_high: Math.max(...nonZero.map(r => r.green_high)),
+                yellow_high: Math.max(...nonZero.map(r => r.yellow_high)),
+                decisiveness_pct: Math.round(nonZero.reduce((s, r) => s + r.decisiveness_pct, 0) / nonZero.length),
+              };
+            };
+            const weeklyBench = mergeRegionBench("weekly") ?? mergeRegionBench("fee");
+            const totalBench = mergeRegionBench("total") ?? mergeRegionBench("cost");
 
             const BandBar = ({ bench, marker, label }: { bench: CountryBenchmarkRow | undefined; marker: number; label: string }) => {
               if (!bench || bench.yellow_high === 0) {
@@ -4093,8 +4104,8 @@ export default function PricingTool() {
                       );
                     })()}
                     {/* Band bars */}
-                    <BandBar bench={weeklyBench} marker={canonicalNetWeekly} label={`Weekly — ${weeklyBench?.country ?? form.region} · PE >${form.revenue_band === "above_1b" ? "€1B" : "€500M"}`} />
-                    <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total cost — ${totalBench?.country ?? form.region}`} />
+                    <BandBar bench={weeklyBench} marker={canonicalNetWeekly} label={`Weekly — ${regionKey} · ${form.pe_owned ? "PE" : "Corp"} ${form.revenue_band === "above_1b" ? ">€1B" : form.revenue_band === "200m_1b" ? "€200M-€1B" : "<€200M"}`} />
+                    <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total cost — ${regionKey}`} />
 
                     {/* W/L Comparables */}
                     {(() => {
