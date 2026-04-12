@@ -675,11 +675,13 @@ export default function PricingTool() {
       pe_owned: c.pe_owned === 1 || c.pe_owned === true,
       staffing: c.staffing ?? [],
     });
+    setWaterfallDuration(null); // reset so it reads from form.duration_weeks
+    setManualDelta(0);
     setView("form");
     if (c.case_discounts?.length) {
       setCaseDiscounts(c.case_discounts);
     } else if (settings) {
-      setCaseDiscounts(settings.discounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
+      setCaseDiscounts(settings.discounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: /one.?off/i.test(d.name) && d.default_pct > 0 })));
     }
   };
 
@@ -3558,9 +3560,13 @@ export default function PricingTool() {
                     onValueChange={v => {
                       if (v === "other") {
                         const weeks = window.prompt("Enter number of weeks:", "10");
-                        if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) setWaterfallDuration(Number(weeks));
+                        if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) {
+                          setWaterfallDuration(Number(weeks));
+                          setForm(f => ({ ...f, duration_weeks: Number(weeks) }));
+                        }
                       } else {
                         setWaterfallDuration(Number(v));
+                        setForm(f => ({ ...f, duration_weeks: Number(v) }));
                       }
                     }}
                   >
