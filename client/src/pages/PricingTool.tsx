@@ -1731,11 +1731,12 @@ export default function PricingTool() {
   const grossMarginPct = netRevenue > 0 ? (grossMarginEur / netRevenue) * 100 : 0;
 
   // Fund history for display
+  // Fund proposals — ranked by highest weekly fees (most expensive first)
   const fundProposals = useMemo(() => {
     if (!form.fund_name?.trim()) return [];
     return proposals
-      .filter(p => p.fund_name?.toLowerCase().trim() === form.fund_name.toLowerCase().trim())
-      .sort((a, b) => b.proposal_date.localeCompare(a.proposal_date))
+      .filter(p => p.fund_name?.toLowerCase().trim() === form.fund_name.toLowerCase().trim() && p.weekly_price > 0)
+      .sort((a, b) => b.weekly_price - a.weekly_price)
       .slice(0, 5);
   }, [form.fund_name, proposals]);
 
@@ -5033,17 +5034,17 @@ export default function PricingTool() {
 
                   {/* ── Historical Intelligence — by Country / Client / Fund ── */}
                   {(() => {
-                    // Section 1: Same country/region
+                    // Section 1: Same country/region — ranked by highest weekly fees
                     const regionKey = proposalRegionKey(form as any);
                     const countryProposals = analysisProposals.filter(p =>
                       proposalRegionKey(p) === regionKey && p.outcome === "won" && p.weekly_price > 0
-                    ).sort((a, b) => b.proposal_date.localeCompare(a.proposal_date)).slice(0, 5);
+                    ).sort((a, b) => b.weekly_price - a.weekly_price).slice(0, 5);
 
-                    // Section 2: Same client
+                    // Section 2: Same client — ranked by highest weekly fees
                     const clientLc = (form.client_name ?? "").trim().toLowerCase();
                     const clientProposals = clientLc ? analysisProposals.filter(p =>
                       (p.client_name ?? "").trim().toLowerCase() === clientLc && p.weekly_price > 0
-                    ).sort((a, b) => b.proposal_date.localeCompare(a.proposal_date)).slice(0, 5) : [];
+                    ).sort((a, b) => b.weekly_price - a.weekly_price).slice(0, 5) : [];
 
                     // Section 3: Same fund
                     const hasAny = countryProposals.length > 0 || clientProposals.length > 0 || fundProposals.length > 0;
