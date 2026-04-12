@@ -328,6 +328,70 @@ function ConfidenceBadge({ label }: { label: string }) {
   return <span className={`text-xs font-semibold ${cls}`}>{label}</span>;
 }
 
+// Reusable arc gauge used for TNF / EBITDA ratios in the right-column fee summary
+function ArcGauge({ ratio, label, denomLabel, maxRatio = 0.2, benchmark }: {
+  ratio: number | null;
+  label: string;
+  denomLabel: string;
+  maxRatio?: number;
+  benchmark?: { value: number | null; label: string };
+}) {
+  const CX = 70; const CY = 62; const R = 50; const SW = 11;
+  const clampedP = ratio != null ? Math.min(1, Math.max(0, ratio / maxRatio)) : 0;
+  const angle = Math.PI * (1 - clampedP);
+  const ex = CX + R * Math.cos(angle); const ey = CY - R * Math.sin(angle);
+  const largeArc = clampedP > 0.5 ? 1 : 0;
+  const color = ratio == null ? "#94a3b8"
+    : ratio < 0.05 ? "#16a34a"
+    : ratio < 0.10 ? "#f59e0b"
+    : "#ef4444";
+  const bgPath = `M ${CX - R} ${CY} A ${R} ${R} 0 0 0 ${CX + R} ${CY}`;
+  const valPath = clampedP > 0.001
+    ? `M ${CX - R} ${CY} A ${R} ${R} 0 ${largeArc} 0 ${ex} ${ey}`
+    : "";
+  // Benchmark marker position (angle on arc)
+  const benchP = benchmark?.value != null ? Math.min(1, Math.max(0, benchmark.value / maxRatio)) : null;
+  const benchAngle = benchP != null ? Math.PI * (1 - benchP) : 0;
+  const bx = CX + R * Math.cos(benchAngle);
+  const by = CY - R * Math.sin(benchAngle);
+  return (
+    <div className="border rounded-lg p-3 bg-background flex flex-col items-center shadow-sm">
+      <div className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide text-center mb-1">{label}</div>
+      <svg width="140" height="78" viewBox={`0 0 ${CX * 2} 78`}>
+        <path d={bgPath} fill="none" stroke="#e2e8f0" strokeWidth={SW} strokeLinecap="round" />
+        {valPath && <path d={valPath} fill="none" stroke={color} strokeWidth={SW} strokeLinecap="round" />}
+        {benchP != null && (
+          <g>
+            <line x1={CX + (R - SW / 2 - 2) * Math.cos(benchAngle)} y1={CY - (R - SW / 2 - 2) * Math.sin(benchAngle)}
+              x2={CX + (R + SW / 2 + 2) * Math.cos(benchAngle)} y2={CY - (R + SW / 2 + 2) * Math.sin(benchAngle)}
+              stroke="#1e293b" strokeWidth="2" />
+            <circle cx={bx} cy={by} r="3" fill="#1e293b" />
+          </g>
+        )}
+        <text x={CX} y={CY - 2} textAnchor="middle" fontSize="22" fontWeight="bold" fill={color}>
+          {ratio != null ? `${(ratio * 100).toFixed(1)}%` : "—"}
+        </text>
+        <text x={CX} y={CY + 14} textAnchor="middle" fontSize="8" fill="#94a3b8">{denomLabel}</text>
+      </svg>
+      <div className="flex justify-between w-full text-[9px] text-muted-foreground mt-0.5 px-2">
+        <span>0%</span>
+        <span className="text-amber-500">{(maxRatio * 50).toFixed(0)}%</span>
+        <span className="text-red-500">{(maxRatio * 100).toFixed(0)}%+</span>
+      </div>
+      {benchmark && (
+        <div className="mt-1.5 pt-1.5 border-t border-border w-full text-[9px] text-center">
+          <span className="text-muted-foreground">Past projects avg: </span>
+          {benchmark.value != null ? (
+            <span className="font-bold font-mono text-slate-700">{(benchmark.value * 100).toFixed(1)}%</span>
+          ) : (
+            <span className="italic text-muted-foreground/70">no data yet</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type CountryFeeRow = { country: string; won: number; lost: number; winRate: number | null; avgWon: number | null; avgLost: number | null; };
 
 export default function PricingTool() {
@@ -2869,13 +2933,7 @@ export default function PricingTool() {
             const matrixRegion2 = regionMap2[form.region] ?? "Italy";
             const competitorBenchmarks = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
 
-            const revenueM = form.company_revenue_m ?? 0;
-            const ebitdaPct = form.ebitda_margin_pct ?? 0;
-            const currentEbitda = revenueM > 0 && ebitdaPct > 0 ? revenueM * 1_000_000 * ebitdaPct / 100 : 0;
-            const aspirationIncreasePct = form.aspiration_ebitda_pct ?? 0;
-            const aspirationEur = currentEbitda > 0 && aspirationIncreasePct > 0 ? currentEbitda * aspirationIncreasePct / 100 : 0;
-            const tnfEbitdaRatio = currentEbitda > 0 ? tnf / currentEbitda : null;
-            const tnfAspirationRatio = aspirationEur > 0 ? tnf / aspirationEur : null;
+            // (TNF / EBITDA ratios were moved to the right-column fee summary next to Gross/Net Project Fees.)
 
             // Benchmark totals for this region
             const benchRows = competitorBenchmarks.map(b => {
@@ -2947,46 +3005,11 @@ export default function PricingTool() {
               );
             };
 
-            // Arc gauge helper
-            const ArcGauge = ({ ratio, label, denomLabel, maxRatio = 0.2 }: { ratio: number | null; label: string; denomLabel: string; maxRatio?: number }) => {
-              const CX = 60; const CY = 52; const R = 42; const SW = 9;
-              const clampedP = ratio != null ? Math.min(1, Math.max(0, ratio / maxRatio)) : 0;
-              const angle = Math.PI * (1 - clampedP);
-              const ex = CX + R * Math.cos(angle); const ey = CY - R * Math.sin(angle);
-              const largeArc = clampedP > 0.5 ? 1 : 0;
-              const color = ratio == null ? "#94a3b8"
-                : ratio < 0.05 ? "#16a34a"
-                : ratio < 0.10 ? "#f59e0b"
-                : "#ef4444";
-              const bgPath = `M ${CX - R} ${CY} A ${R} ${R} 0 0 0 ${CX + R} ${CY}`;
-              const valPath = clampedP > 0.001
-                ? `M ${CX - R} ${CY} A ${R} ${R} 0 ${largeArc} 0 ${ex} ${ey}`
-                : "";
-              return (
-                <div className="border rounded-lg p-3 bg-background flex flex-col items-center">
-                  <div className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide text-center mb-1">{label}</div>
-                  <svg width="120" height="62" viewBox={`0 0 ${CX * 2} 62`}>
-                    <path d={bgPath} fill="none" stroke="#e2e8f0" strokeWidth={SW} strokeLinecap="round" />
-                    {valPath && <path d={valPath} fill="none" stroke={color} strokeWidth={SW} strokeLinecap="round" />}
-                    <text x={CX} y={CY - 4} textAnchor="middle" fontSize="16" fontWeight="bold" fill={color}>
-                      {ratio != null ? `${(ratio * 100).toFixed(1)}%` : "—"}
-                    </text>
-                    <text x={CX} y={CY + 10} textAnchor="middle" fontSize="7" fill="#94a3b8">{denomLabel}</text>
-                  </svg>
-                  <div className="flex justify-between w-full text-[8px] text-muted-foreground mt-0.5 px-1">
-                    <span>0%</span>
-                    <span className="text-amber-500">{(maxRatio * 50).toFixed(0)}%</span>
-                    <span className="text-red-500">{(maxRatio * 100).toFixed(0)}%+</span>
-                  </div>
-                </div>
-              );
-            };
-
             return (
               <div className="border rounded-lg p-5 bg-muted/10 space-y-3">
                 <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
-                <div className="grid grid-cols-[1fr,220px] gap-5 items-start">
-                  {/* Left col: market benchmarks (combined box) */}
+                <div>
+                  {/* Market benchmarks (combined box) */}
                   <div className="border rounded-lg p-3 bg-background space-y-3">
                     {/* TNF total */}
                     <div className="flex items-center justify-between rounded bg-primary/5 border border-primary/15 px-2 py-1.5">
@@ -3066,25 +3089,6 @@ export default function PricingTool() {
                         </div>
                       );
                     })()}
-                  </div>
-
-                  {/* Right col: TNF ratio gauges */}
-                  <div className="space-y-3">
-                    <ArcGauge
-                      ratio={tnfEbitdaRatio}
-                      label="TNF / Company EBITDA"
-                      denomLabel={currentEbitda > 0 ? `of ${fmtK2(currentEbitda)} EBITDA` : "set revenue + margin"}
-                      maxRatio={0.20}
-                    />
-                    <ArcGauge
-                      ratio={tnfAspirationRatio}
-                      label="TNF / Aspiration EBITDA"
-                      denomLabel={aspirationEur > 0 ? `of ${fmtK2(aspirationEur)} (${aspirationIncreasePct}% incr.)` : "set aspiration % above"}
-                      maxRatio={0.20}
-                    />
-                    <div className="text-[8px] text-muted-foreground text-center px-2">
-                      🟢 &lt;5% · 🟡 5–10% · 🔴 &gt;10% of base
-                    </div>
                   </div>
                 </div>
               </div>
@@ -3987,28 +3991,88 @@ export default function PricingTool() {
                     <p className="text-xs text-blue-800 leading-relaxed">{recommendation.advisory}</p>
                   </div>
 
-                  {/* Gross / Net Project Fees */}
+                  {/* Gross / Net Project Fees + TNF-to-EBITDA ratios */}
                   {nwfClamped > 0 && (() => {
                     const cur = getCurrencyForRegion(form.region);
                     const fmtFee = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
+                    const fmtK2Local = (n: number) => n >= 1_000_000 ? `${cur.symbol}${(n / 1_000_000).toFixed(1)}M` : `${cur.symbol}${Math.round(n / 1000)}k`;
                     const effDur = (waterfallDuration ?? form.duration_weeks) || 0;
                     const baseWkly = nwfClamped + manualDelta + negotiationDelta;
                     const finalWkly = Math.round(baseWkly * (1 + variableFeePct / 100 + adminFeePct / 100));
                     const gross = Math.round(baseWkly * effDur);
                     const net = Math.round(finalWkly * effDur);
+                    // TNF / EBITDA ratios
+                    const revenueMLocal = form.company_revenue_m ?? 0;
+                    const ebitdaPctLocal = form.ebitda_margin_pct ?? 0;
+                    const currentEbitdaLocal = revenueMLocal > 0 && ebitdaPctLocal > 0
+                      ? revenueMLocal * 1_000_000 * ebitdaPctLocal / 100 : 0;
+                    const aspirationIncreasePctLocal = form.aspiration_ebitda_pct ?? 0;
+                    const aspirationEurLocal = currentEbitdaLocal > 0 && aspirationIncreasePctLocal > 0
+                      ? currentEbitdaLocal * aspirationIncreasePctLocal / 100 : 0;
+                    const tnfLocal = net; // use Net Project Fees as the "TNF" denominator for ratios (same semantics)
+                    const tnfEbitdaRatioLocal = currentEbitdaLocal > 0 ? tnfLocal / currentEbitdaLocal : null;
+                    const tnfAspirationRatioLocal = aspirationEurLocal > 0 ? tnfLocal / aspirationEurLocal : null;
+
+                    // Benchmark (past projects) — placeholders for now; will populate when we log
+                    // EBITDA metadata alongside past proposals. Reading any *_ratio field if present.
+                    const pastWithEbitda = proposals.filter(p =>
+                      p.outcome === "won" &&
+                      (p as any).tnf_ebitda_ratio != null
+                    );
+                    const pastWithAspir = proposals.filter(p =>
+                      p.outcome === "won" &&
+                      (p as any).tnf_aspiration_ratio != null
+                    );
+                    const avgPastEbitda = pastWithEbitda.length > 0
+                      ? pastWithEbitda.reduce((s, p) => s + ((p as any).tnf_ebitda_ratio as number), 0) / pastWithEbitda.length
+                      : null;
+                    const avgPastAspir = pastWithAspir.length > 0
+                      ? pastWithAspir.reduce((s, p) => s + ((p as any).tnf_aspiration_ratio as number), 0) / pastWithAspir.length
+                      : null;
+
                     return (
-                      <div className="grid grid-cols-2 gap-2 pt-1">
-                        <div className="border rounded-lg p-3 bg-background space-y-0.5">
-                          <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
-                          <div className="text-[10px] text-muted-foreground">before discounts & rebates</div>
-                          <div className="text-xl font-bold text-foreground">{fmtFee(gross)}</div>
-                          <div className="text-[10px] text-muted-foreground">{fmtFee(baseWkly)}/wk × {effDur}w</div>
+                      <div className="space-y-3 pt-1">
+                        {/* Fee boxes */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="border rounded-lg p-3 bg-background space-y-0.5">
+                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
+                            <div className="text-[10px] text-muted-foreground">before discounts & rebates</div>
+                            <div className="text-xl font-bold text-foreground">{fmtFee(gross)}</div>
+                            <div className="text-[10px] text-muted-foreground">{fmtFee(baseWkly)}/wk × {effDur}w</div>
+                          </div>
+                          <div className="border rounded-lg p-3 bg-background space-y-0.5">
+                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
+                            <div className="text-[10px] text-muted-foreground">after discounts, within band</div>
+                            <div className="text-xl font-bold text-emerald-600">{fmtFee(net)}</div>
+                            <div className="text-[10px] text-muted-foreground">{fmtFee(nwfClamped)}/wk × {effDur}w</div>
+                          </div>
                         </div>
-                        <div className="border rounded-lg p-3 bg-background space-y-0.5">
-                          <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
-                          <div className="text-[10px] text-muted-foreground">after discounts, within band</div>
-                          <div className="text-xl font-bold text-emerald-600">{fmtFee(net)}</div>
-                          <div className="text-[10px] text-muted-foreground">{fmtFee(nwfClamped)}/wk × {effDur}w</div>
+
+                        {/* TNF / EBITDA ratio gauges — side by side, highlighted */}
+                        <div className="border-2 border-primary/20 bg-primary/5 rounded-lg p-3 space-y-2">
+                          <div className="text-[10px] font-bold uppercase text-primary tracking-wide flex items-center gap-1.5">
+                            <TrendingUp className="w-3 h-3" />
+                            Value Capture — Fees vs EBITDA
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <ArcGauge
+                              ratio={tnfEbitdaRatioLocal}
+                              label="Net Fees / Co. EBITDA"
+                              denomLabel={currentEbitdaLocal > 0 ? `of ${fmtK2Local(currentEbitdaLocal)} EBITDA` : "set revenue + margin"}
+                              maxRatio={0.20}
+                              benchmark={{ value: avgPastEbitda, label: "Past projects avg" }}
+                            />
+                            <ArcGauge
+                              ratio={tnfAspirationRatioLocal}
+                              label="Net Fees / Aspiration"
+                              denomLabel={aspirationEurLocal > 0 ? `of ${fmtK2Local(aspirationEurLocal)} (+${aspirationIncreasePctLocal}%)` : "set aspiration %"}
+                              maxRatio={0.20}
+                              benchmark={{ value: avgPastAspir, label: "Past projects avg" }}
+                            />
+                          </div>
+                          <div className="text-[9px] text-muted-foreground text-center px-2 pt-0.5">
+                            🟢 &lt;5% · 🟡 5–10% · 🔴 &gt;10% of base · ▌ = past-projects benchmark
+                          </div>
                         </div>
                       </div>
                     );
