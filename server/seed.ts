@@ -334,9 +334,12 @@ export async function seedDatabase() {
 
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS attachment_url TEXT`);
 
-  // API pause flag — default paused; reset to paused on every restart
+  // API pause flag — default paused; reset to paused on every restart.
+  // This runs unconditionally so the API cannot silently stay unpaused across deploys.
   await db.execute(sql`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS api_paused INTEGER NOT NULL DEFAULT 1`);
-  await db.execute(sql`UPDATE app_settings SET api_paused = 1 WHERE id = 1`);
+  await db.execute(sql`ALTER TABLE app_settings ALTER COLUMN api_paused SET DEFAULT 1`);
+  await db.execute(sql`UPDATE app_settings SET api_paused = 1`);
+  console.log("[seed] API set to paused (requires password to resume)");
 
   // Seed pricing_proposals from historical win/loss Excel (idempotent by project_name)
   // Note: no count-gate here — the WHERE NOT EXISTS guard ensures deleted rows stay deleted.

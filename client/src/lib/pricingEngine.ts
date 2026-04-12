@@ -145,6 +145,104 @@ export const SECTORS = [
 ] as const;
 export type Sector = typeof SECTORS[number];
 
+// ─── Industry-specific TNF benchmark (Total Net Fees as % of EBITDA) ──────────
+// Source methodology: industry-calibrated base % × deal-stage × scope multipliers.
+// Base % reflects typical advisory fee share of EBITDA for each sector.
+export const TNF_INDUSTRY_BASE_PCT: Record<string, { low: number; high: number }> = {
+  "Software / SaaS":            { low: 1.5, high: 3.0 },
+  "Pharma / Healthcare":        { low: 2.5, high: 4.0 },
+  "Financial Services":         { low: 1.0, high: 2.5 },
+  "Consumer / Retail":          { low: 3.0, high: 5.0 },
+  "Industrial / Manufacturing": { low: 2.5, high: 4.5 },
+  "Energy / Utilities":         { low: 2.0, high: 3.5 },
+  "Business Services":          { low: 2.0, high: 3.5 },
+  "Other":                      { low: 2.0, high: 3.5 },
+};
+
+// Deal-stage multiplier (inferred from project_type)
+export const TNF_DEAL_STAGE_MULT: Record<string, { mult: number; label: string }> = {
+  "spark":          { mult: 1.0, label: "Steady-state / diagnostic" },
+  "diagnostic":     { mult: 1.0, label: "Steady-state / diagnostic" },
+  "sfe":            { mult: 1.2, label: "Operational improvement" },
+  "SFE":            { mult: 1.2, label: "Operational improvement" },
+  "pricing":        { mult: 1.2, label: "Operational improvement" },
+  "other design":   { mult: 1.3, label: "Strategic advisory" },
+  "other_design":   { mult: 1.3, label: "Strategic advisory" },
+  "war room":       { mult: 1.8, label: "100-day plan / value creation" },
+  "war_room":       { mult: 1.8, label: "100-day plan / value creation" },
+  "implementation": { mult: 1.5, label: "100-day plan implementation" },
+  "transformation": { mult: 1.5, label: "Transformation" },
+};
+
+// Scope multiplier (also inferred from project_type; approximated)
+export const TNF_SCOPE_MULT: Record<string, { mult: number; label: string }> = {
+  "spark":          { mult: 0.8, label: "Strategic advisory only" },
+  "diagnostic":     { mult: 0.8, label: "Strategic advisory only" },
+  "sfe":            { mult: 1.2, label: "Operational improvement" },
+  "SFE":            { mult: 1.2, label: "Operational improvement" },
+  "pricing":        { mult: 1.1, label: "Operational improvement" },
+  "other design":   { mult: 1.0, label: "Strategic advisory" },
+  "other_design":   { mult: 1.0, label: "Strategic advisory" },
+  "war room":       { mult: 1.6, label: "Transformation / turnaround" },
+  "war_room":       { mult: 1.6, label: "Transformation / turnaround" },
+  "implementation": { mult: 1.4, label: "Implementation heavy" },
+  "transformation": { mult: 1.5, label: "Multi-workstream transformation" },
+};
+
+export interface TNFBenchmark {
+  ebitda_eur: number;         // company EBITDA in €
+  sector: string;
+  project_type: string;
+  industry_base_low_pct: number;
+  industry_base_high_pct: number;
+  deal_stage_mult: number;
+  deal_stage_label: string;
+  scope_mult: number;
+  scope_label: string;
+  tnf_low_eur: number;        // low bound of benchmark TNF in €
+  tnf_high_eur: number;       // high bound of benchmark TNF in €
+}
+
+/**
+ * Compute the industry-calibrated TNF benchmark for a given project.
+ * Returns null if we don't have enough data (EBITDA or sector missing).
+ */
+export function computeTNFBenchmark(
+  company_revenue_m: number | null | undefined,
+  ebitda_margin_pct: number | null | undefined,
+  sector: string | null | undefined,
+  project_type: string | null | undefined
+): TNFBenchmark | null {
+  if (!company_revenue_m || company_revenue_m <= 0) return null;
+  if (!ebitda_margin_pct || ebitda_margin_pct <= 0) return null;
+  const ebitda_eur = company_revenue_m * 1_000_000 * ebitda_margin_pct / 100;
+  if (ebitda_eur <= 0) return null;
+
+  const sectorKey = sector && TNF_INDUSTRY_BASE_PCT[sector] ? sector : "Other";
+  const base = TNF_INDUSTRY_BASE_PCT[sectorKey];
+
+  const typeKey = project_type ?? "other design";
+  const stage = TNF_DEAL_STAGE_MULT[typeKey] ?? TNF_DEAL_STAGE_MULT["other design"];
+  const scope = TNF_SCOPE_MULT[typeKey] ?? TNF_SCOPE_MULT["other design"];
+
+  const tnf_low_eur  = ebitda_eur * (base.low  / 100) * stage.mult * scope.mult;
+  const tnf_high_eur = ebitda_eur * (base.high / 100) * stage.mult * scope.mult;
+
+  return {
+    ebitda_eur,
+    sector: sectorKey,
+    project_type: typeKey,
+    industry_base_low_pct: base.low,
+    industry_base_high_pct: base.high,
+    deal_stage_mult: stage.mult,
+    deal_stage_label: stage.label,
+    scope_mult: scope.mult,
+    scope_label: scope.label,
+    tnf_low_eur,
+    tnf_high_eur,
+  };
+}
+
 export interface LayerTrace {
   layer: string;
   label: string;

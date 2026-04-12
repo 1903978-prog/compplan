@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
-  getCurrencyForRegion, formatWithCurrency,
+  getCurrencyForRegion, formatWithCurrency, computeTNFBenchmark,
   type PricingSettings, type PricingProposal, type StaffingLine, type PricingRecommendation,
   type CompetitorBenchmark, type ProjectType, type CompetitiveIntensity, type CompetitorType,
   type OwnershipType, type StrategicIntent, type ProcurementInvolvement, type LayerTrace,
@@ -1205,6 +1205,72 @@ export default function PricingTool() {
     setWeeklyRecalcSelected(new Set(discrepancies.map(d => d.proposal.id!)));
   };
 
+  // Smart Populate: for each client, find the most-complete proposal and copy
+  // region / fund / company_revenue_m / ebitda_margin_pct to sibling proposals
+  // that are missing those values.
+  const runSmartPopulate = async () => {
+    // Group by client (case-insensitive)
+    const groups = new Map<string, PricingProposal[]>();
+    for (const p of proposals) {
+      const key = (p.client_name ?? "").trim().toLowerCase();
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(p);
+    }
+
+    let totalPatches = 0;
+    const patched: PricingProposal[] = [];
+
+    for (const [, group] of groups) {
+      if (group.length < 2) continue;
+      // Pick the "best source" per field — first non-empty value found
+      const bestRegion  = group.map(p => p.region).find(v => v && v.trim());
+      const bestFund    = group.map(p => p.fund_name).find(v => v && v.trim());
+      const bestRevenue = group.map(p => p.company_revenue_m).find(v => v != null && v > 0);
+      const bestEbitda  = group.map(p => p.ebitda_margin_pct).find(v => v != null && v > 0);
+
+      for (const p of group) {
+        const patch: Partial<PricingProposal> = {};
+        if (bestRegion  && !(p.region ?? "").trim())                     patch.region = bestRegion;
+        if (bestFund    && !(p.fund_name ?? "").trim())                  patch.fund_name = bestFund;
+        if (bestRevenue != null && !(p.company_revenue_m != null && p.company_revenue_m > 0)) patch.company_revenue_m = bestRevenue;
+        if (bestEbitda  != null && !(p.ebitda_margin_pct != null && p.ebitda_margin_pct > 0)) patch.ebitda_margin_pct = bestEbitda;
+        if (Object.keys(patch).length > 0) {
+          patched.push({ ...p, ...patch });
+          totalPatches += Object.keys(patch).length;
+        }
+      }
+    }
+
+    if (patched.length === 0) {
+      toast({ title: "Nothing to populate", description: "No missing fields detected across same-client groups." });
+      return;
+    }
+
+    const ok = window.confirm(
+      `Smart Populate will update ${patched.length} project${patched.length > 1 ? "s" : ""} ` +
+      `(${totalPatches} field${totalPatches > 1 ? "s" : ""} filled in total). Proceed?`
+    );
+    if (!ok) return;
+
+    // Optimistic local update
+    setProposals(prev => prev.map(p => {
+      const match = patched.find(q => q.id === p.id);
+      return match ? { ...p, ...match } : p;
+    }));
+
+    // Persist in parallel
+    await Promise.all(patched.map(p =>
+      fetch(`/api/pricing/proposals/${p.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...p, pe_owned: p.pe_owned ? 1 : 0 }),
+      }).catch(() => {})
+    ));
+
+    toast({ title: "Smart Populate complete", description: `${patched.length} projects updated (${totalPatches} fields).` });
+  };
+
   const applyWeeklyRecalc = async () => {
     if (!weeklyRecalcRows) return;
     const toApply = weeklyRecalcRows.filter(r => weeklyRecalcSelected.has(r.proposal.id!));
@@ -1512,6 +1578,10 @@ export default function PricingTool() {
             </Button>
           ) : mainTab === "history" ? (
             <div className="flex gap-2">
+              <Button variant="outline" onClick={runSmartPopulate} disabled={proposals.length === 0}
+                title="Copy region / fund / revenue / EBITDA across all projects of the same client">
+                <Users className="w-4 h-4 mr-2" /> Smart Populate
+              </Button>
               <Button variant="outline" onClick={runWeeklyRecalc} disabled={proposals.length === 0}
                 title="Recalculate weekly price = total fee / weeks / team size">
                 <RefreshCw className="w-4 h-4 mr-2" /> Recalc Weekly
@@ -4626,6 +4696,139 @@ export default function PricingTool() {
                             🟢 &lt;5% · 🟡 5–10% · 🔴 &gt;10% of base · ▌ = past-projects benchmark
                           </div>
                         </div>
+
+                        {/* ── Industry-calibrated TNF benchmark ────────────── */}
+                        {(() => {
+                          const tnfBench = computeTNFBenchmark(
+                            form.company_revenue_m,
+                            form.ebitda_margin_pct,
+                            form.sector,
+                            form.project_type,
+                          );
+                          const [showTNFInfo, setShowTNFInfo] = React.useState(false);
+                          if (!tnfBench) {
+                            return (
+                              <div className="border rounded-lg p-3 bg-muted/20 text-[10px] text-muted-foreground">
+                                Set company revenue, EBITDA margin, sector and project type to see the industry TNF benchmark.
+                              </div>
+                            );
+                          }
+                          const netInBand = net >= tnfBench.tnf_low_eur && net <= tnfBench.tnf_high_eur;
+                          const netBelow = net < tnfBench.tnf_low_eur;
+                          return (
+                            <div className="border-2 border-blue-200 bg-blue-50/40 rounded-lg p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="text-[10px] font-bold uppercase text-blue-700 tracking-wide flex items-center gap-1.5">
+                                  <Info className="w-3 h-3" />
+                                  Industry TNF Benchmark
+                                </div>
+                                <button onClick={() => setShowTNFInfo(v => !v)}
+                                  className="text-blue-500 hover:text-blue-700 transition-colors"
+                                  title="How is this computed?">
+                                  <Info className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              {/* Range */}
+                              <div className="flex items-center justify-between text-xs">
+                                <div>
+                                  <span className="text-muted-foreground">Benchmark range:</span>
+                                  <span className="ml-1.5 font-bold text-blue-700">
+                                    {fmtK2Local(tnfBench.tnf_low_eur)} – {fmtK2Local(tnfBench.tnf_high_eur)}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Our TNF:</span>
+                                  <span className={`ml-1.5 font-bold ${netInBand ? "text-emerald-600" : netBelow ? "text-amber-600" : "text-red-600"}`}>
+                                    {fmtK2Local(net)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Visual bar */}
+                              {(() => {
+                                const min = Math.min(tnfBench.tnf_low_eur * 0.5, net * 0.9);
+                                const max = Math.max(tnfBench.tnf_high_eur * 1.2, net * 1.1);
+                                const range = max - min;
+                                const lowPct = ((tnfBench.tnf_low_eur - min) / range) * 100;
+                                const highPct = ((tnfBench.tnf_high_eur - min) / range) * 100;
+                                const netPct = ((net - min) / range) * 100;
+                                return (
+                                  <div className="relative h-3 bg-muted/40 rounded overflow-hidden">
+                                    <div className="absolute top-0 h-full bg-emerald-200"
+                                      style={{ left: `${lowPct}%`, width: `${highPct - lowPct}%` }} />
+                                    <div className="absolute top-0 h-full w-0.5 bg-blue-700"
+                                      style={{ left: `${Math.max(0, Math.min(100, netPct))}%` }} />
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Breakdown */}
+                              <div className="text-[10px] text-muted-foreground space-y-0.5 leading-relaxed">
+                                <div>
+                                  EBITDA: <span className="font-semibold text-foreground/80">{fmtK2Local(tnfBench.ebitda_eur)}</span>
+                                  {" × "}
+                                  {tnfBench.sector}: <span className="font-semibold text-foreground/80">{tnfBench.industry_base_low_pct}–{tnfBench.industry_base_high_pct}%</span>
+                                </div>
+                                <div>
+                                  Deal stage ({tnfBench.deal_stage_label}): <span className="font-semibold text-foreground/80">×{tnfBench.deal_stage_mult}</span>
+                                  {" · "}
+                                  Scope ({tnfBench.scope_label}): <span className="font-semibold text-foreground/80">×{tnfBench.scope_mult}</span>
+                                </div>
+                              </div>
+
+                              {/* Info popup */}
+                              {showTNFInfo && (
+                                <div className="mt-2 bg-white border border-blue-200 rounded-lg p-3 text-[11px] text-slate-700 leading-relaxed space-y-2 shadow-inner">
+                                  <div className="font-bold text-blue-700 text-xs">TNF Benchmark Methodology</div>
+                                  <p>
+                                    <span className="font-semibold">Core formula:</span><br/>
+                                    <span className="font-mono text-[10px]">TNF = EBITDA × Industry Base % × Deal-Stage × Scope</span>
+                                  </p>
+                                  <p>
+                                    <span className="font-semibold">Why EBITDA?</span> Ties fees directly to the operational profit being optimised. Revenue-based metrics ignore margins; pure deal-size metrics ignore profitability.
+                                  </p>
+                                  <div>
+                                    <div className="font-semibold mb-1">Industry base % (% of EBITDA):</div>
+                                    <ul className="list-disc pl-4 text-[10px] space-y-0.5 text-slate-600">
+                                      <li>Software / SaaS — 1.5–3.0% (high-margin, premium)</li>
+                                      <li>Pharma / Healthcare — 2.5–4.0% (regulatory complexity)</li>
+                                      <li>Financial Services — 1.0–2.5% (large EBITDA base)</li>
+                                      <li>Consumer / Retail — 3.0–5.0% (lower margins)</li>
+                                      <li>Industrial / Manufacturing — 2.5–4.5%</li>
+                                      <li>Energy / Utilities — 2.0–3.5% (capital intensive)</li>
+                                    </ul>
+                                  </div>
+                                  <div>
+                                    <div className="font-semibold mb-1">Deal-stage multiplier (from project type):</div>
+                                    <ul className="list-disc pl-4 text-[10px] space-y-0.5 text-slate-600">
+                                      <li>Spark / Diagnostic — ×1.0 (steady state)</li>
+                                      <li>SFE / Pricing — ×1.2 (operational improvement)</li>
+                                      <li>Other design — ×1.3 (strategic advisory)</li>
+                                      <li>War room / 100-day — ×1.8 (value creation intensive)</li>
+                                    </ul>
+                                  </div>
+                                  <div>
+                                    <div className="font-semibold mb-1">Scope multiplier:</div>
+                                    <ul className="list-disc pl-4 text-[10px] space-y-0.5 text-slate-600">
+                                      <li>Strategic only — ×0.7–1.0 (low implementation risk)</li>
+                                      <li>Operational improvement — ×1.0–1.4</li>
+                                      <li>Transformation — ×1.2–1.8 (multi-workstream)</li>
+                                      <li>Turnaround — ×1.5–2.5 (crisis premium)</li>
+                                    </ul>
+                                  </div>
+                                  <p>
+                                    <span className="font-semibold">Example:</span> €50M EBITDA Software company in 100-day plan: €50M × 2.0% × 1.5 × 1.3 = <span className="font-bold">€1.95M</span>.
+                                  </p>
+                                  <p className="text-slate-500 italic">
+                                    Benchmarks are industry anchors — use them to stress-test proposals, not as a hard rule. Adjust ±15–25% for US vs European vs emerging markets.
+                                  </p>
+                                  <button onClick={() => setShowTNFInfo(false)} className="text-blue-500 underline text-[10px]">Close</button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
