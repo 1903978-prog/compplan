@@ -95,15 +95,24 @@ function emptyProposal(): PricingProposal {
 }
 
 // Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
+// Default full Eendigo team = 2 ASC INT + 3 EM EXT (5 people)
 const STAFFING_ROLES: { label: string; match: string; defaultDays: number; defaultCount: number }[] = [
   { label: "ASC INT",  match: "ASC IN",      defaultDays: 5, defaultCount: 2 },
   { label: "ASC EXT",  match: "ASC EXT",     defaultDays: 5, defaultCount: 0 },
   { label: "EM INT",   match: "Manager INT", defaultDays: 5, defaultCount: 0 },
-  { label: "EM EXT",   match: "Manager EXT", defaultDays: 5, defaultCount: 1 },
+  { label: "EM EXT",   match: "Manager EXT", defaultDays: 5, defaultCount: 3 },
   { label: "Partner",  match: "Partner",     defaultDays: 1, defaultCount: 1 },
 ];
 
 const TEAM_PRESETS: Record<string, { label: string; config: { match: string; count: number; days: number }[] }> = {
+  "full": {
+    label: "Full team (2 ASC INT + 3 EM EXT + Partner)",
+    config: [
+      { match: "Partner",     count: 1, days: 1 },
+      { match: "Manager EXT", count: 3, days: 5 },
+      { match: "ASC IN",      count: 2, days: 5 },
+    ],
+  },
   "1+2": {
     label: "1+2 (Partner + EM + 2 ASC)",
     config: [{ match: "Partner", count: 1, days: 1 }, { match: "Manager EXT", count: 1, days: 5 }, { match: "ASC IN", count: 2, days: 5 }],
@@ -423,7 +432,7 @@ export default function PricingTool() {
   const [markingOutcome, setMarkingOutcome] = useState(false);
   const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
-  const [teamPreset, setTeamPreset] = useState<string>("1+2");
+  const [teamPreset, setTeamPreset] = useState<string>("full");
   const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
   const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
   const [editingBenchmarks, setEditingBenchmarks] = useState(false);
@@ -584,8 +593,8 @@ export default function PricingTool() {
 
   const openNewForm = () => {
     const base = emptyCase();
-    if (settings) base.staffing = buildStaffingFromPreset("1+2", settings);
-    setTeamPreset("1+2");
+    if (settings) base.staffing = buildStaffingFromPreset("full", settings);
+    setTeamPreset("full");
     setForm(base);
     setView("form");
     setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
@@ -1068,6 +1077,35 @@ export default function PricingTool() {
             </span>
             <Input type="number" min="0" value={historyForm.weekly_price || ""} onChange={e => setHistoryForm(f => ({ ...f, weekly_price: +e.target.value || 0 }))} className="h-8 text-sm font-mono rounded-l-none" />
           </div>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Tot. Project Net Fees</Label>
+          <div className="flex gap-1">
+            <span className="flex items-center px-2 text-sm font-semibold bg-muted border rounded-l border-r-0">
+              {historyForm.currency === "USD" ? "$" : historyForm.currency === "GBP" ? "£" : "€"}
+            </span>
+            <Input type="number" min="0" value={historyForm.total_fee ?? ""}
+              onChange={e => {
+                const val = e.target.value === "" ? null : +e.target.value;
+                setHistoryForm(f => {
+                  const updated = { ...f, total_fee: val };
+                  // Auto-compute weekly_price from total_fee ÷ weeks ÷ team_size
+                  if (val && val > 0 && f.duration_weeks && f.duration_weeks > 0) {
+                    const team = f.team_size && f.team_size > 0 ? f.team_size : 1;
+                    updated.weekly_price = Math.round(val / f.duration_weeks / team);
+                  }
+                  return updated;
+                });
+              }}
+              className="h-8 text-sm font-mono rounded-l-none"
+              placeholder="auto-computes weekly"
+            />
+          </div>
+          {historyForm.total_fee && historyForm.duration_weeks && historyForm.duration_weeks > 0 && (
+            <div className="text-[9px] text-muted-foreground">
+              {fmt(historyForm.total_fee)} ÷ {historyForm.duration_weeks}w ÷ {historyForm.team_size ?? 1} team = {fmt(Math.round(historyForm.total_fee / historyForm.duration_weeks / (historyForm.team_size || 1)))}/wk
+            </div>
+          )}
         </div>
         {/* New: company financials — useful for TNF/EBITDA benchmarking */}
         <div className="space-y-1">
@@ -1594,7 +1632,7 @@ export default function PricingTool() {
               <Plus className="w-4 h-4 mr-2" /> New Pricing Case
             </Button>
           ) : mainTab === "history" ? (
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button variant="outline" onClick={runSmartPopulate} disabled={proposals.length === 0}
                 title="Copy region / fund / revenue / EBITDA across all projects of the same client">
                 <Users className="w-4 h-4 mr-2" /> Smart Populate
@@ -1605,6 +1643,14 @@ export default function PricingTool() {
               </Button>
               <Button variant="outline" onClick={downloadProposalsCsv} disabled={proposals.length === 0}>
                 <Download className="w-4 h-4 mr-2" /> Download CSV
+              </Button>
+              <Button variant="outline" onClick={() => {
+                setHistoryForm(emptyProposal());
+                setEditingProposalId(null);
+                setShowEditProposalForm(true);
+                setShowHistoryForm(false);
+              }}>
+                <Plus className="w-4 h-4 mr-2" /> Add Manually
               </Button>
               <Button onClick={() => setShowHistoryForm(true)}>
                 <Plus className="w-4 h-4 mr-2" /> Import Excel / Paste
@@ -1920,6 +1966,15 @@ export default function PricingTool() {
                       Cancel
                     </Button>
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Manual add form (rendered above the table when adding a new row) */}
+            {showEditProposalForm && editingProposalId === null && (
+              <Card className="border-primary/30 bg-primary/5">
+                <CardContent className="pt-4">
+                  {renderProposalEditForm()}
                 </CardContent>
               </Card>
             )}
