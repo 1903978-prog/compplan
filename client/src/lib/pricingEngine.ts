@@ -551,7 +551,7 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
   ],
   funds: ["CARLYLE", "BAIN CAP", "KPS", "ADVENT", "CVC"],
   discounts: [
-    { id: "oneoff",          name: "One-off discount",        default_pct: 0, active: true  },
+    { id: "oneoff",          name: "One-off discount",        default_pct: 3.5, active: true  },
     { id: "prompt_payment",  name: "Prompt payment discount", default_pct: 3, active: true  },
     { id: "rebate",          name: "Rebate",                  default_pct: 2, active: false },
   ],

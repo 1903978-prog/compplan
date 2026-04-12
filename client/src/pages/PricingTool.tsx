@@ -665,7 +665,7 @@ export default function PricingTool() {
     setTeamPreset("1+2");
     setForm(base);
     setView("form");
-    setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: false })));
+    setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: /one.?off/i.test(d.name) && d.default_pct > 0 })));
   };
 
   const openCase = (c: any) => {
@@ -3603,6 +3603,28 @@ export default function PricingTool() {
                   </Select>
                 </div>
               </div>
+              {/* Discounts row */}
+              {caseDiscounts.length > 0 && (
+                <div className="flex items-center gap-3 flex-wrap border-t pt-2">
+                  <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">Discounts:</span>
+                  {caseDiscounts.map(d => (
+                    <label key={d.id} className="flex items-center gap-1.5 text-xs">
+                      <input type="checkbox" checked={d.enabled}
+                        onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, enabled: e.target.checked } : x))}
+                        className="h-3.5 w-3.5 rounded" />
+                      <span className={d.enabled ? "text-foreground" : "text-muted-foreground"}>{d.name}</span>
+                      <input type="number" step="0.5" min="0" max="100" value={d.pct}
+                        onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, pct: parseFloat(e.target.value) || 0 } : x))}
+                        disabled={!d.enabled}
+                        className="h-6 w-12 text-xs text-center font-mono border rounded disabled:opacity-40 bg-background" />
+                      <span className="text-[10px] text-muted-foreground">%</span>
+                    </label>
+                  ))}
+                  {totalDiscountPct > 0 && (
+                    <span className="text-xs font-semibold text-muted-foreground ml-auto">Total: {totalDiscountPct.toFixed(1)}%</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -5016,60 +5038,6 @@ export default function PricingTool() {
                     </div>
                   )}
 
-                  {/* ── DISCOUNT MODULE ──────────────────────────────────── */}
-                  {caseDiscounts.length > 0 && (
-                    <div className="border rounded-lg overflow-hidden">
-                      <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
-                        Discounts
-                      </div>
-                      <div className="divide-y">
-                        {caseDiscounts.map(d => (
-                          <div key={d.id} className="flex items-center gap-2 px-3 py-1.5">
-                            <input
-                              type="checkbox"
-                              checked={d.enabled}
-                              onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, enabled: e.target.checked } : x))}
-                              className="h-3.5 w-3.5 rounded"
-                            />
-                            <span className="text-xs flex-1 text-muted-foreground">{d.name}</span>
-                            <div className="relative flex items-center">
-                              <input
-                                type="number"
-                                step="0.5"
-                                min="0"
-                                max="100"
-                                value={d.pct}
-                                onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, pct: parseFloat(e.target.value) || 0 } : x))}
-                                disabled={!d.enabled}
-                                className="h-6 w-14 text-xs text-center font-mono border rounded pr-4 disabled:opacity-40 bg-background"
-                              />
-                              <span className="absolute right-1.5 text-[10px] text-muted-foreground">%</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      {totalDiscountPct > 0 && (
-                        <div className="bg-muted/20 px-3 py-1.5 flex justify-between items-center border-t">
-                          <span className="text-xs text-muted-foreground">Total discount</span>
-                          <span className="text-xs font-semibold">{totalDiscountPct.toFixed(1)}%</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Net price */}
-                  {totalDiscountPct > 0 && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-                        <div className="text-[10px] text-emerald-700 uppercase font-bold">Net / week</div>
-                        <div className="text-lg font-bold text-emerald-700">{fmt(netTargetWeekly)}</div>
-                      </div>
-                      <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-                        <div className="text-[10px] text-emerald-700 uppercase font-bold">Net total</div>
-                        <div className="text-lg font-bold text-emerald-700">{fmt(netTargetTotal)}</div>
-                      </div>
-                    </div>
-                  )}
 
                   {/* ── GROSS MARGIN ─────────────────────────────────────── */}
                   {totalWeeklyCost > 0 && (
