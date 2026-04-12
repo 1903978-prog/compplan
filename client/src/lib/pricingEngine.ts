@@ -112,6 +112,7 @@ export interface PricingSettings {
   win_loss_weight: number;
   competitor_benchmarks: CompetitorBenchmark[];
   project_types?: string[];
+  sectors?: string[];
 }
 
 export interface StaffingLine {

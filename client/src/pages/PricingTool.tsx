@@ -430,6 +430,8 @@ export default function PricingTool() {
   const [savingBenchmarks, setSavingBenchmarks] = useState(false);
   const [projectTypesLocal, setProjectTypesLocal] = useState<string[]>([]);
   const [editingProjectTypes, setEditingProjectTypes] = useState(false);
+  const [sectorsLocal, setSectorsLocal] = useState<string[]>([]);
+  const [editingSectors, setEditingSectors] = useState(false);
   const [fundsLocal, setFundsLocal] = useState<string[]>([]);
   const [editingFunds, setEditingFunds] = useState(false);
   const [regionsLocal, setRegionsLocal] = useState<PricingRegion[]>([]);
@@ -449,6 +451,8 @@ export default function PricingTool() {
   };
   const [weeklyRecalcRows, setWeeklyRecalcRows] = useState<WeeklyRecalcRow[] | null>(null);
   const [weeklyRecalcSelected, setWeeklyRecalcSelected] = useState<Set<number>>(new Set());
+  const [showTNFInfo, setShowTNFInfo] = useState(false);
+  const [showL4Info, setShowL4Info] = useState(false);
 
   // Fees-by-country analysis
   const computeFeesByCountry = (ps: PricingProposal[]): CountryFeeRow[] => {
@@ -548,6 +552,7 @@ export default function PricingTool() {
   useEffect(() => {
     setBenchmarks(settings?.country_benchmarks ?? DEFAULT_PRICING_SETTINGS.country_benchmarks ?? []);
     setProjectTypesLocal(settings?.project_types ?? DEFAULT_PROJECT_TYPES);
+    setSectorsLocal(settings?.sectors ?? [...SECTORS]);
     setFundsLocal(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []);
     setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions);
   }, [settings]);
@@ -656,6 +661,18 @@ export default function PricingTool() {
     setSettings(updated);
     setEditingFunds(false);
     toast({ title: "Funds saved" });
+  };
+
+  const saveSectors = async (sectors: string[]) => {
+    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), sectors };
+    await fetch("/api/pricing/settings", {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    });
+    setSettings(updated);
+    setEditingSectors(false);
+    toast({ title: "Sectors saved" });
   };
 
   const handleParsePaste = () => {
@@ -999,7 +1016,7 @@ export default function PricingTool() {
           <Select value={historyForm.sector || ""} onValueChange={v => setHistoryForm(f => ({ ...f, sector: v || null }))}>
             <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select sector" /></SelectTrigger>
             <SelectContent>
-              {SECTORS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              {(settings?.sectors ?? [...SECTORS]).map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -2215,6 +2232,52 @@ export default function PricingTool() {
               </CardContent>
             </Card>
 
+            {/* ── Admin: Sectors ───────────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">Sectors</CardTitle>
+                  <div className="flex gap-2">
+                    {editingSectors ? (
+                      <>
+                        <Button size="sm" onClick={() => saveSectors(sectorsLocal)}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setSectorsLocal(settings?.sectors ?? [...SECTORS]); setEditingSectors(false); }}>Cancel</Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => { setSectorsLocal([...(settings?.sectors ?? [...SECTORS])]); setEditingSectors(true); }}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {editingSectors ? (
+                  <div className="space-y-2">
+                    {sectorsLocal.map((s, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <Input value={s} onChange={e => setSectorsLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                          className="h-7 text-sm flex-1" />
+                        <button onClick={() => setSectorsLocal(prev => prev.filter((_, j) => j !== i))}
+                          className="text-muted-foreground hover:text-destructive p-1">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" onClick={() => setSectorsLocal(prev => [...prev, ""])}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add sector
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(settings?.sectors ?? [...SECTORS]).map(s => (
+                      <Badge key={s} variant="secondary" className="text-xs">{s}</Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
           </div>
         ) : null}
 
@@ -2222,135 +2285,60 @@ export default function PricingTool() {
         {mainTab === "winloss" && (
           <div className="space-y-6">
 
-            {/* ── Fees by Country ──────────────────────────────────── */}
+            {/* ── Fees by Country (live — always recomputed from current proposals) ── */}
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold uppercase tracking-wide">Fees by Country</CardTitle>
-                  <Button size="sm" variant="outline" onClick={() => {
-                    const fresh = computeFeesByCountry(proposals);
-                    const current = feesByCountry ?? [];
-                    // Find rows that differ from current
-                    const changed = fresh.filter(r => {
-                      const existing = current.find(c => c.country === r.country);
-                      if (!existing) return true;
-                      return existing.won !== r.won || existing.lost !== r.lost ||
-                        existing.avgWon !== r.avgWon || existing.avgLost !== r.avgLost;
-                    });
-                    if (changed.length === 0) {
-                      toast({ title: "Already up to date", description: "No changes detected." });
-                      return;
-                    }
-                    setPendingFeesByCountry(fresh);
-                    setSelectedCountryUpdates(new Set(changed.map(r => r.country)));
-                  }}>
-                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
-                  </Button>
+                  <span className="text-[10px] text-muted-foreground italic">Live from past projects</span>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Pending confirmation UI */}
-                {pendingFeesByCountry && (
-                  <div className="border border-amber-300 rounded-lg p-4 bg-amber-50 space-y-3">
-                    <div className="text-xs font-semibold text-amber-800">New analysis computed — select which countries to update:</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {pendingFeesByCountry.filter(r => {
-                        const existing = feesByCountry?.find(c => c.country === r.country);
-                        if (!existing) return true;
-                        return existing.won !== r.won || existing.lost !== r.lost ||
-                          existing.avgWon !== r.avgWon || existing.avgLost !== r.avgLost;
-                      }).map(r => {
-                        const existing = feesByCountry?.find(c => c.country === r.country);
-                        const isSelected = selectedCountryUpdates.has(r.country);
-                        const fmtA = (n: number | null) => n != null ? "€" + Math.round(n).toLocaleString("it-IT") : "—";
-                        return (
-                          <label key={r.country} className={`flex items-start gap-2 p-2 rounded border cursor-pointer text-xs ${isSelected ? "bg-white border-amber-400" : "bg-amber-50/50 border-amber-200"}`}>
-                            <input type="checkbox" className="mt-0.5" checked={isSelected} onChange={e => {
-                              setSelectedCountryUpdates(prev => {
-                                const next = new Set(prev);
-                                e.target.checked ? next.add(r.country) : next.delete(r.country);
-                                return next;
-                              });
-                            }} />
-                            <div>
-                              <div className="font-semibold">{r.country}</div>
-                              <div className="text-[10px] text-muted-foreground">
-                                {existing ? (
-                                  <>
-                                    {existing.won}W/{existing.lost}L → <span className="text-emerald-700">{r.won}W/{r.lost}L</span>
-                                    {r.avgWon != null && <span className="ml-1">Won: {fmtA(r.avgWon)}</span>}
-                                    {r.avgLost != null && <span className="ml-1">Lost: {fmtA(r.avgLost)}</span>}
-                                  </>
-                                ) : (
-                                  <span className="text-emerald-700">New — {r.won}W/{r.lost}L</span>
-                                )}
-                              </div>
-                            </div>
-                          </label>
-                        );
-                      })}
+                {/* Analysis table — always computed live from current proposals */}
+                {(() => {
+                  const liveFees = computeFeesByCountry(proposals);
+                  if (liveFees.length === 0) {
+                    return <p className="text-xs text-muted-foreground text-center py-4">No win/loss data yet — mark projects as Won or Lost to populate this table.</p>;
+                  }
+                  const fmtFee = (n: number | null) => n != null ? Math.round(n).toLocaleString("it-IT") : "—";
+                  return (
+                    <div className="rounded-lg border overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-[#1A3A4A] text-white">
+                            <TableHead className="text-white text-xs font-bold py-2">Country</TableHead>
+                            <TableHead className="text-white text-xs font-bold py-2 text-center">Won</TableHead>
+                            <TableHead className="text-white text-xs font-bold py-2 text-center">Lost</TableHead>
+                            <TableHead className="text-white text-xs font-bold py-2 text-center">Win Rate</TableHead>
+                            <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Won (€)</TableHead>
+                            <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Lost (€)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {liveFees.map((r, i) => {
+                            const hasData = r.won > 0 || r.lost > 0;
+                            return (
+                              <TableRow key={r.country} className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}>
+                                <TableCell className="text-xs font-medium py-2">{r.country}</TableCell>
+                                <TableCell className="text-xs text-center font-semibold text-emerald-600 py-2">{r.won}</TableCell>
+                                <TableCell className="text-xs text-center font-semibold text-red-500 py-2">{r.lost}</TableCell>
+                                <TableCell className="text-xs text-center py-2">
+                                  {!hasData ? "—" : r.winRate != null ? `${Math.round(r.winRate * 100)}%` : "—"}
+                                </TableCell>
+                                <TableCell className="text-xs text-right font-mono py-2">
+                                  {r.won > 0 ? fmtFee(r.avgWon) : <span className="text-muted-foreground">-</span>}
+                                </TableCell>
+                                <TableCell className="text-xs text-right font-mono py-2">
+                                  {r.lost > 0 ? fmtFee(r.avgLost) : <span className="text-muted-foreground">-</span>}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
                     </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" disabled={selectedCountryUpdates.size === 0} onClick={() => {
-                        setFeesByCountry(prev => {
-                          const base = prev ? [...prev] : [];
-                          for (const r of pendingFeesByCountry) {
-                            if (!selectedCountryUpdates.has(r.country)) continue;
-                            const idx = base.findIndex(c => c.country === r.country);
-                            idx >= 0 ? (base[idx] = r) : base.push(r);
-                          }
-                          return base.sort((a, b) => a.country.localeCompare(b.country));
-                        });
-                        setPendingFeesByCountry(null);
-                        setSelectedCountryUpdates(new Set());
-                        toast({ title: "Analysis updated", description: `${selectedCountryUpdates.size} countries updated.` });
-                      }}>Apply selected ({selectedCountryUpdates.size})</Button>
-                      <Button size="sm" variant="ghost" onClick={() => { setPendingFeesByCountry(null); setSelectedCountryUpdates(new Set()); }}>Cancel</Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Analysis table */}
-                {feesByCountry && feesByCountry.length > 0 ? (
-                  <div className="rounded-lg border overflow-hidden">
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="bg-[#1A3A4A] text-white">
-                          <TableHead className="text-white text-xs font-bold py-2">Country</TableHead>
-                          <TableHead className="text-white text-xs font-bold py-2 text-center">Won</TableHead>
-                          <TableHead className="text-white text-xs font-bold py-2 text-center">Lost</TableHead>
-                          <TableHead className="text-white text-xs font-bold py-2 text-center">Win Rate</TableHead>
-                          <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Won (€)</TableHead>
-                          <TableHead className="text-white text-xs font-bold py-2 text-right">Avg Fee Lost (€)</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {feesByCountry.map((r, i) => {
-                          const fmtFee = (n: number | null) => n != null ? Math.round(n).toLocaleString("it-IT") : "—";
-                          const hasData = r.won > 0 || r.lost > 0;
-                          return (
-                            <TableRow key={r.country} className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}>
-                              <TableCell className="text-xs font-medium py-2">{r.country}</TableCell>
-                              <TableCell className="text-xs text-center font-semibold text-emerald-600 py-2">{r.won}</TableCell>
-                              <TableCell className="text-xs text-center font-semibold text-red-500 py-2">{r.lost}</TableCell>
-                              <TableCell className="text-xs text-center py-2">
-                                {!hasData ? "—" : r.winRate != null ? `${Math.round(r.winRate * 100)}%` : "—"}
-                              </TableCell>
-                              <TableCell className="text-xs text-right font-mono py-2">
-                                {r.won > 0 ? fmtFee(r.avgWon) : <span className="text-muted-foreground">-</span>}
-                              </TableCell>
-                              <TableCell className="text-xs text-right font-mono py-2">
-                                {r.lost > 0 ? fmtFee(r.avgLost) : <span className="text-muted-foreground">-</span>}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground text-center py-4">No win/loss data yet — mark projects as Won or Lost to populate this table.</p>
-                )}
+                  );
+                })()}
               </CardContent>
             </Card>
 
@@ -2535,18 +2523,18 @@ export default function PricingTool() {
                                             <span className="text-[9px] text-muted-foreground italic">No data</span>
                                           </div>
                                         ) : (
-                                          <div className="relative h-7 rounded overflow-hidden bg-white border border-border/50">
+                                          <div className="relative h-10 rounded overflow-hidden bg-white border border-border/50">
                                             {noData && synthLow && synthHigh ? (
                                               /* Synthetic green band from won projects ±10% */
                                               <>
                                                 <div className="absolute inset-y-0 bg-emerald-400/70"
                                                   style={{ left: pct(synthLow), width: `${Math.max(0, (synthHigh - synthLow) / scale * 100).toFixed(2)}%` }} />
                                                 {/* value label above green band */}
-                                                <span className="absolute text-[8px] font-semibold text-emerald-700 leading-none"
-                                                  style={{ left: pct(synthLow), top: 1 }}>
+                                                <span className="absolute text-[12px] font-bold text-emerald-800 leading-none px-1"
+                                                  style={{ left: pct(synthLow), top: 3 }}>
                                                   {fB(synthLow)}–{fB(synthHigh)}
                                                 </span>
-                                                <div className="absolute bottom-0.5 text-[7px] text-emerald-600 italic w-full text-center leading-none">
+                                                <div className="absolute bottom-1 text-[9px] text-emerald-700 italic w-full text-center leading-none">
                                                   estimated ±10%
                                                 </div>
                                               </>
@@ -2562,8 +2550,8 @@ export default function PricingTool() {
                                                 {/* red right: yellow_high → scale */}
                                                 <div className="absolute inset-y-0 bg-red-400/50" style={{ left: pct(row.yellow_high), right: 0 }} />
                                                 {/* Green band value label */}
-                                                <span className="absolute text-[8px] font-semibold text-emerald-800 leading-none pointer-events-none"
-                                                  style={{ left: `calc(${pct(row.green_low)} + 2px)`, top: 2 }}>
+                                                <span className="absolute text-[12px] font-bold text-emerald-900 leading-none pointer-events-none px-1"
+                                                  style={{ left: `calc(${pct(row.green_low)} + 2px)`, top: 3 }}>
                                                   {fB(row.green_low)}–{fB(row.green_high)}
                                                 </span>
                                               </>
@@ -2655,6 +2643,9 @@ export default function PricingTool() {
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-semibold uppercase tracking-wide">Win-Loss Distribution by Country</CardTitle>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      X axis = weekly price (€/wk). Y axis = none (dots stacked for visibility — won on top, lost below). Recomputed from current past projects on every render.
+                    </p>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 gap-4">
@@ -2935,7 +2926,7 @@ export default function PricingTool() {
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
-                      {SECTORS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      {(settings?.sectors ?? [...SECTORS]).map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -4521,7 +4512,6 @@ export default function PricingTool() {
                   {(() => {
                     const hasData = fundProposals.length > 0 || (recommendation.comparable_wins?.length ?? 0) > 0;
                     if (!hasData) return null;
-                    const [showL4Info, setShowL4Info] = React.useState(false);
                     return (
                       <div className="border border-blue-100 rounded-lg bg-blue-50/40 p-3 space-y-2">
                         {/* Header with info button */}
@@ -4705,7 +4695,6 @@ export default function PricingTool() {
                             form.sector,
                             form.project_type,
                           );
-                          const [showTNFInfo, setShowTNFInfo] = React.useState(false);
                           if (!tnfBench) {
                             return (
                               <div className="border rounded-lg p-3 bg-muted/20 text-[10px] text-muted-foreground">
