@@ -3,6 +3,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { setupAuth } from "./auth";
 import { seedDatabase } from "./seed";
+import path from "path";
+import fs from "fs";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -10,6 +12,11 @@ app.set("trust proxy", 1);
 app.use('/api/proposal-templates', express.json({ limit: '10mb' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Serve uploaded proposal attachments
+const uploadsDir = path.join(process.cwd(), "uploads");
+fs.mkdirSync(uploadsDir, { recursive: true });
+app.use("/uploads", express.static(uploadsDir));
 
 // Request logging
 app.use((req: Request, res: Response, next: NextFunction) => {

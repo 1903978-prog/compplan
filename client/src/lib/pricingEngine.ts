@@ -200,6 +200,7 @@ export interface PricingProposal {
   expected_ebitda_growth_pct?: number | null;
   team_size?: number | null;
   notes?: string | null;
+  attachment_url?: string | null;
   created_at?: string;
 }
 

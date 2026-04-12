@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download,
+  Users, AlertTriangle, Eye, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
@@ -1735,7 +1735,7 @@ export default function PricingTool() {
                         {sortHeader("currency", "Cur.")}
                         {sortHeader("weekly_price", "Weekly price")}
                         {sortHeader("outcome", "Outcome")}
-                        <TableHead className="w-16">Actions</TableHead>
+                        <TableHead className="w-24">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1776,10 +1776,49 @@ export default function PricingTool() {
                                 : <Badge variant="secondary" className="text-xs">Pending</Badge>}
                             </TableCell>
                             <TableCell onClick={e => e.stopPropagation()}>
-                              <div className="flex gap-1">
+                              <div className="flex gap-1 items-center">
                                 <button onClick={() => editProposal(p)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Edit">
                                   <Pencil className="w-3.5 h-3.5" />
                                 </button>
+                                {/* File attachment */}
+                                {p.attachment_url ? (
+                                  <>
+                                    <a href={p.attachment_url} target="_blank" rel="noopener noreferrer"
+                                      className="text-primary hover:text-primary/80 p-1 rounded transition-colors" title={`Open: ${p.attachment_url.split("/").pop()}`}>
+                                      <Paperclip className="w-3.5 h-3.5" />
+                                    </a>
+                                    <button onClick={async () => {
+                                      await fetch(`/api/pricing/proposals/${p.id}/attachment`, { method: "DELETE", credentials: "include" });
+                                      setProposals(prev => prev.map(r => r.id === p.id ? { ...r, attachment_url: null } : r));
+                                      toast({ title: "Attachment removed" });
+                                    }} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors" title="Remove attachment">
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <label className="text-muted-foreground hover:text-primary p-1 rounded transition-colors cursor-pointer" title="Upload PPT/PDF">
+                                    <Paperclip className="w-3.5 h-3.5" />
+                                    <input type="file" className="hidden" accept=".ppt,.pptx,.pdf,.key"
+                                      onChange={async e => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        const res = await fetch(`/api/pricing/proposals/${p.id}/attachment`, {
+                                          method: "PUT", credentials: "include",
+                                          headers: { "Content-Type": "application/octet-stream", "X-Filename": file.name },
+                                          body: file,
+                                        });
+                                        if (res.ok) {
+                                          const { attachment_url } = await res.json();
+                                          setProposals(prev => prev.map(r => r.id === p.id ? { ...r, attachment_url } : r));
+                                          toast({ title: "File uploaded", description: file.name });
+                                        } else {
+                                          toast({ title: "Upload failed", variant: "destructive" });
+                                        }
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                  </label>
+                                )}
                                 <button onClick={() => deleteProposal(p.id!)} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors" title="Delete">
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>

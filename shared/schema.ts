@@ -360,6 +360,7 @@ export const pricingProposals = pgTable("pricing_proposals", {
   expected_ebitda_growth_pct: real("expected_ebitda_growth_pct"),
   team_size: real("team_size").notNull().default(1),
   notes: text("notes"),
+  attachment_url: text("attachment_url"),
   created_at: text("created_at").notNull(),
 });
 

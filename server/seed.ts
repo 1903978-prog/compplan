@@ -332,6 +332,8 @@ export async function seedDatabase() {
     )
   `);
 
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS attachment_url TEXT`);
+
   // API pause flag — default paused; reset to paused on every restart
   await db.execute(sql`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS api_paused INTEGER NOT NULL DEFAULT 1`);
   await db.execute(sql`UPDATE app_settings SET api_paused = 1 WHERE id = 1`);

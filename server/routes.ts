@@ -5,6 +5,8 @@ import { storage } from "./storage";
 import { insertEmployeeSchema, type BenchmarkRow } from "@shared/schema";
 import { z } from "zod";
 import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
 
 function safeInt(val: string): number {
   const n = parseInt(val, 10);
@@ -227,6 +229,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/pricing/proposals/:id", requireAuth, async (req, res) => {
     await storage.deletePricingProposal(safeInt(req.params.id));
     res.status(204).end();
+  });
+
+  // ── Proposal file attachments ──────────────────────────────────────────────
+  const UPLOADS_DIR = path.join(process.cwd(), "uploads", "proposals");
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+  // Upload (or replace) attachment for a proposal
+  app.put("/api/pricing/proposals/:id/attachment",
+    requireAuth,
+    (req, _res, next) => {
+      // Accept raw binary body (PPT/PPTX/PDF/etc.)
+      const ct = req.headers["content-type"] || "";
+      if (!ct.includes("application/json")) {
+        let chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => { (req as any).rawBody = Buffer.concat(chunks); next(); });
+        req.on("error", next);
+      } else {
+        next();
+      }
+    },
+    async (req, res) => {
+      try {
+        const id = safeInt(req.params.id);
+        const rawBody: Buffer = (req as any).rawBody;
+        if (!rawBody || rawBody.length === 0) {
+          res.status(400).json({ message: "No file data received" });
+          return;
+        }
+        const filename = (req.headers["x-filename"] as string) || `proposal_${id}.pptx`;
+        // Sanitise filename
+        const safe = filename.replace(/[^a-zA-Z0-9._\-() ]/g, "_");
+        const dest = path.join(UPLOADS_DIR, `${id}_${safe}`);
+        // Delete any existing attachment for this proposal
+        const existing = fs.readdirSync(UPLOADS_DIR).filter(f => f.startsWith(`${id}_`));
+        for (const f of existing) fs.unlinkSync(path.join(UPLOADS_DIR, f));
+        fs.writeFileSync(dest, rawBody);
+        const attachment_url = `/uploads/proposals/${id}_${safe}`;
+        await storage.updatePricingProposal(id, { attachment_url });
+        res.json({ attachment_url });
+      } catch (err) {
+        console.error("Attachment upload error:", err);
+        res.status(500).json({ message: "Upload failed" });
+      }
+    }
+  );
+
+  // Delete attachment for a proposal
+  app.delete("/api/pricing/proposals/:id/attachment", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const existing = fs.readdirSync(UPLOADS_DIR).filter(f => f.startsWith(`${id}_`));
+      for (const f of existing) fs.unlinkSync(path.join(UPLOADS_DIR, f));
+      await storage.updatePricingProposal(id, { attachment_url: null });
+      res.status(204).end();
+    } catch (err) {
+      console.error("Attachment delete error:", err);
+      res.status(500).json({ message: "Delete failed" });
+    }
   });
 
   // ── Hiring Kanban ──────────────────────────────────────────────────────────
