@@ -4648,42 +4648,59 @@ export default function PricingTool() {
                       ? ((low50 - recommendation.delivery_cost_weekly) / low50 * 100)
                       : 50;
                     const highMkt = recommendation.high_market_weekly;
+
+                    // Gross 1 = Rec + admin (built UP from recommended, not deducted from target)
+                    const gross1 = Math.round(rec * (1 + adminFeePct / 100));
+                    // Gross 2 = Gross 1 / (1-d1%) / (1-d2%) / ... (each discount builds UP)
+                    const enabledDisc = caseDiscounts.filter(dd => dd.enabled && dd.pct > 0);
+                    let gross2 = gross1;
+                    for (const dd of enabledDisc) gross2 = Math.round(gross2 / (1 - dd.pct / 100));
+
                     return (
                       <div className="space-y-2">
                         <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground px-0.5">
                           Fee Range
                         </div>
-                        <div className="grid grid-cols-3 gap-1.5">
+                        <div className="grid grid-cols-5 gap-1.5">
                           {/* Low — 50% GM floor */}
-                          <div className="text-center p-2.5 bg-muted/30 rounded-lg">
+                          <div className="text-center p-2 bg-muted/30 rounded-lg">
                             <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">Low</div>
-                            <div className="text-base font-bold text-muted-foreground mt-0.5">
+                            <div className="text-sm font-bold text-muted-foreground mt-0.5">
                               {low50 ? fmt(low50) : "—"}
                             </div>
-                            <div className="text-[9px] text-muted-foreground">/week</div>
-                            <div className="text-[9px] text-emerald-600 font-semibold mt-0.5">GM {Math.round(low50GM)}%</div>
+                            <div className="text-[8px] text-muted-foreground">/week</div>
+                            <div className="text-[8px] text-emerald-600 font-semibold mt-0.5">GM {Math.round(low50GM)}%</div>
                           </div>
-                          {/* Center — Recommended Fees */}
-                          <div className="text-center p-2.5 bg-primary/10 rounded-lg border border-primary/20">
-                            <div className="text-[9px] text-primary uppercase font-bold tracking-wide">Recommended Fees</div>
-                            <div className="text-xl font-bold text-primary mt-0.5">{fmt(rec)}</div>
-                            <div className="text-[9px] text-muted-foreground">/week</div>
+                          {/* Center — Recommended (Net) */}
+                          <div className="text-center p-2 bg-primary/10 rounded-lg border border-primary/20">
+                            <div className="text-[9px] text-primary uppercase font-bold tracking-wide">Rec. (Net)</div>
+                            <div className="text-lg font-bold text-primary mt-0.5">{fmt(rec)}</div>
+                            <div className="text-[8px] text-muted-foreground">/week</div>
                             {recGM != null && (
-                              <div className="text-[9px] text-emerald-600 font-semibold mt-0.5">GM {recGM.toFixed(0)}%</div>
+                              <div className="text-[8px] text-emerald-600 font-semibold mt-0.5">GM {recGM.toFixed(0)}%</div>
                             )}
+                          </div>
+                          {/* Gross 1 — Rec + admin */}
+                          <div className="text-center p-2 bg-blue-50 rounded-lg border border-blue-200">
+                            <div className="text-[9px] text-blue-700 uppercase font-bold tracking-wide">Gross 1</div>
+                            <div className="text-sm font-bold text-blue-700 mt-0.5">{fmt(gross1)}</div>
+                            <div className="text-[8px] text-muted-foreground">+{adminFeePct}% admin</div>
+                          </div>
+                          {/* Gross 2 — Gross 1 + D&R */}
+                          <div className="text-center p-2 bg-amber-50 rounded-lg border border-amber-200">
+                            <div className="text-[9px] text-amber-700 uppercase font-bold tracking-wide">Gross 2</div>
+                            <div className="text-sm font-bold text-amber-700 mt-0.5">{fmt(gross2)}</div>
+                            <div className="text-[8px] text-muted-foreground">
+                              {enabledDisc.length > 0 ? `+D&R` : "= Gross 1"}
+                            </div>
                           </div>
                           {/* High — market ceiling */}
-                          <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-100">
-                            <div className="text-[9px] text-amber-700 uppercase font-bold tracking-wide">High</div>
-                            <div className="text-base font-bold text-amber-600 mt-0.5">
+                          <div className="text-center p-2 bg-muted/30 rounded-lg">
+                            <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wide">High</div>
+                            <div className="text-sm font-bold text-muted-foreground mt-0.5">
                               {highMkt ? fmt(highMkt) : "—"}
                             </div>
-                            <div className="text-[9px] text-muted-foreground">/week</div>
-                            {highMkt && recommendation.cost_floor_weekly > 0 && (
-                              <div className="text-[9px] text-emerald-600 font-semibold mt-0.5">
-                                GM {((highMkt - recommendation.cost_floor_weekly) / highMkt * 100).toFixed(0)}%
-                              </div>
-                            )}
+                            <div className="text-[8px] text-muted-foreground">/week</div>
                           </div>
                         </div>
 
@@ -4692,18 +4709,28 @@ export default function PricingTool() {
                           <div>
                             <span className="font-semibold text-foreground/70">Low:</span>{" "}
                             {low50
-                              ? `${fmt(low50)}/wk = minimum to achieve 50% GM on team daily costs (${fmt(recommendation.delivery_cost_weekly)}/wk × 2)`
-                              : "No staffing cost data — enter team build-up to compute"}
+                              ? `${fmt(low50)}/wk = 50% GM floor (${fmt(recommendation.delivery_cost_weekly)}/wk × 2)`
+                              : "Enter team build-up"}
                           </div>
                           <div>
-                            <span className="font-semibold text-foreground/70">Recommended:</span>{" "}
-                            {fmt(rec)}/wk = last bar of waterfall (rule-based layers applied to staffing base). GM {recGM != null ? `${recGM.toFixed(0)}%` : "—"} vs cost floor {fmt(recommendation.cost_floor_weekly)}/wk.
+                            <span className="font-semibold text-foreground/70">Rec.:</span>{" "}
+                            {fmt(rec)}/wk = net recommended (waterfall output)
+                          </div>
+                          <div>
+                            <span className="font-semibold text-foreground/70">Gross 1:</span>{" "}
+                            {fmt(rec)} × (1+{adminFeePct}%) = {fmt(gross1)}/wk (with admin, before D&R)
+                          </div>
+                          <div>
+                            <span className="font-semibold text-foreground/70">Gross 2:</span>{" "}
+                            {enabledDisc.length > 0
+                              ? `${fmt(gross1)}${enabledDisc.map(dd => ` ÷ (1−${dd.pct}%)`).join("")} = ${fmt(gross2)}/wk (price to quote)`
+                              : `= Gross 1 (no discounts)`}
                           </div>
                           <div>
                             <span className="font-semibold text-foreground/70">High:</span>{" "}
                             {highMkt && recommendation.high_market_context
-                              ? `${fmt(highMkt)}/wk = highest won deal in ${recommendation.high_market_context}`
-                              : "No comparable won deals found — increase past project data for this region"}
+                              ? `${fmt(highMkt)}/wk = max won in ${recommendation.high_market_context}`
+                              : "No comparable data"}
                           </div>
                         </div>
                       </div>
