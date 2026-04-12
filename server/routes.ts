@@ -35,7 +35,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.put("/api/api-pause", requireAuth, async (req, res) => {
-    const { paused } = req.body;
+    const { paused, password } = req.body;
+    // Resuming the API (paused: false) requires a password.
+    if (paused === false) {
+      const required = process.env.API_UNPAUSE_PASSWORD || process.env.APP_PASSWORD;
+      if (!required) {
+        res.status(500).json({ message: "Server misconfigured: no API unpause password set." });
+        return;
+      }
+      if (typeof password !== "string" || password !== required) {
+        res.status(401).json({ message: "Invalid password." });
+        return;
+      }
+    }
     const { db } = await import("./db");
     const { sql } = await import("drizzle-orm");
     await db.execute(sql`UPDATE app_settings SET api_paused = ${paused ? 1 : 0} WHERE id = 1`);

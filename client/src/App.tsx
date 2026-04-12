@@ -85,12 +85,24 @@ function Navigation() {
 
   const toggleApiPause = async () => {
     const newState = !apiPaused;
-    setApiPaused(newState);
-    await fetch("/api/api-pause", {
+    // Resuming (going from paused → active) requires a password
+    let password: string | undefined;
+    if (newState === false) {
+      const entered = window.prompt("Enter password to activate the API:");
+      if (!entered) return; // cancelled
+      password = entered;
+    }
+    const res = await fetch("/api/api-pause", {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: newState }),
+      body: JSON.stringify({ paused: newState, password }),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: "Failed to update API state" }));
+      alert(err.message || "Failed to update API state");
+      return;
+    }
+    setApiPaused(newState);
   };
 
   const handleLogout = async () => {
