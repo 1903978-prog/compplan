@@ -1338,6 +1338,11 @@ function FundsTab({ settings, onChange, onSave, saving }: FundsTabProps) {
 
 const RATE_MATRIX_REGIONS = ["Italy", "France", "UK", "DACH", "US"];
 
+// Map matrix region labels → admin region codes for multiplier lookup
+const MATRIX_REGION_TO_CODE: Record<string, string> = {
+  Italy: "IT", France: "FR", UK: "UK", DACH: "DE", US: "US",
+};
+
 interface RateMatrixTabProps {
   settings: PricingSettings;
   onChange: (patch: Partial<PricingSettings>) => void;
@@ -1347,17 +1352,65 @@ interface RateMatrixTabProps {
 
 function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProps) {
   const matrix: RateMatrixRow[] = settings.rate_matrix ?? [];
+  const regions = settings.regions ?? [];
 
-  const updateCell = (rowIdx: number, region: string, field: keyof RateMatrixCell, value: number | boolean | string) => {
+  // Find the baseline region (Italy by default)
+  const baselineRegion = regions.find(r => r.is_baseline) ?? regions[0];
+  const baselineLabel = RATE_MATRIX_REGIONS.find(label => {
+    const code = MATRIX_REGION_TO_CODE[label];
+    return code && baselineRegion && baselineRegion.region_name === code;
+  }) ?? "Italy";
+
+  // Get multiplier for a matrix region label
+  const getMultiplier = (matrixRegion: string): number => {
+    const code = MATRIX_REGION_TO_CODE[matrixRegion];
+    if (!code) return 1;
+    const adminRegion = regions.find(r => r.region_name === code);
+    return adminRegion?.multiplier ?? 1;
+  };
+
+  // When user edits the baseline, auto-compute all other regions
+  const updateBaselineCell = (rowIdx: number, field: "min_weekly" | "max_weekly", value: number) => {
     const newMatrix = matrix.map((row, i) => {
       if (i !== rowIdx) return row;
-      return {
-        ...row,
-        rates: {
-          ...row.rates,
-          [region]: { ...(row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false }), [field]: value },
-        },
-      };
+      const newRates = { ...row.rates };
+      // Update baseline
+      const baseCell = newRates[baselineLabel] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
+      newRates[baselineLabel] = { ...baseCell, [field]: value };
+      // Auto-compute other regions from baseline values
+      const updatedBase = newRates[baselineLabel];
+      for (const region of RATE_MATRIX_REGIONS) {
+        if (region === baselineLabel) continue;
+        const existing = newRates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
+        if (existing.avoid) continue; // don't touch avoided regions
+        const mult = getMultiplier(region);
+        newRates[region] = {
+          ...existing,
+          min_weekly: Math.round(updatedBase.min_weekly * mult / 500) * 500,
+          max_weekly: Math.round(updatedBase.max_weekly * mult / 500) * 500,
+        };
+      }
+      return { ...row, rates: newRates };
+    });
+    onChange({ rate_matrix: newMatrix });
+  };
+
+  const toggleAvoid = (rowIdx: number, region: string, avoid: boolean) => {
+    const newMatrix = matrix.map((row, i) => {
+      if (i !== rowIdx) return row;
+      const cell = row.rates[region] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
+      const newRates = { ...row.rates, [region]: { ...cell, avoid } };
+      // If un-avoiding, auto-compute from baseline
+      if (!avoid) {
+        const baseCell = row.rates[baselineLabel] ?? { min_weekly: 0, max_weekly: 0, note: "", avoid: false };
+        const mult = getMultiplier(region);
+        newRates[region] = {
+          min_weekly: Math.round(baseCell.min_weekly * mult / 500) * 500,
+          max_weekly: Math.round(baseCell.max_weekly * mult / 500) * 500,
+          note: "", avoid: false,
+        };
+      }
+      return { ...row, rates: newRates };
     });
     onChange({ rate_matrix: newMatrix });
   };
@@ -1366,6 +1419,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
   const familyRows = matrix.filter(r => !r.client_type.startsWith("PE"));
 
   const fmtK = (n: number) => n >= 1000 ? `€${Math.round(n / 1000)}k` : `€${n}`;
+  const fmtN = (n: number) => n.toLocaleString("it-IT");
 
   const renderMatrixTable = (rows: RateMatrixRow[], title: string, colorClass: string) => (
     <div className="space-y-2">
@@ -1375,11 +1429,17 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
           <thead>
             <tr className="bg-[#1A3A4A] text-white">
               <th rowSpan={2} className="text-left px-3 py-2 font-bold text-xs uppercase tracking-wide border-r border-white/20 min-w-[160px]">Client Type</th>
-              {RATE_MATRIX_REGIONS.map(region => (
-                <th key={region} colSpan={2} className="text-center px-2 py-1.5 font-bold text-xs uppercase tracking-wide border-r border-white/20 last:border-r-0">
-                  {region}
-                </th>
-              ))}
+              {RATE_MATRIX_REGIONS.map(region => {
+                const isBase = region === baselineLabel;
+                const mult = getMultiplier(region);
+                return (
+                  <th key={region} colSpan={2} className="text-center px-2 py-1.5 font-bold text-xs uppercase tracking-wide border-r border-white/20 last:border-r-0">
+                    {region}
+                    {!isBase && <span className="ml-1 text-[9px] font-normal opacity-70">×{mult.toFixed(2)}</span>}
+                    {isBase && <span className="ml-1 text-[9px] font-normal opacity-70">base</span>}
+                  </th>
+                );
+              })}
             </tr>
             <tr className="bg-[#1A3A4A]/80 text-white/80">
               {RATE_MATRIX_REGIONS.map(region => (
@@ -1393,6 +1453,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
           <tbody>
             {rows.map((row, ri) => {
               const rowIdx = matrix.indexOf(row);
+              const isBase = (region: string) => region === baselineLabel;
               return (
                 <tr key={row.client_type} className={ri % 2 === 0 ? "bg-background" : "bg-muted/20"}>
                   <td className="px-3 py-2.5 font-semibold text-xs border-r border-border whitespace-nowrap">{row.client_type}</td>
@@ -1401,24 +1462,33 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
                     return cell.avoid ? (
                       <td key={region} colSpan={2} className="text-center py-2 px-1 border-r border-border last:border-r-0">
                         <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100 text-[10px]">AVOID</Badge>
-                        <button type="button" onClick={() => updateCell(rowIdx, region, "avoid", false)}
+                        <button type="button" onClick={() => toggleAvoid(rowIdx, region, false)}
                           className="block mx-auto text-[9px] text-muted-foreground hover:text-foreground underline mt-0.5">set range</button>
                       </td>
-                    ) : (
+                    ) : isBase(region) ? (
+                      /* Baseline (Italy) — editable */
                       <React.Fragment key={region}>
-                        <td className="py-1.5 px-1 border-r border-border/50 text-center">
-                          <Input type="number" step="1000" min="0" value={cell.min_weekly}
-                            onChange={e => updateCell(rowIdx, region, "min_weekly", parseInt(e.target.value) || 0)}
-                            className="h-7 text-xs text-center font-mono w-full px-1" />
+                        <td className="py-1.5 px-1 border-r border-border/50 text-center bg-primary/5">
+                          <Input type="number" step="500" min="0" value={cell.min_weekly}
+                            onChange={e => updateBaselineCell(rowIdx, "min_weekly", parseInt(e.target.value) || 0)}
+                            className="h-7 text-xs text-center font-mono w-full px-1 border-primary/30" />
                         </td>
-                        <td className="py-1.5 px-1 border-r border-border last:border-r-0 text-center">
-                          <div className="flex flex-col items-center">
-                            <Input type="number" step="1000" min="0" value={cell.max_weekly}
-                              onChange={e => updateCell(rowIdx, region, "max_weekly", parseInt(e.target.value) || 0)}
-                              className="h-7 text-xs text-center font-mono w-full px-1" />
-                            <button type="button" onClick={() => updateCell(rowIdx, region, "avoid", true)}
-                              className="text-[8px] text-muted-foreground hover:text-red-600 underline mt-0.5">avoid</button>
-                          </div>
+                        <td className="py-1.5 px-1 border-r border-border last:border-r-0 text-center bg-primary/5">
+                          <Input type="number" step="500" min="0" value={cell.max_weekly}
+                            onChange={e => updateBaselineCell(rowIdx, "max_weekly", parseInt(e.target.value) || 0)}
+                            className="h-7 text-xs text-center font-mono w-full px-1 border-primary/30" />
+                        </td>
+                      </React.Fragment>
+                    ) : (
+                      /* Non-baseline — auto-computed, read-only */
+                      <React.Fragment key={region}>
+                        <td className="py-2 px-1.5 border-r border-border/50 text-center font-mono text-xs text-muted-foreground">
+                          {fmtN(cell.min_weekly)}
+                        </td>
+                        <td className="py-2 px-1.5 border-r border-border last:border-r-0 text-center">
+                          <div className="font-mono text-xs text-muted-foreground">{fmtN(cell.max_weekly)}</div>
+                          <button type="button" onClick={() => toggleAvoid(rowIdx, region, true)}
+                            className="text-[8px] text-muted-foreground hover:text-red-600 underline mt-0.5">avoid</button>
                         </td>
                       </React.Fragment>
                     );
