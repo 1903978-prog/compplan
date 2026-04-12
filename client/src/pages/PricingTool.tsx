@@ -3493,8 +3493,8 @@ export default function PricingTool() {
             }
 
             const CANONICAL = [
-              "Geography", "Market Context", "Client Profile",
-              "Cost Floor Applied", "Strategic Intent",
+              "Geography", "Sector", "Client Profile",
+              "Strategic Intent",
             ];
 
             // Compute absolute deltas from original trace
@@ -3597,8 +3597,8 @@ export default function PricingTool() {
             const hOf = (v1: number, v2: number) => Math.abs(yOf(v1) - yOf(v2));
 
             const SHORT: Record<string, string> = {
-              "Geography": "Geo", "Market Context": "Market", "Client Profile": "Client",
-              "Cost Floor Applied": "Floor", "Strategic Intent": "Intent",
+              "Geography": "Geo", "Sector": "Sector", "Client Profile": "Client",
+              "Strategic Intent": "Intent",
             };
 
             const toggleBar = (label: string) => setDisabledBars(prev => {

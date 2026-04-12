@@ -119,6 +119,12 @@ export interface PricingSettings {
   strategic_intent_adj?: PricingAdjustment[];
   proposal_template?: string;
   fund_defaults?: FundDefaults[];
+  sector_multipliers?: SectorMultiplier[];
+}
+
+export interface SectorMultiplier {
+  sector: string;
+  multiplier: number;
 }
 
 export interface FundDefaults {
@@ -724,6 +730,16 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { value: "expand",  label: "Expand relationship",          adj_pct: 0   },
     { value: "harvest", label: "Harvest (optimise margin)",    adj_pct: 15  },
   ],
+  sector_multipliers: [
+    { sector: "Industrial / Manufacturing", multiplier: 1.0  },
+    { sector: "Pharma / Healthcare",        multiplier: 1.1  },
+    { sector: "Software / SaaS",            multiplier: 1.05 },
+    { sector: "Consumer / Retail",          multiplier: 1.0  },
+    { sector: "Energy / Utilities",         multiplier: 1.0  },
+    { sector: "Business Services",          multiplier: 1.0  },
+    { sector: "Financial Services",         multiplier: 1.0  },
+    { sector: "Other",                      multiplier: 1.0  },
+  ],
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1074,41 +1090,52 @@ export function calculatePricing(
   const ebitda_improvement_pct = null;
   let working_price = base_weekly;
 
-  // ── Geo multiplier (from settings) ───────────────────────────────────────
+  // ── Geography multiplier (from admin regions) ─────────────────────────────
   const geoRegion = settings.regions.find(r =>
     r.region_name.toLowerCase() === input.region.toLowerCase()
   );
   const geo_multiplier = geoRegion?.multiplier ?? 1.0;
-  const geo_adjusted = base_weekly * geo_multiplier; // keep for backward compat
+  const geo_adjusted = base_weekly * geo_multiplier;
+  working_price = geo_adjusted;
 
   layer_trace.push({
     layer: "L2",
     label: `Geography (${input.region})`,
-    value: working_price * geo_multiplier,
+    value: working_price,
     delta_pct: (geo_multiplier - 1) * 100,
-    note: `Regional multiplier ×${geo_multiplier}`,
+    note: `Regional multiplier ×${geo_multiplier.toFixed(2)}`,
   });
 
-  // ── L2: Market adjustments (competitive context) ──────────────────────────
-  const { competitive_adj, competitor_adj, interaction_adj, market_notes } = computeMarketAdjustments(input, settings);
-  const total_market_adj = competitive_adj + competitor_adj + interaction_adj;
-  const after_market = working_price * geo_multiplier * (1 + total_market_adj);
+  // ── Sector multiplier (from admin sector_multipliers) ──────────────────────
+  const sectorMults = settings.sector_multipliers ?? DEFAULT_PRICING_SETTINGS.sector_multipliers ?? [];
+  const sectorEntry = input.sector ? sectorMults.find(s => s.sector === input.sector) : null;
+  const sector_multiplier = sectorEntry?.multiplier ?? 1.0;
+  const after_sector = working_price * sector_multiplier;
 
-  if (Math.abs(total_market_adj) > 0.001) {
+  if (Math.abs(sector_multiplier - 1.0) > 0.001) {
     layer_trace.push({
       layer: "L2",
-      label: "Market Context",
-      value: after_market,
-      delta_pct: total_market_adj * 100,
-      note: market_notes.join("; ") || "No market adjustment",
+      label: `Sector (${input.sector})`,
+      value: after_sector,
+      delta_pct: (sector_multiplier - 1) * 100,
+      note: `Sector multiplier ×${sector_multiplier.toFixed(2)}`,
     });
   }
+  working_price = after_sector;
+
+  // ── L2: Market adjustments (competitive context) — computed but NOT in waterfall
+  // These still feed into the total_market_adj for backward compat / drivers
+  const { competitive_adj, competitor_adj, interaction_adj, market_notes } = computeMarketAdjustments(input, settings);
+  const total_market_adj = competitive_adj + competitor_adj + interaction_adj;
+  const after_market = working_price * (1 + total_market_adj);
+  working_price = after_market;
 
   // ── L3: Client adjustments ────────────────────────────────────────────────
   const { ownership_adj, maturity_urgency_adj, procurement_adj, sensitivity_adj, client_notes } =
     computeClientAdjustments(input);
   const total_client_adj = ownership_adj + maturity_urgency_adj + procurement_adj + sensitivity_adj;
-  const after_client = after_market * (1 + total_client_adj);
+  const after_client = working_price * (1 + total_client_adj);
+  working_price = after_client;
 
   // Backward compat multipliers
   const ownershipKey = input.pe_owned ? "pe" : "non_pe";
@@ -1134,17 +1161,9 @@ export function calculatePricing(
     });
   }
 
-  // Ensure cost floor
-  const after_floor = Math.max(after_client, cost_floor_weekly);
-  if (after_floor > after_client) {
-    layer_trace.push({
-      layer: "L1",
-      label: "Cost Floor Applied",
-      value: after_floor,
-      delta_pct: ((after_floor - after_client) / after_client) * 100,
-      note: `Price raised to cost floor ${formatCurrency(cost_floor_weekly)}/wk`,
-    });
-  }
+  // Cost floor — enforced silently (no bar in waterfall) but still used for GM calc
+  const after_floor = Math.max(working_price, cost_floor_weekly);
+  working_price = after_floor;
 
   // ── L4: Historical Intelligence (informational only — not blended into price) ──
   const histResult = computeHistoricalAnchor(input, historicalProposals, settings);

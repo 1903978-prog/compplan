@@ -132,6 +132,12 @@ interface PricingSettings {
   competitor_type_adj?: PricingAdjustment[];
   strategic_intent_adj?: PricingAdjustment[];
   fund_defaults?: FundDefaults[];
+  sector_multipliers?: SectorMultiplier[];
+}
+
+interface SectorMultiplier {
+  sector: string;
+  multiplier: number;
 }
 
 interface FundDefaults {
@@ -1565,7 +1571,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
 
 // ─── Tabs list ────────────────────────────────────────────────────────────────
 
-type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks" | "price_adjustments" | "fund_defaults";
+type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks" | "price_adjustments" | "fund_defaults" | "sector_multipliers";
 
 // ─── Tab: Market Benchmarks ───────────────────────────────────────────────────
 
@@ -2029,6 +2035,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "market_benchmarks", label: "Market Benchmarks" },
   { id: "price_adjustments", label: "Price Adjustments" },
   { id: "fund_defaults", label: "Fund Defaults" },
+  { id: "sector_multipliers", label: "Sector Multipliers" },
 ];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -2234,6 +2241,80 @@ export default function PricingAdmin() {
           {activeTab === "fund_defaults" && (
             <FundDefaultsTab settings={settings} onChange={patchSettings} onSave={handleSave} saving={saving} />
           )}
+          {activeTab === "sector_multipliers" && (() => {
+            const DEFAULT_SECTORS: SectorMultiplier[] = [
+              { sector: "Industrial / Manufacturing", multiplier: 1.0 },
+              { sector: "Pharma / Healthcare", multiplier: 1.1 },
+              { sector: "Software / SaaS", multiplier: 1.05 },
+              { sector: "Consumer / Retail", multiplier: 1.0 },
+              { sector: "Energy / Utilities", multiplier: 1.0 },
+              { sector: "Business Services", multiplier: 1.0 },
+              { sector: "Financial Services", multiplier: 1.0 },
+              { sector: "Other", multiplier: 1.0 },
+            ];
+            const items: SectorMultiplier[] = (settings as any).sector_multipliers ?? DEFAULT_SECTORS;
+            return (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Sector Multipliers</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Applied as a pricing layer after Geography. Multiplier ×1.0 = no adjustment, ×1.1 = +10%.
+                  </p>
+                </div>
+                <div className="rounded-lg border overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-muted/30 border-b">
+                        <th className="text-left px-3 py-2 text-xs font-semibold">Sector</th>
+                        <th className="text-center px-3 py-2 text-xs font-semibold w-28">Multiplier</th>
+                        <th className="w-8" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((s, i) => (
+                        <tr key={i} className="border-b last:border-0">
+                          <td className="px-3 py-1.5">
+                            <Input value={s.sector}
+                              onChange={e => {
+                                const updated = items.map((v, j) => j === i ? { ...v, sector: e.target.value } : v);
+                                patchSettings({ sector_multipliers: updated } as any);
+                              }}
+                              className="h-7 text-xs" />
+                          </td>
+                          <td className="px-3 py-1.5 text-center">
+                            <Input type="number" step="0.05" min="0.5" max="3" value={s.multiplier}
+                              onChange={e => {
+                                const updated = items.map((v, j) => j === i ? { ...v, multiplier: parseFloat(e.target.value) || 1 } : v);
+                                patchSettings({ sector_multipliers: updated } as any);
+                              }}
+                              className="h-7 text-xs font-mono text-center w-20 mx-auto" />
+                          </td>
+                          <td className="px-1 py-1.5">
+                            <button onClick={() => {
+                              patchSettings({ sector_multipliers: items.filter((_, j) => j !== i) } as any);
+                            }} className="text-muted-foreground hover:text-destructive p-1">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => {
+                  patchSettings({ sector_multipliers: [...items, { sector: "", multiplier: 1.0 }] } as any);
+                }}>
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Add Sector
+                </Button>
+                <div className="flex justify-end pt-2">
+                  <Button onClick={handleSave} disabled={saving} size="sm">
+                    <Save className="w-3.5 h-3.5 mr-1.5" />
+                    {saving ? "Saving…" : "Save Settings"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
     </div>
