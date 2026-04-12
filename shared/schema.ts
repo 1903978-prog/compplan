@@ -352,6 +352,8 @@ export const pricingProposals = pgTable("pricing_proposals", {
   total_fee: real("total_fee"),
   outcome: text("outcome").notNull().default("pending"),
   loss_reason: text("loss_reason"),
+  sector: text("sector"),
+  project_type: text("project_type"),
   notes: text("notes"),
   created_at: text("created_at").notNull(),
 });

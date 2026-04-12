@@ -256,6 +256,10 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS procurement_involvement TEXT`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS case_discounts JSONB`);
 
+  // New columns for pricing_proposals
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS sector TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS project_type TEXT`);
+
   // Time tracking tables
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS time_tracking_topics (

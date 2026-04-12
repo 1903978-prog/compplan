@@ -181,6 +181,7 @@ export interface PricingProposal {
   client_name?: string | null;
   fund_name?: string | null;
   region: string;
+  country?: string | null;
   pe_owned: boolean;
   revenue_band: string;
   price_sensitivity?: string | null;
@@ -189,6 +190,8 @@ export interface PricingProposal {
   total_fee?: number | null;
   outcome: string;
   loss_reason?: string | null;
+  sector?: string | null;
+  project_type?: string | null;
   notes?: string | null;
   created_at?: string;
 }
@@ -440,8 +443,42 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     },
   ],
   country_benchmarks: [
-    { country: "Italy", parameter: "Weekly fee",         yellow_low: 25000, green_low: 28000, green_high: 34000, yellow_high: 38000, decisiveness_pct: 25 },
-    { country: "Italy", parameter: "Total project cost", yellow_low: 150000, green_low: 300000, green_high: 410000, yellow_high: 600000, decisiveness_pct: 25 },
+    // Italy — Reliability: High
+    { country: "Italy",         parameter: "Weekly fee",         yellow_low: 15000,  green_low: 27000,  green_high: 35000,  yellow_high: 39000,  decisiveness_pct: 25 },
+    { country: "Italy",         parameter: "Total project cost", yellow_low: 135000, green_low: 200000, green_high: 410000, yellow_high: 705000, decisiveness_pct: 25 },
+    // USA — Reliability: Medium (no lower yellow band)
+    { country: "United States", parameter: "Weekly fee",         yellow_low: 29000,  green_low: 29000,  green_high: 36000,  yellow_high: 45000,  decisiveness_pct: 45 },
+    { country: "United States", parameter: "Total project cost", yellow_low: 98000,  green_low: 98000,  green_high: 145000, yellow_high: 530000, decisiveness_pct: 45 },
+    // United Kingdom — Reliability: Medium (no lower yellow band)
+    { country: "United Kingdom",parameter: "Weekly fee",         yellow_low: 22000,  green_low: 22000,  green_high: 39000,  yellow_high: 48000,  decisiveness_pct: 30 },
+    { country: "United Kingdom",parameter: "Total project cost", yellow_low: 115000, green_low: 115000, green_high: 603000, yellow_high: 669000, decisiveness_pct: 30 },
+    // Germany — Reliability: Low (lower yellow only)
+    { country: "Germany",       parameter: "Weekly fee",         yellow_low: 19000,  green_low: 27000,  green_high: 35000,  yellow_high: 35000,  decisiveness_pct: 35 },
+    { country: "Germany",       parameter: "Total project cost", yellow_low: 20000,  green_low: 288000, green_high: 379000, yellow_high: 379000, decisiveness_pct: 35 },
+    // France — Reliability: Low
+    { country: "France",        parameter: "Weekly fee",         yellow_low: 30000,  green_low: 32000,  green_high: 33000,  yellow_high: 35000,  decisiveness_pct: 60 },
+    { country: "France",        parameter: "Total project cost", yellow_low: 220000, green_low: 220000, green_high: 230000, yellow_high: 260000, decisiveness_pct: 60 },
+    // Netherlands — Reliability: Low (no yellow bands)
+    { country: "Netherlands",   parameter: "Weekly fee",         yellow_low: 11000,  green_low: 11000,  green_high: 27000,  yellow_high: 27000,  decisiveness_pct: 30 },
+    { country: "Netherlands",   parameter: "Total project cost", yellow_low: 85000,  green_low: 85000,  green_high: 538000, yellow_high: 538000, decisiveness_pct: 30 },
+    // Switzerland — Reliability: Very low (fallback ±10%)
+    { country: "Switzerland",   parameter: "Weekly fee",         yellow_low: 12000,  green_low: 26000,  green_high: 32000,  yellow_high: 35000,  decisiveness_pct: 60 },
+    { country: "Switzerland",   parameter: "Total project cost", yellow_low: 149000, green_low: 284000, green_high: 348000, yellow_high: 357000, decisiveness_pct: 60 },
+    // Philippines — Reliability: Very low (fallback ±10%, upper yellow only)
+    { country: "Philippines",   parameter: "Weekly fee",         yellow_low: 28000,  green_low: 28000,  green_high: 34000,  yellow_high: 37000,  decisiveness_pct: 40 },
+    { country: "Philippines",   parameter: "Total project cost", yellow_low: 77000,  green_low: 77000,  green_high: 95000,  yellow_high: 105000, decisiveness_pct: 40 },
+    // Saudi Arabia — Very low, no bands (0 = no data)
+    { country: "Saudi Arabia",  parameter: "Weekly fee",         yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 55 },
+    { country: "Saudi Arabia",  parameter: "Total project cost", yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 55 },
+    // Luxembourg — Very low, no won projects, no bands
+    { country: "Luxembourg",    parameter: "Weekly fee",         yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 75 },
+    { country: "Luxembourg",    parameter: "Total project cost", yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 75 },
+    // UAE — Very low, no won projects, no bands
+    { country: "UAE",           parameter: "Weekly fee",         yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 70 },
+    { country: "UAE",           parameter: "Total project cost", yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 70 },
+    // Czech Republic — Very low, no won projects, no bands
+    { country: "Czech Republic",parameter: "Weekly fee",         yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 65 },
+    { country: "Czech Republic",parameter: "Total project cost", yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0, decisiveness_pct: 65 },
   ],
   bracket_low_pct: 10,
   bracket_high_pct: 15,
