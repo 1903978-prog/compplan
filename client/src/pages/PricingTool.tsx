@@ -4098,14 +4098,9 @@ export default function PricingTool() {
                         </Table>
                       </div>
 
-                      {/* Row 3: Gross Margin */}
+                      {/* Row 3: Gross Margin (directly under gross total for visual connection) */}
                       {teamCostWk > 0 && (
                         <div className="grid grid-cols-3 gap-2">
-                          <div className="border rounded-lg p-2.5 bg-background text-center">
-                            <div className="text-[9px] text-muted-foreground uppercase font-semibold">Team Cost (total)</div>
-                            <div className="text-sm font-bold text-muted-foreground">{fmtC(teamCostTotal)}</div>
-                            <div className="text-[9px] text-muted-foreground">{fmtC(teamCostWk)}/wk × {effectiveDur}w</div>
-                          </div>
                           <div className="border rounded-lg p-2.5 bg-background text-center">
                             <div className="text-[9px] text-muted-foreground uppercase font-semibold">Gross Margin</div>
                             <div className={`text-sm font-bold ${gmColor}`}>{fmtC(gmTotal)}</div>
@@ -4114,6 +4109,11 @@ export default function PricingTool() {
                           <div className="border rounded-lg p-2.5 bg-background text-center">
                             <div className="text-[9px] text-muted-foreground uppercase font-semibold">GM %</div>
                             <div className={`text-lg font-bold ${gmColor}`}>{gmPct.toFixed(0)}%</div>
+                          </div>
+                          <div className="border rounded-lg p-2.5 bg-background text-center">
+                            <div className="text-[9px] text-muted-foreground uppercase font-semibold">Team Cost (total)</div>
+                            <div className="text-sm font-bold text-muted-foreground">{fmtC(teamCostTotal)}</div>
+                            <div className="text-[9px] text-muted-foreground">{fmtC(teamCostWk)}/wk × {effectiveDur}w</div>
                           </div>
                         </div>
                       )}
@@ -4452,17 +4452,25 @@ export default function PricingTool() {
                       return (
                         <div className="space-y-0.5">
                           <div className="text-[10px] font-bold uppercase text-muted-foreground">NET1/wk vs Market — {matrixRegion2}</div>
-                          <div className="relative h-14 bg-muted/20 rounded-lg border border-border/20">
-                            {allPoints.map((t, i) => (
-                              <div key={i} className="absolute top-2 flex flex-col items-center" style={{ left: `${pctDot(t.avg)}%`, transform: "translateX(-50%)" }}>
-                                <div className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${t.isOurs ? "ring-2 ring-emerald-400" : ""}`}
+                          <div className="relative h-16 bg-muted/20 rounded-lg border border-border/20">
+                            {/* Competitor dots (rendered first = behind) */}
+                            {allPoints.filter(t => !t.isOurs).map((t, i) => (
+                              <div key={`c${i}`} className="absolute bottom-2 flex flex-col items-center" style={{ left: `${pctDot(t.avg)}%`, transform: "translateX(-50%)" }}>
+                                <div className="w-3 h-3 rounded-full border-2 border-white shadow-sm"
                                   style={{ backgroundColor: t.color }} />
-                                <span className={`text-[7px] mt-0.5 whitespace-nowrap font-semibold ${t.isOurs ? "text-emerald-700" : "text-muted-foreground"}`}>
-                                  {t.label.replace("(MBB)", "MBB").replace("(OW, SKP, Kearney)", "T2")}
+                                <span className="text-[7px] mt-0.5 whitespace-nowrap font-semibold text-muted-foreground">
+                                  {t.label.replace("Tier 1 (MBB)", "MBB").replace("Tier 2 (OW, SKP, Kearney)", "T2")}
                                 </span>
-                                <span className={`text-[8px] font-mono font-bold ${t.isOurs ? "text-emerald-700" : "text-muted-foreground"}`}>
-                                  {fmtK2(t.avg)}
-                                </span>
+                                <span className="text-[8px] font-mono font-bold text-muted-foreground">{fmtK2(t.avg)}</span>
+                              </div>
+                            ))}
+                            {/* Our NET1 dot (rendered last = on top, label ABOVE dot) */}
+                            {allPoints.filter(t => t.isOurs).map((t, i) => (
+                              <div key={`o${i}`} className="absolute top-1 flex flex-col items-center z-10" style={{ left: `${pctDot(t.avg)}%`, transform: "translateX(-50%)" }}>
+                                <span className="text-[8px] font-mono font-bold text-emerald-700">{fmtK2(t.avg)}</span>
+                                <span className="text-[7px] whitespace-nowrap font-bold text-emerald-700">Our NET1</span>
+                                <div className="w-4 h-4 rounded-full border-2 border-white shadow-md ring-2 ring-emerald-400 mt-0.5"
+                                  style={{ backgroundColor: "#16a34a" }} />
                               </div>
                             ))}
                           </div>
@@ -4471,7 +4479,7 @@ export default function PricingTool() {
                     })()}
                     {/* Band bars */}
                     <BandBar bench={weeklyBench} marker={canonicalNetWeekly} label={`Weekly — ${regionKey} · ${form.pe_owned ? "PE" : "Corp"} ${form.revenue_band === "above_1b" ? ">€1B" : form.revenue_band === "200m_1b" ? "€200M-€1B" : "<€200M"}`} />
-                    <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total cost — ${regionKey}`} />
+                    <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total Net Fees — ${regionKey}`} />
 
                     {/* W/L Comparables */}
                     {(() => {
