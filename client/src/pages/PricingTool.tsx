@@ -3004,9 +3004,8 @@ export default function PricingTool() {
 
       <div className="space-y-5">
 
-        {/* ── TOP: Two-column — form (left) + staffing (right) ────────────── */}
-        <div className="grid lg:grid-cols-2 gap-6 items-start">
-          <div className="space-y-5">
+        {/* ── ROW 1: Project Info (left) + Deal Context (right) ─────────── */}
+        <div className="grid lg:grid-cols-2 gap-4 items-start">
 
           {/* SECTION A: Project Info */}
           <Card>
@@ -3326,97 +3325,9 @@ export default function PricingTool() {
             </CardContent>
           </Card>
 
-          {/* PROJECT SPECS — duration, adjustments, fees (before waterfall) */}
-          {recommendation && (
-            <div className="border rounded-lg p-4 bg-muted/10 space-y-3">
-              <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Project Specs</div>
-              <div className="grid grid-cols-4 gap-3">
-                {/* Duration */}
-                <div className="space-y-1">
-                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Duration</Label>
-                  <Select
-                    value={String(waterfallDuration ?? form.duration_weeks)}
-                    onValueChange={v => {
-                      if (v === "other") {
-                        const weeks = window.prompt("Enter number of weeks:", "10");
-                        if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) {
-                          setWaterfallDuration(Number(weeks));
-                          setForm(f => ({ ...f, duration_weeks: Number(weeks) }));
-                        }
-                      } else {
-                        setWaterfallDuration(Number(v));
-                        setForm(f => ({ ...f, duration_weeks: Number(v) }));
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {[6, 8, 12, 16, 24].map(w => <SelectItem key={w} value={String(w)}>{w} weeks</SelectItem>)}
-                      <SelectItem value="other">Other…</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* Model adjustment */}
-                <div className="space-y-1">
-                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Model adj. (±500)</Label>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setManualDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
-                    <span className={`text-sm font-mono font-bold flex-1 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
-                      {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
-                    </span>
-                    <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
-                    {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[9px] text-muted-foreground hover:text-foreground underline ml-1">reset</button>}
-                  </div>
-                </div>
-                {/* Variable fee */}
-                <div className="space-y-1">
-                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Variable fee</Label>
-                  <Select value={String(variableFeePct)} onValueChange={v => setVariableFeePct(Number(v))}>
-                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {[0, 10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* Admin fees */}
-                <div className="space-y-1">
-                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Admin fees</Label>
-                  <Select value={String(adminFeePct)} onValueChange={v => setAdminFeePct(Number(v))}>
-                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {[0, 2, 4, 6, 8].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              {/* Discounts row */}
-              {caseDiscounts.length > 0 && (
-                <div className="flex items-center gap-3 flex-wrap border-t pt-2">
-                  <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">Discounts:</span>
-                  {caseDiscounts.map(d => (
-                    <label key={d.id} className="flex items-center gap-1.5 text-xs">
-                      <input type="checkbox" checked={d.enabled}
-                        onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, enabled: e.target.checked } : x))}
-                        className="h-3.5 w-3.5 rounded" />
-                      <span className={d.enabled ? "text-foreground" : "text-muted-foreground"}>{d.name}</span>
-                      <input type="number" step="0.5" min="0" max="100" value={d.pct}
-                        onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, pct: parseFloat(e.target.value) || 0 } : x))}
-                        disabled={!d.enabled}
-                        className="h-6 w-12 text-xs text-center font-mono border rounded disabled:opacity-40 bg-background" />
-                      <span className="text-[10px] text-muted-foreground">%</span>
-                    </label>
-                  ))}
-                  {totalDiscountPct > 0 && (
-                    <span className="text-xs font-semibold text-muted-foreground ml-auto">Total: {totalDiscountPct.toFixed(1)}%</span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          </div>{/* end left column */}
+        </div>{/* end row 1 grid */}
 
-          {/* RIGHT COLUMN: Staffing Build-up */}
-          <div className="lg:sticky lg:top-6 space-y-4">
+          {/* ── Staffing Build-up (full width) ─────────────────────────────── */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -3557,8 +3468,90 @@ export default function PricingTool() {
               )}
             </CardContent>
           </Card>
-          </div>{/* end right column */}
-        </div>{/* end two-column grid */}
+
+          {/* ── PROJECT SPECS (full width, single line) ────────────────────── */}
+          {recommendation && (
+            <div className="border rounded-lg p-3 bg-muted/10">
+              <div className="flex items-center gap-4 flex-wrap">
+                {/* Duration */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Duration</Label>
+                  <Select
+                    value={String(waterfallDuration ?? form.duration_weeks)}
+                    onValueChange={v => {
+                      if (v === "other") {
+                        const weeks = window.prompt("Enter number of weeks:", "10");
+                        if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) {
+                          setWaterfallDuration(Number(weeks));
+                          setForm(f => ({ ...f, duration_weeks: Number(weeks) }));
+                        }
+                      } else {
+                        setWaterfallDuration(Number(v));
+                        setForm(f => ({ ...f, duration_weeks: Number(v) }));
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[6, 8, 12, 16, 24].map(w => <SelectItem key={w} value={String(w)}>{w} weeks</SelectItem>)}
+                      <SelectItem value="other">Other…</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Model adjustment */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Model adj. (±500)</Label>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setManualDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
+                    <span className={`text-sm font-mono font-bold flex-1 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                      {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
+                    </span>
+                    <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
+                    {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[9px] text-muted-foreground hover:text-foreground underline ml-1">reset</button>}
+                  </div>
+                </div>
+                {/* Variable fee */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Variable fee</Label>
+                  <Select value={String(variableFeePct)} onValueChange={v => setVariableFeePct(Number(v))}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[0, 10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Admin fees */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Admin fees</Label>
+                  <Select value={String(adminFeePct)} onValueChange={v => setAdminFeePct(Number(v))}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[0, 2, 4, 6, 8].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Discounts inline */}
+                {caseDiscounts.length > 0 && (
+                  <div className="flex items-center gap-2 border-l pl-4 ml-2">
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground shrink-0">Disc:</span>
+                    {caseDiscounts.map(d => (
+                      <label key={d.id} className="flex items-center gap-1 text-[11px] shrink-0">
+                        <input type="checkbox" checked={d.enabled}
+                          onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, enabled: e.target.checked } : x))}
+                          className="h-3 w-3 rounded" />
+                        <span className={d.enabled ? "text-foreground" : "text-muted-foreground"}>{d.name}</span>
+                        <input type="number" step="0.5" min="0" max="100" value={d.pct}
+                          onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, pct: parseFloat(e.target.value) || 0 } : x))}
+                          disabled={!d.enabled}
+                          className="h-5 w-10 text-[10px] text-center font-mono border rounded disabled:opacity-40 bg-background" />
+                        <span className="text-[9px] text-muted-foreground">%</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* SECTION B: Pricing Waterfall Chart */}
           {recommendation && (() => {
