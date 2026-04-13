@@ -847,7 +847,7 @@ function computeMarketAdjustments(input: PricingCaseInput, settings: PricingSett
 
 // ── L3: Client Layer ──────────────────────────────────────────────────────────
 
-function computeClientAdjustments(input: PricingCaseInput): {
+function computeClientAdjustments(input: PricingCaseInput, settings: PricingSettings): {
   ownership_adj: number;
   maturity_urgency_adj: number;
   procurement_adj: number;
@@ -892,12 +892,17 @@ function computeClientAdjustments(input: PricingCaseInput): {
     case "heavy": procurement_adj = -0.15; notes.push("Heavy procurement: −15%"); break;
   }
 
-  // Sensitivity (asymmetric)
+  // Sensitivity — read from admin settings (sensitivity_multipliers)
   let sensitivity_adj = 0;
-  switch (input.price_sensitivity) {
-    case "low":    sensitivity_adj = 0.15;  notes.push("Low price sensitivity: +15%"); break;
-    case "medium": sensitivity_adj = 0.0;   break;
-    case "high":   sensitivity_adj = -0.25; notes.push("High price sensitivity: −25%"); break;
+  if (input.price_sensitivity) {
+    const entry = settings.sensitivity_multipliers?.find(s => s.value === input.price_sensitivity);
+    if (entry) {
+      sensitivity_adj = entry.multiplier - 1.0; // e.g. 0.95 → -0.05 (-5%), 1.05 → +0.05 (+5%)
+      if (Math.abs(sensitivity_adj) > 0.001) {
+        const sign = sensitivity_adj > 0 ? "+" : "";
+        notes.push(`${entry.label}: ${sign}${(sensitivity_adj * 100).toFixed(0)}%`);
+      }
+    }
   }
 
   return { ownership_adj, maturity_urgency_adj, procurement_adj, sensitivity_adj, client_notes: notes };
@@ -1165,7 +1170,7 @@ export function calculatePricing(
 
   // ── L3: Client adjustments ────────────────────────────────────────────────
   const { ownership_adj, maturity_urgency_adj, procurement_adj, sensitivity_adj, client_notes } =
-    computeClientAdjustments(input);
+    computeClientAdjustments(input, settings);
   const total_client_adj = ownership_adj + maturity_urgency_adj + procurement_adj + sensitivity_adj;
   const after_client = working_price * (1 + total_client_adj);
   working_price = after_client;
