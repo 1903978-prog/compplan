@@ -9,7 +9,7 @@ import {
   Plus, Trash2, ArrowRight, ArrowLeft, Loader2, Download, Pencil, Eye,
   FileText, Upload, Check, X, Sparkles, GripVertical, ChevronUp, ChevronDown,
   RotateCcw, AlertTriangle, Info, ChevronRight, BookOpen, MessageSquare,
-  Settings2, Image as ImageIcon, ClipboardPaste, Cpu, HelpCircle,
+  Settings2, Image as ImageIcon, ClipboardPaste, Cpu, HelpCircle, Save,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -636,6 +636,55 @@ export default function Proposals() {
     setSaving(false);
   }
 
+  // ── Save progress at any step (without advancing) ──────────────────────────
+  async function saveProgress() {
+    setSaving(true);
+    const now = new Date().toISOString();
+    const body = {
+      company_name: form.company_name,
+      website: form.website || null,
+      transcript: form.transcript || null,
+      notes: form.notes || null,
+      revenue: form.revenue ? Number(form.revenue) : null,
+      ebitda_margin: form.ebitda_margin ? Number(form.ebitda_margin) : null,
+      scope_perimeter: form.scope_perimeter || null,
+      objective: form.objective || null,
+      urgency: form.urgency || null,
+      project_type: projectType,
+      slide_selection: slides,
+      slide_briefs: briefs,
+      call_checklist: callChecklist,
+      status: current?.status || "draft",
+      options: current?.options || [],
+      created_at: current?.created_at || now,
+      updated_at: now,
+    };
+    try {
+      if (current?.id) {
+        const res = await fetch(`/api/proposals/${current.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const updated = await res.json();
+        setCurrent(updated);
+      } else {
+        const res = await fetch("/api/proposals", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const created = await res.json();
+        setCurrent(created);
+      }
+      loadProposals();
+      toast({ title: "Progress saved" });
+    } catch {
+      toast({ title: "Save failed", variant: "destructive" });
+    }
+    setSaving(false);
+  }
+
   // ── Step 3 → Step 4: Submit briefs & trigger AI analysis ──────────────────
 
   async function handleSubmitBriefs() {
@@ -1016,6 +1065,18 @@ export default function Proposals() {
                 <Plus className="w-3.5 h-3.5 mr-1" /> Add Question
               </Button>
             </Card>
+
+            {/* Save + Next */}
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={saveProgress} disabled={saving || !form.company_name}>
+                {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                Save Progress
+              </Button>
+              <Button onClick={() => setStep(2)} disabled={!form.company_name}>
+                Select Slides
+                <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
           </div>
         )}
 
@@ -1299,6 +1360,10 @@ Example:
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setShowSlideInstructions(true)}>
                   <FileText className="w-4 h-4 mr-1" /> Slide Template Instructions
+                </Button>
+                <Button variant="outline" onClick={saveProgress} disabled={saving}>
+                  {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                  Save Progress
                 </Button>
                 <Button onClick={handleSubmitSlides} disabled={saving || !projectType}>
                   {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BookOpen className="w-4 h-4 mr-1" />}
@@ -1664,11 +1729,17 @@ Root cause: Territory allocation..."
                   <Button variant="outline" onClick={() => setStep(2)}>
                     <ArrowLeft className="w-4 h-4 mr-1" /> Back to Slides
                   </Button>
-                  <Button onClick={handleSubmitBriefs} disabled={saving}>
-                    {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
-                    Validate & Analyze with AI
-                    <ArrowRight className="w-4 h-4 ml-1" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={saveBriefs} disabled={saving}>
+                      {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                      Save Progress
+                    </Button>
+                    <Button onClick={handleSubmitBriefs} disabled={saving}>
+                      {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                      Validate & Analyze with AI
+                      <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
                 </div>
               </>
             )}
