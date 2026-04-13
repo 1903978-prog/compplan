@@ -133,6 +133,8 @@ interface PricingSettings {
   strategic_intent_adj?: PricingAdjustment[];
   fund_defaults?: FundDefaults[];
   sector_multipliers?: SectorMultiplier[];
+  sectors?: string[];
+  project_types?: string[];
 }
 
 interface SectorMultiplier {
@@ -187,6 +189,8 @@ const DEFAULT_SETTINGS: PricingSettings = {
     { value: "high", label: "High", multiplier: 0.9 },
   ],
   funds: ["CARLYLE", "BAIN CAP", "KPS", "ADVENT", "CVC"],
+  sectors: ["Industrial / Manufacturing", "Pharma / Healthcare", "Software / SaaS", "Consumer / Retail", "Energy / Utilities", "Business Services", "PE-SWF", "Other", "Distribution"],
+  project_types: ["Spark", "SFE", "Pricing", "Other Design", "War Room"],
   discounts: [
     { id: "oneoff", name: "One-off discount", default_pct: 0, active: true },
     { id: "prompt_payment", name: "Prompt payment discount", default_pct: 3, active: true },
@@ -1571,7 +1575,7 @@ function RateMatrixTab({ settings, onChange, onSave, saving }: RateMatrixTabProp
 
 // ─── Tabs list ────────────────────────────────────────────────────────────────
 
-type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks" | "price_adjustments" | "fund_defaults" | "sector_multipliers";
+type TabId = "roles" | "regions" | "client_multipliers" | "sensitivity" | "bracket_rules" | "discounts_costs" | "funds" | "rate_matrix" | "market_benchmarks" | "price_adjustments" | "fund_defaults" | "sector_multipliers" | "project_types" | "sectors_list";
 
 // ─── Tab: Market Benchmarks ───────────────────────────────────────────────────
 
@@ -2036,6 +2040,8 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "price_adjustments", label: "Price Adjustments" },
   { id: "fund_defaults", label: "Fund Defaults" },
   { id: "sector_multipliers", label: "Sector Multipliers" },
+  { id: "project_types", label: "Project Types" },
+  { id: "sectors_list", label: "Sectors" },
 ];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -2312,6 +2318,78 @@ export default function PricingAdmin() {
                     {saving ? "Saving…" : "Save Settings"}
                   </Button>
                 </div>
+              </div>
+            );
+          })()}
+
+          {activeTab === "project_types" && (() => {
+            const DEFAULT_PT = ["Spark", "SFE", "Pricing", "Other Design", "War Room"];
+            const items: string[] = settings.project_types ?? DEFAULT_PT;
+            return (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Project Types</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">List of project types available in the Pricing Tool dropdown.</p>
+                </div>
+                <div className="space-y-2 max-w-sm">
+                  {items.map((t, i) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <Input value={t}
+                        onChange={e => {
+                          const updated = items.map((v, j) => j === i ? e.target.value : v);
+                          patchSettings({ project_types: updated });
+                        }}
+                        className="h-8 text-sm flex-1" />
+                      <button
+                        onClick={() => patchSettings({ project_types: items.filter((_, j) => j !== i) })}
+                        className="text-muted-foreground hover:text-destructive p-1">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <Button size="sm" variant="outline" onClick={() => patchSettings({ project_types: [...items, ""] })}>
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add type
+                  </Button>
+                </div>
+                <Button onClick={handleSave} disabled={saving} size="sm">
+                  {saving ? "Saving…" : "Save"}
+                </Button>
+              </div>
+            );
+          })()}
+
+          {activeTab === "sectors_list" && (() => {
+            const DEFAULT_SEC = ["Industrial / Manufacturing", "Pharma / Healthcare", "Software / SaaS", "Consumer / Retail", "Energy / Utilities", "Business Services", "PE-SWF", "Other", "Distribution"];
+            const items: string[] = settings.sectors ?? DEFAULT_SEC;
+            return (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Sectors</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">List of sectors available in the Pricing Tool dropdown.</p>
+                </div>
+                <div className="space-y-2 max-w-sm">
+                  {items.map((s, i) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <Input value={s}
+                        onChange={e => {
+                          const updated = items.map((v, j) => j === i ? e.target.value : v);
+                          patchSettings({ sectors: updated });
+                        }}
+                        className="h-8 text-sm flex-1" />
+                      <button
+                        onClick={() => patchSettings({ sectors: items.filter((_, j) => j !== i) })}
+                        className="text-muted-foreground hover:text-destructive p-1">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <Button size="sm" variant="outline" onClick={() => patchSettings({ sectors: [...items, ""] })}>
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add sector
+                  </Button>
+                </div>
+                <Button onClick={handleSave} disabled={saving} size="sm">
+                  {saving ? "Saving…" : "Save"}
+                </Button>
               </div>
             );
           })()}

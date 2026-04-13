@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
-  Users, AlertTriangle, Eye, EyeOff, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X, FileText,
+  Users, AlertTriangle, Eye, EyeOff, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X, FileText, ChevronDown,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
@@ -487,20 +487,12 @@ export default function PricingTool() {
   const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
   const [editingBenchmarks, setEditingBenchmarks] = useState(false);
   const [savingBenchmarks, setSavingBenchmarks] = useState(false);
-  const [projectTypesLocal, setProjectTypesLocal] = useState<string[]>([]);
-  const [editingProjectTypes, setEditingProjectTypes] = useState(false);
-  const [sectorsLocal, setSectorsLocal] = useState<string[]>([]);
-  const [editingSectors, setEditingSectors] = useState(false);
-  const [fundsLocal, setFundsLocal] = useState<string[]>([]);
-  const [editingFunds, setEditingFunds] = useState(false);
   const [compIntensityLocal, setCompIntensityLocal] = useState<PricingAdjustment[]>([]);
   const [editingCompIntensity, setEditingCompIntensity] = useState(false);
   const [compTypeLocal, setCompTypeLocal] = useState<PricingAdjustment[]>([]);
   const [editingCompType, setEditingCompType] = useState(false);
   const [stratIntentLocal, setStratIntentLocal] = useState<PricingAdjustment[]>([]);
   const [editingStratIntent, setEditingStratIntent] = useState(false);
-  const [regionsLocal, setRegionsLocal] = useState<PricingRegion[]>([]);
-  const [editingRegions, setEditingRegions] = useState(false);
   const [pasteInput, setPasteInput] = useState("");
   const [pasteResult, setPasteResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [excelPaste, setExcelPaste] = useState("");
@@ -519,6 +511,7 @@ export default function PricingTool() {
   const [showTNFInfo, setShowTNFInfo] = useState(false);
   const [showL4Info, setShowL4Info] = useState(false);
   const [showProposalText, setShowProposalText] = useState(false);
+  const [showBenchmarks, setShowBenchmarks] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState(false);
   const [templateLocal, setTemplateLocal] = useState("");
 
@@ -625,13 +618,9 @@ export default function PricingTool() {
 
   useEffect(() => {
     setBenchmarks(settings?.country_benchmarks ?? DEFAULT_PRICING_SETTINGS.country_benchmarks ?? []);
-    setProjectTypesLocal(settings?.project_types ?? DEFAULT_PROJECT_TYPES);
-    setSectorsLocal(settings?.sectors ?? [...SECTORS]);
-    setFundsLocal(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []);
     setCompIntensityLocal(settings?.competitive_intensity_adj ?? DEFAULT_PRICING_SETTINGS.competitive_intensity_adj ?? []);
     setCompTypeLocal(settings?.competitor_type_adj ?? DEFAULT_PRICING_SETTINGS.competitor_type_adj ?? []);
     setStratIntentLocal(settings?.strategic_intent_adj ?? DEFAULT_PRICING_SETTINGS.strategic_intent_adj ?? []);
-    setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions);
   }, [settings]);
 
   // Auto-populate fees-by-country when proposals first load
@@ -704,54 +693,6 @@ export default function PricingTool() {
     } finally {
       setSavingBenchmarks(false);
     }
-  };
-
-  const saveRegions = async (regions: PricingRegion[]) => {
-    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), regions };
-    await fetch("/api/pricing/settings", {
-      method: "PUT", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    });
-    setSettings(updated);
-    setEditingRegions(false);
-    toast({ title: "Regions saved" });
-  };
-
-  const saveProjectTypes = async (types: string[]) => {
-    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), project_types: types };
-    await fetch("/api/pricing/settings", {
-      method: "PUT", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    });
-    setSettings(updated);
-    setEditingProjectTypes(false);
-    toast({ title: "Project types saved" });
-  };
-
-  const saveFunds = async (funds: string[]) => {
-    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), funds };
-    await fetch("/api/pricing/settings", {
-      method: "PUT", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    });
-    setSettings(updated);
-    setEditingFunds(false);
-    toast({ title: "Funds saved" });
-  };
-
-  const saveSectors = async (sectors: string[]) => {
-    const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), sectors };
-    await fetch("/api/pricing/settings", {
-      method: "PUT", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    });
-    setSettings(updated);
-    setEditingSectors(false);
-    toast({ title: "Sectors saved" });
   };
 
   const saveAdjustments = async (
@@ -2374,210 +2315,6 @@ export default function PricingTool() {
               );
             })()}
 
-            {/* ── Admin: Funds ─────────────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold">Funds</CardTitle>
-                  <div className="flex gap-2">
-                    {editingFunds ? (
-                      <>
-                        <Button size="sm" onClick={() => saveFunds(fundsLocal)}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setFundsLocal(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []); setEditingFunds(false); }}>Cancel</Button>
-                      </>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => { setFundsLocal([...(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? [])]); setEditingFunds(true); }}>
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingFunds ? (
-                  <div className="space-y-2">
-                    {fundsLocal.map((f, i) => (
-                      <div key={i} className="flex gap-2 items-center">
-                        <Input value={f} onChange={e => setFundsLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
-                          className="h-7 text-sm flex-1 font-mono uppercase" />
-                        <button onClick={() => setFundsLocal(prev => prev.filter((_, j) => j !== i))}
-                          className="text-muted-foreground hover:text-destructive p-1">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    <Button size="sm" variant="outline" onClick={() => setFundsLocal(prev => [...prev, ""])}>
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add fund
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? []).map(f => (
-                      <Badge key={f} variant="secondary" className="text-xs font-mono">{f}</Badge>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* ── Admin: Regions ───────────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold">Regions</CardTitle>
-                  <div className="flex gap-2">
-                    {editingRegions ? (
-                      <>
-                        <Button size="sm" onClick={() => saveRegions(regionsLocal)}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setRegionsLocal(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions); setEditingRegions(false); }}>Cancel</Button>
-                      </>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => { setRegionsLocal([...(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions)]); setEditingRegions(true); }}>
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingRegions ? (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-[1fr,80px,60px,32px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase px-1">
-                      <span>Region code</span><span>Multiplier</span><span>Baseline</span><span />
-                    </div>
-                    {regionsLocal.map((r, i) => (
-                      <div key={i} className="grid grid-cols-[1fr,80px,60px,32px] gap-2 items-center">
-                        <Input value={r.region_name}
-                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, region_name: e.target.value } : v))}
-                          className="h-7 text-sm" placeholder="e.g. IT" />
-                        <Input type="number" step="0.01" min="0.5" max="3" value={r.multiplier}
-                          onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, multiplier: parseFloat(e.target.value) || 1 } : v))}
-                          className="h-7 text-sm font-mono" />
-                        <div className="flex justify-center">
-                          <input type="checkbox" checked={r.is_baseline}
-                            onChange={e => setRegionsLocal(prev => prev.map((v, j) => j === i ? { ...v, is_baseline: e.target.checked } : v))}
-                          />
-                        </div>
-                        <button onClick={() => setRegionsLocal(prev => prev.filter((_, j) => j !== i))}
-                          className="text-muted-foreground hover:text-destructive p-1">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    <Button size="sm" variant="outline" onClick={() => setRegionsLocal(prev => [
-                      ...prev,
-                      { id: `region_${Date.now()}`, region_name: "", multiplier: 1.0, is_baseline: false }
-                    ])}>
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add region
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).map(r => (
-                      <Badge key={r.id} variant={r.is_baseline ? "default" : "secondary"} className="text-xs">
-                        {r.region_name}
-                        {!r.is_baseline && <span className="text-muted-foreground ml-1">×{r.multiplier.toFixed(2)}</span>}
-                        {r.is_baseline && <span className="ml-1 opacity-60">baseline</span>}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* ── Admin: Project Types ─────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold">Project Types</CardTitle>
-                  <div className="flex gap-2">
-                    {editingProjectTypes ? (
-                      <>
-                        <Button size="sm" onClick={() => saveProjectTypes(projectTypesLocal)}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setProjectTypesLocal(projectTypes); setEditingProjectTypes(false); }}>Cancel</Button>
-                      </>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => { setProjectTypesLocal([...projectTypes]); setEditingProjectTypes(true); }}>
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingProjectTypes ? (
-                  <div className="space-y-2">
-                    {projectTypesLocal.map((t, i) => (
-                      <div key={i} className="flex gap-2 items-center">
-                        <Input value={t} onChange={e => setProjectTypesLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
-                          className="h-7 text-sm flex-1" />
-                        <button onClick={() => setProjectTypesLocal(prev => prev.filter((_, j) => j !== i))}
-                          className="text-muted-foreground hover:text-destructive p-1">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    <Button size="sm" variant="outline" onClick={() => setProjectTypesLocal(prev => [...prev, ""])}>
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add type
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {projectTypes.map(t => (
-                      <Badge key={t} variant="secondary" className="text-xs capitalize">{t}</Badge>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* ── Admin: Sectors ───────────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold">Sectors</CardTitle>
-                  <div className="flex gap-2">
-                    {editingSectors ? (
-                      <>
-                        <Button size="sm" onClick={() => saveSectors(sectorsLocal)}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setSectorsLocal(settings?.sectors ?? [...SECTORS]); setEditingSectors(false); }}>Cancel</Button>
-                      </>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => { setSectorsLocal([...(settings?.sectors ?? [...SECTORS])]); setEditingSectors(true); }}>
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingSectors ? (
-                  <div className="space-y-2">
-                    {sectorsLocal.map((s, i) => (
-                      <div key={i} className="flex gap-2 items-center">
-                        <Input value={s} onChange={e => setSectorsLocal(prev => prev.map((v, j) => j === i ? e.target.value : v))}
-                          className="h-7 text-sm flex-1" />
-                        <button onClick={() => setSectorsLocal(prev => prev.filter((_, j) => j !== i))}
-                          className="text-muted-foreground hover:text-destructive p-1">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    <Button size="sm" variant="outline" onClick={() => setSectorsLocal(prev => [...prev, ""])}>
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add sector
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {(settings?.sectors ?? [...SECTORS]).map(s => (
-                      <Badge key={s} variant="secondary" className="text-xs">{s}</Badge>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-
           </div>
         ) : null}
 
@@ -3064,19 +2801,50 @@ export default function PricingTool() {
                         const prices = cps.map(p => p.weekly_price);
                         const minP = Math.min(...prices);
                         const maxP = Math.max(...prices);
-                        const range = maxP - minP || Math.max(maxP, 1);
-                        const pad = range * 0.1;
-                        const sMin = Math.max(0, minP - pad);
-                        const sMax = maxP + pad;
+                        const sym = getCurrencyForRegion(cps[0].region).symbol;
+                        const fmtK2 = (n: number) => `${sym}${Math.round(n / 1000)}k`;
+                        const fmtFull = (n: number) => `${sym}${Math.round(n).toLocaleString("it-IT")}`;
+
+                        // Find matching benchmark row for this country/region
+                        const countryAliases = REGION_TO_COUNTRY[country] ?? [country];
+                        const benchRow = benchmarks.find(b =>
+                          countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+                          (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+                        );
+                        const benchGreenLow = benchRow?.green_low ?? 0;
+                        const benchGreenHigh = benchRow?.green_high ?? 0;
+                        const hasBench = benchGreenLow > 0 && benchGreenHigh > 0;
+
+                        // Extend scale to include benchmark band
+                        const allVals = [...prices, ...(hasBench ? [benchGreenLow, benchGreenHigh] : [])];
+                        const range = (Math.max(...allVals) - Math.min(...allVals)) || Math.max(Math.max(...allVals), 1);
+                        const pad = range * 0.12;
+                        const sMin = Math.max(0, Math.min(...allVals) - pad);
+                        const sMax = Math.max(...allVals) + pad;
                         const sRange = sMax - sMin || 1;
                         const avgWon = won.length ? won.reduce((s, p) => s + p.weekly_price, 0) / won.length : null;
                         const avgLost = lost.length ? lost.reduce((s, p) => s + p.weekly_price, 0) / lost.length : null;
-                        const sym = getCurrencyForRegion(cps[0].region).symbol;
-                        const fmtK2 = (n: number) => `${sym}${Math.round(n / 1000)}k`;
-                        const W = 320, H = 90;
-                        const padL = 6, padR = 6, padT = 8, padB = 18;
+
+                        const W = 320, H = 100;
+                        const padL = 6, padR = 6, padT = 18, padB = 18;
                         const plotW = W - padL - padR;
-                        const xAt = (v: number) => padL + ((v - sMin) / sRange) * plotW;
+                        const xAt = (v: number) => Math.max(padL, Math.min(W - padR, padL + ((v - sMin) / sRange) * plotW));
+
+                        // Save handler for this country's green band
+                        const saveBenchBand = (newLow: number, newHigh: number) => {
+                          const updated = benchmarks.map(b => {
+                            const matches = countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+                              (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"));
+                            return matches ? { ...b, green_low: newLow, green_high: newHigh, yellow_low: newLow, yellow_high: newHigh } : b;
+                          });
+                          // If no row found, add one
+                          if (!benchRow) {
+                            updated.push({ country: countryAliases[0] ?? country, parameter: "Weekly Fee", yellow_low: newLow, green_low: newLow, green_high: newHigh, yellow_high: newHigh, decisiveness_pct: 25 });
+                          }
+                          setBenchmarks(updated);
+                          setBenchmarksLocal(updated);
+                          saveBenchmarks(updated);
+                        };
 
                         return (
                           <div key={country} className="border rounded-lg p-2.5 bg-background">
@@ -3091,17 +2859,26 @@ export default function PricingTool() {
                             <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
                               <rect x={padL} y={padT} width={plotW} height={H - padT - padB}
                                 fill="#f8fafc" stroke="#e2e8f0" strokeWidth="0.5" rx="2" />
-                              {/* won band (avg ±10%) */}
-                              {avgWon != null && (
-                                <rect
-                                  x={xAt(avgWon * 0.9)}
-                                  y={padT}
-                                  width={Math.max(2, xAt(avgWon * 1.1) - xAt(avgWon * 0.9))}
-                                  height={H - padT - padB}
-                                  fill="#dcfce7" opacity="0.7"
-                                />
+
+                              {/* Benchmark green band */}
+                              {hasBench && (
+                                <>
+                                  <rect
+                                    x={xAt(benchGreenLow)} y={padT}
+                                    width={Math.max(2, xAt(benchGreenHigh) - xAt(benchGreenLow))}
+                                    height={H - padT - padB}
+                                    fill="#22c55e" opacity="0.15" />
+                                  <line x1={xAt(benchGreenLow)} y1={padT} x2={xAt(benchGreenLow)} y2={H - padB}
+                                    stroke="#16a34a" strokeWidth="0.8" strokeDasharray="3,2" opacity="0.7" />
+                                  <line x1={xAt(benchGreenHigh)} y1={padT} x2={xAt(benchGreenHigh)} y2={H - padB}
+                                    stroke="#16a34a" strokeWidth="0.8" strokeDasharray="3,2" opacity="0.7" />
+                                  {/* Min/max labels above green band */}
+                                  <text x={xAt(benchGreenLow)} y={padT - 4} fontSize="6.5" fill="#16a34a" textAnchor="middle" fontWeight="bold">{fmtK2(benchGreenLow)}</text>
+                                  <text x={xAt(benchGreenHigh)} y={padT - 4} fontSize="6.5" fill="#16a34a" textAnchor="middle" fontWeight="bold">{fmtK2(benchGreenHigh)}</text>
+                                </>
                               )}
-                              {/* avg markers */}
+
+                              {/* Avg won/lost markers */}
                               {avgWon != null && (
                                 <line x1={xAt(avgWon)} y1={padT} x2={xAt(avgWon)} y2={H - padB}
                                   stroke="#10b981" strokeWidth="1.2" strokeDasharray="2,2" />
@@ -3110,34 +2887,72 @@ export default function PricingTool() {
                                 <line x1={xAt(avgLost)} y1={padT} x2={xAt(avgLost)} y2={H - padB}
                                   stroke="#ef4444" strokeWidth="1.2" strokeDasharray="2,2" />
                               )}
-                              {/* won dots */}
+                              {/* Won dots */}
                               {won.map((p, i) => (
                                 <circle key={`w${i}`} cx={xAt(p.weekly_price)}
                                   cy={padT + 12 + (i % 3) * 10} r="3.5"
                                   fill="#10b981" opacity="0.85" stroke="#065f46" strokeWidth="0.4">
-                                  <title>{p.project_name} · Won · {fmtK2(p.weekly_price)}/wk</title>
+                                  <title>{p.project_name} · Won · {fmtFull(p.weekly_price)}/wk</title>
                                 </circle>
                               ))}
-                              {/* lost dots */}
+                              {/* Lost dots */}
                               {lost.map((p, i) => (
                                 <circle key={`l${i}`} cx={xAt(p.weekly_price)}
-                                  cy={padT + 42 + (i % 3) * 10} r="3.5"
+                                  cy={padT + 45 + (i % 3) * 10} r="3.5"
                                   fill="#ef4444" opacity="0.85" stroke="#7f1d1d" strokeWidth="0.4">
-                                  <title>{p.project_name} · Lost · {fmtK2(p.weekly_price)}/wk</title>
+                                  <title>{p.project_name} · Lost · {fmtFull(p.weekly_price)}/wk</title>
                                 </circle>
                               ))}
-                              {/* scale labels */}
+                              {/* Scale labels */}
                               <text x={padL} y={H - 4} fontSize="7" fill="#94a3b8">{fmtK2(sMin)}</text>
                               <text x={W - padR} y={H - 4} fontSize="7" fill="#94a3b8" textAnchor="end">{fmtK2(sMax)}</text>
                               <text x={W / 2} y={H - 4} fontSize="7" fill="#94a3b8" textAnchor="middle">{fmtK2((sMin + sMax) / 2)}</text>
                             </svg>
-                            <div className="flex items-center justify-between text-[9px] mt-0.5">
+
+                            {/* Avg won/lost row */}
+                            <div className="flex items-center justify-between text-[9px] mt-0.5 mb-1.5">
                               <span className="text-emerald-700 font-mono">
                                 {avgWon != null ? `avg won ${fmtK2(avgWon)}` : "—"}
                               </span>
                               <span className="text-red-600 font-mono">
                                 {avgLost != null ? `avg lost ${fmtK2(avgLost)}` : "—"}
                               </span>
+                            </div>
+
+                            {/* Editable green band */}
+                            <div className="flex items-center gap-1.5 border-t pt-1.5">
+                              <div className="w-2 h-2 rounded-sm bg-emerald-400/60 shrink-0" />
+                              <span className="text-[9px] text-muted-foreground shrink-0">Green band:</span>
+                              <input
+                                type="number" step="500" min="0"
+                                defaultValue={benchGreenLow || ""}
+                                placeholder="min"
+                                key={`${country}-low-${benchGreenLow}`}
+                                onBlur={e => {
+                                  const newLow = parseInt(e.target.value) || 0;
+                                  if (newLow !== benchGreenLow) saveBenchBand(newLow, benchGreenHigh || newLow);
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                }}
+                                className="w-16 h-5 text-[9px] text-center font-mono border rounded bg-emerald-50 border-emerald-200 focus:outline-none focus:border-emerald-500"
+                              />
+                              <span className="text-[9px] text-muted-foreground">–</span>
+                              <input
+                                type="number" step="500" min="0"
+                                defaultValue={benchGreenHigh || ""}
+                                placeholder="max"
+                                key={`${country}-high-${benchGreenHigh}`}
+                                onBlur={e => {
+                                  const newHigh = parseInt(e.target.value) || 0;
+                                  if (newHigh !== benchGreenHigh) saveBenchBand(benchGreenLow || newHigh, newHigh);
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                }}
+                                className="w-16 h-5 text-[9px] text-center font-mono border rounded bg-emerald-50 border-emerald-200 focus:outline-none focus:border-emerald-500"
+                              />
+                              <span className="text-[9px] text-muted-foreground italic ml-0.5">↵ to save</span>
                             </div>
                           </div>
                         );
@@ -3151,7 +2966,7 @@ export default function PricingTool() {
                         <div className="w-2.5 h-2.5 rounded-full bg-red-500" /> Lost
                       </div>
                       <div className="flex items-center gap-1">
-                        <div className="w-3 h-2 bg-emerald-200 rounded-sm" /> Won avg ±10%
+                        <div className="w-3 h-2 bg-emerald-200/80 rounded-sm border border-emerald-300" /> Green band (editable)
                       </div>
                       <div className="flex items-center gap-1">
                         <div className="w-3 h-0.5 bg-emerald-500" /> Avg won
@@ -3187,20 +3002,22 @@ export default function PricingTool() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr,350px] gap-6 items-start">
-        {/* ── LEFT COLUMN ──────────────────────────────────────────────────── */}
-        <div className="space-y-5">
+      <div className="space-y-5">
+
+        {/* ── TOP: Two-column — form (left) + staffing (right) ────────────── */}
+        <div className="grid lg:grid-cols-2 gap-6 items-start">
+          <div className="space-y-5">
 
           {/* SECTION A: Project Info */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Project Information</CardTitle>
+              <CardTitle className="text-sm">Project Information</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
                 {/* Client name — first */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Client Company <span className="text-destructive">*</span></Label>
+                <div className="space-y-0.5">
+                  <Label className="text-[11px]">Client Company <span className="text-destructive">*</span></Label>
                   <Input value={form.client_name}
                     onChange={e => {
                       const name = e.target.value;
@@ -3224,7 +3041,7 @@ export default function PricingTool() {
                     const currentSeq = seqOptions.includes(form.project_name) ? form.project_name : seqOptions[0];
                     return (
                       <Select value={currentSeq} onValueChange={v => setForm(f => ({ ...f, project_name: v }))}>
-                        <SelectTrigger className="h-9 text-sm font-mono"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {seqOptions.map(s => <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>)}
                         </SelectContent>
@@ -3234,7 +3051,7 @@ export default function PricingTool() {
                 </div>
                 {/* PE Owner — default CARLYLE */}
                 <div className="space-y-1">
-                  <Label className="text-xs">PE Owner</Label>
+                  <Label className="text-xs">PE Owner <span className="text-primary/60 font-mono text-[9px]">P3</span></Label>
                   <Select value={form.fund_name || "__none__"} onValueChange={v => {
                     const isPE = v !== "__none__";
                     const fundDef = isPE ? (settings?.fund_defaults ?? []).find(fd => fd.fund_name === v) : null;
@@ -3248,7 +3065,7 @@ export default function PricingTool() {
                       ...(fundDef?.price_sensitivity ? { price_sensitivity: fundDef.price_sensitivity } : {}),
                     }));
                   }}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select PE owner…" /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select PE owner…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">-- None (Family owned) --</SelectItem>
                       {(settings?.funds ?? DEFAULT_PRICING_SETTINGS.funds).map(fund => (
@@ -3266,7 +3083,7 @@ export default function PricingTool() {
                       setForm(f => ({ ...f, staffing: buildStaffingFromPreset(v, settings) }));
                     }
                   }}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {Object.entries(TEAM_PRESETS).map(([k, p]) => (
                         <SelectItem key={k} value={k}>{p.label}</SelectItem>
@@ -3275,9 +3092,9 @@ export default function PricingTool() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Region <span className="text-destructive">*</span></Label>
+                  <Label className="text-xs">Region <span className="text-primary/60 font-mono text-[9px]">P1</span> <span className="text-destructive">*</span></Label>
                   <Select value={form.region} onValueChange={v => setForm(f => ({ ...f, region: v }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {(settings?.regions ?? DEFAULT_PRICING_SETTINGS.regions).map(r => (
                         <SelectItem key={r.region_name} value={r.region_name}>
@@ -3290,7 +3107,7 @@ export default function PricingTool() {
                 <div className="space-y-1">
                   <Label className="text-xs">Currency</Label>
                   <Select value={form.currency ?? "EUR"} onValueChange={v => setForm(f => ({ ...f, currency: v }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="EUR">EUR €</SelectItem>
                       <SelectItem value="USD">USD $</SelectItem>
@@ -3302,7 +3119,7 @@ export default function PricingTool() {
                 {/* Company Revenue → auto-fills Revenue Band */}
                 <div className="space-y-1">
                   <Label className="text-xs">Company Revenue (€M)</Label>
-                  <Input type="number" min="0" step="10" placeholder="e.g. 500" className="h-9 text-sm"
+                  <Input type="number" min="0" step="10" placeholder="e.g. 500" className="h-8 text-xs"
                     value={form.company_revenue_m ?? ""}
                     onChange={e => {
                       const val = e.target.value === "" ? null : parseFloat(e.target.value);
@@ -3320,18 +3137,18 @@ export default function PricingTool() {
                     }} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Revenue Band</Label>
+                  <Label className="text-xs">Revenue Band <span className="text-primary/60 font-mono text-[9px]">P4</span></Label>
                   <Select value={form.revenue_band} onValueChange={v => setForm(f => ({ ...f, revenue_band: v }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {REVENUE_BANDS.map(rb => <SelectItem key={rb.value} value={rb.value}>{rb.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Price Sensitivity</Label>
+                  <Label className="text-xs">Price Sensitivity <span className="text-primary/60 font-mono text-[9px]">P5</span></Label>
                   <Select value={form.price_sensitivity} onValueChange={v => setForm(f => ({ ...f, price_sensitivity: v }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="low">Low — client not price-sensitive</SelectItem>
                       <SelectItem value="medium">Medium — standard sensitivity</SelectItem>
@@ -3358,7 +3175,7 @@ export default function PricingTool() {
           {/* SECTION A2: Deal Context */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Deal Context &amp; Value Drivers</CardTitle>
+              <CardTitle className="text-sm">Deal Context &amp; Value Drivers</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
@@ -3366,7 +3183,7 @@ export default function PricingTool() {
                 <div className="space-y-1">
                   <Label className="text-xs">Project Type <span className="text-muted-foreground/50 font-normal">(L0)</span></Label>
                   <Select value={form.project_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, project_type: v === "__none__" ? null : v as ProjectType }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
                       {projectTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
@@ -3375,9 +3192,9 @@ export default function PricingTool() {
                 </div>
                 {/* Sector */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Sector <span className="text-muted-foreground/50 font-normal">(L0)</span></Label>
+                  <Label className="text-xs">Sector <span className="text-primary/60 font-mono text-[9px]">P2</span></Label>
                   <Select value={form.sector ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, sector: v === "__none__" ? null : v }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
                       {(settings?.sectors ?? [...SECTORS]).map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -3436,9 +3253,9 @@ export default function PricingTool() {
                 </div>
                 {/* Strategic intent — labels from settings */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Strategic Intent <span className="text-muted-foreground/50 font-normal">(L5)</span></Label>
+                  <Label className="text-xs">Strategic Intent <span className="text-primary/60 font-mono text-[9px]">P6</span></Label>
                   <Select value={form.strategic_intent ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, strategic_intent: v === "__none__" ? null : v as StrategicIntent }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
                       {(settings?.strategic_intent_adj ?? DEFAULT_PRICING_SETTINGS.strategic_intent_adj ?? []).map(a => (
@@ -3451,27 +3268,12 @@ export default function PricingTool() {
                 </div>
                 {/* Competitive intensity — labels from settings */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Competitive Intensity <span className="text-muted-foreground/50 font-normal">(L2)</span></Label>
+                  <Label className="text-xs">Competitive Intensity</Label>
                   <Select value={form.competitive_intensity ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitive_intensity: v === "__none__" ? null : v as CompetitiveIntensity }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
                       {(settings?.competitive_intensity_adj ?? DEFAULT_PRICING_SETTINGS.competitive_intensity_adj ?? []).map(a => (
-                        <SelectItem key={a.value} value={a.value}>
-                          {a.label}{a.adj_pct !== 0 ? ` (${a.adj_pct > 0 ? "+" : ""}${a.adj_pct}%)` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* Competitor type — labels from settings */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Main Competitor <span className="text-muted-foreground/50 font-normal">(L2)</span></Label>
-                  <Select value={form.competitor_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, competitor_type: v === "__none__" ? null : v as CompetitorType }))}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">— Not set —</SelectItem>
-                      {(settings?.competitor_type_adj ?? DEFAULT_PRICING_SETTINGS.competitor_type_adj ?? []).map(a => (
                         <SelectItem key={a.value} value={a.value}>
                           {a.label}{a.adj_pct !== 0 ? ` (${a.adj_pct > 0 ? "+" : ""}${a.adj_pct}%)` : ""}
                         </SelectItem>
@@ -3489,7 +3291,7 @@ export default function PricingTool() {
                   <div className="space-y-1">
                     <Label className="text-xs">Client Relationship</Label>
                     <Select value={form.relationship_type ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, relationship_type: v === "__none__" ? null : v }))}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select…" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none__">— Not set —</SelectItem>
                         <SelectItem value="new">First-time client</SelectItem>
@@ -3498,27 +3300,11 @@ export default function PricingTool() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {/* Decision maker */}
-                  <div className="space-y-1">
-                    <Label className="text-xs">Primary Decision Maker</Label>
-                    <Select value={form.decision_maker ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, decision_maker: v === "__none__" ? null : v }))}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">— Not set —</SelectItem>
-                        <SelectItem value="ceo">CEO</SelectItem>
-                        <SelectItem value="cfo">CFO</SelectItem>
-                        <SelectItem value="coo">COO</SelectItem>
-                        <SelectItem value="pe_partner">PE Partner / Investor</SelectItem>
-                        <SelectItem value="board">Board</SelectItem>
-                        <SelectItem value="procurement">Procurement</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
                   {/* Geographic scope */}
                   <div className="space-y-1">
                     <Label className="text-xs">Geographic Scope</Label>
                     <Select value={form.geographic_scope ?? "__none__"} onValueChange={v => setForm(f => ({ ...f, geographic_scope: v === "__none__" ? null : v }))}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select…" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none__">— Not set —</SelectItem>
                         <SelectItem value="single">Single country</SelectItem>
@@ -3534,13 +3320,6 @@ export default function PricingTool() {
                       placeholder="e.g. 400000"
                       value={form.budget_disclosed_eur ?? ""}
                       onChange={e => setForm(f => ({ ...f, budget_disclosed_eur: e.target.value === "" ? null : parseFloat(e.target.value) }))} />
-                  </div>
-                  {/* Incumbent advisor */}
-                  <div className="space-y-1">
-                    <Label className="text-xs">Incumbent Advisor (if any)</Label>
-                    <Input placeholder="e.g. McKinsey, internal team, none"
-                      value={form.incumbent_advisor ?? ""}
-                      onChange={e => setForm(f => ({ ...f, incumbent_advisor: e.target.value || null }))} />
                   </div>
                 </div>
               </div>
@@ -3634,6 +3413,152 @@ export default function PricingTool() {
               )}
             </div>
           )}
+          </div>{/* end left column */}
+
+          {/* RIGHT COLUMN: Staffing Build-up */}
+          <div className="lg:sticky lg:top-6 space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">Staffing Build-up</CardTitle>
+                {baseWeeklyDisplay > 0 && (
+                  <span className="text-sm font-semibold text-muted-foreground">
+                    Base: <span className="text-foreground">{fmt(baseWeeklyDisplay)}/wk</span>
+                  </span>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {settings ? (
+                <div className="space-y-1">
+                  {/* Header */}
+                  <div className="grid grid-cols-[110px_1fr_1fr_80px_110px] gap-2 px-2 pb-1">
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground">Role</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-center">How many</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-center">Days / wk</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-right">Rate</span>
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-right">Weekly</span>
+                  </div>
+
+                  {STAFFING_ROLES.map(def => {
+                    const adminRole = settings.roles.find(r =>
+                      r.role_name.toLowerCase().includes(def.match.toLowerCase())
+                    );
+                    if (!adminRole) return null;
+
+                    const line = form.staffing.find(s => s.role_id === adminRole.id);
+                    const count = line?.count ?? 0;
+                    const days = line?.days_per_week ?? def.defaultDays;
+                    const rate = adminRole.default_daily_rate;
+                    const weekly = count > 0 ? count * days * rate : 0;
+                    const active = count > 0;
+
+                    const setCount = (n: number) => {
+                      const newCount = Math.max(0, Math.min(10, n));
+                      if (newCount === 0) {
+                        // Remove from staffing
+                        setForm(f => ({ ...f, staffing: f.staffing.filter(s => s.role_id !== adminRole.id) }));
+                      } else if (line) {
+                        updateStaffingLine(adminRole.id, "count", newCount);
+                      } else {
+                        // Add to staffing
+                        setForm(f => ({
+                          ...f,
+                          staffing: [...f.staffing, {
+                            role_id: adminRole.id,
+                            role_name: def.label,
+                            days_per_week: def.defaultDays,
+                            daily_rate_used: rate,
+                            count: newCount,
+                          }],
+                        }));
+                      }
+                    };
+
+                    const setDays = (d: number) => {
+                      const newDays = Math.max(0.5, Math.min(5, d));
+                      if (line) {
+                        updateStaffingLine(adminRole.id, "days_per_week", newDays);
+                      }
+                    };
+
+                    return (
+                      <div key={def.label}
+                        className={`grid grid-cols-[110px_1fr_1fr_80px_110px] gap-2 items-center rounded-lg px-2 py-2 transition-colors ${
+                          active ? "bg-primary/5 border border-primary/15" : "bg-muted/20 border border-transparent"
+                        }`}
+                      >
+                        {/* Role label */}
+                        <span className={`text-sm font-semibold ${active ? "text-foreground" : "text-muted-foreground"}`}>
+                          {def.label}
+                        </span>
+
+                        {/* Count */}
+                        <div className="flex items-center justify-center gap-1">
+                          <button type="button" onClick={() => setCount(count - 1)}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30"
+                            disabled={count === 0}>−</button>
+                          <span className={`w-6 text-center text-sm font-bold tabular-nums ${active ? "text-foreground" : "text-muted-foreground"}`}>
+                            {count}
+                          </span>
+                          <button type="button" onClick={() => setCount(count + 1)}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center">+</button>
+                        </div>
+
+                        {/* Days / wk */}
+                        <div className="flex items-center justify-center gap-1">
+                          <button type="button" onClick={() => setDays(days - 0.5)}
+                            disabled={!active || days <= 0.5}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30">−</button>
+                          <span className={`w-8 text-center text-sm tabular-nums ${active ? "text-foreground" : "text-muted-foreground/50"}`}>
+                            {active ? days : "—"}
+                          </span>
+                          <button type="button" onClick={() => setDays(days + 0.5)}
+                            disabled={!active || days >= 5}
+                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30">+</button>
+                        </div>
+
+                        {/* Rate */}
+                        <span className={`text-xs text-right tabular-nums ${active ? "text-muted-foreground" : "text-muted-foreground/40"}`}>
+                          €{rate.toLocaleString("it-IT")}/d
+                        </span>
+
+                        {/* Weekly */}
+                        <span className={`text-sm font-semibold text-right tabular-nums ${active ? "text-foreground" : "text-muted-foreground/30"}`}>
+                          {active ? fmt(weekly) : "—"}
+                        </span>
+                      </div>
+                    );
+                  })}
+
+                  {/* Total row — computed from visible STAFFING_ROLES to avoid phantom entries */}
+                  {(() => {
+                    const t = STAFFING_ROLES.reduce((acc, def) => {
+                      const role = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
+                      if (!role) return acc;
+                      const line = form.staffing.find(s => s.role_id === role.id);
+                      const count = line?.count ?? 0;
+                      const days = line?.days_per_week ?? def.defaultDays;
+                      const rate = line?.daily_rate_used ?? role.default_daily_rate;
+                      return { people: acc.people + count, days: acc.days + count * days, weekly: acc.weekly + count * days * rate };
+                    }, { people: 0, days: 0, weekly: 0 });
+                    return (
+                      <div className="flex items-center justify-between pt-3 border-t mt-2 px-2">
+                        <span className="text-xs text-muted-foreground">
+                          {t.people} people · {t.days.toFixed(1)} days/wk
+                        </span>
+                        <span className="font-bold text-base">{fmt(t.weekly)}/week</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">Loading roles…</div>
+              )}
+            </CardContent>
+          </Card>
+          </div>{/* end right column */}
+        </div>{/* end two-column grid */}
 
           {/* SECTION B: Pricing Waterfall Chart */}
           {recommendation && (() => {
@@ -3742,7 +3667,7 @@ export default function PricingTool() {
             // base + layers + (adj?) + NET1 + markups + (GROSS1?) + (VarFee + GROSSV if variable>0 & markups)
             const hasGrossV = hasMarkups && variableFeePct > 0;
             const totalBarCount = 1 + bars.length + (manualDelta !== 0 ? 1 : 0) + 1 + markupBars.length + (hasMarkups ? 1 : 0) + (hasGrossV ? 2 : 0);
-            const W = 700; const H = 240;
+            const W = 900; const H = 260;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
             const chartH = chartBot - chartTop;
@@ -3753,8 +3678,16 @@ export default function PricingTool() {
             const hOf = (v1: number, v2: number) => Math.abs(yOf(v1) - yOf(v2));
 
             const SHORT: Record<string, string> = {
-              "Geography": "Geo", "Sector": "Sector", "Ownership": "PE/Corp",
-              "Client Size": "Size", "Client Profile": "Client", "Strategic Intent": "Intent",
+              "Geography": "P1 Geo", "Sector": "P2 Sector", "Ownership": "P3 PE/Corp",
+              "Client Size": "P4 Size", "Client Profile": "P5 Sensitivity", "Strategic Intent": "P6 Intent",
+            };
+            const TOOLTIP: Record<string, string> = {
+              "Geography": "P1 — Geography: adjusts price based on regional market rates. IT=baseline, US=+60%, UK=+20%, DACH=+10%–20%, SEA=−10%",
+              "Sector": "P2 — Sector: industry-specific multiplier. Pharma/Healthcare +10%, Software/SaaS +5%, Industrial baseline",
+              "Ownership": "P3 — Ownership: PE-owned = baseline (1.0×), non-PE/family-owned = typically 0.85×",
+              "Client Size": "P4 — Client Size: revenue band multiplier. >€1B = baseline, €200M–€1B = 0.95×, €100M–€200M = 0.90×, <€100M = 0.80×",
+              "Client Profile": "P5 — Price Sensitivity: High = −10%, Medium = baseline, Low = +10%. Reflects client's willingness to pay",
+              "Strategic Intent": "P6 — Strategic Intent: adjusts for deal type. Offensive/competitive = premium, defensive/retention = discount",
             };
 
             const toggleBar = (label: string) => setDisabledBars(prev => {
@@ -3765,9 +3698,7 @@ export default function PricingTool() {
 
             return (
               <div className="border rounded-lg p-4 bg-muted/10">
-                <div className="flex items-start gap-5">
-                  {/* Left: waterfall SVG */}
-                  <div className="flex-1 min-w-0 space-y-1">
+                <div className="space-y-1">
                     <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Pricing Waterfall</div>
                     <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
                       {/* Green band background */}
@@ -3813,7 +3744,9 @@ export default function PricingTool() {
                                 fill="white" stroke={b.isDisabled ? "#cbd5e1" : "#166534"} strokeWidth="0.5" />
                             </g>
                             <line x1={xOf(i) + barW} y1={yOf(b.start)} x2={x} y2={yOf(b.start)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                            <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity={b.isDisabled ? 0.3 : (isZero ? 0.45 : 0.85)} />
+                            <rect x={x} y={y} width={barW} height={h} fill={color} rx="2" opacity={b.isDisabled ? 0.3 : (isZero ? 0.45 : 0.85)} style={{ cursor: "help" }}>
+                              <title>{TOOLTIP[b.label] ?? b.label}{b.note ? `\n${b.note}` : ""}{!isZero ? `\nImpact: ${sign}${fmt(deltaEur)} (${sign}${b.deltaPct.toFixed(1)}%)` : ""}</title>
+                            </rect>
                             <text x={x + barW/2} y={textY} textAnchor="middle" fontSize="8" fill={b.isDisabled ? "#94a3b8" : (isZero ? "#94a3b8" : color)} fontWeight="bold">
                               {b.isDisabled ? "—" : (isZero ? "—" : `${sign}${fmt(deltaEur)}`)}
                             </text>
@@ -3822,7 +3755,7 @@ export default function PricingTool() {
                                 {sign}{b.deltaPct.toFixed(0)}%
                               </text>
                             )}
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill={b.isDisabled ? "#cbd5e1" : "#64748b"}>{SHORT[b.label] ?? b.label}</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7" fill={b.isDisabled ? "#cbd5e1" : "#64748b"}>{SHORT[b.label] ?? b.label}</text>
                           </g>
                         );
                       })}
@@ -3950,216 +3883,126 @@ export default function PricingTool() {
                       {/* Baseline */}
                       <line x1="25" y1={chartBot} x2={W - 5} y2={chartBot} stroke="#e2e8f0" strokeWidth="0.5" />
                     </svg>
-                  </div>
-
-                  {/* Right: green band info */}
-                  <div className="w-28 shrink-0 flex flex-col gap-2 pt-6 text-center">
-                    {hasGreenBand && (
-                      <div className="text-[10px] text-emerald-600">
-                        🟢 {fmt(greenLow)}–{fmt(greenHigh)}
-                      </div>
-                    )}
-                    <div className="text-[10px] text-muted-foreground">{effectiveDuration}w</div>
-                  </div>
                 </div>
               </div>
             );
           })()}
 
-          {/* SECTION C: Commercial Analysis */}
+          {/* ── PRICING HEALTH SCORECARD ─────────────────────────────── */}
           {recommendation && nwfClamped > 0 && (() => {
+            const dur = (waterfallDuration ?? form.duration_weeks) || 0;
+            const netWk = canonicalNetWeekly;
+            const grossWk = canonicalGrossWeekly;
+            const grossVWk = variableFeePct > 0 ? Math.round(grossWk * (1 + variableFeePct / 100)) : grossWk;
+            const grossVTotal = grossVWk * dur;
+            const teamCostWk = recommendation.delivery_cost_weekly ?? 0;
+            const grossTotal = grossWk * dur;
+            const teamCostTotal = Math.round(teamCostWk * dur);
+            const gmPct = grossTotal > 0 ? ((grossTotal - teamCostTotal) / grossTotal * 100) : 0;
             const cur = getCurrencyForRegion(form.region);
-            const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
-            const fmtK2 = (n: number) => `${cur.symbol}${Math.round(n / 1000)}k`;
+            const fmtH = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
 
-            const regionMap2: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
-            const matrixRegion2 = regionMap2[form.region] ?? "Italy";
-            const competitorBenchmarks = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
+            // Check 1: Gross Margin >= 55%
+            const gm55 = teamCostWk > 0;
+            const gm55Pass = gm55 && gmPct >= 55;
 
-            // (TNF / EBITDA ratios were moved to the right-column fee summary next to Gross/Net Project Fees.)
+            // Check 2: Net price within green band
+            const cAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
+            const wBench = benchmarks.find(b =>
+              cAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+              (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+            );
+            const gLow = wBench?.green_low ?? 0;
+            const gHigh = wBench?.green_high ?? 0;
+            const hasGreen = gLow > 0 && gHigh > 0;
+            const greenPass = hasGreen && netWk >= gLow && netWk <= gHigh;
 
-            // Benchmark totals for this region
-            const benchRows = competitorBenchmarks.map(b => {
-              const minW = (b.rates as any)[matrixRegion2]?.min_weekly ?? 0;
-              const maxW = (b.rates as any)[matrixRegion2]?.max_weekly ?? 0;
-              const avg = ((minW + maxW) / 2) * (form.duration_weeks || 12);
-              return { label: b.label, color: "#94a3b8", avg }; // competitor bars always grey
-            }).filter(r => r.avg > 0);
-
-            // Gross / Net fees for display in Section C
-            const secCEffDur = waterfallDuration ?? form.duration_weeks ?? 0;
-            const secCBaseWkly = nwfClamped + manualDelta;
-            const secCFinalWkly = Math.round(secCBaseWkly * (1 + variableFeePct / 100 + adminFeePct / 100));
-            const secCGross = Math.round(secCBaseWkly * secCEffDur);
-            const secCNet = Math.round(secCFinalWkly * secCEffDur);
-            const allBenchVals = [...benchRows.map(r => r.avg), tnf];
-            const benchScale = Math.max(...allBenchVals, 1) * 1.1;
-            const pctBar = (v: number) => `${Math.min(100, (v / benchScale) * 100).toFixed(1)}%`;
-
-            // Region band bars — merge all countries in the region (same as Win-Loss tab)
+            // Check 3: Net price <= highest won price in that country/region
             const regionKey = countryToRegion(form.region) ?? form.region;
-            const regionCountries = benchmarks.map(b => b.country).filter(c => (countryToRegion(c) ?? c) === regionKey);
-            const mergeRegionBench = (param: string): CountryBenchmarkRow | undefined => {
-              const rows = [...new Set(regionCountries)].map(c =>
-                benchmarks.find(b => b.country === c && b.parameter.toLowerCase().includes(param))
-              ).filter(Boolean) as CountryBenchmarkRow[];
-              const nonZero = rows.filter(r => r.yellow_high > 0);
-              if (nonZero.length === 0) return rows[0]; // return first even if zero
-              return {
-                country: regionKey,
-                parameter: nonZero[0].parameter,
-                yellow_low: Math.min(...nonZero.map(r => r.yellow_low)),
-                green_low: Math.min(...nonZero.map(r => r.green_low)),
-                green_high: Math.max(...nonZero.map(r => r.green_high)),
-                yellow_high: Math.max(...nonZero.map(r => r.yellow_high)),
-                decisiveness_pct: Math.round(nonZero.reduce((s, r) => s + r.decisiveness_pct, 0) / nonZero.length),
-              };
-            };
-            const weeklyBench = mergeRegionBench("weekly") ?? mergeRegionBench("fee");
-            const totalBench = mergeRegionBench("total") ?? mergeRegionBench("cost");
+            const wonInRegion = analysisProposals.filter(p =>
+              p.outcome === "won" && p.weekly_price > 0 && (countryToRegion(proposalRegionKey(p)) ?? proposalRegionKey(p)) === regionKey
+            );
+            const maxWonWk = wonInRegion.length > 0 ? Math.max(...wonInRegion.map(p => p.weekly_price)) : null;
+            const wonPass = maxWonWk !== null && netWk <= maxWonWk;
 
-            const BandBar = ({ bench, marker, label }: { bench: CountryBenchmarkRow | undefined; marker: number; label: string }) => {
-              if (!bench || bench.yellow_high === 0) {
-                return (
-                  <div className="space-y-0.5">
-                    <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
-                    <div className="text-[9px] text-muted-foreground italic">No benchmark</div>
-                  </div>
-                );
-              }
-              const rangeLow = Math.min(bench.yellow_low * 0.75, marker * 0.85);
-              const rangeHigh = Math.max(bench.yellow_high * 1.15, marker * 1.15);
-              const span = rangeHigh - rangeLow;
-              const pct = (v: number) => Math.max(0, Math.min(100, ((v - rangeLow) / span) * 100));
-              const markerPct = pct(marker);
-              const band = marker >= bench.green_low && marker <= bench.green_high ? "green"
-                : marker >= bench.yellow_low && marker <= bench.yellow_high ? "yellow" : "red";
-              const bandColor = band === "green" ? "text-emerald-600" : band === "yellow" ? "text-amber-600" : "text-red-600";
-              return (
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
-                    <div className={`text-[10px] font-bold ${bandColor}`}>{band === "green" ? "🟢" : band === "yellow" ? "🟡" : "🔴"}</div>
-                  </div>
-                  <div className="relative h-5 rounded overflow-hidden border border-border">
-                    <div className="absolute inset-y-0 bg-red-400/40" style={{ left: 0, width: `${pct(bench.yellow_low)}%` }} />
-                    <div className="absolute inset-y-0 bg-amber-300/60" style={{ left: `${pct(bench.yellow_low)}%`, width: `${pct(bench.green_low) - pct(bench.yellow_low)}%` }} />
-                    <div className="absolute inset-y-0 bg-emerald-400/70" style={{ left: `${pct(bench.green_low)}%`, width: `${pct(bench.green_high) - pct(bench.green_low)}%` }} />
-                    <div className="absolute inset-y-0 bg-amber-300/60" style={{ left: `${pct(bench.green_high)}%`, width: `${pct(bench.yellow_high) - pct(bench.green_high)}%` }} />
-                    <div className="absolute inset-y-0 bg-red-400/40" style={{ left: `${pct(bench.yellow_high)}%`, right: 0 }} />
-                    <div className="absolute inset-y-0 w-0.5 bg-foreground" style={{ left: `calc(${markerPct}% - 1px)` }} />
-                  </div>
-                  <div className="flex justify-between text-[8px] text-muted-foreground font-mono">
-                    <span>{fmtK2(rangeLow)}</span>
-                    <span className="text-emerald-700">{fmtK2(bench.green_low)}–{fmtK2(bench.green_high)}</span>
-                    <span>{fmtK2(rangeHigh)}</span>
-                  </div>
-                  <div className="text-[9px] text-center font-semibold">{fmtC(marker)}<span className="text-muted-foreground font-normal ml-1">({bench.decisiveness_pct}% decisive)</span></div>
+            // Check 4a: Total project cost / EBITDA <= 2%
+            const revM = form.company_revenue_m ?? 0;
+            const ebitdaPct = form.ebitda_margin_pct ?? 0;
+            const companyEBITDA = revM * ebitdaPct / 100 * 1_000_000; // in €
+            const hasEBITDA = companyEBITDA > 0;
+            const feesOverEBITDA = hasEBITDA ? grossVTotal / companyEBITDA : null;
+            const ebitdaPass = feesOverEBITDA !== null && feesOverEBITDA <= 0.02;
+
+            // Check 4b: Total project cost / aspiration EBITDA increase <= 20%
+            const aspPct = form.aspiration_ebitda_pct ?? 0;
+            const aspEBITDA = hasEBITDA && aspPct > 0 ? companyEBITDA * aspPct / 100 : 0;
+            const hasAsp = aspEBITDA > 0;
+            const feesOverAsp = hasAsp ? grossVTotal / aspEBITDA : null;
+            const aspPass = feesOverAsp !== null && feesOverAsp <= 0.20;
+
+            // Overall score
+            const checks = [
+              { available: gm55, pass: gm55Pass },
+              { available: hasGreen, pass: greenPass },
+              { available: maxWonWk !== null, pass: wonPass },
+              { available: hasEBITDA, pass: ebitdaPass },
+              { available: hasAsp, pass: aspPass },
+            ];
+            const availableCount = checks.filter(c => c.available).length;
+            const passCount = checks.filter(c => c.available && c.pass).length;
+            const allPass = availableCount > 0 && passCount === availableCount;
+
+            type Status = "pass" | "fail" | "na";
+            const Row = ({ status, label, detail }: { status: Status; label: string; detail: string }) => (
+              <div className={`flex items-start gap-2.5 py-1.5 ${status === "na" ? "opacity-50" : ""}`}>
+                <span className="text-base mt-0.5 shrink-0">
+                  {status === "pass" ? "✅" : status === "fail" ? "❌" : "⚠️"}
+                </span>
+                <div className="min-w-0">
+                  <span className="text-sm font-semibold">{label}</span>
+                  <span className="text-xs text-muted-foreground ml-2">{detail}</span>
                 </div>
-              );
-            };
+              </div>
+            );
 
             return (
-              <div className="border rounded-lg p-5 bg-muted/10 space-y-3">
-                <div className="text-sm font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
-                <div>
-                  {/* Market benchmarks (combined box) */}
-                  <div className="border rounded-lg p-3 bg-background space-y-3">
-                    {/* TNF total */}
-                    <div className="flex items-center justify-between rounded bg-primary/5 border border-primary/15 px-2 py-1.5">
-                      <span className="text-[10px] font-semibold text-muted-foreground">Total Net Fees (TNF)</span>
-                      <span className="text-sm font-bold text-primary">
-                        {fmtC(tnf)}
-                        <span className="text-[9px] font-normal text-muted-foreground ml-1">{form.duration_weeks}w × {fmtC(nwfClamped)}/wk</span>
-                      </span>
-                    </div>
-                    {/* TNF vs Market — single line with dots */}
-                    {benchRows.length > 0 && (() => {
-                      const allPoints = [...benchRows, { label: "Our TNF", color: "#1A6571", avg: tnf, isOurs: true }];
-                      const maxVal = Math.max(...allPoints.map(p => p.avg)) * 1.1;
-                      const pctDot = (v: number) => Math.min(100, Math.max(0, (v / maxVal) * 100));
-                      return (
-                        <div className="space-y-1">
-                          <div className="text-[10px] font-bold uppercase text-muted-foreground">TNF vs Market — {matrixRegion2}</div>
-                          <div className="relative h-6 bg-muted/30 rounded-full border border-border/30">
-                            {allPoints.map((t, i) => (
-                              <div key={i} className="absolute top-1/2 -translate-y-1/2" style={{ left: `${pctDot(t.avg)}%` }}>
-                                <div className="relative">
-                                  <div className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${(t as any).isOurs ? "ring-1 ring-[#1A6571]" : ""}`}
-                                    style={{ backgroundColor: t.color, marginLeft: "-7px" }}
-                                    title={`${t.label}: ${fmtK2(t.avg)}`} />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="flex justify-between flex-wrap gap-x-3 gap-y-0.5">
-                            {allPoints.map((t, i) => (
-                              <span key={i} className="text-[8px] flex items-center gap-1">
-                                <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: t.color }} />
-                                <span className={(t as any).isOurs ? "font-bold text-[#1A6571]" : "text-muted-foreground"}>{t.label} {fmtK2(t.avg)}</span>
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    {/* Band bars */}
-                    <BandBar bench={weeklyBench} marker={canonicalNetWeekly} label={`Weekly — ${regionKey} · ${form.pe_owned ? "PE" : "Corp"} ${form.revenue_band === "above_1b" ? ">€1B" : form.revenue_band === "200m_1b" ? "€200M-€1B" : "<€200M"}`} />
-                    <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total cost — ${regionKey}`} />
-
-                    {/* W/L Comparables */}
-                    {(() => {
-                      const wins = recommendation.comparable_wins ?? [];
-                      const losses = recommendation.comparable_losses ?? [];
-                      const avgWin = recommendation.comparable_avg_win_weekly;
-                      const avgLoss = recommendation.comparable_avg_loss_weekly;
-                      if (wins.length === 0 && losses.length === 0) return (
-                        <div className="text-[9px] text-muted-foreground italic">No W/L comparables found</div>
-                      );
-                      const allAvgs = [avgWin, avgLoss, nwfClamped].filter(Boolean) as number[];
-                      const compScale = Math.max(...allAvgs) * 1.2;
-                      const pctW = (v: number) => `${Math.min(100, (v / compScale) * 100).toFixed(1)}%`;
-                      return (
-                        <div className="space-y-1.5 pt-1 border-t border-border">
-                          <div className="text-[10px] font-bold uppercase text-muted-foreground">W/L Comparables ({wins.length}W / {losses.length}L)</div>
-                          {avgWin != null && (
-                            <div className="space-y-0.5">
-                              <div className="flex justify-between text-[9px]">
-                                <span className="text-emerald-700 font-semibold">Avg Won ({wins.length})</span>
-                                <span className="font-mono">{fmtC(avgWin)}/wk</span>
-                              </div>
-                              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                <div className="h-full rounded-full bg-emerald-500" style={{ width: pctW(avgWin) }} />
-                              </div>
-                            </div>
-                          )}
-                          {avgLoss != null && (
-                            <div className="space-y-0.5">
-                              <div className="flex justify-between text-[9px]">
-                                <span className="text-red-600 font-semibold">Avg Lost ({losses.length})</span>
-                                <span className="font-mono">{fmtC(avgLoss)}/wk</span>
-                              </div>
-                              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                <div className="h-full rounded-full bg-red-400" style={{ width: pctW(avgLoss) }} />
-                              </div>
-                            </div>
-                          )}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[9px]">
-                              <span className="text-[#1A6571] font-bold">Our Net1</span>
-                              <span className="font-mono">{fmtC(canonicalNetWeekly)}/wk</span>
-                            </div>
-                            <div className="h-2 bg-muted rounded-full overflow-hidden">
-                              <div className="h-full rounded-full bg-[#1A6571]" style={{ width: pctW(canonicalNetWeekly) }} />
-                            </div>
-                          </div>
-                          <div className="text-[9px] text-muted-foreground leading-relaxed pt-1 border-t border-border/50">
-                            Comparables are scored by similarity: same fund (40 pts), same region (25 pts), same PE/non-PE ownership (15 pts), same revenue band (20 pts). Top 8 projects with score ≥25 are selected. Won and lost averages shown above.
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
+              <div className={`border-l-4 rounded-lg p-4 bg-background shadow-sm ${
+                allPass ? "border-l-emerald-500" : "border-l-red-400"
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Pricing Health</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                    allPass ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+                  }`}>
+                    {passCount}/{availableCount} passed
+                  </span>
+                </div>
+                <div className="divide-y">
+                  <Row
+                    status={!gm55 ? "na" : gm55Pass ? "pass" : "fail"}
+                    label="Gross Margin ≥ 55%"
+                    detail={gm55 ? `${gmPct.toFixed(0)}% GM on ${fmtH(grossTotal)} gross` : "no cost data"}
+                  />
+                  <Row
+                    status={!hasGreen ? "na" : greenPass ? "pass" : "fail"}
+                    label="Net price in green band"
+                    detail={hasGreen ? `${fmtH(netWk)}/wk vs band ${fmtH(gLow)}–${fmtH(gHigh)}` : "no benchmark for region"}
+                  />
+                  <Row
+                    status={maxWonWk === null ? "na" : wonPass ? "pass" : "fail"}
+                    label="Below highest won price"
+                    detail={maxWonWk !== null ? `${fmtH(netWk)}/wk vs max won ${fmtH(maxWonWk)} (${regionKey}, ${wonInRegion.length} wins)` : "no won projects in region"}
+                  />
+                  <Row
+                    status={!hasEBITDA ? "na" : ebitdaPass ? "pass" : "fail"}
+                    label="Fees / EBITDA ≤ 2%"
+                    detail={hasEBITDA ? `${(feesOverEBITDA! * 100).toFixed(1)}% of €${(companyEBITDA / 1_000_000).toFixed(1)}M EBITDA` : "enter revenue & EBITDA margin"}
+                  />
+                  <Row
+                    status={!hasAsp ? "na" : aspPass ? "pass" : "fail"}
+                    label="Fees / Aspiration EBITDA ≤ 20%"
+                    detail={hasAsp ? `${(feesOverAsp! * 100).toFixed(0)}% of €${(aspEBITDA / 1_000_000).toFixed(1)}M aspiration increase` : "enter aspiration EBITDA %"}
+                  />
                 </div>
               </div>
             );
@@ -4379,9 +4222,12 @@ export default function PricingTool() {
                     const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
                     const hasDiscounts = enabledDisc.length > 0 || variableFeePct > 0;
 
-                    // GROSSV total = gross total + variable fee (same base as waterfall)
-                    const varFeeTotal = Math.round(grossWk * variableFeePct / 100 * dur);
-                    const grossVTotal = grossTotal + varFeeTotal;
+                    // GROSSV total — use EXACT same formula as waterfall: Math.round(GROSS1 × (1+var%)) × dur
+                    const grossVWeekly = variableFeePct > 0
+                      ? Math.round(grossWk * (1 + variableFeePct / 100))
+                      : grossWk;
+                    const grossVTotal = grossVWeekly * dur;
+                    const varFeeTotal = grossVTotal - grossTotal;
                     // Headline = GROSSV (the all-inclusive number we report)
                     const headlineGross = grossVTotal;
 
@@ -4472,158 +4318,236 @@ export default function PricingTool() {
             );
           })()}
 
-          {/* SECTION B-old: Staffing moved to right column */}
-          {/* Staffing Build-up — now in right column */}
-          <div className="hidden">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Staffing Build-up</CardTitle>
-                {baseWeeklyDisplay > 0 && (
-                  <span className="text-sm font-semibold text-muted-foreground">
-                    Base: <span className="text-foreground">{fmt(baseWeeklyDisplay)}/wk</span>
-                  </span>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {settings ? (
-                <div className="space-y-1">
-                  {/* Header */}
-                  <div className="grid grid-cols-[120px_1fr_1fr_80px_90px] gap-2 px-2 pb-1">
-                    <span className="text-[10px] font-bold uppercase text-muted-foreground">Role</span>
-                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-center">How many</span>
-                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-center">Days / wk</span>
-                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-right">Rate</span>
-                    <span className="text-[10px] font-bold uppercase text-muted-foreground text-right">Weekly</span>
+          {/* ── COLLAPSIBLE: Benchmarks & Market Analysis ─────────── */}
+          <div className="border rounded-lg bg-muted/10 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowBenchmarks(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/20 transition-colors"
+            >
+              <span className="text-xs font-bold uppercase text-muted-foreground tracking-wide">
+                Benchmarks & Market Analysis
+              </span>
+              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showBenchmarks ? "rotate-180" : ""}`} />
+            </button>
+            {showBenchmarks && (
+              <div className="space-y-5 px-4 pb-4">
+
+          {/* SECTION C: Commercial Analysis */}
+          {recommendation && nwfClamped > 0 && (() => {
+            const cur = getCurrencyForRegion(form.region);
+            const fmtC = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
+            const fmtK2 = (n: number) => `${cur.symbol}${Math.round(n / 1000)}k`;
+
+            // Map all regions to rate matrix keys — fall back to nearest benchmark region
+            const regionMap2: Record<string, string> = {
+              IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US",
+              DACH: "DACH", Nordics: "DACH", "Other EU": "France", "Middle East": "UK", Asia: "US", SEA: "US",
+            };
+            const matrixRegion2 = regionMap2[form.region] ?? "Italy";
+            const competitorBenchmarks = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
+
+            // (TNF / EBITDA ratios were moved to the right-column fee summary next to Gross/Net Project Fees.)
+
+            // Benchmark totals for this region
+            const benchRows = competitorBenchmarks.map(b => {
+              const minW = (b.rates as any)[matrixRegion2]?.min_weekly ?? 0;
+              const maxW = (b.rates as any)[matrixRegion2]?.max_weekly ?? 0;
+              const avg = ((minW + maxW) / 2) * (form.duration_weeks || 12);
+              return { label: b.label, color: "#94a3b8", avg }; // competitor bars always grey
+            }).filter(r => r.avg > 0);
+
+            // Gross / Net fees for display in Section C
+            const secCEffDur = waterfallDuration ?? form.duration_weeks ?? 0;
+            const secCBaseWkly = nwfClamped + manualDelta;
+            const secCFinalWkly = Math.round(secCBaseWkly * (1 + variableFeePct / 100 + adminFeePct / 100));
+            const secCGross = Math.round(secCBaseWkly * secCEffDur);
+            const secCNet = Math.round(secCFinalWkly * secCEffDur);
+            const allBenchVals = [...benchRows.map(r => r.avg), tnf];
+            const benchScale = Math.max(...allBenchVals, 1) * 1.1;
+            const pctBar = (v: number) => `${Math.min(100, (v / benchScale) * 100).toFixed(1)}%`;
+
+            // Region band bars — merge all countries in the region (same as Win-Loss tab)
+            const regionKey = countryToRegion(form.region) ?? form.region;
+            const regionCountries = benchmarks.map(b => b.country).filter(c => (countryToRegion(c) ?? c) === regionKey);
+            const mergeRegionBench = (param: string): CountryBenchmarkRow | undefined => {
+              const rows = [...new Set(regionCountries)].map(c =>
+                benchmarks.find(b => b.country === c && b.parameter.toLowerCase().includes(param))
+              ).filter(Boolean) as CountryBenchmarkRow[];
+              const nonZero = rows.filter(r => r.yellow_high > 0);
+              if (nonZero.length === 0) return rows[0]; // return first even if zero
+              return {
+                country: regionKey,
+                parameter: nonZero[0].parameter,
+                yellow_low: Math.min(...nonZero.map(r => r.yellow_low)),
+                green_low: Math.min(...nonZero.map(r => r.green_low)),
+                green_high: Math.max(...nonZero.map(r => r.green_high)),
+                yellow_high: Math.max(...nonZero.map(r => r.yellow_high)),
+                decisiveness_pct: Math.round(nonZero.reduce((s, r) => s + r.decisiveness_pct, 0) / nonZero.length),
+              };
+            };
+            const weeklyBench = mergeRegionBench("weekly") ?? mergeRegionBench("fee");
+            const totalBench = mergeRegionBench("total") ?? mergeRegionBench("cost");
+
+            const BandBar = ({ bench, marker, label }: { bench: CountryBenchmarkRow | undefined; marker: number; label: string }) => {
+              if (!bench || bench.yellow_high === 0) {
+                return (
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
+                    <div className="text-[9px] text-muted-foreground italic">No benchmark</div>
                   </div>
-
-                  {STAFFING_ROLES.map(def => {
-                    const adminRole = settings.roles.find(r =>
-                      r.role_name.toLowerCase().includes(def.match.toLowerCase())
-                    );
-                    if (!adminRole) return null;
-
-                    const line = form.staffing.find(s => s.role_id === adminRole.id);
-                    const count = line?.count ?? 0;
-                    const days = line?.days_per_week ?? def.defaultDays;
-                    const rate = adminRole.default_daily_rate;
-                    const weekly = count > 0 ? count * days * rate : 0;
-                    const active = count > 0;
-
-                    const setCount = (n: number) => {
-                      const newCount = Math.max(0, Math.min(10, n));
-                      if (newCount === 0) {
-                        // Remove from staffing
-                        setForm(f => ({ ...f, staffing: f.staffing.filter(s => s.role_id !== adminRole.id) }));
-                      } else if (line) {
-                        updateStaffingLine(adminRole.id, "count", newCount);
-                      } else {
-                        // Add to staffing
-                        setForm(f => ({
-                          ...f,
-                          staffing: [...f.staffing, {
-                            role_id: adminRole.id,
-                            role_name: def.label,
-                            days_per_week: def.defaultDays,
-                            daily_rate_used: rate,
-                            count: newCount,
-                          }],
-                        }));
-                      }
-                    };
-
-                    const setDays = (d: number) => {
-                      const newDays = Math.max(0.5, Math.min(5, d));
-                      if (line) {
-                        updateStaffingLine(adminRole.id, "days_per_week", newDays);
-                      }
-                    };
-
-                    return (
-                      <div key={def.label}
-                        className={`grid grid-cols-[120px_1fr_1fr_80px_90px] gap-2 items-center rounded-lg px-2 py-2 transition-colors ${
-                          active ? "bg-primary/5 border border-primary/15" : "bg-muted/20 border border-transparent"
-                        }`}
-                      >
-                        {/* Role label */}
-                        <span className={`text-sm font-semibold ${active ? "text-foreground" : "text-muted-foreground"}`}>
-                          {def.label}
-                        </span>
-
-                        {/* Count */}
-                        <div className="flex items-center justify-center gap-1">
-                          <button type="button" onClick={() => setCount(count - 1)}
-                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30"
-                            disabled={count === 0}>−</button>
-                          <span className={`w-6 text-center text-sm font-bold tabular-nums ${active ? "text-foreground" : "text-muted-foreground"}`}>
-                            {count}
-                          </span>
-                          <button type="button" onClick={() => setCount(count + 1)}
-                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center">+</button>
-                        </div>
-
-                        {/* Days / wk */}
-                        <div className="flex items-center justify-center gap-1">
-                          <button type="button" onClick={() => setDays(days - 0.5)}
-                            disabled={!active || days <= 0.5}
-                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30">−</button>
-                          <span className={`w-8 text-center text-sm tabular-nums ${active ? "text-foreground" : "text-muted-foreground/50"}`}>
-                            {active ? days : "—"}
-                          </span>
-                          <button type="button" onClick={() => setDays(days + 0.5)}
-                            disabled={!active || days >= 5}
-                            className="w-6 h-6 rounded-md border bg-background hover:bg-muted text-sm font-bold leading-none flex items-center justify-center disabled:opacity-30">+</button>
-                        </div>
-
-                        {/* Rate */}
-                        <span className={`text-xs text-right tabular-nums ${active ? "text-muted-foreground" : "text-muted-foreground/40"}`}>
-                          €{rate.toLocaleString("it-IT")}/d
-                        </span>
-
-                        {/* Weekly */}
-                        <span className={`text-sm font-semibold text-right tabular-nums ${active ? "text-foreground" : "text-muted-foreground/30"}`}>
-                          {active ? fmt(weekly) : "—"}
-                        </span>
-                      </div>
-                    );
-                  })}
-
-                  {/* Total row — computed from visible STAFFING_ROLES to avoid phantom entries */}
-                  {(() => {
-                    const t = STAFFING_ROLES.reduce((acc, def) => {
-                      const role = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
-                      if (!role) return acc;
-                      const line = form.staffing.find(s => s.role_id === role.id);
-                      const count = line?.count ?? 0;
-                      const days = line?.days_per_week ?? def.defaultDays;
-                      const rate = line?.daily_rate_used ?? role.default_daily_rate;
-                      return { people: acc.people + count, days: acc.days + count * days, weekly: acc.weekly + count * days * rate };
-                    }, { people: 0, days: 0, weekly: 0 });
-                    return (
-                      <div className="flex items-center justify-between pt-3 border-t mt-2 px-2">
-                        <span className="text-xs text-muted-foreground">
-                          {t.people} people · {t.days.toFixed(1)} days/wk
-                        </span>
-                        <span className="font-bold text-base">{fmt(t.weekly)}/week</span>
-                      </div>
-                    );
-                  })()}
+                );
+              }
+              const rangeLow = Math.min(bench.yellow_low * 0.75, marker * 0.85);
+              const rangeHigh = Math.max(bench.yellow_high * 1.15, marker * 1.15);
+              const span = rangeHigh - rangeLow;
+              const pct = (v: number) => Math.max(0, Math.min(100, ((v - rangeLow) / span) * 100));
+              const markerPct = pct(marker);
+              const band = marker >= bench.green_low && marker <= bench.green_high ? "green"
+                : marker >= bench.yellow_low && marker <= bench.yellow_high ? "yellow" : "red";
+              const bandColor = band === "green" ? "text-emerald-600" : band === "yellow" ? "text-amber-600" : "text-red-600";
+              return (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">{label}</div>
+                    <div className={`text-[10px] font-bold ${bandColor}`}>{band === "green" ? "🟢" : band === "yellow" ? "🟡" : "🔴"}</div>
+                  </div>
+                  <div className="relative h-5 rounded overflow-hidden border border-border">
+                    <div className="absolute inset-y-0 bg-red-400/40" style={{ left: 0, width: `${pct(bench.yellow_low)}%` }} />
+                    <div className="absolute inset-y-0 bg-amber-300/60" style={{ left: `${pct(bench.yellow_low)}%`, width: `${pct(bench.green_low) - pct(bench.yellow_low)}%` }} />
+                    <div className="absolute inset-y-0 bg-emerald-400/70" style={{ left: `${pct(bench.green_low)}%`, width: `${pct(bench.green_high) - pct(bench.green_low)}%` }} />
+                    <div className="absolute inset-y-0 bg-amber-300/60" style={{ left: `${pct(bench.green_high)}%`, width: `${pct(bench.yellow_high) - pct(bench.green_high)}%` }} />
+                    <div className="absolute inset-y-0 bg-red-400/40" style={{ left: `${pct(bench.yellow_high)}%`, right: 0 }} />
+                    <div className="absolute inset-y-0 w-0.5 bg-foreground" style={{ left: `calc(${markerPct}% - 1px)` }} />
+                  </div>
+                  <div className="flex justify-between text-[8px] text-muted-foreground font-mono">
+                    <span>{fmtK2(rangeLow)}</span>
+                    <span className="text-emerald-700">{fmtK2(bench.green_low)}–{fmtK2(bench.green_high)}</span>
+                    <span>{fmtK2(rangeHigh)}</span>
+                  </div>
+                  <div className="text-[9px] text-center font-semibold">{fmtC(marker)}<span className="text-muted-foreground font-normal ml-1">({bench.decisiveness_pct}% decisive)</span></div>
                 </div>
-              ) : (
-                <div className="text-sm text-muted-foreground">Loading roles…</div>
-              )}
-            </CardContent>
-          </Card>
-          </div>{/* end hidden staffing */}
+              );
+            };
+
+            return (
+              <div className="border rounded-lg p-5 bg-muted/10 space-y-3">
+                <div className="text-sm font-bold uppercase text-muted-foreground tracking-wide">Commercial Analysis</div>
+                <div>
+                  {/* Market benchmarks (combined box) */}
+                  <div className="border rounded-lg p-3 bg-background space-y-3">
+                    {/* NET1 weekly header */}
+                    <div className="flex items-center justify-between rounded bg-emerald-50 border border-emerald-200 px-2 py-1.5">
+                      <span className="text-[10px] font-semibold text-muted-foreground">Our NET1 Weekly</span>
+                      <span className="text-sm font-bold text-emerald-700">
+                        {fmtC(canonicalNetWeekly)}<span className="text-[9px] font-normal text-muted-foreground ml-1">/week</span>
+                      </span>
+                    </div>
+                    {/* NET1 vs Market — weekly comparison with dots + labels under each dot */}
+                    {benchRows.length > 0 && (() => {
+                      // Convert competitor benchmarks to weekly (they were total = avg weekly × duration)
+                      const dur = form.duration_weeks || 12;
+                      const weeklyPoints = competitorBenchmarks.map(b => {
+                        const minW = (b.rates as any)[matrixRegion2]?.min_weekly ?? 0;
+                        const maxW = (b.rates as any)[matrixRegion2]?.max_weekly ?? 0;
+                        const avgW = (minW + maxW) / 2;
+                        return { label: b.label, color: "#94a3b8", avg: avgW, isOurs: false };
+                      }).filter(r => r.avg > 0);
+                      const allPoints = [...weeklyPoints, { label: "Our NET1", color: "#16a34a", avg: canonicalNetWeekly, isOurs: true }];
+                      const maxVal = Math.max(...allPoints.map(p => p.avg)) * 1.12;
+                      const pctDot = (v: number) => Math.min(95, Math.max(5, (v / maxVal) * 100));
+                      return (
+                        <div className="space-y-0.5">
+                          <div className="text-[10px] font-bold uppercase text-muted-foreground">NET1/wk vs Market — {matrixRegion2}</div>
+                          <div className="relative h-14 bg-muted/20 rounded-lg border border-border/20">
+                            {allPoints.map((t, i) => (
+                              <div key={i} className="absolute top-2 flex flex-col items-center" style={{ left: `${pctDot(t.avg)}%`, transform: "translateX(-50%)" }}>
+                                <div className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${t.isOurs ? "ring-2 ring-emerald-400" : ""}`}
+                                  style={{ backgroundColor: t.color }} />
+                                <span className={`text-[7px] mt-0.5 whitespace-nowrap font-semibold ${t.isOurs ? "text-emerald-700" : "text-muted-foreground"}`}>
+                                  {t.label.replace("(MBB)", "MBB").replace("(OW, SKP, Kearney)", "T2")}
+                                </span>
+                                <span className={`text-[8px] font-mono font-bold ${t.isOurs ? "text-emerald-700" : "text-muted-foreground"}`}>
+                                  {fmtK2(t.avg)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {/* Band bars */}
+                    <BandBar bench={weeklyBench} marker={canonicalNetWeekly} label={`Weekly — ${regionKey} · ${form.pe_owned ? "PE" : "Corp"} ${form.revenue_band === "above_1b" ? ">€1B" : form.revenue_band === "200m_1b" ? "€200M-€1B" : "<€200M"}`} />
+                    <BandBar bench={totalBench} marker={canonicalNetWeekly * (form.duration_weeks || 0)} label={`Total cost — ${regionKey}`} />
+
+                    {/* W/L Comparables */}
+                    {(() => {
+                      const wins = recommendation.comparable_wins ?? [];
+                      const losses = recommendation.comparable_losses ?? [];
+                      const avgWin = recommendation.comparable_avg_win_weekly;
+                      const avgLoss = recommendation.comparable_avg_loss_weekly;
+                      if (wins.length === 0 && losses.length === 0) return (
+                        <div className="text-[9px] text-muted-foreground italic">No W/L comparables found</div>
+                      );
+                      const allAvgs = [avgWin, avgLoss, nwfClamped].filter(Boolean) as number[];
+                      const compScale = Math.max(...allAvgs) * 1.2;
+                      const pctW = (v: number) => `${Math.min(100, (v / compScale) * 100).toFixed(1)}%`;
+                      return (
+                        <div className="space-y-1.5 pt-1 border-t border-border">
+                          <div className="text-[10px] font-bold uppercase text-muted-foreground">W/L Comparables ({wins.length}W / {losses.length}L)</div>
+                          {avgWin != null && (
+                            <div className="space-y-0.5">
+                              <div className="flex justify-between text-[9px]">
+                                <span className="text-emerald-700 font-semibold">Avg Won ({wins.length})</span>
+                                <span className="font-mono">{fmtC(avgWin)}/wk</span>
+                              </div>
+                              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                <div className="h-full rounded-full bg-emerald-500" style={{ width: pctW(avgWin) }} />
+                              </div>
+                            </div>
+                          )}
+                          {avgLoss != null && (
+                            <div className="space-y-0.5">
+                              <div className="flex justify-between text-[9px]">
+                                <span className="text-red-600 font-semibold">Avg Lost ({losses.length})</span>
+                                <span className="font-mono">{fmtC(avgLoss)}/wk</span>
+                              </div>
+                              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                <div className="h-full rounded-full bg-red-400" style={{ width: pctW(avgLoss) }} />
+                              </div>
+                            </div>
+                          )}
+                          <div className="space-y-0.5">
+                            <div className="flex justify-between text-[9px]">
+                              <span className="text-[#1A6571] font-bold">Our Net1</span>
+                              <span className="font-mono">{fmtC(canonicalNetWeekly)}/wk</span>
+                            </div>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full rounded-full bg-[#1A6571]" style={{ width: pctW(canonicalNetWeekly) }} />
+                            </div>
+                          </div>
+                          <div className="text-[9px] text-muted-foreground leading-relaxed pt-1 border-t border-border/50">
+                            Comparables are scored by similarity: same fund (40 pts), same region (25 pts), same PE/non-PE ownership (15 pts), same revenue band (20 pts). Top 8 projects with score ≥25 are selected. Won and lost averages shown above.
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ── MARKET BENCHMARK CHART ────────────────────────────── */}
           {(() => {
             const benchmarks: CompetitorBenchmark[] = settings?.competitor_benchmarks ?? DEFAULT_PRICING_SETTINGS.competitor_benchmarks;
             if (!benchmarks?.length) return null;
-            const regionMap: Record<string, string> = { IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US" };
-            const matrixRegion = regionMap[form.region] ?? null;
-            if (!matrixRegion) return null;
+            // Map all regions to rate matrix keys — fall back to nearest benchmark region
+            const regionMap: Record<string, string> = {
+              IT: "Italy", FR: "France", DE: "DACH", UK: "UK", US: "US",
+              DACH: "DACH", Nordics: "DACH", "Other EU": "France", "Middle East": "UK", Asia: "US", SEA: "US",
+            };
+            const matrixRegion = regionMap[form.region] ?? "Italy";
             const clientType = form.pe_owned
               ? (form.revenue_band === "above_1b" ? "PE >€1B"
                 : form.revenue_band === "200m_1b" ? "PE €200M-€1B"
@@ -4706,7 +4630,9 @@ export default function PricingTool() {
             );
           })()}
 
-
+              </div>
+            )}
+          </div>{/* end collapsible benchmarks */}
 
           {/* Save buttons */}
           <div className="flex gap-3 pt-2">
@@ -4720,724 +4646,6 @@ export default function PricingTool() {
               Cancel
             </Button>
           </div>
-        </div>
-
-        {/* ── RIGHT COLUMN: Staffing + Live Result ─────────────────────────── */}
-        <div className="lg:sticky lg:top-6 space-y-4">
-
-          {/* Staffing Build-up */}
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Staffing Build-up</CardTitle>
-                {baseWeeklyDisplay > 0 && (
-                  <span className="text-xs font-semibold text-muted-foreground">
-                    Base: <span className="text-foreground">{fmt(baseWeeklyDisplay)}/wk</span>
-                  </span>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {settings ? (
-                <div className="space-y-1">
-                  <div className="grid grid-cols-[80px_1fr_1fr_60px_70px] gap-1.5 px-1 pb-1">
-                    <span className="text-[9px] font-bold uppercase text-muted-foreground">Role</span>
-                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-center">Count</span>
-                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-center">d/wk</span>
-                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-right">Rate</span>
-                    <span className="text-[9px] font-bold uppercase text-muted-foreground text-right">Weekly</span>
-                  </div>
-                  {STAFFING_ROLES.map(def => {
-                    const adminRole = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
-                    if (!adminRole) return null;
-                    const line = form.staffing.find(s => s.role_id === adminRole.id);
-                    const count = line?.count ?? 0;
-                    const days = line?.days_per_week ?? def.defaultDays;
-                    const rate = adminRole.default_daily_rate;
-                    const weekly = count > 0 ? count * days * rate : 0;
-                    const active = count > 0;
-                    const setCount = (n: number) => {
-                      const newCount = Math.max(0, Math.min(10, n));
-                      if (newCount === 0) {
-                        setForm(f => ({ ...f, staffing: f.staffing.filter(s => s.role_id !== adminRole.id) }));
-                      } else if (line) {
-                        updateStaffingLine(adminRole.id, "count", newCount);
-                      } else {
-                        setForm(f => ({ ...f, staffing: [...f.staffing, { role_id: adminRole.id, role_name: def.label, days_per_week: def.defaultDays, daily_rate_used: rate, count: newCount }] }));
-                      }
-                    };
-                    const setDays = (d: number) => { if (line) updateStaffingLine(adminRole.id, "days_per_week", Math.max(0.5, Math.min(5, d))); };
-                    return (
-                      <div key={def.label} className={`grid grid-cols-[80px_1fr_1fr_60px_70px] gap-1.5 items-center rounded px-1 py-1.5 transition-colors ${active ? "bg-primary/5 border border-primary/15" : "bg-muted/20 border border-transparent"}`}>
-                        <span className={`text-xs font-semibold ${active ? "text-foreground" : "text-muted-foreground"}`}>{def.label}</span>
-                        <div className="flex items-center justify-center gap-0.5">
-                          <button type="button" onClick={() => setCount(count - 1)} disabled={count === 0} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center disabled:opacity-30">−</button>
-                          <span className={`w-5 text-center text-xs font-bold tabular-nums ${active ? "" : "text-muted-foreground"}`}>{count}</span>
-                          <button type="button" onClick={() => setCount(count + 1)} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center">+</button>
-                        </div>
-                        <div className="flex items-center justify-center gap-0.5">
-                          <button type="button" onClick={() => setDays(days - 0.5)} disabled={!active || days <= 0.5} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center disabled:opacity-30">−</button>
-                          <span className={`w-7 text-center text-xs tabular-nums ${active ? "" : "text-muted-foreground/50"}`}>{active ? days : "—"}</span>
-                          <button type="button" onClick={() => setDays(days + 0.5)} disabled={!active || days >= 5} className="w-5 h-5 rounded border bg-background hover:bg-muted text-xs font-bold flex items-center justify-center disabled:opacity-30">+</button>
-                        </div>
-                        <span className={`text-[10px] text-right tabular-nums ${active ? "text-muted-foreground" : "text-muted-foreground/40"}`}>€{rate.toLocaleString("it-IT")}/d</span>
-                        <span className={`text-xs font-semibold text-right tabular-nums ${active ? "text-foreground" : "text-muted-foreground/30"}`}>{active ? fmt(weekly) : "—"}</span>
-                      </div>
-                    );
-                  })}
-                  {(() => {
-                    const t = STAFFING_ROLES.reduce((acc, def) => {
-                      const role = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
-                      if (!role) return acc;
-                      const line = form.staffing.find(s => s.role_id === role.id);
-                      const count = line?.count ?? 0;
-                      const days = line?.days_per_week ?? def.defaultDays;
-                      const rate = line?.daily_rate_used ?? role.default_daily_rate;
-                      return { people: acc.people + count, days: acc.days + count * days, weekly: acc.weekly + count * days * rate };
-                    }, { people: 0, days: 0, weekly: 0 });
-                    return (
-                      <div className="flex items-center justify-between pt-2 border-t mt-1 px-1">
-                        <span className="text-xs text-muted-foreground">{t.people} people · {t.days.toFixed(1)}d/wk</span>
-                        <span className="font-bold text-sm">{fmt(t.weekly)}/week</span>
-                      </div>
-                    );
-                  })()}
-                </div>
-              ) : <div className="text-sm text-muted-foreground">Loading roles…</div>}
-            </CardContent>
-          </Card>
-
-          <Card className="overflow-hidden">
-            <CardHeader className="pb-2 bg-muted/30">
-              <CardTitle className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
-                Live Pricing Result
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4">
-              {!recommendation ? (
-                <div className="text-center py-8 text-muted-foreground text-sm">
-                  <DollarSign className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-                  Fill in region, duration, and staffing to see the recommendation
-                </div>
-              ) : (
-                <div className="space-y-3">
-
-                  {/* ── DUAL PRICE DISPLAY: Benchmark vs Value-Based ────── */}
-                  {/* Benchmark Price */}
-                  <div className="rounded-lg border-2 border-primary/40 bg-primary/5 px-4 py-3">
-                    <div className="flex items-end justify-between">
-                      <div>
-                        <div className="text-[9px] font-bold uppercase tracking-wide text-primary mb-1">Benchmark Price</div>
-                        <div className="text-2xl font-bold text-primary leading-none">
-                          {fmt(recommendation.target_weekly + manualDelta)}
-                        </div>
-                        <div className="text-[9px] text-muted-foreground mt-0.5">/week · market-based</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[9px] text-muted-foreground leading-tight">Base {fmt(recommendation.base_weekly)}</div>
-                        <div className="text-[9px] text-muted-foreground leading-tight">→ layers applied</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ── MANUAL PRICE ADJUSTMENT SLIDER ───────────────────── */}
-                  <div className="rounded-lg border px-3 py-2.5 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Manual adjustment</span>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => setManualDelta(d => d - 500)}
-                          className="w-6 h-6 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted transition-colors">−</button>
-                        <span className={`text-sm font-mono font-bold w-20 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
-                          {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
-                        </span>
-                        <button onClick={() => setManualDelta(d => d + 500)}
-                          className="w-6 h-6 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted transition-colors">+</button>
-                        {manualDelta !== 0 && (
-                          <button onClick={() => setManualDelta(0)}
-                            className="text-[10px] text-muted-foreground hover:text-foreground ml-1 underline">reset</button>
-                        )}
-                      </div>
-                    </div>
-                    <input type="range" min={-20000} max={20000} step={500} value={manualDelta}
-                      onChange={e => setManualDelta(Number(e.target.value))}
-                      className="w-full h-1.5 rounded accent-primary cursor-pointer" />
-                    <div className="flex justify-between text-[9px] text-muted-foreground">
-                      <span>−€20k</span><span>0</span><span>+€20k</span>
-                    </div>
-                  </div>
-
-                  {/* ── ADJUSTMENTS WATERFALL ────────────────────────────── */}
-                  {(() => {
-                    const steps: { label: string; reason: string; multiplier: number; result: number }[] = [];
-
-                    if (recommendation.geo_multiplier !== 1.0) {
-                      const pct = ((recommendation.geo_multiplier - 1) * 100);
-                      const sign = pct > 0 ? "+" : "";
-                      steps.push({
-                        label: `Geography — ${form.region}`,
-                        reason: `${form.region} market carries a ${sign}${pct.toFixed(0)}% regional rate adjustment`,
-                        multiplier: recommendation.geo_multiplier,
-                        result: recommendation.geo_adjusted,
-                      });
-                    }
-
-                    if (recommendation.ownership_multiplier !== 1.0) {
-                      const pct = ((recommendation.ownership_multiplier - 1) * 100);
-                      const sign = pct > 0 ? "+" : "";
-                      steps.push({
-                        label: "Ownership — Non-PE",
-                        reason: `Non-PE clients receive a ${sign}${pct.toFixed(0)}% ownership adjustment vs PE baseline`,
-                        multiplier: recommendation.ownership_multiplier,
-                        result: recommendation.ownership_adjusted,
-                      });
-                    }
-
-                    if (recommendation.size_multiplier !== 1.0) {
-                      const pct = ((recommendation.size_multiplier - 1) * 100);
-                      const sign = pct > 0 ? "+" : "";
-                      const bandLabel = settings?.revenue_band_multipliers.find(b => b.value === form.revenue_band)?.label ?? form.revenue_band;
-                      steps.push({
-                        label: `Revenue — ${bandLabel}`,
-                        reason: `Revenue band below €1B target applies a ${sign}${pct.toFixed(0)}% size adjustment`,
-                        multiplier: recommendation.size_multiplier,
-                        result: recommendation.size_adjusted,
-                      });
-                    }
-
-                    if (recommendation.sensitivity_multiplier !== 1.0) {
-                      const pct = ((recommendation.sensitivity_multiplier - 1) * 100);
-                      const sign = pct > 0 ? "+" : "";
-                      const sensLabels: Record<string, string> = {
-                        low: "Low sensitivity — client not price-conscious",
-                        high: "High sensitivity — competitive / budget pressure",
-                      };
-                      steps.push({
-                        label: `Sensitivity — ${form.price_sensitivity}`,
-                        reason: sensLabels[form.price_sensitivity] ?? `Price sensitivity applies a ${sign}${pct.toFixed(0)}% adjustment`,
-                        multiplier: recommendation.sensitivity_multiplier,
-                        result: recommendation.sensitivity_adjusted,
-                      });
-                    }
-
-                    if (steps.length === 0) return (
-                      <div className="text-xs text-muted-foreground text-center py-1 italic">
-                        No adjustments — case matches the baseline profile
-                      </div>
-                    );
-
-                    return (
-                      <div className="border rounded-lg overflow-hidden">
-                        <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                          Adjustments
-                        </div>
-                        <div className="divide-y">
-                          {steps.map((step, i) => {
-                            const pct = ((step.multiplier - 1) * 100);
-                            const isPositive = pct > 0;
-                            return (
-                              <div key={i} className="px-3 py-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-medium">{step.label}</span>
-                                  <div className="flex items-center gap-2">
-                                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isPositive ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>
-                                      {isPositive ? "+" : ""}{pct.toFixed(0)}%
-                                    </span>
-                                    <span className="text-xs font-semibold font-mono">{fmt(step.result)}</span>
-                                  </div>
-                                </div>
-                                <p className="text-[10px] text-muted-foreground mt-0.5">{step.reason}</p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-
-                  {/* ── FEE RANGE ────────────────────────────────────────── */}
-                  {(() => {
-                    // Use canonical values — single source of truth (= waterfall)
-                    const rec = canonicalNetWeekly;
-                    const recGM = recommendation.cost_floor_weekly > 0
-                      ? ((rec - recommendation.cost_floor_weekly) / rec * 100)
-                      : null;
-                    const low50 = recommendation.low_50gm_weekly > 0
-                      ? recommendation.low_50gm_weekly
-                      : null;
-                    const low50GM = low50 && recommendation.delivery_cost_weekly > 0
-                      ? ((low50 - recommendation.delivery_cost_weekly) / low50 * 100)
-                      : 50;
-                    const highMkt = recommendation.high_market_weekly;
-
-                    const highMktLabel = highMkt && recommendation.high_market_context
-                      ? `max won in ${recommendation.high_market_context}` : null;
-
-                    const dur = (waterfallDuration ?? form.duration_weeks) || 0;
-                    const totalNet = canonicalNetWeekly * dur;
-                    const totalGrossR = canonicalGrossWeekly * dur;
-                    const teamCostR = (recommendation.delivery_cost_weekly ?? 0) * dur;
-                    const totalGMR = totalGrossR - teamCostR;
-                    const gmPctR = totalGrossR > 0 ? (totalGMR / totalGrossR * 100) : 0;
-                    const gmColorR = gmPctR >= 50 ? "text-emerald-600" : gmPctR >= 30 ? "text-amber-600" : "text-red-600";
-
-                    return (
-                      <div className="space-y-2">
-                        <div className="text-sm font-bold uppercase tracking-wide text-muted-foreground px-0.5">
-                          Fee Range (weekly)
-                        </div>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          <div className="text-center p-2.5 bg-muted/30 rounded-lg">
-                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Low</div>
-                            <div className="text-base font-bold text-muted-foreground mt-0.5">{low50 ? fmt(low50) : "—"}</div>
-                            <div className="text-[9px] text-muted-foreground">50% GM floor</div>
-                          </div>
-                          <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-                            <div className="text-[10px] text-emerald-700 uppercase font-bold">Net</div>
-                            <div className="text-xl font-bold text-emerald-700 mt-0.5">{fmt(canonicalNetWeekly)}</div>
-                            <div className="text-[9px] text-emerald-600">recommended</div>
-                          </div>
-                          <div className="text-center p-2.5 bg-muted/30 rounded-lg">
-                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Max</div>
-                            <div className="text-base font-bold text-muted-foreground mt-0.5">{highMkt ? fmt(highMkt) : "—"}</div>
-                            <div className="text-[9px] text-muted-foreground">similar projects</div>
-                          </div>
-                        </div>
-
-                        {/* Total Net / Total Gross / Total GM */}
-                        <div className="text-sm font-bold uppercase tracking-wide text-muted-foreground px-0.5 pt-1">
-                          Project Totals ({dur}w)
-                        </div>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          <div className="text-center p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-                            <div className="text-[10px] text-emerald-700 uppercase font-bold">Total Net</div>
-                            <div className="text-base font-bold text-emerald-700">{fmt(totalNet)}</div>
-                          </div>
-                          <div className="text-center p-2.5 bg-amber-50 rounded-lg border border-amber-200">
-                            <div className="text-[10px] text-amber-700 uppercase font-bold">Total Gross</div>
-                            <div className="text-base font-bold text-amber-700">{fmt(totalGrossR)}</div>
-                          </div>
-                          <div className={`text-center p-2.5 rounded-lg border ${gmPctR >= 50 ? "bg-emerald-50 border-emerald-200" : gmPctR >= 30 ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200"}`}>
-                            <div className={`text-[10px] uppercase font-bold ${gmColorR}`}>Total GM</div>
-                            <div className={`text-base font-bold ${gmColorR}`}>{fmt(totalGMR)}</div>
-                            <div className={`text-[9px] font-semibold ${gmColorR}`}>{gmPctR.toFixed(0)}%</div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Posture + confidence */}
-                  <div className="flex items-center justify-between text-xs px-0.5">
-                    <PostureBadge posture={recommendation.posture} />
-                    <span className="text-muted-foreground">
-                      Confidence: <ConfidenceBadge label={recommendation.confidence_label} />
-                    </span>
-                  </div>
-
-                  {/* Cost floor reference */}
-                  {recommendation.cost_floor_weekly > 0 && (
-                    <div className="text-[10px] text-muted-foreground px-0.5">
-                      Cost floor: <span className="font-semibold">{fmt(recommendation.cost_floor_weekly)}/wk</span>
-                    </div>
-                  )}
-
-                  {/* ── LAYER TRACE ──────────────────────────────────────── */}
-                  {recommendation.layer_trace.length > 0 && (
-                    <div className="border rounded-lg overflow-hidden">
-                      <div className="bg-muted/30 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                        Pricing Layers
-                      </div>
-                      <div className="divide-y">
-                        {recommendation.layer_trace.map((lt, i) => (
-                          <div key={i} className="px-3 py-1.5">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-muted text-muted-foreground font-mono">{lt.layer}</span>
-                                <span className="text-xs font-medium">{lt.label}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                {lt.layer !== "OUT" && lt.delta_pct !== 0 && (
-                                  <span className={`text-[9px] font-mono font-bold px-1 py-0.5 rounded ${lt.delta_pct > 0 ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
-                                    {lt.delta_pct > 0 ? "+" : ""}{lt.delta_pct.toFixed(0)}%
-                                  </span>
-                                )}
-                                <span className="text-xs font-semibold font-mono">{fmt(lt.value)}</span>
-                              </div>
-                            </div>
-                            {lt.note && <p className="text-[9px] text-muted-foreground mt-0.5 leading-relaxed">{lt.note}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-
-                  {/* ── Historical Intelligence — by Country / Client / Fund ── */}
-                  {(() => {
-                    // Section 1: Same country/region — ranked by highest weekly fees
-                    const regionKey = proposalRegionKey(form as any);
-                    const countryProposals = analysisProposals.filter(p =>
-                      proposalRegionKey(p) === regionKey && p.outcome === "won" && p.weekly_price > 0
-                    ).sort((a, b) => b.weekly_price - a.weekly_price).slice(0, 5);
-
-                    // Section 2: Same client — ranked by highest weekly fees
-                    const clientLc = (form.client_name ?? "").trim().toLowerCase();
-                    const clientProposals = clientLc ? analysisProposals.filter(p =>
-                      (p.client_name ?? "").trim().toLowerCase() === clientLc && p.weekly_price > 0
-                    ).sort((a, b) => b.weekly_price - a.weekly_price).slice(0, 5) : [];
-
-                    // Section 3: Same fund
-                    const hasAny = countryProposals.length > 0 || clientProposals.length > 0 || fundProposals.length > 0;
-                    if (!hasAny) return null;
-
-                    const MiniTable = ({ items, label }: { items: PricingProposal[]; label: string }) => {
-                      // Items already sorted by highest weekly (from earlier sort)
-                      const maxWeekly = items.length > 0 ? Math.max(...items.map(p => p.weekly_price)) : 0;
-                      const totals = items.map(p => p.total_fee ?? (p.weekly_price * (p.duration_weeks || 1)));
-                      const maxTotal = totals.length > 0 ? Math.max(...totals) : 0;
-                      return (
-                        <div className="space-y-1">
-                          <div className="text-[11px] font-bold text-blue-700">{label} ({items.length})</div>
-                          <div className="grid grid-cols-[auto,1fr,auto,auto,auto] gap-x-2 gap-y-0.5 text-xs">
-                            {items.map((p, idx) => {
-                              const totalFee = p.total_fee ?? (p.weekly_price * (p.duration_weeks || 1));
-                              const isMaxWeekly = p.weekly_price === maxWeekly;
-                              const isMaxTotal = totalFee === maxTotal;
-                              return (
-                                <React.Fragment key={p.id}>
-                                  <span className="text-muted-foreground">{p.proposal_date?.slice(0, 7)}</span>
-                                  <span className="truncate text-muted-foreground">{p.project_name}</span>
-                                  <span className={`font-semibold font-mono text-right ${isMaxWeekly ? "underline decoration-2 decoration-emerald-500" : ""}`}>{fmt(p.weekly_price)}/wk</span>
-                                  <span className={`font-mono text-right ${isMaxTotal ? "underline decoration-2 decoration-amber-500 font-semibold" : "text-muted-foreground"}`}>{fmt(totalFee)}</span>
-                                  <OutcomeBadge outcome={p.outcome} />
-                                </React.Fragment>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    };
-
-                    return (
-                      <div className="border border-blue-100 rounded-lg bg-blue-50/40 p-3 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm uppercase font-bold text-blue-700 tracking-wide">
-                            Historical Intelligence — Net Weekly Prices
-                          </div>
-                          <button onClick={() => setShowL4Info(v => !v)} className="text-blue-400 hover:text-blue-600">
-                            <Info className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {showL4Info && (
-                          <div className="bg-white border border-blue-200 rounded-lg p-3 text-[11px] text-slate-700 leading-relaxed space-y-1">
-                            <p>Past projects shown as reference only — <span className="font-semibold">not blended into the recommendation</span>. Use as a sanity check.</p>
-                            <button onClick={() => setShowL4Info(false)} className="text-blue-500 underline text-[10px]">Close</button>
-                          </div>
-                        )}
-
-                        {countryProposals.length > 0 && <MiniTable items={countryProposals} label={`Same region (${regionKey})`} />}
-                        {clientProposals.length > 0 && <MiniTable items={clientProposals} label={`Same client (${form.client_name})`} />}
-                        {fundProposals.length > 0 && <MiniTable items={fundProposals} label={`Same fund (${form.fund_name})`} />}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Advisory */}
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <div className="text-[10px] font-bold text-blue-700 uppercase mb-1 flex items-center gap-1">
-                      <Info className="w-3 h-3" /> Advisory
-                    </div>
-                    <p className="text-xs text-blue-800 leading-relaxed">{recommendation.advisory}</p>
-                  </div>
-
-                  {/* Gross / Net Project Fees + TNF-to-EBITDA ratios */}
-                  {nwfClamped > 0 && (() => {
-                    const cur = getCurrencyForRegion(form.region);
-                    const fmtFee = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
-                    const fmtK2Local = (n: number) => n >= 1_000_000 ? `${cur.symbol}${(n / 1_000_000).toFixed(1)}M` : `${cur.symbol}${Math.round(n / 1000)}k`;
-                    const effDur = (waterfallDuration ?? form.duration_weeks) || 0;
-                    const baseWkly = nwfClamped + manualDelta;
-                    // Net = recommended price (what we receive — never changes with discounts)
-                    const net = Math.round(baseWkly * effDur);
-                    // Gross weekly = net × (1+admin%) / (1-d1%) / (1-d2%) / ...
-                    const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
-                    let grossWkly = baseWkly * (1 + adminFeePct / 100);
-                    for (const d of enabledDisc) grossWkly /= (1 - d.pct / 100);
-                    const gross = Math.round(grossWkly * effDur);
-                    // TNF / EBITDA ratios
-                    const revenueMLocal = form.company_revenue_m ?? 0;
-                    const ebitdaPctLocal = form.ebitda_margin_pct ?? 0;
-                    const currentEbitdaLocal = revenueMLocal > 0 && ebitdaPctLocal > 0
-                      ? revenueMLocal * 1_000_000 * ebitdaPctLocal / 100 : 0;
-                    const aspirationIncreasePctLocal = form.aspiration_ebitda_pct ?? 0;
-                    const aspirationEurLocal = currentEbitdaLocal > 0 && aspirationIncreasePctLocal > 0
-                      ? currentEbitdaLocal * aspirationIncreasePctLocal / 100 : 0;
-                    const tnfLocal = net; // use Net Project Fees as the "TNF" denominator for ratios (same semantics)
-                    const tnfEbitdaRatioLocal = currentEbitdaLocal > 0 ? tnfLocal / currentEbitdaLocal : null;
-                    const tnfAspirationRatioLocal = aspirationEurLocal > 0 ? tnfLocal / aspirationEurLocal : null;
-
-                    // Benchmark: compute TNF/EBITDA and TNF/Aspiration ratios from past
-                    // won proposals that have company_revenue_m + ebitda_margin_pct populated.
-                    const pastRatios = analysisProposals
-                      .filter(p => p.outcome === "won"
-                        && p.company_revenue_m != null && p.company_revenue_m > 0
-                        && p.ebitda_margin_pct != null && p.ebitda_margin_pct > 0
-                        && p.total_fee != null && p.total_fee > 0)
-                      .map(p => {
-                        const ebitda = (p.company_revenue_m as number) * 1_000_000 * (p.ebitda_margin_pct as number) / 100;
-                        const ratio = (p.total_fee as number) / ebitda;
-                        const growth = p.expected_ebitda_growth_pct ?? 0;
-                        const aspiration = ebitda * growth / 100;
-                        const aspRatio = aspiration > 0 ? (p.total_fee as number) / aspiration : null;
-                        return { ratio, aspRatio };
-                      });
-                    const avgPastEbitda = pastRatios.length > 0
-                      ? pastRatios.reduce((s, r) => s + r.ratio, 0) / pastRatios.length
-                      : null;
-                    const asps = pastRatios.filter(r => r.aspRatio != null).map(r => r.aspRatio as number);
-                    const avgPastAspir = asps.length > 0
-                      ? asps.reduce((s, v) => s + v, 0) / asps.length
-                      : null;
-
-                    return (
-                      <div className="space-y-3 pt-1">
-                        {/* Fee boxes */}
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="border rounded-lg p-3 bg-background space-y-0.5">
-                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Net Project Fees</div>
-                            <div className="text-[10px] text-muted-foreground">what we receive</div>
-                            <div className="text-xl font-bold text-emerald-600">{fmtFee(net)}</div>
-                            <div className="text-[10px] text-muted-foreground">{fmtFee(baseWkly)}/wk × {effDur}w</div>
-                          </div>
-                          <div className="border rounded-lg p-3 bg-background space-y-0.5">
-                            <div className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide">Gross Project Fees</div>
-                            <div className="text-[10px] text-muted-foreground">
-                              {enabledDisc.length > 0 ? `price to quote (net+admin${enabledDisc.map(d => `/${d.name}`).join("")})` : adminFeePct > 0 ? "net + admin" : "= net (no markups)"}
-                            </div>
-                            <div className="text-xl font-bold text-foreground">{fmtFee(gross)}</div>
-                            <div className="text-[10px] text-muted-foreground">{fmtFee(Math.round(grossWkly))}/wk × {effDur}w</div>
-                          </div>
-                        </div>
-
-                        {/* TNF / EBITDA ratio gauges — side by side, highlighted */}
-                        <div className="border-2 border-primary/20 bg-primary/5 rounded-lg p-3 space-y-2">
-                          <div className="text-[10px] font-bold uppercase text-primary tracking-wide flex items-center gap-1.5">
-                            <TrendingUp className="w-3 h-3" />
-                            Value Capture — Fees vs EBITDA
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <ArcGauge
-                              ratio={tnfEbitdaRatioLocal}
-                              label="Net Fees / Co. EBITDA"
-                              denomLabel={currentEbitdaLocal > 0 ? `of ${fmtK2Local(currentEbitdaLocal)} EBITDA` : "set revenue + margin"}
-                              maxRatio={0.20}
-                              benchmark={{ value: avgPastEbitda, label: "Past projects avg" }}
-                            />
-                            <ArcGauge
-                              ratio={tnfAspirationRatioLocal}
-                              label="Net Fees / Aspiration"
-                              denomLabel={aspirationEurLocal > 0 ? `of ${fmtK2Local(aspirationEurLocal)} (+${aspirationIncreasePctLocal}%)` : "set aspiration %"}
-                              maxRatio={0.20}
-                              benchmark={{ value: avgPastAspir, label: "Past projects avg" }}
-                            />
-                          </div>
-                          <div className="text-[9px] text-muted-foreground text-center px-2 pt-0.5">
-                            🟢 &lt;5% · 🟡 5–10% · 🔴 &gt;10% of base · ▌ = past-projects benchmark
-                          </div>
-                        </div>
-
-                        {/* ── Industry-calibrated TNF benchmark ────────────── */}
-                        {(() => {
-                          const tnfBench = computeTNFBenchmark(
-                            form.company_revenue_m,
-                            form.ebitda_margin_pct,
-                            form.sector,
-                            form.project_type,
-                            form.revenue_band,
-                          );
-                          if (!tnfBench) {
-                            return (
-                              <div className="border rounded-lg p-3 bg-muted/20 text-[10px] text-muted-foreground">
-                                Select a sector and revenue band to see the industry TNF benchmark.
-                              </div>
-                            );
-                          }
-                          const netInBand = net >= tnfBench.tnf_low_eur && net <= tnfBench.tnf_high_eur;
-                          const netBelow = net < tnfBench.tnf_low_eur;
-                          // Source badge styling
-                          const srcStyle = tnfBench.source === "project"
-                            ? { bg: "bg-emerald-100", text: "text-emerald-700", border: "border-emerald-300", label: "PROJECT DATA" }
-                            : tnfBench.source === "mixed"
-                            ? { bg: "bg-amber-100", text: "text-amber-700", border: "border-amber-300", label: "MIXED" }
-                            : { bg: "bg-slate-100", text: "text-slate-600", border: "border-slate-300", label: "INDUSTRY DEFAULTS" };
-                          return (
-                            <div className="border-2 border-blue-200 bg-blue-50/40 rounded-lg p-3 space-y-2">
-                              <div className="flex items-center justify-between flex-wrap gap-1">
-                                <div className="text-[10px] font-bold uppercase text-blue-700 tracking-wide flex items-center gap-1.5">
-                                  <Info className="w-3 h-3" />
-                                  Industry TNF Benchmark
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${srcStyle.bg} ${srcStyle.text} ${srcStyle.border}`}>
-                                    {srcStyle.label}
-                                  </span>
-                                  <button onClick={() => setShowTNFInfo(v => !v)}
-                                    className="text-blue-500 hover:text-blue-700 transition-colors"
-                                    title="How is this computed?">
-                                    <Info className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {/* Source explanation */}
-                              <div className="text-[10px] text-muted-foreground leading-tight">
-                                {tnfBench.source_label}
-                                {tnfBench.source !== "project" && (
-                                  <span className="ml-1 text-blue-600 italic">
-                                    — enter {tnfBench.revenue_is_imputed && tnfBench.margin_is_imputed
-                                      ? "company revenue & EBITDA %"
-                                      : tnfBench.revenue_is_imputed
-                                      ? "company revenue"
-                                      : "EBITDA margin %"} for project-specific accuracy
-                                  </span>
-                                )}
-                              </div>
-
-                              {/* Range */}
-                              <div className="flex items-center justify-between text-xs">
-                                <div>
-                                  <span className="text-muted-foreground">Benchmark range:</span>
-                                  <span className="ml-1.5 font-bold text-blue-700">
-                                    {fmtK2Local(tnfBench.tnf_low_eur)} – {fmtK2Local(tnfBench.tnf_high_eur)}
-                                  </span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Our TNF:</span>
-                                  <span className={`ml-1.5 font-bold ${netInBand ? "text-emerald-600" : netBelow ? "text-amber-600" : "text-red-600"}`}>
-                                    {fmtK2Local(net)}
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Visual bar */}
-                              {(() => {
-                                const min = Math.min(tnfBench.tnf_low_eur * 0.5, net * 0.9);
-                                const max = Math.max(tnfBench.tnf_high_eur * 1.2, net * 1.1);
-                                const range = max - min;
-                                const lowPct = ((tnfBench.tnf_low_eur - min) / range) * 100;
-                                const highPct = ((tnfBench.tnf_high_eur - min) / range) * 100;
-                                const netPct = ((net - min) / range) * 100;
-                                return (
-                                  <div className="relative h-3 bg-muted/40 rounded overflow-hidden">
-                                    <div className="absolute top-0 h-full bg-emerald-200"
-                                      style={{ left: `${lowPct}%`, width: `${highPct - lowPct}%` }} />
-                                    <div className="absolute top-0 h-full w-0.5 bg-blue-700"
-                                      style={{ left: `${Math.max(0, Math.min(100, netPct))}%` }} />
-                                  </div>
-                                );
-                              })()}
-
-                              {/* Breakdown */}
-                              <div className="text-[10px] text-muted-foreground space-y-0.5 leading-relaxed">
-                                <div>
-                                  Revenue: <span className={`font-semibold ${tnfBench.revenue_is_imputed ? "text-slate-500 italic" : "text-foreground/80"}`}>
-                                    {fmtK2Local(tnfBench.revenue_m_used * 1_000_000)}
-                                    {tnfBench.revenue_is_imputed && " *"}
-                                  </span>
-                                  {" × "}
-                                  EBITDA %: <span className={`font-semibold ${tnfBench.margin_is_imputed ? "text-slate-500 italic" : "text-foreground/80"}`}>
-                                    {tnfBench.ebitda_margin_used_pct}%
-                                    {tnfBench.margin_is_imputed && " *"}
-                                  </span>
-                                  {" = "}
-                                  EBITDA: <span className="font-semibold text-foreground/80">{fmtK2Local(tnfBench.ebitda_eur)}</span>
-                                </div>
-                                <div>
-                                  {tnfBench.sector}: <span className="font-semibold text-foreground/80">{tnfBench.industry_base_low_pct}–{tnfBench.industry_base_high_pct}%</span>
-                                  {" · "}
-                                  Stage ({tnfBench.deal_stage_label}): <span className="font-semibold text-foreground/80">×{tnfBench.deal_stage_mult}</span>
-                                  {" · "}
-                                  Scope ({tnfBench.scope_label}): <span className="font-semibold text-foreground/80">×{tnfBench.scope_mult}</span>
-                                </div>
-                                {(tnfBench.revenue_is_imputed || tnfBench.margin_is_imputed) && (
-                                  <div className="text-[9px] italic text-slate-500">* imputed from industry defaults</div>
-                                )}
-                              </div>
-
-                              {/* Info popup */}
-                              {showTNFInfo && (
-                                <div className="mt-2 bg-white border border-blue-200 rounded-lg p-3 text-[11px] text-slate-700 leading-relaxed space-y-2 shadow-inner">
-                                  <div className="font-bold text-blue-700 text-xs">TNF Benchmark Methodology</div>
-                                  <p>
-                                    <span className="font-semibold">Core formula:</span><br/>
-                                    <span className="font-mono text-[10px]">TNF = EBITDA × Industry Base % × Deal-Stage × Scope</span>
-                                  </p>
-                                  <div className="bg-emerald-50 border border-emerald-200 rounded p-2">
-                                    <div className="font-semibold text-emerald-800 mb-1">Priority order (which data is used)</div>
-                                    <ol className="list-decimal pl-4 text-[10px] space-y-0.5 text-slate-700">
-                                      <li><span className="font-semibold">PROJECT DATA</span> (preferred): actual company revenue + actual EBITDA margin from the case</li>
-                                      <li><span className="font-semibold">MIXED</span>: one of the two is available, the other is imputed from sector/band norms</li>
-                                      <li><span className="font-semibold">INDUSTRY DEFAULTS</span>: both imputed — sector-midpoint EBITDA margin × revenue-band midpoint</li>
-                                    </ol>
-                                    <div className="text-[9px] text-emerald-700 italic mt-1">
-                                      The engine always tries project data first. Imputed values are shown in italic with a *.
-                                    </div>
-                                  </div>
-                                  <p>
-                                    <span className="font-semibold">Why EBITDA?</span> Ties fees directly to the operational profit being optimised. Revenue-based metrics ignore margins; pure deal-size metrics ignore profitability.
-                                  </p>
-                                  <div>
-                                    <div className="font-semibold mb-1">Industry base % (% of EBITDA):</div>
-                                    <ul className="list-disc pl-4 text-[10px] space-y-0.5 text-slate-600">
-                                      <li>Software / SaaS — 1.5–3.0% (high-margin, premium)</li>
-                                      <li>Pharma / Healthcare — 2.5–4.0% (regulatory complexity)</li>
-                                      <li>Financial Services — 1.0–2.5% (large EBITDA base)</li>
-                                      <li>Consumer / Retail — 3.0–5.0% (lower margins)</li>
-                                      <li>Industrial / Manufacturing — 2.5–4.5%</li>
-                                      <li>Energy / Utilities — 2.0–3.5% (capital intensive)</li>
-                                    </ul>
-                                  </div>
-                                  <div>
-                                    <div className="font-semibold mb-1">Deal-stage multiplier (from project type):</div>
-                                    <ul className="list-disc pl-4 text-[10px] space-y-0.5 text-slate-600">
-                                      <li>Spark / Diagnostic — ×1.0 (steady state)</li>
-                                      <li>SFE / Pricing — ×1.2 (operational improvement)</li>
-                                      <li>Other design — ×1.3 (strategic advisory)</li>
-                                      <li>War room / 100-day — ×1.8 (value creation intensive)</li>
-                                    </ul>
-                                  </div>
-                                  <div>
-                                    <div className="font-semibold mb-1">Scope multiplier:</div>
-                                    <ul className="list-disc pl-4 text-[10px] space-y-0.5 text-slate-600">
-                                      <li>Strategic only — ×0.7–1.0 (low implementation risk)</li>
-                                      <li>Operational improvement — ×1.0–1.4</li>
-                                      <li>Transformation — ×1.2–1.8 (multi-workstream)</li>
-                                      <li>Turnaround — ×1.5–2.5 (crisis premium)</li>
-                                    </ul>
-                                  </div>
-                                  <p>
-                                    <span className="font-semibold">Example:</span> €50M EBITDA Software company in 100-day plan: €50M × 2.0% × 1.5 × 1.3 = <span className="font-bold">€1.95M</span>.
-                                  </p>
-                                  <p className="text-slate-500 italic">
-                                    Benchmarks are industry anchors — use them to stress-test proposals, not as a hard rule. Adjust ±15–25% for US vs European vs emerging markets.
-                                  </p>
-                                  <button onClick={() => setShowTNFInfo(false)} className="text-blue-500 underline text-[10px]">Close</button>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })()}
-
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
       </div>
     </div>
   );
