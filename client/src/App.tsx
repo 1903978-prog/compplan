@@ -18,7 +18,8 @@ import Hiring from "@/pages/Hiring";
 import TimeTracker from "@/pages/TimeTracker";
 import Proposals from "@/pages/Proposals";
 import SlideMethodologyAdmin from "@/pages/SlideMethodologyAdmin";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play } from "lucide-react";
+import Invoicing from "@/pages/Invoicing";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -174,6 +175,14 @@ function Navigation() {
                   { href: "/hiring", label: "Pipeline", icon: UserCheck },
                 ]}
               />
+              <NavDropdown
+                label="AR"
+                icon={Receipt}
+                basePaths={["/invoicing"]}
+                items={[
+                  { href: "/invoicing", label: "Invoicing", icon: Receipt },
+                ]}
+              />
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -214,6 +223,7 @@ function Router() {
       <Route path="/proposals" component={Proposals} />
       <Route path="/proposals/methodology" component={SlideMethodologyAdmin} />
       <Route path="/hiring" component={Hiring} />
+      <Route path="/invoicing" component={Invoicing} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -924,6 +924,63 @@ RULES:
     });
   });
 
+  // ── Harvest Invoicing Proxy ─────────────────────────────────────────────────
+  const HARVEST_TOKEN = process.env.HARVEST_TOKEN ?? "";
+  const HARVEST_ACCOUNT = process.env.HARVEST_ACCOUNT_ID ?? "";
+  const HARVEST_BASE = "https://api.harvestapp.com/v2";
+
+  const harvestHeaders = (): Record<string, string> => ({
+    "Authorization": `Bearer ${HARVEST_TOKEN}`,
+    "Harvest-Account-Id": HARVEST_ACCOUNT,
+    "Content-Type": "application/json",
+    "User-Agent": "CompPlan App",
+  });
+
+  // GET /api/harvest/invoices — paginate through all invoices
+  app.get("/api/harvest/invoices", requireAuth, async (_req, res) => {
+    if (!HARVEST_TOKEN || !HARVEST_ACCOUNT) {
+      return res.status(503).json({ error: "Harvest credentials not configured" });
+    }
+    try {
+      let allInvoices: any[] = [];
+      let page = 1;
+      let hasMore = true;
+      while (hasMore) {
+        const resp = await fetch(`${HARVEST_BASE}/invoices?per_page=100&page=${page}`, { headers: harvestHeaders() });
+        if (!resp.ok) throw new Error(`Harvest API ${resp.status}: ${await resp.text()}`);
+        const data = await resp.json();
+        allInvoices = allInvoices.concat(data.invoices ?? []);
+        hasMore = data.next_page !== null;
+        page++;
+      }
+      res.json({ invoices: allInvoices });
+    } catch (err: any) {
+      console.error("[Harvest] Failed to fetch invoices:", err.message);
+      res.status(502).json({ error: err.message ?? "Failed to fetch invoices from Harvest" });
+    }
+  });
+
+  // POST /api/harvest/invoices/:id/reminder — send invoice reminder
+  app.post("/api/harvest/invoices/:id/reminder", requireAuth, async (req, res) => {
+    if (!HARVEST_TOKEN || !HARVEST_ACCOUNT) {
+      return res.status(503).json({ error: "Harvest credentials not configured" });
+    }
+    const invoiceId = req.params.id;
+    try {
+      const resp = await fetch(`${HARVEST_BASE}/invoices/${invoiceId}/messages`, {
+        method: "POST",
+        headers: harvestHeaders(),
+        body: JSON.stringify({ event_type: "send", send_me_a_copy: true }),
+      });
+      if (!resp.ok) throw new Error(`Harvest API ${resp.status}: ${await resp.text()}`);
+      const data = await resp.json();
+      res.json(data);
+    } catch (err: any) {
+      console.error("[Harvest] Failed to send reminder:", err.message);
+      res.status(502).json({ error: err.message ?? "Failed to send reminder" });
+    }
+  });
+
   // Global error handler — catches unhandled route errors
   app.use((err: any, _req: any, res: any, _next: any) => {
     const status = err.status ?? 500;
