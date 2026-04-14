@@ -638,6 +638,17 @@ export const invoiceChanges = pgTable("invoice_changes", {
 });
 
 // ── Knowledge Center ────────────────────────────────────────────────────────
+// API Cost Tracking
+export const apiUsageLog = pgTable("api_usage_log", {
+  id: serial("id").primaryKey(),
+  endpoint: text("endpoint").notNull(),
+  model: text("model").notNull().default("claude-sonnet-4"),
+  input_tokens: integer("input_tokens").notNull().default(0),
+  output_tokens: integer("output_tokens").notNull().default(0),
+  cost_usd: text("cost_usd").notNull().default("0"),  // stored as string to avoid float issues
+  created_at: text("created_at").notNull(),
+});
+
 // Knowledge topics (e.g. "Timelines", "Methodologies", "Past Proposals")
 export const knowledgeTopics = pgTable("knowledge_topics", {
   id: serial("id").primaryKey(),

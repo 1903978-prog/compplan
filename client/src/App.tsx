@@ -78,7 +78,8 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
 }
 
 function Navigation() {
-  const [apiPaused, setApiPaused] = useState<boolean>(true); // DEFAULT: paused
+  const [apiPaused, setApiPaused] = useState<boolean>(true);
+  const [apiCost, setApiCost] = useState<{ month: string; today: string } | null>(null);
   const [location] = useLocation();
 
   // On every page load: FORCE pause in DB, then read state
@@ -90,7 +91,12 @@ function Navigation() {
       body: JSON.stringify({ paused: true }),
     })
       .then(() => setApiPaused(true))
-      .catch(() => setApiPaused(true)); // even on error, show paused
+      .catch(() => setApiPaused(true));
+    // Load API cost
+    fetch("/api/api-cost", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setApiCost({ month: d.month_cost_usd ?? "0", today: d.today_cost_usd ?? "0" }))
+      .catch(() => {});
   }, []);
 
   // Also auto-pause on every navigation
@@ -202,6 +208,11 @@ function Navigation() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {apiCost && (
+              <span className="text-[10px] font-mono text-muted-foreground border rounded px-2 py-1" title={`Today: $${apiCost.today} | Month: $${apiCost.month}`}>
+                ${apiCost.month}
+              </span>
+            )}
             {(
               <Button
                 variant={apiPaused ? "destructive" : "outline"}

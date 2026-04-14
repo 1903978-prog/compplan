@@ -27,6 +27,25 @@ async function guardApiAsync(res: any): Promise<boolean> {
   return false;
 }
 
+// Claude Sonnet 4 pricing: $3/M input, $15/M output
+const PRICING = { input_per_million: 3, output_per_million: 15 };
+
+async function logApiUsage(endpoint: string, response: any) {
+  try {
+    const usage = response?.usage;
+    if (!usage) return;
+    const inputTokens = usage.input_tokens ?? 0;
+    const outputTokens = usage.output_tokens ?? 0;
+    const costUsd = ((inputTokens * PRICING.input_per_million + outputTokens * PRICING.output_per_million) / 1_000_000).toFixed(6);
+    const { db } = await import("./db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`
+      INSERT INTO api_usage_log (endpoint, model, input_tokens, output_tokens, cost_usd, created_at)
+      VALUES (${endpoint}, ${"claude-sonnet-4"}, ${inputTokens}, ${outputTokens}, ${costUsd}, ${new Date().toISOString()})
+    `);
+  } catch { /* non-fatal */ }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
@@ -574,6 +593,7 @@ Keep the same 960×540 format and Eendigo branding. Output ONLY the updated HTML
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       });
+      logApiUsage("generate-page", response);
 
       const textBlock = response.content.find(b => b.type === "text");
       let html = textBlock?.text ?? "<div>Generation failed</div>";
@@ -594,6 +614,7 @@ Keep the same 960×540 format and Eendigo branding. Output ONLY the updated HTML
 Return ONLY JSON: {"clarity":N,"relevance":N,"visual":N,"persuasion":N,"total":N,"tip":"one sentence improvement suggestion"}`,
           messages: [{ role: "user", content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):\n\n${html.substring(0, 2000)}` }],
         });
+        logApiUsage("quality-score", scoreRes);
         const scoreText = scoreRes.content.find(b => b.type === "text")?.text ?? "";
         const jsonMatch = scoreText.match(/\{[\s\S]*\}/);
         if (jsonMatch) quality_score = JSON.parse(jsonMatch[0]);
@@ -643,6 +664,7 @@ Return ONLY JSON:
 }`,
         messages: [{ role: "user", content: `Current visual prompt:\n${current_visual_prompt || "(empty)"}\n\nCurrent content prompt:\n${current_content_prompt || "(empty)"}\n\nUser corrections made via chat:\n${corrections}` }],
       });
+      logApiUsage("update-prompts", response);
 
       const text = response.content.find(b => b.type === "text")?.text ?? "{}";
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -1659,6 +1681,42 @@ RULES:
       res.json(await resp.json());
     } catch (err: any) {
       res.status(502).json({ error: err.message ?? "Failed to send reminder" });
+    }
+  });
+
+  // ── API Cost Tracking ───────────────────────────────────────────────────────
+  app.get("/api/api-cost", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      // Total cost this month
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+      const monthRows = await db.execute(sql`
+        SELECT COALESCE(SUM(CAST(cost_usd AS NUMERIC)), 0) as total_cost,
+               COALESCE(SUM(input_tokens), 0) as total_input,
+               COALESCE(SUM(output_tokens), 0) as total_output,
+               COUNT(*) as call_count
+        FROM api_usage_log WHERE created_at >= ${monthStart}
+      `);
+      const row = monthRows.rows[0] as any;
+      // Today's cost
+      const todayStart = new Date().toISOString().split("T")[0] + "T00:00:00.000Z";
+      const todayRows = await db.execute(sql`
+        SELECT COALESCE(SUM(CAST(cost_usd AS NUMERIC)), 0) as today_cost,
+               COUNT(*) as today_calls
+        FROM api_usage_log WHERE created_at >= ${todayStart}
+      `);
+      const today = todayRows.rows[0] as any;
+      res.json({
+        month_cost_usd: parseFloat(row.total_cost || "0").toFixed(4),
+        month_input_tokens: Number(row.total_input),
+        month_output_tokens: Number(row.total_output),
+        month_calls: Number(row.call_count),
+        today_cost_usd: parseFloat(today.today_cost || "0").toFixed(4),
+        today_calls: Number(today.today_calls),
+      });
+    } catch (err: any) {
+      res.json({ month_cost_usd: "0", month_calls: 0, today_cost_usd: "0", today_calls: 0 });
     }
   });
 

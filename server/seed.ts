@@ -397,6 +397,19 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS new_value TEXT`);
   await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'pending'`);
 
+  // ── API Cost Tracking ─────────────────────────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS api_usage_log (
+      id SERIAL PRIMARY KEY,
+      endpoint TEXT NOT NULL,
+      model TEXT NOT NULL DEFAULT 'claude-sonnet-4',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd TEXT NOT NULL DEFAULT '0',
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // ── Knowledge Center + Project Approach ──────────────────────────────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS knowledge_topics (
