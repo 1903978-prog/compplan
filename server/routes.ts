@@ -1088,6 +1088,78 @@ RULES:
     }
   });
 
+  // ── Security Auto-Checks ────────────────────────────────────────────────────
+  app.get("/api/security/app-checks", requireAuth, async (_req, res) => {
+    try {
+      const checks: { id: string; status: "green" | "yellow" | "red"; detail: string }[] = [];
+
+      // Check 1: helmet in dependencies
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf-8"));
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+        checks.push({
+          id: "app_helmet",
+          status: deps["helmet"] ? "green" : "red",
+          detail: deps["helmet"] ? `helmet ${deps["helmet"]} installed` : "helmet not installed — no security headers",
+        });
+        checks.push({
+          id: "app_rate_limit",
+          status: deps["express-rate-limit"] ? "green" : "red",
+          detail: deps["express-rate-limit"] ? `express-rate-limit ${deps["express-rate-limit"]} installed` : "express-rate-limit not installed — login brute-force possible",
+        });
+      } catch { /* skip */ }
+
+      // Check 2: auth uses plaintext comparison
+      try {
+        const authCode = fs.readFileSync(path.resolve("server/auth.ts"), "utf-8");
+        const usesPlaintext = authCode.includes("=== appPassword") || authCode.includes("== appPassword");
+        const usesBcrypt = authCode.includes("bcrypt") || authCode.includes("argon");
+        checks.push({
+          id: "app_password_hashing",
+          status: usesBcrypt ? "green" : usesPlaintext ? "red" : "yellow",
+          detail: usesBcrypt ? "Password hashed with bcrypt/argon" : usesPlaintext ? "Plaintext password comparison in auth.ts" : "Unknown auth pattern",
+        });
+      } catch { /* skip */ }
+
+      // Check 3: .gitignore covers secrets
+      try {
+        const gitignore = fs.readFileSync(path.resolve(".gitignore"), "utf-8");
+        const coversEnv = gitignore.includes(".env");
+        const coversPem = gitignore.includes(".pem") || gitignore.includes("*.pem");
+        checks.push({
+          id: "app_gitignore",
+          status: coversEnv ? "green" : "red",
+          detail: coversEnv ? `.gitignore covers .env files${coversPem ? " and .pem keys" : ""}` : ".gitignore does NOT exclude .env files",
+        });
+      } catch { /* skip */ }
+
+      // Check 4: session cookie max age
+      try {
+        const authCode = fs.readFileSync(path.resolve("server/auth.ts"), "utf-8");
+        const match = authCode.match(/MAX_AGE\s*=\s*(\d+)/);
+        if (match) {
+          const days = Math.round(parseInt(match[1]) / 86400000);
+          checks.push({
+            id: "app_session_duration",
+            status: days <= 7 ? "green" : days <= 14 ? "yellow" : "red",
+            detail: `Session cookie expires in ${days} days${days > 14 ? " — should be ≤7 days" : ""}`,
+          });
+        }
+      } catch { /* skip */ }
+
+      // Check 5: HARVEST_TOKEN set
+      checks.push({
+        id: "render_harvest_token",
+        status: HARVEST_TOKEN ? "green" : "yellow",
+        detail: HARVEST_TOKEN ? "HARVEST_TOKEN env var configured" : "HARVEST_TOKEN not set",
+      });
+
+      res.json({ checks });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Global error handler — catches unhandled route errors
   app.use((err: any, _req: any, res: any, _next: any) => {
     const status = err.status ?? 500;
