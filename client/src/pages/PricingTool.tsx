@@ -2525,12 +2525,12 @@ export default function PricingTool() {
                     };
 
                     return (
-                      <div className="space-y-5">
+                      <div className="space-y-6">
                         {/* Scale legend */}
-                        <div className="flex gap-6 text-[9px] text-muted-foreground">
+                        <div className="flex gap-6 text-xs text-muted-foreground">
                           <span>Weekly scale: 0 – {fB(weeklyScale)}</span>
                           <span>Total scale: 0 – {fB(totalScale)}</span>
-                          <span className="ml-auto flex gap-3">
+                          <span className="ml-auto flex gap-4">
                             <span><span className="inline-block w-3 h-2 bg-amber-300/70 rounded-sm mr-1" />Yellow</span>
                             <span><span className="inline-block w-3 h-2 bg-emerald-400/80 rounded-sm mr-1" />Pricing corridor</span>
                             <span><span className="inline-block w-3 h-2 bg-blue-400/60 rounded-sm mr-1" />Mkt (IT×mult)</span>
@@ -2545,10 +2545,10 @@ export default function PricingTool() {
                           const mktBench = getMarketBenchmark(country);
                           return (
                             <div key={country}>
-                              <div className="flex items-center gap-2 mb-1.5">
-                                <span className="text-xs font-bold uppercase tracking-wide">{country}</span>
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-sm font-bold uppercase tracking-wide">{country}</span>
                                 {wonProposals.length > 0 && (
-                                  <span className="text-[9px] text-emerald-600 font-medium">
+                                  <span className="text-xs text-emerald-600 font-medium">
                                     {wonProposals.length} won · avg {fB(avgWonWeekly!)}/wk
                                   </span>
                                 )}
@@ -2561,30 +2561,33 @@ export default function PricingTool() {
                                   <Trash2 className="w-3 h-3" />
                                 </button>
                               </div>
-                              <div className="grid grid-cols-[280px,1fr] gap-3 items-start">
-                                {/* Left: compact number table */}
-                                <table className="text-[10px] w-full border rounded overflow-hidden">
+                              <div className="grid grid-cols-[300px,1fr] gap-4 items-start">
+                                {/* Left: number table */}
+                                <table className="text-xs w-full border rounded overflow-hidden">
                                   <thead>
                                     <tr className="bg-muted/30 border-b">
-                                      <th className="text-left px-2 py-1 font-semibold text-muted-foreground">Parameter</th>
-                                      <th className="text-center px-2 py-1 font-semibold text-emerald-700">Corridor</th>
-                                      <th className="text-center px-2 py-1 font-semibold text-muted-foreground">Decisive</th>
+                                      <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Parameter</th>
+                                      <th className="text-center px-3 py-1.5 font-semibold text-emerald-700">Corridor</th>
+                                      <th className="text-center px-3 py-1.5 font-semibold text-muted-foreground">Decisive</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {rows.map((row, i) => (
-                                      <tr key={i} className="border-b last:border-0">
-                                        <td className="px-2 py-1 font-medium text-muted-foreground">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</td>
-                                        <td className="px-2 py-1 text-center font-mono text-emerald-700">
-                                          {row.green_high === 0
-                                            ? (avgWonWeekly && row.parameter.toLowerCase().includes("weekly")
-                                                ? <span className="text-emerald-600 italic">{fB(avgWonWeekly * 0.9)}–{fB(avgWonWeekly * 1.1)}</span>
-                                                : <span className="text-muted-foreground italic">n/a</span>)
-                                            : `${fB(row.green_low)}–${fB(row.green_high)}`}
-                                        </td>
-                                        <td className="px-2 py-1 text-center font-semibold">{row.decisiveness_pct}%</td>
-                                      </tr>
-                                    ))}
+                                    {rows.map((row, i) => {
+                                      const isWeeklyRow = row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee");
+                                      return (
+                                        <tr key={i} className={`border-b last:border-0 ${isWeeklyRow ? "bg-emerald-50/30" : ""}`}>
+                                          <td className={`px-3 py-1.5 font-medium ${isWeeklyRow ? "text-foreground font-semibold" : "text-muted-foreground"}`}>{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</td>
+                                          <td className={`px-3 py-1.5 text-center font-mono ${isWeeklyRow ? "text-emerald-700 font-bold text-sm" : "text-emerald-600"}`}>
+                                            {row.green_high === 0
+                                              ? (avgWonWeekly && isWeeklyRow
+                                                  ? <span className="text-emerald-600 italic">{fB(avgWonWeekly * 0.9)}–{fB(avgWonWeekly * 1.1)}</span>
+                                                  : <span className="text-muted-foreground italic">n/a</span>)
+                                              : `${fB(row.green_low)}–${fB(row.green_high)}`}
+                                          </td>
+                                          <td className="px-3 py-1.5 text-center font-semibold">{row.decisiveness_pct}%</td>
+                                        </tr>
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                                 {/* Right: visual band bars (shared scale) */}
@@ -2595,14 +2598,14 @@ export default function PricingTool() {
                                     const pctM = (v: number) => `${Math.min(100, Math.max(0, (v / scale) * 100)).toFixed(2)}%`;
                                     return (
                                       <div className="space-y-0.5">
-                                        <div className="text-[9px] text-blue-600 font-semibold">
+                                        <div className="text-[10px] text-blue-600 font-semibold">
                                           Mkt benchmark (IT ×{mktBench.mult.toFixed(2)})
                                         </div>
-                                        <div className="relative h-6 rounded overflow-hidden bg-blue-50 border border-blue-200/50">
+                                        <div className="relative h-7 rounded overflow-hidden bg-blue-50 border border-blue-200/50">
                                           <div className="absolute inset-y-0 bg-blue-400/50"
                                             style={{ left: pctM(mktBench.low), width: `${Math.max(0, (mktBench.high - mktBench.low) / scale * 100).toFixed(2)}%` }} />
-                                          <span className="absolute text-[11px] font-bold text-blue-800 leading-none px-1"
-                                            style={{ left: `calc(${pctM(mktBench.low)} + 2px)`, top: 3 }}>
+                                          <span className="absolute text-xs font-bold text-blue-800 leading-none px-1.5"
+                                            style={{ left: `calc(${pctM(mktBench.low)} + 2px)`, top: 4 }}>
                                             {fB(mktBench.low)}–{fB(mktBench.high)}
                                           </span>
                                         </div>
@@ -2614,51 +2617,69 @@ export default function PricingTool() {
                                     const pct = (v: number) => `${Math.min(100, Math.max(0, (v / scale) * 100)).toFixed(2)}%`;
                                     const noData = row.yellow_high === 0;
                                     const isWeekly = row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee");
-                                    // Synthetic band from won proposals when no benchmark data
                                     const synthLow = noData && avgWonWeekly && isWeekly ? avgWonWeekly * 0.9 : null;
                                     const synthHigh = noData && avgWonWeekly && isWeekly ? avgWonWeekly * 1.1 : null;
+
+                                    // Weekly = prominent thick bar; Total = thin line markers
+                                    if (!isWeekly) {
+                                      // ── TOTAL: thin line representation ──
+                                      return (
+                                        <div key={i} className="space-y-0.5">
+                                          <div className="text-[10px] text-muted-foreground/60">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</div>
+                                          {noData ? (
+                                            <div className="h-3 flex items-center">
+                                              <span className="text-[10px] text-muted-foreground/40 italic">No data</span>
+                                            </div>
+                                          ) : (
+                                            <div className="relative h-3 rounded-full overflow-hidden bg-muted/20">
+                                              {/* Thin colored line segments */}
+                                              <div className="absolute top-1 bottom-1 bg-amber-300/50 rounded-full" style={{ left: pct(row.yellow_low), width: `${Math.max(0, (row.green_low - row.yellow_low) / scale * 100).toFixed(2)}%` }} />
+                                              <div className="absolute top-0.5 bottom-0.5 bg-emerald-400/70 rounded-full" style={{ left: pct(row.green_low), width: `${Math.max(0, (row.green_high - row.green_low) / scale * 100).toFixed(2)}%` }} />
+                                              <div className="absolute top-1 bottom-1 bg-amber-300/50 rounded-full" style={{ left: pct(row.green_high), width: `${Math.max(0, (row.yellow_high - row.green_high) / scale * 100).toFixed(2)}%` }} />
+                                              <div className="absolute top-1 bottom-1 bg-red-300/40 rounded-full" style={{ left: pct(row.yellow_high), right: 0 }} />
+                                            </div>
+                                          )}
+                                          {!noData && (
+                                            <div className="text-[9px] text-muted-foreground/50 font-mono">{fB(row.green_low)}–{fB(row.green_high)}</div>
+                                          )}
+                                        </div>
+                                      );
+                                    }
+
+                                    // ── WEEKLY: prominent thick bar ──
                                     return (
                                       <div key={i} className="space-y-0.5">
-                                        <div className="text-[9px] text-muted-foreground">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</div>
+                                        <div className="text-xs font-semibold text-foreground">{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</div>
                                         {noData && !synthLow ? (
-                                          <div className="h-5 rounded bg-muted/30 flex items-center px-2">
-                                            <span className="text-[9px] text-muted-foreground italic">No data</span>
+                                          <div className="h-6 rounded bg-muted/30 flex items-center px-2">
+                                            <span className="text-xs text-muted-foreground italic">No data</span>
                                           </div>
                                         ) : (
-                                          <div className="relative h-10 rounded overflow-hidden bg-white border border-border/50">
+                                          <div className="relative h-12 rounded-lg overflow-hidden bg-white border border-border/50">
                                             {noData && synthLow && synthHigh ? (
-                                              /* Synthetic green band from won projects ±10% */
                                               <>
                                                 <div className="absolute inset-y-0 bg-emerald-400/70"
                                                   style={{ left: pct(synthLow), width: `${Math.max(0, (synthHigh - synthLow) / scale * 100).toFixed(2)}%` }} />
-                                                {/* value label above green band */}
-                                                <span className="absolute text-[12px] font-bold text-emerald-800 leading-none px-1"
-                                                  style={{ left: pct(synthLow), top: 3 }}>
+                                                <span className="absolute text-sm font-bold text-emerald-800 leading-none px-1.5"
+                                                  style={{ left: pct(synthLow), top: 4 }}>
                                                   {fB(synthLow)}–{fB(synthHigh)}
                                                 </span>
-                                                <div className="absolute bottom-1 text-[9px] text-emerald-700 italic w-full text-center leading-none">
+                                                <div className="absolute bottom-1 text-[10px] text-emerald-700 italic w-full text-center leading-none">
                                                   estimated ±10%
                                                 </div>
                                               </>
                                             ) : (
                                               <>
-                                                {/* left zone: 0 → yellow_low — white (no colour) */}
-                                                {/* yellow left: yellow_low → green_low */}
                                                 <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.yellow_low), width: `${Math.max(0, (row.green_low - row.yellow_low) / scale * 100).toFixed(2)}%` }} />
-                                                {/* green: green_low → green_high */}
                                                 <div className="absolute inset-y-0 bg-emerald-400/80" style={{ left: pct(row.green_low), width: `${Math.max(0, (row.green_high - row.green_low) / scale * 100).toFixed(2)}%` }} />
-                                                {/* yellow right: green_high → yellow_high */}
                                                 <div className="absolute inset-y-0 bg-amber-300/70" style={{ left: pct(row.green_high), width: `${Math.max(0, (row.yellow_high - row.green_high) / scale * 100).toFixed(2)}%` }} />
-                                                {/* red right: yellow_high → scale */}
                                                 <div className="absolute inset-y-0 bg-red-400/50" style={{ left: pct(row.yellow_high), right: 0 }} />
-                                                {/* Green band value label */}
-                                                <span className="absolute text-[12px] font-bold text-emerald-900 leading-none pointer-events-none px-1"
-                                                  style={{ left: `calc(${pct(row.green_low)} + 2px)`, top: 3 }}>
+                                                <span className="absolute text-sm font-bold text-emerald-900 leading-none pointer-events-none px-1.5"
+                                                  style={{ left: `calc(${pct(row.green_low)} + 2px)`, top: 4 }}>
                                                   {fB(row.green_low)}–{fB(row.green_high)}
                                                 </span>
                                               </>
                                             )}
-                                            {/* Scale tick marks */}
                                             {[0.25, 0.5, 0.75].map(t => (
                                               <div key={t} className="absolute inset-y-0 w-px bg-black/10" style={{ left: `${t * 100}%` }} />
                                             ))}
@@ -2673,7 +2694,7 @@ export default function PricingTool() {
                           );
                         })}
                         {/* Scale axis labels */}
-                        <div className="grid grid-cols-[280px,1fr] gap-3">
+                        <div className="grid grid-cols-[300px,1fr] gap-4">
                           <div />
                           <div className="flex justify-between text-[8px] text-muted-foreground px-0.5">
                             <span>0</span><span>25%</span><span>50%</span><span>75%</span><span>max</span>
