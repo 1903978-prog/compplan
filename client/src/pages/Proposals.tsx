@@ -182,6 +182,12 @@ export default function Proposals() {
   const [slideGenerating, setSlideGenerating] = useState<string | null>(null);
   const [slideFollowUpQs, setSlideFollowUpQs] = useState<Record<string, { key: string; question: string }[]>>({});
   const [slideDefaultPrompts, setSlideDefaultPrompts] = useState<Record<string, { visual: string; content: string }>>({});
+  const [previewSlideId, setPreviewSlideId] = useState<string | null>(null);
+  const [previewHtml, setPreviewHtml] = useState<Record<string, string>>({});
+  const [generatingPage, setGeneratingPage] = useState<string | null>(null);
+  const [slideChatInput, setSlideChatInput] = useState("");
+  const [slideChatHistory, setSlideChatHistory] = useState<Record<string, { role: "user" | "ai"; text: string }[]>>({});
+  const [slideChatLoading, setSlideChatLoading] = useState(false);
 
   // Drag state
   const dragItem = useRef<number | null>(null);
@@ -453,6 +459,98 @@ export default function Proposals() {
       toast({ title: "Generation failed", description: err.message, variant: "destructive" });
     }
     setSlideGenerating(null);
+  }
+
+  // Generate visual page preview (HTML)
+  async function generatePage(slideId: string) {
+    const slide = slides.find(s => s.slide_id === slideId);
+    if (!slide || !current?.id) { if (!current?.id) await saveProgress(); }
+    if (!current?.id) { toast({ title: "Save first", variant: "destructive" }); return; }
+
+    setGeneratingPage(slideId);
+    setPreviewSlideId(slideId);
+    try {
+      const res = await fetch(`/api/proposals/${current.id}/generate-page`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: slideId,
+          visual_prompt: slide?.visual_prompt ?? "",
+          content_prompt: slide?.content_prompt ?? "",
+          generated_content: slide?.generated_content ?? "",
+        }),
+      });
+      if (!res.ok) throw new Error("Page generation failed");
+      const { html } = await res.json();
+      setPreviewHtml(prev => ({ ...prev, [slideId]: html }));
+      toast({ title: `Page preview ready for "${slide?.title}"` });
+    } catch (err: any) {
+      toast({ title: "Page generation failed", description: err.message, variant: "destructive" });
+    }
+    setGeneratingPage(null);
+  }
+
+  // Download single slide as PPTX
+  async function downloadSlidePptx(slideId: string) {
+    if (!current?.id) return;
+    try {
+      const res = await fetch(`/api/proposals/${current.id}/download-slide`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_id: slideId }),
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const slide = slides.find(s => s.slide_id === slideId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${slide?.title ?? slideId}.pptx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast({ title: "Download failed", description: err.message, variant: "destructive" });
+    }
+  }
+
+  // Chat modification for slide preview
+  async function sendSlideChat(slideId: string) {
+    if (!slideChatInput.trim() || !current?.id) return;
+    const instruction = slideChatInput.trim();
+    setSlideChatInput("");
+    setSlideChatHistory(prev => ({
+      ...prev,
+      [slideId]: [...(prev[slideId] ?? []), { role: "user" as const, text: instruction }],
+    }));
+    setSlideChatLoading(true);
+    try {
+      const slide = slides.find(s => s.slide_id === slideId);
+      const res = await fetch(`/api/proposals/${current.id}/generate-page`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: slideId,
+          visual_prompt: slide?.visual_prompt ?? "",
+          content_prompt: slide?.content_prompt ?? "",
+          generated_content: slide?.generated_content ?? "",
+          chat_instruction: instruction,
+          current_html: previewHtml[slideId] ?? "",
+        }),
+      });
+      if (!res.ok) throw new Error("Modification failed");
+      const { html } = await res.json();
+      setPreviewHtml(prev => ({ ...prev, [slideId]: html }));
+      setSlideChatHistory(prev => ({
+        ...prev,
+        [slideId]: [...(prev[slideId] ?? []), { role: "ai" as const, text: "Page updated." }],
+      }));
+    } catch (err: any) {
+      setSlideChatHistory(prev => ({
+        ...prev,
+        [slideId]: [...(prev[slideId] ?? []), { role: "ai" as const, text: `Error: ${err.message}` }],
+      }));
+    }
+    setSlideChatLoading(false);
   }
 
   // ── Step 2 → Step 3: Save slide selection & generate briefs ─────────────────
@@ -1366,6 +1464,15 @@ Example:
                             className={`p-1.5 rounded hover:bg-muted transition-colors ${isExpanded && activePanel === "generate" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
                             {isGen ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                           </button>
+                          <button title="Generate Page Preview" onClick={e => { e.stopPropagation(); generatePage(slide.slide_id); }}
+                            disabled={generatingPage === slide.slide_id}
+                            className={`p-1.5 rounded hover:bg-muted transition-colors ${
+                              previewSlideId === slide.slide_id && previewHtml[slide.slide_id] ? "text-emerald-600 bg-emerald-50"
+                              : generatingPage === slide.slide_id ? "text-primary"
+                              : "text-muted-foreground"
+                            }`}>
+                            {generatingPage === slide.slide_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
                         </div>
                       )}
                       <button title="Delete slide" onClick={e => {
@@ -1574,39 +1681,99 @@ Example:
                     </Card>
                   </div>
 
-                  {/* Right: Selected slides summary */}
+                  {/* Right: Preview panel OR slide list */}
                   <div>
-                    <Card className="p-0 overflow-hidden sticky top-20">
-                      <div className="px-4 py-3 border-b bg-muted/30">
-                        <h3 className="text-sm font-semibold">Selected Slides ({selectedSlideCount})</h3>
-                        <p className="text-xs text-muted-foreground">
-                          {coreSlides.filter(s => s.is_selected).length} core + {optionalSlides.filter(s => s.is_selected).length} optional
-                        </p>
-                      </div>
-                      <div className="p-3 max-h-[540px] overflow-y-auto">
-                        {slides.filter(s => s.is_selected).length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">No slides selected</p>
-                        ) : (
-                          <ol className="space-y-1">
-                            {slides.filter(s => s.is_selected).map((s, i) => (
-                              <li key={s.slide_id} className="flex items-center gap-2 text-sm py-1">
-                                <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
-                                <span className="truncate">{s.title}</span>
-                                {s.group === "optional" && (
-                                  <span className="text-[9px] px-1 py-0 rounded bg-amber-100 text-amber-600 shrink-0">OPT</span>
-                                )}
-                                <button
-                                  onClick={() => toggleSlide(s.slide_id)}
-                                  className="ml-auto text-muted-foreground hover:text-destructive shrink-0"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
-                              </li>
+                    {previewSlideId && previewHtml[previewSlideId] ? (
+                      /* ── Slide Preview ─────────────────────────────── */
+                      <Card className="p-0 overflow-hidden sticky top-20">
+                        <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between">
+                          <div>
+                            <h3 className="text-xs font-semibold">{slides.find(s => s.slide_id === previewSlideId)?.title ?? "Preview"}</h3>
+                            <p className="text-[10px] text-muted-foreground">Slide preview</p>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Button size="sm" variant="outline" className="h-7 text-[10px]"
+                              onClick={() => downloadSlidePptx(previewSlideId)}>
+                              <Download className="w-3 h-3 mr-1" /> PPTX
+                            </Button>
+                            <button onClick={() => setPreviewSlideId(null)}
+                              className="p-1 rounded hover:bg-muted text-muted-foreground">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        {/* Preview iframe */}
+                        <div className="bg-gray-100 p-2">
+                          <div className="bg-white shadow-lg mx-auto" style={{ width: "100%", aspectRatio: "16/9", overflow: "hidden" }}>
+                            <div
+                              dangerouslySetInnerHTML={{ __html: previewHtml[previewSlideId] }}
+                              style={{ transform: "scale(0.5)", transformOrigin: "top left", width: "200%", height: "200%" }}
+                            />
+                          </div>
+                        </div>
+                        {/* Chat for modifications */}
+                        <div className="border-t p-2 space-y-2">
+                          <div className="max-h-28 overflow-y-auto space-y-1">
+                            {(slideChatHistory[previewSlideId] ?? []).map((msg, i) => (
+                              <div key={i} className={`text-[10px] px-2 py-1 rounded ${
+                                msg.role === "user" ? "bg-primary/10 text-primary ml-4" : "bg-muted text-muted-foreground mr-4"
+                              }`}>{msg.text}</div>
                             ))}
-                          </ol>
-                        )}
-                      </div>
-                    </Card>
+                          </div>
+                          <div className="flex gap-1">
+                            <Input
+                              value={slideChatInput}
+                              onChange={e => setSlideChatInput(e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendSlideChat(previewSlideId); } }}
+                              placeholder="Ask to modify..."
+                              className="h-7 text-xs flex-1"
+                              disabled={slideChatLoading}
+                            />
+                            <Button size="sm" className="h-7 text-[10px] shrink-0"
+                              onClick={() => sendSlideChat(previewSlideId)} disabled={slideChatLoading || !slideChatInput.trim()}>
+                              {slideChatLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Send"}
+                            </Button>
+                          </div>
+                        </div>
+                      </Card>
+                    ) : (
+                      /* ── Selected Slides Summary ────────────────────── */
+                      <Card className="p-0 overflow-hidden sticky top-20">
+                        <div className="px-3 py-2 border-b bg-muted/30">
+                          <h3 className="text-xs font-semibold">Selected Slides ({selectedSlideCount})</h3>
+                          <p className="text-[10px] text-muted-foreground">
+                            {coreSlides.filter(s => s.is_selected).length} core + {optionalSlides.filter(s => s.is_selected).length} optional
+                          </p>
+                        </div>
+                        <div className="p-2 max-h-[540px] overflow-y-auto">
+                          {slides.filter(s => s.is_selected).length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-4">No slides selected</p>
+                          ) : (
+                            <ol className="space-y-0.5">
+                              {slides.filter(s => s.is_selected).map((s, i) => (
+                                <li key={s.slide_id} className="flex items-center gap-1.5 text-xs py-0.5">
+                                  <span className="text-[10px] text-muted-foreground w-4 text-right">{i + 1}.</span>
+                                  <span className="truncate">{s.title}</span>
+                                  {s.group === "optional" && (
+                                    <span className="text-[8px] px-1 rounded bg-amber-100 text-amber-600 shrink-0">OPT</span>
+                                  )}
+                                  {previewHtml[s.slide_id] && (
+                                    <button onClick={() => setPreviewSlideId(s.slide_id)}
+                                      className="text-emerald-600 hover:text-emerald-700 shrink-0" title="Show preview">
+                                      <Eye className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                  <button onClick={() => toggleSlide(s.slide_id)}
+                                    className="ml-auto text-muted-foreground hover:text-destructive shrink-0">
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </li>
+                              ))}
+                            </ol>
+                          )}
+                        </div>
+                      </Card>
+                    )}
                   </div>
                 </div>
               );

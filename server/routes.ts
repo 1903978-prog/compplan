@@ -520,6 +520,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/proposals/:id/generate-page — generate slide as HTML preview
+  app.post("/api/proposals/:id/generate-page", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { slide_id, visual_prompt, content_prompt, generated_content, chat_instruction } = req.body;
+      if (!slide_id) { res.status(400).json({ message: "slide_id required" }); return; }
+
+      const slideSelection = Array.isArray(proposal.slide_selection) ? proposal.slide_selection : [];
+      const slide = slideSelection.find((s: any) => s.slide_id === slide_id);
+      const slideTitle = slide?.title ?? slide_id;
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) { res.status(503).json({ message: "ANTHROPIC_API_KEY not set" }); return; }
+      const client = new Anthropic({ apiKey });
+
+      const systemPrompt = `You are a senior slide designer at Eendigo, a management consulting firm.
+Generate a single HTML page that looks like a PowerPoint slide preview.
+Use inline CSS. The slide should be 960px wide × 540px tall (16:9 ratio).
+Brand colors: primary teal #1A6571, text dark #1e293b, accent light teal #e0f2f1.
+Use clean, professional fonts (system sans-serif stack).
+Include a thin teal footer bar at the bottom with "eendigo" text right-aligned.
+The HTML must be a complete self-contained div (no external resources).
+Output ONLY the HTML div, no explanation.`;
+
+      let userPrompt = `Create a slide for: "${slideTitle}"
+
+VISUAL INSTRUCTIONS:
+${visual_prompt || "Standard single-column layout with header and body content."}
+
+CONTENT:
+${generated_content || content_prompt || "Generate appropriate content for this slide type."}
+
+Company: ${proposal.company_name}`;
+
+      if (chat_instruction) {
+        userPrompt = `Modify the following slide based on this instruction: "${chat_instruction}"
+
+Current slide HTML:
+${req.body.current_html || ""}
+
+Keep the same 960×540 format and Eendigo branding. Output ONLY the updated HTML div.`;
+      }
+
+      const response = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 3000,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      });
+
+      const textBlock = response.content.find(b => b.type === "text");
+      let html = textBlock?.text ?? "<div>Generation failed</div>";
+      // Extract just the div if wrapped in markdown code block
+      const codeMatch = html.match(/```html?\s*([\s\S]*?)```/);
+      if (codeMatch) html = codeMatch[1].trim();
+
+      res.json({ slide_id, html });
+    } catch (err: any) {
+      console.error("Page generation error:", err.message);
+      res.status(500).json({ message: err.message || "Generation failed" });
+    }
+  });
+
+  // POST /api/proposals/:id/download-slide — generate PPTX for a single slide
+  app.post("/api/proposals/:id/download-slide", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { slide_id } = req.body;
+      const slideSelection = Array.isArray(proposal.slide_selection) ? proposal.slide_selection : [];
+      const slide = slideSelection.find((s: any) => s.slide_id === slide_id);
+      if (!slide) { res.status(404).json({ message: "Slide not found" }); return; }
+
+      // Generate a minimal single-slide PPTX using PptxGenJS
+      const PptxGenJS = (await import("pptxgenjs")).default;
+      const pptx = new PptxGenJS();
+      pptx.layout = "LAYOUT_WIDE";
+
+      const s = pptx.addSlide();
+      // Header
+      s.addText(slide.title ?? slide_id, { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 24, color: "1A6571", fontFace: "Arial", bold: true });
+      // Content
+      const content = slide.generated_content ?? slide.content_prompt ?? "";
+      s.addText(content, { x: 0.5, y: 1.1, w: 9, h: 4, fontSize: 12, color: "1e293b", fontFace: "Arial", valign: "top", paraSpaceAfter: 6 });
+      // Footer
+      s.addText("eendigo", { x: 8, y: 5.0, w: 1.5, h: 0.3, fontSize: 10, color: "1A6571", fontFace: "Arial", align: "right" });
+      s.addShape(pptx.ShapeType.rect, { x: 0, y: 5.2, w: 10, h: 0.05, fill: { color: "1A6571" } });
+
+      const buffer = await pptx.write({ outputType: "arraybuffer" });
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Content-Disposition", `attachment; filename="${slide.title ?? slide_id}.pptx"`);
+      res.send(Buffer.from(buffer as ArrayBuffer));
+    } catch (err: any) {
+      console.error("Slide PPTX error:", err.message);
+      res.status(500).json({ message: err.message || "PPTX generation failed" });
+    }
+  });
+
   app.post("/api/proposals/:id/analyze", requireAuth, async (req, res) => {
     try {
       if (await guardApiAsync(res)) return;
