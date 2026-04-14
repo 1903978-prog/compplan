@@ -10,8 +10,11 @@ const app = express();
 app.set("trust proxy", 1);
 
 app.use('/api/proposal-templates', express.json({ limit: '10mb' }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// Proposals carry generated slide previews (HTML) in their JSON body, which
+// routinely pushes bodies well past Express's 100KB default. Raising to 25mb
+// matches the templates route and prevents "Save failed" / 413 errors.
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: false }));
 
 // Serve uploaded proposal attachments
 const uploadsDir = path.join(process.cwd(), "uploads");
