@@ -173,6 +173,45 @@ Equally, our methodologies, analytical frameworks, and proprietary approaches re
 
 Copyright 2026© Eendigo LLC`;
     }
+    // Pre-fill agenda slide with dynamic content prompt
+    if (slide.slide_id === "agenda") {
+      entry.visual_prompt = `Single-column layout:
+- Title "Agenda" in Eendigo teal (#1A6571) at the top left
+- Numbered list of agenda items, each on its own line
+- Use consistent font size (14-16pt), teal color for numbers, dark text for titles
+- Clean spacing between items (1.2× line height)
+- Footer: Eendigo logo bottom-right with page number
+- No icons, no bullets — just numbered items aligned left
+- White background, professional and minimal`;
+      entry.content_prompt = `DYNAMIC AGENDA — AUTO-GENERATED FROM SELECTED SLIDES
+
+This page must list EXACTLY the slides that are currently selected in the proposal, in their exact order. It must start from the slide after "Agenda" (typically "Executive Summary") and end with the last selected slide (typically "Next Steps" or "Annex").
+
+RULES:
+1. List ONLY slides that have is_selected = true
+2. Skip "Cover Page", "Confidentiality", and "Agenda" itself — they are not agenda items
+3. Use the exact slide TITLE as the agenda item text (respect any renames the user made)
+4. Maintain the exact ORDER defined in the slide selection (the order field)
+5. Number each item sequentially starting from 1
+6. If an optional slide is selected, it appears in the agenda at its position in the order
+7. If a slide is deselected, it must NOT appear in the agenda
+8. If a custom slide was added by the user, include it at its position
+
+FORMAT:
+1. Executive Summary
+2. Context
+3. Value at Stake
+4. Proposed Approach
+5. Timeline
+6. Governance & Inputs
+7. Impact & ROI
+8. Why Eendigo
+9. Commercials & Options
+10. Next Steps
+11. Annex
+
+NOTE: The above is just an example. The actual agenda must reflect the CURRENT slide selection at the time of generation. The system should read the slides array and build the list dynamically.`;
+    }
     return entry;
   });
 }

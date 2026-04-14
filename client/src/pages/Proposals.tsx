@@ -471,13 +471,25 @@ export default function Proposals() {
 
     setSlideGenerating(slideId);
     try {
+      // For agenda: inject the actual selected slide list into the content prompt
+      let contentPrompt = slide.content_prompt ?? "";
+      if (slideId === "agenda") {
+        const SKIP_IDS = new Set(["cover", "confidentiality", "agenda"]);
+        const agendaItems = slides
+          .filter(s => s.is_selected && !SKIP_IDS.has(s.slide_id))
+          .sort((a, b) => a.order - b.order)
+          .map((s, i) => `${i + 1}. ${s.title}`)
+          .join("\n");
+        contentPrompt += `\n\n=== CURRENT SELECTED SLIDES (use this exact list) ===\n${agendaItems}`;
+      }
+
       const res = await fetch(`/api/proposals/${current.id}/generate-slide`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slide_id: slideId,
           visual_prompt: slide.visual_prompt ?? "",
-          content_prompt: slide.content_prompt ?? "",
+          content_prompt: contentPrompt,
           answers: slide.generation_answers ?? {},
         }),
       });
@@ -500,14 +512,28 @@ export default function Proposals() {
     setGeneratingPage(slideId);
     setPreviewSlideId(slideId);
     try {
+      // For agenda: inject the actual selected slide list
+      let pageContentPrompt = slide?.content_prompt ?? "";
+      let pageGenContent = slide?.generated_content ?? "";
+      if (slideId === "agenda") {
+        const SKIP_IDS = new Set(["cover", "confidentiality", "agenda"]);
+        const agendaItems = slides
+          .filter(s => s.is_selected && !SKIP_IDS.has(s.slide_id))
+          .sort((a, b) => a.order - b.order)
+          .map((s, i) => `${i + 1}. ${s.title}`)
+          .join("\n");
+        pageContentPrompt += `\n\n=== CURRENT SELECTED SLIDES (use this exact list) ===\n${agendaItems}`;
+        if (!pageGenContent) pageGenContent = agendaItems;
+      }
+
       const res = await fetch(`/api/proposals/${current.id}/generate-page`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slide_id: slideId,
           visual_prompt: slide?.visual_prompt ?? "",
-          content_prompt: slide?.content_prompt ?? "",
-          generated_content: slide?.generated_content ?? "",
+          content_prompt: pageContentPrompt,
+          generated_content: pageGenContent,
         }),
       });
       if (!res.ok) throw new Error("Page generation failed");
