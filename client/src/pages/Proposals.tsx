@@ -516,9 +516,15 @@ export default function Proposals() {
           answers: slide.generation_answers ?? {},
         }),
       });
-      if (!res.ok) throw new Error("Generation failed");
-      const { generated_content } = await res.json();
-      updateSlideField(slideId, "generated_content", generated_content);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ message: `HTTP ${res.status}` }));
+        throw new Error(errData.message || `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      if (!data.generated_content) {
+        throw new Error("Server returned empty content");
+      }
+      updateSlideField(slideId, "generated_content", data.generated_content);
       toast({ title: `Content generated for "${slide.title}"` });
     } catch (err: any) {
       toast({ title: "Generation failed", description: err.message, variant: "destructive" });
@@ -1861,14 +1867,14 @@ Example:
                               </div>
                             </div>
 
-                            {isGen && !slide.generated_content && (
-                              <div className="flex items-center gap-2 py-4 justify-center text-xs text-muted-foreground">
-                                <Loader2 className="w-4 h-4 animate-spin" /> Generating content from your prompts and proposal context...
+                            {isGen && (
+                              <div className="flex items-center gap-2 py-4 justify-center text-xs text-muted-foreground border rounded bg-violet-50">
+                                <Loader2 className="w-4 h-4 animate-spin text-violet-600" /> Generating content — this may take 5-10 seconds...
                               </div>
                             )}
 
                             {/* Editable generated content */}
-                            {slide.generated_content && (
+                            {slide.generated_content && !isGen && (
                               <Textarea
                                 value={slide.generated_content}
                                 onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}

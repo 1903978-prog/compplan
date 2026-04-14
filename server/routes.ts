@@ -532,9 +532,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         project_type: proposal.project_type || "Strategy",
       });
 
+      console.log(`[generate-slide] ${slide_id}: ${generated ? generated.substring(0, 80) + "..." : "EMPTY"}`);
       res.json({ slide_id, generated_content: generated });
     } catch (err: any) {
-      console.error("Single slide generation error:", err);
+      console.error("Single slide generation error:", err.message || err);
       res.status(500).json({ message: err.message || "Generation failed" });
     }
   });
