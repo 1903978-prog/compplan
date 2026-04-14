@@ -1665,7 +1665,10 @@ Example:
                       >
                         {slide.is_selected && <Check className="w-3 h-3" />}
                       </button>
-                      <div className="flex-1 min-w-0" onClick={() => toggleSlide(slide.slide_id)}>
+                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
+                        if (previewHtml[slide.slide_id]) { setPreviewSlideId(slide.slide_id); }
+                        else if (slide.is_selected) { generatePage(slide.slide_id); }
+                      }}>
                         <div className="flex items-center gap-2">
                           <span
                             className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"} cursor-text`}
