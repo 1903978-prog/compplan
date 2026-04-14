@@ -181,6 +181,7 @@ export default function Proposals() {
   const [expandedSlidePanel, setExpandedSlidePanel] = useState<{ slideId: string; panel: "visual" | "content" | "generate" } | null>(null);
   const [slideGenerating, setSlideGenerating] = useState<string | null>(null);
   const [slideFollowUpQs, setSlideFollowUpQs] = useState<Record<string, { key: string; question: string }[]>>({});
+  const [slideDefaultPrompts, setSlideDefaultPrompts] = useState<Record<string, { visual: string; content: string }>>({});
 
   // Drag state
   const dragItem = useRef<number | null>(null);
@@ -400,16 +401,17 @@ export default function Proposals() {
       const res = await fetch(`/api/slide-defaults/${slideId}`, { credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
-      setSlides(prev => prev.map(s =>
-        s.slide_id === slideId ? {
-          ...s,
-          visual_prompt: s.visual_prompt || data.visual_prompt,
-          content_prompt: s.content_prompt || data.content_prompt,
-        } : s
-      ));
-      if (data.follow_up_questions?.length > 0) {
-        setSlideFollowUpQs(prev => ({ ...prev, [slideId]: data.follow_up_questions }));
-      }
+      // Store defaults separately — do NOT write into slide state (that would light up icons)
+      // Defaults are shown as placeholder text in the textareas, not as saved content
+      setSlideFollowUpQs(prev => ({
+        ...prev,
+        [slideId]: data.follow_up_questions ?? [],
+      }));
+      // Store default prompts for placeholder display (keyed by slideId)
+      setSlideDefaultPrompts(prev => ({
+        ...prev,
+        [slideId]: { visual: data.visual_prompt ?? "", content: data.content_prompt ?? "" },
+      }));
     } catch { /* silent */ }
   }
 
@@ -1345,7 +1347,7 @@ Example:
                           <button title="Content Prompt" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "content"); }}
                             className={`p-1.5 rounded hover:bg-muted transition-colors ${
                               isExpanded && activePanel === "content" ? "bg-primary/10 text-primary"
-                              : slide.content_prompt?.trim() ? "text-amber-600 bg-amber-50"
+                              : slide.content_prompt?.trim() ? "text-blue-600 bg-blue-50"
                               : "text-muted-foreground"
                             }`}>
                             <FileText className="w-3.5 h-3.5" />
@@ -1377,7 +1379,7 @@ Example:
                             <Textarea
                               value={slide.visual_prompt ?? ""}
                               onChange={e => updateSlideField(slide.slide_id, "visual_prompt", e.target.value)}
-                              placeholder="Describe how this slide should look: layout, columns, imagery, branding..."
+                              placeholder={slideDefaultPrompts[slide.slide_id]?.visual || "Describe how this slide should look: layout, columns, imagery, branding..."}
                               rows={4}
                               className="text-xs"
                             />
@@ -1398,7 +1400,7 @@ Example:
                             <Textarea
                               value={slide.content_prompt ?? ""}
                               onChange={e => updateSlideField(slide.slide_id, "content_prompt", e.target.value)}
-                              placeholder="Define the workflow/questions to guide content generation for this slide..."
+                              placeholder={slideDefaultPrompts[slide.slide_id]?.content || "Define the workflow/questions to guide content generation for this slide..."}
                               rows={6}
                               className="text-xs font-mono"
                             />
