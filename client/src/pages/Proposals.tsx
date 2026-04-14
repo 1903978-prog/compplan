@@ -1320,7 +1320,17 @@ Example:
                       </button>
                       <div className="flex-1 min-w-0" onClick={() => toggleSlide(slide.slide_id)}>
                         <div className="flex items-center gap-2">
-                          <span className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"}`}>{slide.title}</span>
+                          <span
+                            className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"} cursor-text`}
+                            onDoubleClick={e => {
+                              e.stopPropagation();
+                              const newName = window.prompt("Rename slide:", slide.title);
+                              if (newName?.trim() && newName.trim() !== slide.title) {
+                                updateSlideField(slide.slide_id, "title", newName.trim());
+                              }
+                            }}
+                            title="Double-click to rename"
+                          >{slide.title}</span>
                           {slide.group === "core" && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">CORE</span>
                           )}

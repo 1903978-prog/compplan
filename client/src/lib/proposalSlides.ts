@@ -16,11 +16,11 @@ export const MASTER_SLIDES: SlideDefinition[] = [
   { slide_id: "context",           title: "Context",                description: "Client situation, market dynamics, and urgency drivers",           group: "core" },
   { slide_id: "value_at_stake",    title: "Value at Stake",         description: "Quantified opportunity sizing and impact if nothing changes",      group: "core" },
   { slide_id: "proposed_approach", title: "Proposed Approach",       description: "Recommended approach, logic, and high-level workstreams",          group: "core" },
-  { slide_id: "timeline_options",  title: "Timeline & Options",     description: "Project timeline with milestones and option variants",             group: "core" },
+  { slide_id: "timeline_options",  title: "Timeline",               description: "Project timeline with milestones",                                group: "core" },
   { slide_id: "governance_inputs", title: "Governance & Inputs",    description: "Steering committee, escalation, reporting, and client inputs",     group: "core" },
   { slide_id: "impact_roi",        title: "Impact & ROI",           description: "Expected business impact, ROI projections, and value creation",    group: "core" },
   { slide_id: "why_eendigo",       title: "Why Eendigo",            description: "Credentials, case studies, proof of impact, and differentiators",  group: "core" },
-  { slide_id: "commercials",       title: "Commercials",            description: "Fee structure, pricing, and commercial terms",                     group: "core" },
+  { slide_id: "commercials",       title: "Commercials & Options",  description: "Fee structure, pricing, commercial terms, and option variants",    group: "core" },
   { slide_id: "next_steps",        title: "Next Steps",             description: "Immediate actions and decision timeline",                          group: "core" },
   { slide_id: "annex",             title: "Annex",                  description: "Supporting data, detailed tables, and appendix material",          group: "core" },
 
