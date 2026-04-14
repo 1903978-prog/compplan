@@ -1,8 +1,12 @@
 /**
  * Eendigo → Hiring Kanban sync
- * Fetches https://56.228.34.234/, parses the candidate table,
- * and upserts into hiring_candidates (keyed by email).
- * Candidates manually moved by the user (sync_locked=1) keep their stage.
+ * Logs into https://56.228.34.234/ (the dashboard is now behind a
+ * session-cookie login), fetches the candidate table, and upserts into
+ * hiring_candidates (keyed by email). Candidates manually moved by the
+ * user (sync_locked=1) keep their stage.
+ *
+ * Credentials are read from env vars EENDIGO_USERNAME / EENDIGO_PASSWORD.
+ * Never hard-code them.
  */
 
 import { storage } from "./storage";
@@ -10,7 +14,9 @@ import https from "node:https";
 import http from "node:http";
 import { URL } from "node:url";
 
-const EENDIGO_URL = "https://56.228.34.234/";
+const EENDIGO_BASE = "https://56.228.34.234";
+const EENDIGO_URL = `${EENDIGO_BASE}/`;
+const EENDIGO_LOGIN_URL = `${EENDIGO_BASE}/login`;
 
 // Stage ordering: higher = more advanced
 const STAGE_ORDER: Record<string, number> = {
@@ -20,30 +26,124 @@ const STAGE_ORDER: Record<string, number> = {
   after_csi_lm: 3,
 };
 
-/** Fetch a URL following up to maxRedirects redirects */
-function fetchWithRedirects(url: string, maxRedirects: number): Promise<string> {
+interface RawResponse {
+  statusCode: number;
+  headers: http.IncomingHttpHeaders;
+  body: string;
+}
+
+/** Raw request returning status, headers, and body. Does not follow redirects. */
+function request(
+  method: "GET" | "POST",
+  url: string,
+  opts: { cookie?: string; body?: string; contentType?: string } = {}
+): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const lib = parsedUrl.protocol === "https:" ? https : http;
-    const req = lib.get(
+    const headers: Record<string, string> = {
+      "User-Agent": "Mozilla/5.0 (compatible; CompPlan/1.0)",
+      "Accept": "text/html,application/xhtml+xml",
+    };
+    if (opts.cookie) headers["Cookie"] = opts.cookie;
+    if (opts.body) {
+      headers["Content-Type"] = opts.contentType || "application/x-www-form-urlencoded";
+      headers["Content-Length"] = String(Buffer.byteLength(opts.body));
+    }
+    const req = lib.request(
       url,
-      { rejectUnauthorized: false, headers: { "User-Agent": "Mozilla/5.0 (compatible; CompPlan/1.0)", "Accept": "text/html" } },
+      { method, rejectUnauthorized: false, headers },
       (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          if (maxRedirects <= 0) { reject(new Error("Too many redirects")); return; }
-          const next = new URL(res.headers.location, url).toString();
-          fetchWithRedirects(next, maxRedirects - 1).then(resolve, reject);
-          return;
-        }
-        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
         let data = "";
         res.on("data", (chunk) => { data += chunk; });
-        res.on("end", () => resolve(data));
+        res.on("end", () => resolve({
+          statusCode: res.statusCode ?? 0,
+          headers: res.headers,
+          body: data,
+        }));
       }
     );
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error("Timeout")); });
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error("Timeout")); });
     req.on("error", reject);
+    if (opts.body) req.write(opts.body);
+    req.end();
   });
+}
+
+/** Extract the session cookie(s) from a Set-Cookie header into a Cookie header value. */
+function collectCookies(setCookie: string | string[] | undefined, prev = ""): string {
+  if (!setCookie) return prev;
+  const list = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const jar = new Map<string, string>();
+  // Seed with previous cookies
+  prev.split(";").map(s => s.trim()).filter(Boolean).forEach(pair => {
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq), pair.slice(eq + 1));
+  });
+  for (const c of list) {
+    const first = c.split(";")[0].trim();
+    const eq = first.indexOf("=");
+    if (eq > 0) jar.set(first.slice(0, eq), first.slice(eq + 1));
+  }
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+/**
+ * Log into Eendigo and fetch the dashboard HTML.
+ * Throws a descriptive error on auth failure.
+ */
+async function loginAndFetchDashboard(): Promise<string> {
+  const username = process.env.EENDIGO_USERNAME;
+  const password = process.env.EENDIGO_PASSWORD;
+  if (!username || !password) {
+    throw new Error(
+      "Eendigo credentials not configured. Set EENDIGO_USERNAME and EENDIGO_PASSWORD env vars in Render."
+    );
+  }
+
+  // 1. GET /login to seed any initial session cookie.
+  let cookie = "";
+  const loginPage = await request("GET", EENDIGO_LOGIN_URL);
+  cookie = collectCookies(loginPage.headers["set-cookie"], cookie);
+
+  // 2. POST credentials.
+  const body = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+  const loginRes = await request("POST", EENDIGO_LOGIN_URL, { cookie, body });
+  cookie = collectCookies(loginRes.headers["set-cookie"], cookie);
+
+  // 3. Follow the post-login redirect (typically 302 → /).
+  let landingUrl = EENDIGO_URL;
+  if (loginRes.statusCode >= 300 && loginRes.statusCode < 400 && loginRes.headers.location) {
+    landingUrl = new URL(loginRes.headers.location, EENDIGO_BASE).toString();
+  } else if (loginRes.statusCode === 200 && /name=["']password["']/i.test(loginRes.body)) {
+    // Still on the login form — credentials rejected.
+    throw new Error("Eendigo login rejected: invalid EENDIGO_USERNAME / EENDIGO_PASSWORD.");
+  }
+
+  // 4. GET the dashboard, following up to 5 redirects with the session cookie.
+  let hops = 0;
+  let url = landingUrl;
+  while (hops++ < 5) {
+    const res = await request("GET", url, { cookie });
+    cookie = collectCookies(res.headers["set-cookie"], cookie);
+    if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+      url = new URL(res.headers.location, url).toString();
+      // If we are being redirected back to /login after POST, auth failed.
+      if (/\/login(\?|$)/.test(url)) {
+        throw new Error("Eendigo session lost — redirected back to /login after authentication.");
+      }
+      continue;
+    }
+    if (res.statusCode !== 200) {
+      throw new Error(`Eendigo dashboard returned HTTP ${res.statusCode}`);
+    }
+    // Sanity check: we should be on a candidate page, not the login form.
+    if (/name=["']password["']/i.test(res.body) && /login/i.test(res.body)) {
+      throw new Error("Eendigo returned the login form after authentication — session cookie not accepted.");
+    }
+    return res.body;
+  }
+  throw new Error("Too many redirects fetching Eendigo dashboard.");
 }
 
 // ─── Stage mapping ────────────────────────────────────────────────────────────
@@ -230,7 +330,7 @@ function mergeInfo(existingInfo: string, newInfo: string): string {
 export async function syncEendigoHiring(): Promise<{ synced: number; created: number; updated: number; skipped: number; error?: string }> {
   let html: string;
   try {
-    html = await fetchWithRedirects(EENDIGO_URL, 5);
+    html = await loginAndFetchDashboard();
   } catch (err: any) {
     return { synced: 0, created: 0, updated: 0, skipped: 0, error: String(err.message ?? err) };
   }
