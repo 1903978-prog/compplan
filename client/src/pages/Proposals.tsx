@@ -1369,6 +1369,17 @@ Example:
                           </button>
                         </div>
                       )}
+                      <button title="Delete slide" onClick={e => {
+                        e.stopPropagation();
+                        if (window.confirm(`Remove "${slide.title}" from the list?`)) {
+                          setSlides(prev => prev.filter(s => s.slide_id !== slide.slide_id).map((s, i) => ({ ...s, order: i })));
+                          setHasManualEdits(true);
+                          if (expandedSlidePanel?.slideId === slide.slide_id) setExpandedSlidePanel(null);
+                        }
+                      }}
+                        className="p-1 rounded hover:bg-red-50 text-muted-foreground/30 hover:text-red-500 transition-colors shrink-0">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                       <span className="text-xs text-muted-foreground w-6 text-right shrink-0">{globalIdx + 1}</span>
                     </div>
 
