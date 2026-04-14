@@ -936,12 +936,13 @@ RULES:
     "User-Agent": "CompPlan App",
   });
 
-  // GET /api/harvest/invoices — paginate through all invoices
+  // GET /api/harvest/invoices — paginate through all invoices + snapshot diff
   app.get("/api/harvest/invoices", requireAuth, async (_req, res) => {
     if (!HARVEST_TOKEN || !HARVEST_ACCOUNT) {
       return res.status(503).json({ error: "Harvest credentials not configured" });
     }
     try {
+      // 1. Fetch all invoices from Harvest
       let allInvoices: any[] = [];
       let page = 1;
       let hasMore = true;
@@ -953,10 +954,116 @@ RULES:
         hasMore = data.next_page !== null;
         page++;
       }
+
+      // 2. Snapshot diff — detect new invoices and paid status changes
+      try {
+        const { db } = await import("./db");
+        const { sql } = await import("drizzle-orm");
+        const now = new Date().toISOString();
+
+        // Load existing snapshots
+        const snapRows = await db.execute(sql`SELECT invoice_id, state FROM invoice_snapshots`);
+        const snapMap = new Map<number, string>();
+        for (const r of snapRows.rows) {
+          snapMap.set(Number(r.invoice_id), String(r.state));
+        }
+
+        const isFirstLoad = snapMap.size === 0;
+
+        for (const inv of allInvoices) {
+          const invId = Number(inv.id);
+          const invNum = inv.number ?? "";
+          const clientName = inv.client?.name ?? "";
+          const amount = Math.round(Number(inv.amount) || 0);
+          const state = inv.state ?? "";
+
+          if (!snapMap.has(invId)) {
+            // New invoice — insert snapshot
+            await db.execute(sql`
+              INSERT INTO invoice_snapshots (invoice_id, invoice_number, client_name, amount, state, updated_at)
+              VALUES (${invId}, ${invNum}, ${clientName}, ${amount}, ${state}, ${now})
+              ON CONFLICT (invoice_id) DO NOTHING
+            `);
+            // Only create notification if not first load (avoid flooding on initial seed)
+            if (!isFirstLoad) {
+              // Dedup: check no same change in last 24h
+              const dup = await db.execute(sql`
+                SELECT id FROM invoice_changes
+                WHERE invoice_id = ${invId} AND change_type = 'new_invoice'
+                  AND detected_at > ${new Date(Date.now() - 86400000).toISOString()}
+                LIMIT 1
+              `);
+              if (dup.rows.length === 0) {
+                await db.execute(sql`
+                  INSERT INTO invoice_changes (invoice_id, invoice_number, client_name, amount, change_type, detected_at)
+                  VALUES (${invId}, ${invNum}, ${clientName}, ${amount}, ${"new_invoice"}, ${now})
+                `);
+              }
+            }
+          } else {
+            const prevState = snapMap.get(invId)!;
+            // Status changed to paid?
+            if (prevState !== "paid" && state === "paid") {
+              const dup = await db.execute(sql`
+                SELECT id FROM invoice_changes
+                WHERE invoice_id = ${invId} AND change_type = 'paid'
+                  AND detected_at > ${new Date(Date.now() - 86400000).toISOString()}
+                LIMIT 1
+              `);
+              if (dup.rows.length === 0) {
+                await db.execute(sql`
+                  INSERT INTO invoice_changes (invoice_id, invoice_number, client_name, amount, change_type, detected_at)
+                  VALUES (${invId}, ${invNum}, ${clientName}, ${amount}, ${"paid"}, ${now})
+                `);
+              }
+            }
+            // Update snapshot
+            await db.execute(sql`
+              UPDATE invoice_snapshots SET state = ${state}, amount = ${amount}, client_name = ${clientName}, updated_at = ${now}
+              WHERE invoice_id = ${invId}
+            `);
+          }
+        }
+      } catch (diffErr: any) {
+        console.error("[Harvest] Snapshot diff error (non-fatal):", diffErr.message);
+      }
+
       res.json({ invoices: allInvoices });
     } catch (err: any) {
       console.error("[Harvest] Failed to fetch invoices:", err.message);
       res.status(502).json({ error: err.message ?? "Failed to fetch invoices from Harvest" });
+    }
+  });
+
+  // GET /api/harvest/changes — last 30 days of undismissed changes
+  app.get("/api/harvest/changes", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+      const rows = await db.execute(sql`
+        SELECT id, invoice_id, invoice_number, client_name, amount, change_type, detected_at, dismissed
+        FROM invoice_changes
+        WHERE detected_at > ${thirtyDaysAgo}
+        ORDER BY detected_at DESC
+      `);
+      res.json({ changes: rows.rows });
+    } catch (err: any) {
+      console.error("[Harvest] Failed to fetch changes:", err.message);
+      res.json({ changes: [] });
+    }
+  });
+
+  // POST /api/harvest/changes/:id/dismiss — dismiss a notification
+  app.post("/api/harvest/changes/:id/dismiss", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const changeId = safeInt(req.params.id);
+      await db.execute(sql`UPDATE invoice_changes SET dismissed = 1 WHERE id = ${changeId}`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

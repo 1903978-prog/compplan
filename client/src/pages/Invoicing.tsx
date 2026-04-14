@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Receipt, Send, Search, AlertTriangle, CheckCircle, Clock, DollarSign, RefreshCw, EyeOff, Eye, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Receipt, Send, Search, AlertTriangle, CheckCircle, Clock, DollarSign, RefreshCw, EyeOff, Eye, ArrowUpDown, ArrowUp, ArrowDown, X, Bell, Plus, CreditCard } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface HarvestInvoice {
@@ -26,6 +26,17 @@ interface HarvestInvoice {
   notes: string | null;
   period_start: string | null;
   period_end: string | null;
+}
+
+interface InvoiceChange {
+  id: number;
+  invoice_id: number;
+  invoice_number: string;
+  client_name: string;
+  amount: number;
+  change_type: "new_invoice" | "paid";
+  detected_at: string;
+  dismissed: number;
 }
 
 type StatusFilter = "all" | "open" | "overdue" | "paid" | "partial" | "draft";
@@ -84,6 +95,7 @@ export default function Invoicing() {
   const [showHidden, setShowHidden] = useState(false);
   const [sortCol, setSortCol] = useState<SortColumn>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [changes, setChanges] = useState<InvoiceChange[]>([]);
 
   const toggleHide = (id: number) => {
     setHiddenIds(prev => {
@@ -128,7 +140,24 @@ export default function Invoicing() {
     }
   };
 
-  useEffect(() => { loadInvoices(); }, []);
+  const loadChanges = async () => {
+    try {
+      const res = await fetch("/api/harvest/changes", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setChanges((data.changes ?? []).filter((c: InvoiceChange) => !c.dismissed));
+      }
+    } catch { /* silent */ }
+  };
+
+  const dismissChange = async (changeId: number) => {
+    setChanges(prev => prev.filter(c => c.id !== changeId));
+    try {
+      await fetch(`/api/harvest/changes/${changeId}/dismiss`, { method: "POST", credentials: "include" });
+    } catch { /* silent */ }
+  };
+
+  useEffect(() => { loadInvoices().then(loadChanges); }, []);
 
   // Send reminder
   const sendReminder = async (invoiceId: number) => {
@@ -245,6 +274,39 @@ export default function Invoicing() {
           </div>
         }
       />
+
+      {/* Change notifications */}
+      {changes.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Bell className="w-3.5 h-3.5" />
+            <span className="font-semibold uppercase tracking-wide">Recent changes (last 30 days)</span>
+            <span className="text-muted-foreground/60">{changes.length}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {changes.map(c => (
+              <div key={c.id} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs ${
+                c.change_type === "new_invoice"
+                  ? "bg-blue-50 border-blue-200 text-blue-800"
+                  : "bg-emerald-50 border-emerald-200 text-emerald-800"
+              }`}>
+                {c.change_type === "new_invoice"
+                  ? <Plus className="w-3 h-3 shrink-0" />
+                  : <CreditCard className="w-3 h-3 shrink-0" />
+                }
+                <span className="font-semibold">#{c.invoice_number}</span>
+                <span className="text-muted-foreground">{c.client_name}</span>
+                <span className="font-mono font-bold">{fmtCurrency(c.amount)}</span>
+                <span className="text-[9px] text-muted-foreground">{fmtDate(c.detected_at)}</span>
+                <button onClick={() => dismissChange(c.id)}
+                  className="ml-1 p-0.5 rounded hover:bg-black/10 transition-colors" title="Dismiss">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

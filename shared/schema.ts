@@ -597,3 +597,27 @@ export const hiringCandidates = pgTable("hiring_candidates", {
   sync_locked: integer("sync_locked").notNull().default(0), // 1 = user manually moved, don't overwrite
   created_at: text("created_at").notNull(),
 });
+
+// ── Harvest Invoice Tracking ────────────────────────────────────────────────
+// Snapshot of last-seen state per invoice (for change detection)
+export const invoiceSnapshots = pgTable("invoice_snapshots", {
+  id: serial("id").primaryKey(),
+  invoice_id: integer("invoice_id").notNull().unique(),  // Harvest invoice ID
+  invoice_number: text("invoice_number"),
+  client_name: text("client_name"),
+  amount: integer("amount").notNull().default(0),        // in cents or whole units
+  state: text("state").notNull().default(""),
+  updated_at: text("updated_at").notNull(),
+});
+
+// Detected changes (notifications shown on AR page)
+export const invoiceChanges = pgTable("invoice_changes", {
+  id: serial("id").primaryKey(),
+  invoice_id: integer("invoice_id").notNull(),
+  invoice_number: text("invoice_number"),
+  client_name: text("client_name"),
+  amount: integer("amount").notNull().default(0),
+  change_type: text("change_type").notNull(),              // "new_invoice" | "paid"
+  detected_at: text("detected_at").notNull(),
+  dismissed: integer("dismissed").notNull().default(0),    // 1 = user dismissed
+});

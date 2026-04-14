@@ -342,6 +342,31 @@ export async function seedDatabase() {
   await db.execute(sql`UPDATE app_settings SET api_paused = 1`);
   console.log("[seed] API set to paused (requires password to resume)");
 
+  // ── Harvest invoice tracking tables ──────────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS invoice_snapshots (
+      id SERIAL PRIMARY KEY,
+      invoice_id INTEGER NOT NULL UNIQUE,
+      invoice_number TEXT,
+      client_name TEXT,
+      amount INTEGER NOT NULL DEFAULT 0,
+      state TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS invoice_changes (
+      id SERIAL PRIMARY KEY,
+      invoice_id INTEGER NOT NULL,
+      invoice_number TEXT,
+      client_name TEXT,
+      amount INTEGER NOT NULL DEFAULT 0,
+      change_type TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      dismissed INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
   // Seed pricing_proposals from historical win/loss Excel (idempotent by project_name)
   // Note: no count-gate here — the WHERE NOT EXISTS guard ensures deleted rows stay deleted.
   try {
