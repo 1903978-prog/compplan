@@ -627,7 +627,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deckCfg = await storage.getDeckTemplateConfig().catch(() => null);
       const methodCfg = await storage.getSlideMethodologyConfig(slide_id).catch(() => undefined);
 
-      const templateInstructions = (deckCfg?.system_prompt || "").trim();
+      // Two sources of deck-level instructions, both authoritative:
+      //   1. system_prompt — the parsed/curated system prompt
+      //   2. slide_instructions_text — the raw free-text the user pastes in
+      //      the "Slide Template Instructions" dialog (Proposals → Step 2)
+      // Splice both in so what the user types is always honored at
+      // generation time (preview AND PPTX download both route through here).
+      const templateSystemPrompt = (deckCfg?.system_prompt || "").trim();
+      const rawInstructionsText = ((deckCfg as any)?.slide_instructions_text || "").trim();
+      const templateInstructions = [
+        rawInstructionsText && `USER-PROVIDED SLIDE TEMPLATE INSTRUCTIONS (verbatim, highest authority):\n${rawInstructionsText}`,
+        templateSystemPrompt && `DECK-LEVEL SYSTEM PROMPT:\n${templateSystemPrompt}`,
+      ].filter(Boolean).join("\n\n");
 
       let slideMethodology = "";
       if (methodCfg) {

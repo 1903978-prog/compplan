@@ -180,6 +180,8 @@ export default function Proposals() {
   const [showSlideInstructions, setShowSlideInstructions] = useState(false);
   const [slideInstructionsText, setSlideInstructionsText] = useState("");
   const [slideInstructionsParsing, setSlideInstructionsParsing] = useState(false);
+  const [slideInstructionsSaveState, setSlideInstructionsSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [slideInstructionsSaveError, setSlideInstructionsSaveError] = useState<string>("");
 
   // Per-slide prompt editing (Step 2)
   const [expandedSlidePanel, setExpandedSlidePanel] = useState<{ slideId: string; panel: "visual" | "content" | "generate" } | null>(null);
@@ -502,33 +504,70 @@ export default function Proposals() {
     })();
   }
 
-  // Debounced best-effort server mirror. Writes to localStorage synchronously
-  // on every keystroke (via the textarea onChange below) so nothing is ever
-  // lost if the server call fails or the column does not exist in prod yet.
-  const slideInstructionsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveSlideInstructionsText = useCallback((text: string) => {
-    // Synchronous, always-on local persistence.
+  // Keystroke handler: write to localStorage synchronously so the text is
+  // never lost on reload, and mark the save state as "idle" (user must click
+  // Save to commit to the server).
+  const onSlideInstructionsChange = useCallback((text: string) => {
     try { localStorage.setItem(SLIDE_INSTRUCTIONS_LS_KEY, text); } catch {}
-
-    // Debounced server mirror.
-    if (slideInstructionsSaveTimer.current) clearTimeout(slideInstructionsSaveTimer.current);
-    slideInstructionsSaveTimer.current = setTimeout(async () => {
-      try {
-        const res = await fetch("/api/deck-template", { credentials: "include" });
-        const existing = res.ok ? await res.json() : {};
-        await fetch("/api/deck-template", {
-          method: "PUT",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...(existing || {}),
-            slide_instructions_text: text,
-            updated_at: new Date().toISOString(),
-          }),
-        });
-      } catch { /* silent — localStorage already has it */ }
-    }, 600);
+    setSlideInstructionsSaveState("idle");
+    setSlideInstructionsSaveError("");
   }, []);
+
+  // Explicit Save: PUT to /api/deck-template, then GET to verify the server
+  // actually persisted the value. Surfaces errors instead of swallowing them.
+  async function saveSlideInstructionsNow() {
+    setSlideInstructionsSaveState("saving");
+    setSlideInstructionsSaveError("");
+    const textToSave = slideInstructionsText;
+    try {
+      // 1. Fetch existing config so the PUT body carries required fields.
+      const getRes = await fetch("/api/deck-template", { credentials: "include" });
+      if (!getRes.ok) throw new Error(`GET failed: ${getRes.status}`);
+      const existing = await getRes.json();
+
+      // 2. PUT with the new value merged in.
+      const putRes = await fetch("/api/deck-template", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(existing || {}),
+          slide_instructions_text: textToSave,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      if (!putRes.ok) {
+        const errBody = await putRes.text().catch(() => "");
+        throw new Error(`PUT failed: ${putRes.status} ${errBody}`);
+      }
+
+      // 3. GET again and verify the server returned what we sent — this
+      //    catches the case where the column doesn't exist and Drizzle
+      //    silently drops the field.
+      const verifyRes = await fetch("/api/deck-template", { credentials: "include" });
+      if (!verifyRes.ok) throw new Error(`verify GET failed: ${verifyRes.status}`);
+      const verifyCfg = await verifyRes.json();
+      if ((verifyCfg?.slide_instructions_text ?? "") !== textToSave) {
+        throw new Error(
+          "Server accepted the save but did not return the new text on re-read. " +
+          "The deck_template_configs.slide_instructions_text column may not exist in prod yet — " +
+          "check the Render deploy status."
+        );
+      }
+
+      // 4. Mirror to localStorage (survives any future server outage).
+      try { localStorage.setItem(SLIDE_INSTRUCTIONS_LS_KEY, textToSave); } catch {}
+
+      setSlideInstructionsSaveState("saved");
+      setTimeout(() => {
+        setSlideInstructionsSaveState(s => (s === "saved" ? "idle" : s));
+      }, 2500);
+    } catch (e: any) {
+      console.error("[slide-instructions] save failed:", e);
+      setSlideInstructionsSaveError(e?.message || "Save failed");
+      setSlideInstructionsSaveState("error");
+    }
+  }
 
   async function loadProposals() {
     const res = await fetch("/api/proposals", { credentials: "include" });
@@ -2065,7 +2104,7 @@ export default function Proposals() {
                     value={slideInstructionsText}
                     onChange={e => {
                       setSlideInstructionsText(e.target.value);
-                      saveSlideInstructionsText(e.target.value);
+                      onSlideInstructionsChange(e.target.value);
                     }}
                     rows={20}
                     className="flex-1 text-sm font-mono"
@@ -2086,12 +2125,39 @@ Example:
 - Include business model, key challenges, performance gaps
 - Must reference specific data points from transcript...`}
                   />
-                  <div className="flex justify-end gap-2 mt-4">
-                    <Button variant="outline" onClick={() => setShowSlideInstructions(false)}>Cancel</Button>
-                    <Button onClick={parseSlideInstructions} disabled={slideInstructionsParsing || !slideInstructionsText.trim()}>
-                      {slideInstructionsParsing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
-                      Parse & Apply to Slides
-                    </Button>
+                  <div className="flex items-center justify-between gap-2 mt-4">
+                    <div className="text-xs min-h-[1.25rem]">
+                      {slideInstructionsSaveState === "saving" && (
+                        <span className="text-muted-foreground flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Saving…
+                        </span>
+                      )}
+                      {slideInstructionsSaveState === "saved" && (
+                        <span className="text-green-600">✓ Saved to server</span>
+                      )}
+                      {slideInstructionsSaveState === "error" && (
+                        <span className="text-red-600" title={slideInstructionsSaveError}>
+                          ✗ {slideInstructionsSaveError || "Save failed"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={() => setShowSlideInstructions(false)}>Close</Button>
+                      <Button
+                        variant="secondary"
+                        onClick={saveSlideInstructionsNow}
+                        disabled={slideInstructionsSaveState === "saving"}
+                      >
+                        {slideInstructionsSaveState === "saving"
+                          ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                          : <Save className="w-4 h-4 mr-1" />}
+                        Save
+                      </Button>
+                      <Button onClick={parseSlideInstructions} disabled={slideInstructionsParsing || !slideInstructionsText.trim()}>
+                        {slideInstructionsParsing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                        Parse & Apply to Slides
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               </div>
