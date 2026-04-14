@@ -466,28 +466,51 @@ export default function Proposals() {
   useEffect(() => {
     loadProposals();
     loadTemplates();
-    loadSlideInstructionsFromDeckTemplate();
+    loadSlideInstructions();
   }, []);
 
-  // Load the persisted Slide Template Instructions free-text from the
-  // deck_template_configs row so it survives page reloads.
-  async function loadSlideInstructionsFromDeckTemplate() {
+  // Persistence for the Slide Template Instructions free-text.
+  //
+  // Source of truth: localStorage (key below). It's instant, survives
+  // reloads, and does not depend on a DB migration having shipped to prod.
+  // We *also* best-effort mirror to the server's deck_template_configs row
+  // so the text follows the user across devices once that column exists,
+  // but a server failure must never lose the user's text — localStorage
+  // already has it.
+  const SLIDE_INSTRUCTIONS_LS_KEY = "compplan:slideInstructionsText";
+
+  function loadSlideInstructions() {
+    // 1. Hydrate immediately from localStorage (synchronous, no flicker).
     try {
-      const res = await fetch("/api/deck-template", { credentials: "include" });
-      if (!res.ok) return;
-      const cfg = await res.json();
-      if (cfg?.slide_instructions_text) {
-        setSlideInstructionsText(cfg.slide_instructions_text);
-      }
-    } catch { /* silent */ }
+      const cached = localStorage.getItem(SLIDE_INSTRUCTIONS_LS_KEY);
+      if (cached) setSlideInstructionsText(cached);
+    } catch { /* localStorage disabled — fall through to server */ }
+
+    // 2. Then try the server. If it has a non-empty value, prefer it
+    //    (cross-device sync) and refresh the localStorage cache.
+    (async () => {
+      try {
+        const res = await fetch("/api/deck-template", { credentials: "include" });
+        if (!res.ok) return;
+        const cfg = await res.json();
+        const serverText: string | undefined = cfg?.slide_instructions_text;
+        if (serverText && serverText.trim()) {
+          setSlideInstructionsText(serverText);
+          try { localStorage.setItem(SLIDE_INSTRUCTIONS_LS_KEY, serverText); } catch {}
+        }
+      } catch { /* silent */ }
+    })();
   }
 
-  // Debounced auto-save for the Slide Template Instructions textarea.
-  // Saves the raw text into deck_template_configs so it persists across
-  // reloads and re-opens of the dialog. Independent from the Claude-based
-  // bulk-parse action (which writes into slide_methodology_configs).
+  // Debounced best-effort server mirror. Writes to localStorage synchronously
+  // on every keystroke (via the textarea onChange below) so nothing is ever
+  // lost if the server call fails or the column does not exist in prod yet.
   const slideInstructionsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSlideInstructionsText = useCallback((text: string) => {
+    // Synchronous, always-on local persistence.
+    try { localStorage.setItem(SLIDE_INSTRUCTIONS_LS_KEY, text); } catch {}
+
+    // Debounced server mirror.
     if (slideInstructionsSaveTimer.current) clearTimeout(slideInstructionsSaveTimer.current);
     slideInstructionsSaveTimer.current = setTimeout(async () => {
       try {
@@ -503,7 +526,7 @@ export default function Proposals() {
             updated_at: new Date().toISOString(),
           }),
         });
-      } catch { /* silent — user will see it missing on reload if save truly failed */ }
+      } catch { /* silent — localStorage already has it */ }
     }, 600);
   }, []);
 
