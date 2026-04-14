@@ -1404,46 +1404,42 @@ export default function Proposals() {
   }
 
   // ── Save progress at any step (without advancing) ──────────────────────────
+  // NOTE: This function reads from latestXxxRef — NOT closed-over state.
+  // That way it is immune to the stale-closure bug that bit auto-save, no
+  // matter from what memoized callback it gets called.
   async function saveProgress() {
     setSaving(true);
-    const now = new Date().toISOString();
-    const body = {
-      company_name: form.company_name,
-      website: form.website || null,
-      transcript: form.transcript || null,
-      notes: form.notes || null,
-      revenue: form.revenue ? Number(form.revenue) : null,
-      ebitda_margin: form.ebitda_margin ? Number(form.ebitda_margin) : null,
-      scope_perimeter: form.scope_perimeter || null,
-      objective: form.objective || null,
-      urgency: form.urgency || null,
-      project_type: projectType,
-      project_approach: projectApproach || null,
-      slide_selection: slides,
-      slide_briefs: briefs,
-      call_checklist: callChecklist,
-      status: current?.status || "draft",
-      options: current?.options || [],
-      created_at: current?.created_at || now,
-      updated_at: now,
-    };
+    const f = latestFormRef.current;
+    const cur = latestCurrentRef.current;
+    // Defensive guard: never try to save a proposal without a company name.
+    // The server will 400 anyway and the toast hides the reason.
+    if (!f.company_name || !f.company_name.trim()) {
+      setSaving(false);
+      toast({ title: "Company name is required", variant: "destructive" });
+      return;
+    }
+    const body = buildLatestBody();
     try {
-      if (current?.id) {
-        const res = await fetch(`/api/proposals/${current.id}`, {
+      if (cur?.id) {
+        const res = await fetch(`/api/proposals/${cur.id}`, {
           method: "PUT", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
+        if (!res.ok) throw new Error(`PUT ${res.status}`);
         const updated = await res.json();
         setCurrent(updated);
+        latestCurrentRef.current = updated;
       } else {
         const res = await fetch("/api/proposals", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
+        if (!res.ok) throw new Error(`POST ${res.status}`);
         const created = await res.json();
         setCurrent(created);
+        latestCurrentRef.current = created;
       }
       loadProposals();
       toast({ title: "Progress saved" });
