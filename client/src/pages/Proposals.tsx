@@ -109,7 +109,7 @@ const DEFAULT_CALL_QUESTIONS: string[] = [
 
 const WIZARD_STEPS = [
   { n: 1, label: "Input" },
-  { n: 2, label: "Slides" },
+  { n: 2, label: "Deck" },
   { n: 3, label: "Briefing" },
   { n: 4, label: "Analysis" },
   { n: 5, label: "Architecture" },
@@ -1040,8 +1040,6 @@ export default function Proposals() {
       }
       loadProposals();
       toast({ title: "Progress saved" });
-      // After manual save on step 2, show full slide view
-      if (step === 2) setShowFullSlideView(true);
     } catch {
       toast({ title: "Save failed", variant: "destructive" });
     }
@@ -1334,7 +1332,7 @@ export default function Proposals() {
               <span className={`text-sm ${step === n ? "font-medium cursor-pointer" : step > n ? "text-foreground cursor-pointer" : "text-muted-foreground"}`}
                 onClick={() => {
                   if (n < step) setStep(n);
-                  if (n === 2 && step === 2) setShowFullSlideView(v => !v);
+                  // Clicking current step label does nothing special
                 }}
               >{label}</span>
               {n < WIZARD_STEPS.length && <div className={`w-8 h-0.5 ${step > n ? "bg-green-500" : "bg-muted"}`} />}
@@ -1396,10 +1394,10 @@ export default function Proposals() {
               <div className="border-t pt-3 mt-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Project Approach</h4>
-                  <Button size="sm" variant="outline" className="h-6 text-[10px]"
+                  <Button size="sm" variant="outline" className="h-6 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50"
                     onClick={suggestApproach} disabled={generatingApproach || !form.company_name}>
                     {generatingApproach ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Generating...</>
-                      : <><Sparkles className="w-3 h-3 mr-1" />Suggest Approach</>}
+                      : <><Sparkles className="w-3 h-3 mr-1" />Suggest Approach (AI)</>}
                   </Button>
                 </div>
                 {projectApproach ? (
@@ -1620,6 +1618,9 @@ Example:
                       <span className="text-xs text-muted-foreground ml-1">(target: {SLIDE_COUNT.IDEAL_MIN}–{SLIDE_COUNT.IDEAL_MAX})</span>
                     </div>
                   )}
+                  <Button variant="outline" size="sm" onClick={() => setShowFullSlideView(true)}>
+                    <Eye className="w-4 h-4 mr-1" /> Preview All Slides
+                  </Button>
                   <Button variant="outline" size="sm" onClick={resetToDefaults} disabled={!projectType}>
                     <RotateCcw className="w-4 h-4 mr-1" /> Reset Defaults
                   </Button>
@@ -1733,25 +1734,25 @@ Example:
                             }`}>
                             <FileText className="w-3.5 h-3.5" />
                           </button>
-                          <button title="Generate Content" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "generate"); }}
+                          <button title="Generate Content (opens panel)" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "generate"); }}
                             disabled={isGen}
                             className={`p-1.5 rounded hover:bg-muted transition-colors ${isExpanded && activePanel === "generate" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
                             {isGen ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                           </button>
-                          <button title="Generate Page Preview" onClick={e => { e.stopPropagation(); generatePage(slide.slide_id); }}
+                          <button title="Generate Page Preview (uses AI — costs money)" onClick={e => { e.stopPropagation(); generatePage(slide.slide_id); }}
                             disabled={generatingPage === slide.slide_id}
-                            className={`p-1.5 rounded hover:bg-muted transition-colors ${
+                            className={`p-1.5 rounded hover:bg-violet-100 transition-colors ${
                               previewSlideId === slide.slide_id && previewHtml[slide.slide_id] ? "text-emerald-600 bg-emerald-50"
-                              : generatingPage === slide.slide_id ? "text-primary"
-                              : "text-muted-foreground"
+                              : generatingPage === slide.slide_id ? "text-violet-600"
+                              : "text-violet-500"
                             }`}>
                             {generatingPage === slide.slide_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
-                          <label title="Upload reference image — AI will analyze it to improve prompts"
-                            className={`p-1.5 rounded hover:bg-muted transition-colors cursor-pointer ${
+                          <label title="Upload reference image (uses AI — costs money)"
+                            className={`p-1.5 rounded hover:bg-violet-100 transition-colors cursor-pointer ${
                               analyzingRef === slide.slide_id ? "text-violet-600 animate-pulse"
                               : slide.reference_image ? "text-violet-600 bg-violet-50"
-                              : "text-muted-foreground"
+                              : "text-violet-500"
                             }`}>
                             {analyzingRef === slide.slide_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                             <input type="file" className="hidden" accept="image/*"
@@ -1831,14 +1832,14 @@ Example:
                               </div>
                               <div className="flex items-center gap-1.5">
                                 {!slide.generated_content && !isGen && (
-                                  <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => generateSlideContent(slide.slide_id)}>
-                                    <Sparkles className="w-3 h-3 mr-1" /> Auto-generate
+                                  <Button size="sm" variant="outline" className="h-6 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50" onClick={() => generateSlideContent(slide.slide_id)}>
+                                    <Sparkles className="w-3 h-3 mr-1" /> Auto-generate (AI)
                                   </Button>
                                 )}
                                 {slide.generated_content && (
-                                  <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => generateSlideContent(slide.slide_id)} disabled={isGen}>
+                                  <Button size="sm" variant="outline" className="h-6 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50" onClick={() => generateSlideContent(slide.slide_id)} disabled={isGen}>
                                     {isGen ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
-                                    Regenerate
+                                    Regenerate (AI)
                                   </Button>
                                 )}
                                 <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={saveProgress} disabled={saving}>
@@ -2065,17 +2066,17 @@ Example:
                               className="h-7 text-xs flex-1"
                               disabled={slideChatLoading}
                             />
-                            <Button size="sm" className="h-7 text-[10px] shrink-0"
+                            <Button size="sm" className="h-7 text-[10px] shrink-0 bg-violet-600 hover:bg-violet-700 text-white"
                               onClick={() => sendSlideChat(previewSlideId)} disabled={slideChatLoading || !slideChatInput.trim()}>
-                              {slideChatLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Send"}
+                              {slideChatLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Send (AI)"}
                             </Button>
                           </div>
                           {/* Update Prompts — learn from chat corrections */}
                           {(slideChatHistory[previewSlideId] ?? []).filter(m => m.role === "user").length > 0 && (
-                            <Button size="sm" variant="outline" className="w-full h-7 text-[10px] mt-1"
+                            <Button size="sm" variant="outline" className="w-full h-7 text-[10px] mt-1 border-violet-300 text-violet-700 hover:bg-violet-50"
                               onClick={() => updatePromptsFromChat(previewSlideId)} disabled={updatingPrompts}>
                               {updatingPrompts ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Learning...</>
-                                : <><Sparkles className="w-3 h-3 mr-1" />Update Prompts from Feedback</>}
+                                : <><Sparkles className="w-3 h-3 mr-1" />Update Prompts from Feedback (AI)</>}
                             </Button>
                           )}
                         </div>
