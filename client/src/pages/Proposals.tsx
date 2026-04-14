@@ -1594,7 +1594,7 @@ Example:
                               value={slide.visual_prompt ?? ""}
                               onChange={e => updateSlideField(slide.slide_id, "visual_prompt", e.target.value)}
                               placeholder={slideDefaultPrompts[slide.slide_id]?.visual || "Describe how this slide should look: layout, columns, imagery, branding..."}
-                              rows={4}
+                              rows={12}
                               className="text-xs"
                             />
                           </>
@@ -1615,7 +1615,7 @@ Example:
                               value={slide.content_prompt ?? ""}
                               onChange={e => updateSlideField(slide.slide_id, "content_prompt", e.target.value)}
                               placeholder={slideDefaultPrompts[slide.slide_id]?.content || "Define the workflow/questions to guide content generation for this slide..."}
-                              rows={6}
+                              rows={20}
                               className="text-xs font-mono"
                             />
                           </>
@@ -1685,11 +1685,11 @@ Example:
               }
 
               return (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className={`grid grid-cols-1 gap-4 ${previewSlideId && previewHtml[previewSlideId] ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
                   {/* Left: Grouped slide list */}
-                  <div className="lg:col-span-2 space-y-4">
-                    {/* Core Pages */}
-                    <Card className="p-0 overflow-hidden">
+                  <div className={`space-y-4 ${previewSlideId && previewHtml[previewSlideId] ? "" : "lg:col-span-2"}`}>
+                    {/* Core Pages — hidden when editing an optional slide */}
+                    <Card className={`p-0 overflow-hidden ${expandedSlidePanel && optionalSlides.some(s => s.slide_id === expandedSlidePanel.slideId) ? "hidden" : ""}`}>
                       <div className="px-4 py-3 border-b bg-blue-50 dark:bg-blue-950/30">
                         <div className="flex items-center justify-between">
                           <div>
@@ -1704,6 +1704,8 @@ Example:
                       <div className="divide-y">
                         {slides.map((slide, globalIdx) => {
                           if (slide.group !== "core") return null;
+                          // Hide other slides when a panel is expanded (focus mode)
+                          if (expandedSlidePanel && expandedSlidePanel.slideId !== slide.slide_id) return null;
                           const coreIdx = coreSlides.indexOf(slide);
                           return renderSlideRow(slide, coreIdx, globalIdx);
                         })}
@@ -1733,8 +1735,8 @@ Example:
                       </div>
                     </Card>
 
-                    {/* Optional Pages */}
-                    <Card className="p-0 overflow-hidden">
+                    {/* Optional Pages — hidden when editing a core slide */}
+                    <Card className={`p-0 overflow-hidden ${expandedSlidePanel && coreSlides.some(s => s.slide_id === expandedSlidePanel.slideId) ? "hidden" : ""}`}>
                       <div className="px-4 py-3 border-b bg-amber-50 dark:bg-amber-950/30">
                         <div className="flex items-center justify-between">
                           <div>
@@ -1756,6 +1758,7 @@ Example:
                       <div className="divide-y max-h-[400px] overflow-y-auto">
                         {slides.map((slide, globalIdx) => {
                           if (slide.group !== "optional") return null;
+                          if (expandedSlidePanel && expandedSlidePanel.slideId !== slide.slide_id) return null;
                           const optIdx = optionalSlides.indexOf(slide);
                           return renderSlideRow(slide, optIdx, globalIdx);
                         })}
@@ -1809,7 +1812,7 @@ Example:
                           <div className="bg-white shadow-lg mx-auto" style={{ width: "100%", aspectRatio: "16/9", overflow: "hidden" }}>
                             <div
                               dangerouslySetInnerHTML={{ __html: previewHtml[previewSlideId] }}
-                              style={{ transform: "scale(0.5)", transformOrigin: "top left", width: "200%", height: "200%" }}
+                              style={{ transform: "scale(0.7)", transformOrigin: "top left", width: "143%", height: "143%" }}
                             />
                           </div>
                         </div>
