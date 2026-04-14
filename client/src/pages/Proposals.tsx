@@ -1335,11 +1335,19 @@ Example:
                       {slide.is_selected && (
                         <div className="flex items-center gap-1 shrink-0">
                           <button title="Visual Instructions" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "visual"); }}
-                            className={`p-1.5 rounded hover:bg-muted transition-colors ${isExpanded && activePanel === "visual" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                            className={`p-1.5 rounded hover:bg-muted transition-colors ${
+                              isExpanded && activePanel === "visual" ? "bg-primary/10 text-primary"
+                              : slide.visual_prompt?.trim() ? "text-blue-600 bg-blue-50"
+                              : "text-muted-foreground"
+                            }`}>
                             <ImageIcon className="w-3.5 h-3.5" />
                           </button>
                           <button title="Content Prompt" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "content"); }}
-                            className={`p-1.5 rounded hover:bg-muted transition-colors ${isExpanded && activePanel === "content" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                            className={`p-1.5 rounded hover:bg-muted transition-colors ${
+                              isExpanded && activePanel === "content" ? "bg-primary/10 text-primary"
+                              : slide.content_prompt?.trim() ? "text-amber-600 bg-amber-50"
+                              : "text-muted-foreground"
+                            }`}>
                             <FileText className="w-3.5 h-3.5" />
                           </button>
                           <button title="Generate Content" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "generate"); }}
