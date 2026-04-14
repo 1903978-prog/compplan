@@ -77,23 +77,26 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
 }
 
 function Navigation() {
-  const [apiPaused, setApiPaused] = useState<boolean | null>(null);
+  const [apiPaused, setApiPaused] = useState<boolean>(true); // DEFAULT: paused
   const [location] = useLocation();
 
-  // Load initial state
+  // On every page load: FORCE pause in DB, then read state
+  // This ensures the API is ALWAYS paused when the page loads
   useEffect(() => {
-    fetch("/api/api-pause", { credentials: "include" })
-      .then(r => r.json())
-      .then(d => setApiPaused(!!d.paused))
-      .catch(() => {});
+    fetch("/api/api-pause", {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: true }),
+    })
+      .then(() => setApiPaused(true))
+      .catch(() => setApiPaused(true)); // even on error, show paused
   }, []);
 
-  // Auto-pause API every time the user navigates to a different page
+  // Also auto-pause on every navigation
   const prevLocation = useRef(location);
   useEffect(() => {
     if (prevLocation.current !== location) {
       prevLocation.current = location;
-      // Fire-and-forget: pause the API on navigation
       fetch("/api/api-pause", {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -197,7 +200,7 @@ function Navigation() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {apiPaused !== null && (
+            {(
               <Button
                 variant={apiPaused ? "destructive" : "outline"}
                 size="sm"

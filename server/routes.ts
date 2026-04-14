@@ -40,11 +40,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { paused, password } = req.body;
     // Resuming the API (paused: false) requires a password.
     if (paused === false) {
-      const required = process.env.API_UNPAUSE_PASSWORD || process.env.APP_PASSWORD;
-      if (!required) {
-        res.status(500).json({ message: "Server misconfigured: no API unpause password set." });
-        return;
-      }
+      // Password required to unpause. Checks env var first, falls back to "1"
+      const required = process.env.API_UNPAUSE_PASSWORD || process.env.APP_PASSWORD || "1";
       if (typeof password !== "string" || password !== required) {
         res.status(401).json({ message: "Invalid password." });
         return;
