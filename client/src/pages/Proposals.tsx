@@ -462,14 +462,11 @@ export default function Proposals() {
     const slide = slides.find(s => s.slide_id === slideId);
     if (!slide) return;
 
-    // Must save proposal first to get an ID
     if (!current?.id) {
       await saveProgress();
+      await new Promise(r => setTimeout(r, 500));
     }
-    if (!current?.id) {
-      toast({ title: "Save the proposal first", variant: "destructive" });
-      return;
-    }
+    if (!current?.id) return;
 
     setSlideGenerating(slideId);
     try {
@@ -508,8 +505,12 @@ export default function Proposals() {
   // Generate visual page preview (HTML)
   async function generatePage(slideId: string) {
     const slide = slides.find(s => s.slide_id === slideId);
-    if (!slide || !current?.id) { if (!current?.id) await saveProgress(); }
-    if (!current?.id) { toast({ title: "Save first", variant: "destructive" }); return; }
+    if (!current?.id) {
+      await saveProgress();
+      // saveProgress sets current via setState — wait a tick for it to update
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (!current?.id) return; // still no ID — silently abort
 
     setGeneratingPage(slideId);
     setPreviewSlideId(slideId);
@@ -620,8 +621,8 @@ export default function Proposals() {
   async function analyzeReferenceImage(slideId: string, file: File) {
     const slide = slides.find(s => s.slide_id === slideId);
     if (!slide) return;
-    if (!current?.id) { await saveProgress(); }
-    if (!current?.id) { toast({ title: "Save the proposal first", variant: "destructive" }); return; }
+    if (!current?.id) { await saveProgress(); await new Promise(r => setTimeout(r, 500)); }
+    if (!current?.id) return;
 
     setAnalyzingRef(slideId);
     toast({ title: `Analyzing "${file.name}" for ${slide.title}...` });
@@ -1062,8 +1063,8 @@ export default function Proposals() {
 
   // ── Project Approach ────────────────────────────────────────────────────────
   async function suggestApproach() {
-    if (!current?.id) { await saveProgress(); }
-    if (!current?.id) { toast({ title: "Save the proposal first", variant: "destructive" }); return; }
+    if (!current?.id) { await saveProgress(); await new Promise(r => setTimeout(r, 500)); }
+    if (!current?.id) return;
     setGeneratingApproach(true);
     try {
       const res = await fetch(`/api/proposals/${current.id}/suggest-approach`, {
