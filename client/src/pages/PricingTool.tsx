@@ -1930,7 +1930,7 @@ export default function PricingTool() {
                             const band = getBandForPrice(price, c.region, benchmarks);
                             if (!band) return <span className="text-muted-foreground text-xs">—</span>;
                             const cfg = band === "green"
-                              ? { cls: "bg-emerald-500", label: `Green band (${fmt(price)}/wk)` }
+                              ? { cls: "bg-emerald-500", label: `Pricing corridor (${fmt(price)}/wk)` }
                               : band === "yellow"
                               ? { cls: "bg-amber-400", label: `Yellow band (${fmt(price)}/wk)` }
                               : { cls: "bg-red-500", label: `Red band (${fmt(price)}/wk)` };
@@ -2395,7 +2395,7 @@ export default function PricingTool() {
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold">Country Benchmarks</CardTitle>
+                  <CardTitle className="text-sm font-semibold">Pricing Corridors by Country</CardTitle>
                   <div className="flex gap-2">
                     {editingBenchmarks ? (
                       <>
@@ -2532,7 +2532,7 @@ export default function PricingTool() {
                           <span>Total scale: 0 – {fB(totalScale)}</span>
                           <span className="ml-auto flex gap-3">
                             <span><span className="inline-block w-3 h-2 bg-amber-300/70 rounded-sm mr-1" />Yellow</span>
-                            <span><span className="inline-block w-3 h-2 bg-emerald-400/80 rounded-sm mr-1" />Green (W/L)</span>
+                            <span><span className="inline-block w-3 h-2 bg-emerald-400/80 rounded-sm mr-1" />Pricing corridor</span>
                             <span><span className="inline-block w-3 h-2 bg-blue-400/60 rounded-sm mr-1" />Mkt (IT×mult)</span>
                           </span>
                         </div>
@@ -2567,7 +2567,7 @@ export default function PricingTool() {
                                   <thead>
                                     <tr className="bg-muted/30 border-b">
                                       <th className="text-left px-2 py-1 font-semibold text-muted-foreground">Parameter</th>
-                                      <th className="text-center px-2 py-1 font-semibold text-emerald-700">🟢 Green</th>
+                                      <th className="text-center px-2 py-1 font-semibold text-emerald-700">Corridor</th>
                                       <th className="text-center px-2 py-1 font-semibold text-muted-foreground">Decisive</th>
                                     </tr>
                                   </thead>
@@ -2701,8 +2701,8 @@ export default function PricingTool() {
                           <TableHead>Region</TableHead>
                           <TableHead>Parameter</TableHead>
                           <TableHead className="text-center">🟡 Yel low</TableHead>
-                          <TableHead className="text-center">🟢 Grn low</TableHead>
-                          <TableHead className="text-center">🟢 Grn high</TableHead>
+                          <TableHead className="text-center">Corridor low</TableHead>
+                          <TableHead className="text-center">Corridor high</TableHead>
                           <TableHead className="text-center">🟡 Yel high</TableHead>
                           <TableHead className="text-center">Decis %</TableHead>
                           <TableHead className="w-8" />
@@ -2926,7 +2926,7 @@ export default function PricingTool() {
                             {/* Editable green band */}
                             <div className="flex items-center gap-1.5 border-t pt-1.5">
                               <div className="w-2 h-2 rounded-sm bg-emerald-400/60 shrink-0" />
-                              <span className="text-[9px] text-muted-foreground shrink-0">Green band:</span>
+                              <span className="text-[9px] text-muted-foreground shrink-0">Pricing corridor:</span>
                               <input
                                 type="number" step="500" min="0"
                                 defaultValue={benchGreenLow || ""}
@@ -2970,7 +2970,7 @@ export default function PricingTool() {
                         <div className="w-2.5 h-2.5 rounded-full bg-red-500" /> Lost
                       </div>
                       <div className="flex items-center gap-1">
-                        <div className="w-3 h-2 bg-emerald-200/80 rounded-sm border border-emerald-300" /> Green band (editable)
+                        <div className="w-3 h-2 bg-emerald-200/80 rounded-sm border border-emerald-300" /> Pricing corridor (editable)
                       </div>
                       <div className="flex items-center gap-1">
                         <div className="w-3 h-0.5 bg-emerald-500" /> Avg won
@@ -3698,7 +3698,7 @@ export default function PricingTool() {
                 <div className="space-y-1">
                     <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Pricing Waterfall</div>
                     <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
-                      {/* Green band background */}
+                      {/* Pricing corridor background */}
                       {hasGreenBand && (
                         <rect x={25} y={yOf(greenHigh)} width={W - 30} height={Math.max(1, hOf(greenLow, greenHigh))}
                           fill="#22c55e" opacity="0.08" />
@@ -3982,8 +3982,8 @@ export default function PricingTool() {
                   />
                   <Row
                     status={!hasGreen ? "na" : greenPass ? "pass" : "fail"}
-                    label="Net price in green band"
-                    detail={hasGreen ? `${fmtH(netWk)}/wk vs band ${fmtH(gLow)}–${fmtH(gHigh)}` : "no benchmark for region"}
+                    label="Net price in pricing corridor"
+                    detail={hasGreen ? `${fmtH(netWk)}/wk vs corridor ${fmtH(gLow)}–${fmtH(gHigh)}` : "no pricing corridor for region"}
                   />
                   <Row
                     status={maxWonWk === null ? "na" : wonPass ? "pass" : "fail"}
