@@ -49,6 +49,23 @@ async function logApiUsage(endpoint: string, response: any) {
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
+  // ── Version / health (unauthenticated) ────────────────────────────────────
+  // Returns the git SHA baked in at build time (via RENDER_GIT_COMMIT,
+  // SOURCE_VERSION, or COMMIT_SHA env vars — Render sets RENDER_GIT_COMMIT
+  // automatically). Use this to verify which commit is actually running on
+  // prod when debugging "my fix didn't deploy" issues.
+  app.get("/api/version", (_req, res) => {
+    res.json({
+      commit:
+        process.env.RENDER_GIT_COMMIT ||
+        process.env.SOURCE_VERSION ||
+        process.env.COMMIT_SHA ||
+        "unknown",
+      node_env: process.env.NODE_ENV || "unknown",
+      started_at: new Date(Date.now() - Math.floor(process.uptime() * 1000)).toISOString(),
+    });
+  });
+
   // ── API Pause Toggle ──────────────────────────────────────────────────────
   app.get("/api/api-pause", requireAuth, async (_req, res) => {
     const paused = await checkApiPaused();
