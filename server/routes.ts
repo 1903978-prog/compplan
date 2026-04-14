@@ -1011,9 +1011,30 @@ RULES:
         const state = inv.state ?? "";
 
         // Extract project codes/names from line_items
+        // Priority: project.code > derive from project.name > derive from subject
         const lineItems: any[] = inv.line_items ?? [];
-        const projectCodes = [...new Set(lineItems.map((li: any) => li.project?.code).filter(Boolean))].join(",") || null;
-        const projectNames = [...new Set(lineItems.map((li: any) => li.project?.name).filter(Boolean))].join(",") || null;
+        const rawCodes: string[] = [];
+        const rawNames: string[] = [];
+        for (const li of lineItems) {
+          const proj = li.project;
+          if (!proj) continue;
+          const name = proj.name ?? "";
+          const code = proj.code ?? "";
+          if (code) { rawCodes.push(code); rawNames.push(name); }
+          else if (name) {
+            // Try to derive code from project name (e.g. "DAI01 - Dainese Phase 1" → "DAI01")
+            const m = name.match(/^([A-Z]{2,5}\d{1,3})/i);
+            rawCodes.push(m ? m[1].toUpperCase() : name);
+            rawNames.push(name);
+          }
+        }
+        // If no line_items had projects, try to extract from invoice subject
+        if (rawCodes.length === 0 && inv.subject) {
+          const m = inv.subject.match(/\b([A-Z]{2,5})\s*[-]?\s*(\d{1,3})\b/i);
+          if (m) { rawCodes.push(`${m[1].toUpperCase()}${m[2].padStart(2, "0")}`); rawNames.push(inv.subject); }
+        }
+        const projectCodes = [...new Set(rawCodes)].join(",") || null;
+        const projectNames = [...new Set(rawNames)].join(",") || null;
 
         if (!snapMap.has(invId)) {
           // New invoice
