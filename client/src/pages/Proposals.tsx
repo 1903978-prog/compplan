@@ -199,6 +199,25 @@ export default function Proposals() {
   const [projectApproach, setProjectApproach] = useState<string>("");
   const [generatingApproach, setGeneratingApproach] = useState(false);
 
+  // Auto-save: debounced save after any modification (2 second delay)
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const triggerAutoSave = useCallback(() => {
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(async () => {
+      if (!form.company_name) return; // don't save empty proposals
+      setAutoSaving(true);
+      try { await saveProgress(); } catch { /* silent */ }
+      setAutoSaving(false);
+    }, 2000);
+  }, [form, slides, briefs, callChecklist, projectType, projectApproach]);
+
+  // Trigger auto-save when key data changes
+  useEffect(() => {
+    if (step >= 1 && form.company_name) triggerAutoSave();
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [form.company_name, form.website, form.revenue, form.ebitda_margin, form.objective, form.urgency, form.scope_perimeter, form.transcript, form.notes, slides, briefs, projectApproach, callChecklist]);
+
   // Drag state
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
@@ -1179,6 +1198,11 @@ export default function Proposals() {
                 <Button variant="outline" onClick={() => setStep(step - 1)}>
                   <ArrowLeft className="w-4 h-4 mr-1" /> Back to {WIZARD_STEPS.find(s => s.n === step - 1)?.label || "Previous"}
                 </Button>
+              )}
+              {autoSaving && (
+                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" /> saving...
+                </span>
               )}
               <Button variant="ghost" size="sm" onClick={() => { setView("list"); setStep(1); }}>
                 Back to List

@@ -208,11 +208,17 @@ function Navigation() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {apiCost && (
-              <span className="text-[10px] font-mono text-muted-foreground border rounded px-2 py-1" title={`Today: $${apiCost.today} | Month: $${apiCost.month}`}>
-                ${apiCost.month}
-              </span>
-            )}
+            {/* Live API activity indicator + cost */}
+            <div className="flex items-center gap-1.5">
+              <div className={`w-2 h-2 rounded-full transition-all ${
+                !apiPaused ? "bg-green-500 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.6)]" : "bg-muted-foreground/20"
+              }`} title={apiPaused ? "API inactive" : "API active — calls may be in progress"} />
+              {apiCost && (
+                <span className="text-[10px] font-mono text-muted-foreground" title={`Today: $${apiCost.today} | Month: $${apiCost.month}`}>
+                  ${apiCost.month}
+                </span>
+              )}
+            </div>
             {(
               <Button
                 variant={apiPaused ? "destructive" : "outline"}
