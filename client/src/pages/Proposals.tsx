@@ -257,7 +257,7 @@ export default function Proposals() {
   useEffect(() => {
     if (step >= 1 && form.company_name) triggerAutoSave();
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  }, [form.company_name, form.website, form.revenue, form.ebitda_margin, form.objective, form.urgency, form.scope_perimeter, form.transcript, form.notes, slides, briefs, projectApproach, callChecklist]);
+  }, [form.company_name, form.website, form.revenue, form.ebitda_margin, form.objective, form.urgency, form.scope_perimeter, form.transcript, form.notes, slides, briefs, projectApproach, callChecklist, projectType]);
 
   // Drag state
   const dragItem = useRef<number | null>(null);
@@ -319,7 +319,10 @@ export default function Proposals() {
         : DEFAULT_CALL_QUESTIONS.map(q => ({ question: q, checked: false }))
     );
     setEditingQuestion(null);
-    setHasManualEdits(false);
+    // Treat any loaded proposal with slides as "manually edited" so that
+    // changing project type on a saved proposal prompts for confirmation
+    // instead of silently wiping custom slides, renames, prompts, and content.
+    setHasManualEdits(loadedSlides.length > 0);
     setExpandedBrief(null);
     setBriefMode(Array.isArray(p.slide_briefs) && p.slide_briefs.length > 0 ? "editing" : "choose");
 
@@ -366,33 +369,100 @@ export default function Proposals() {
 
   // ── Step 2: Project type change handling ────────────────────────────────────
 
-  async function applyProjectType(pt: ProjectType) {
-    setProjectType(pt);
-    // Try to load learned defaults for this project type
+  // Load learned defaults (selected slide IDs + order) for a project type.
+  // Returns null if none are available, so callers can fall through to hardcoded defaults.
+  async function fetchLearnedDefaults(pt: ProjectType): Promise<{ savedIds: string[]; savedOrder: string[] } | null> {
     try {
       const res = await fetch(`/api/slide-defaults/${encodeURIComponent(pt)}`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        const savedIds: string[] = data.slide_ids || [];
-        const savedOrder: string[] = data.slide_order || [];
-        if (savedIds.length > 0) {
-          // We have learned defaults — use them
-          const selectedSet = new Set(savedIds);
-          const defaults = getDefaultSlideSelection(pt);
-          const orderMap = new Map(savedOrder.map((id: string, i: number) => [id, i]));
-          const allSlides = defaults.map((slide) => ({
-            ...slide,
-            is_selected: selectedSet.has(slide.slide_id),
-            default_selected: selectedSet.has(slide.slide_id),
-            order: orderMap.has(slide.slide_id) ? orderMap.get(slide.slide_id)! : 999,
-          }));
-          allSlides.sort((a, b) => a.order - b.order);
-          setSlides(allSlides.map((s, i) => ({ ...s, order: i })));
-          setHasManualEdits(false);
-          return;
+      if (!res.ok) return null;
+      const data = await res.json();
+      const savedIds: string[] = data.slide_ids || [];
+      const savedOrder: string[] = data.slide_order || [];
+      if (savedIds.length === 0) return null;
+      return { savedIds, savedOrder };
+    } catch {
+      return null;
+    }
+  }
+
+  // SAFE, non-destructive version. Applies a project type by merging existing
+  // slides with the project's defaults, preserving:
+  //   - user renames (title)
+  //   - user-edited prompts (visual_prompt, content_prompt)
+  //   - generated_content, preview_html, quality_score, reference_image
+  //   - any custom slides the user added (slide_id starting with "custom_")
+  // Only selection state and order are taken from learned defaults.
+  // Called from handleGoToSlides (first navigation) and from handleProjectTypeChange
+  // when the user has no manual edits yet — in both cases, no data can be lost.
+  async function applyProjectType(pt: ProjectType) {
+    setProjectType(pt);
+    const learned = await fetchLearnedDefaults(pt);
+    const defaults = getDefaultSlideSelection(pt);
+
+    setSlides(prev => {
+      const existingById = new Map(prev.map(s => [s.slide_id, s]));
+      const defaultIds = new Set(defaults.map(d => d.slide_id));
+
+      const selectedSet = learned ? new Set(learned.savedIds) : null;
+      const orderMap = learned ? new Map(learned.savedOrder.map((id: string, i: number) => [id, i as number])) : null;
+
+      // Merge defaults with existing: keep every existing field on default slides,
+      // only override is_selected/default_selected/order from learned data if available.
+      const mergedDefaults: SlideSelectionEntry[] = defaults.map(d => {
+        const existing = existingById.get(d.slide_id);
+        const base: SlideSelectionEntry = existing ?? d;
+        const next: SlideSelectionEntry = { ...base };
+        if (selectedSet) {
+          next.is_selected = selectedSet.has(d.slide_id);
+          next.default_selected = selectedSet.has(d.slide_id);
+        } else if (existing) {
+          // No learned defaults — keep existing selection, don't touch it
+          next.is_selected = existing.is_selected;
+          next.default_selected = existing.default_selected;
         }
-      }
-    } catch { /* fall through to hardcoded defaults */ }
+        if (orderMap && orderMap.has(d.slide_id)) {
+          next.order = orderMap.get(d.slide_id)!;
+        } else if (existing && typeof existing.order === "number") {
+          next.order = existing.order;
+        }
+        return next;
+      });
+
+      // Preserve any custom slides the user added (not in MASTER defaults)
+      const customs = prev.filter(s => !defaultIds.has(s.slide_id));
+
+      const all = [...mergedDefaults, ...customs];
+      all.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      return all.map((s, i) => ({ ...s, order: i }));
+    });
+
+    // Only clear the "manual edits" flag on a truly fresh proposal.
+    // If there were already slides, the user has customizations — keep the flag on
+    // so future project-type changes still trigger the confirmation dialog.
+    if (slides.length === 0) setHasManualEdits(false);
+  }
+
+  // DESTRUCTIVE version. Wipes the slide list and rebuilds from defaults.
+  // Only called from the explicit user-confirmed "reset" path and from the
+  // "Reset to defaults" button. This WILL lose user edits — by design.
+  async function resetSlidesToProjectType(pt: ProjectType) {
+    setProjectType(pt);
+    const learned = await fetchLearnedDefaults(pt);
+    if (learned) {
+      const selectedSet = new Set(learned.savedIds);
+      const defaults = getDefaultSlideSelection(pt);
+      const orderMap = new Map(learned.savedOrder.map((id: string, i: number) => [id, i as number]));
+      const allSlides = defaults.map((slide) => ({
+        ...slide,
+        is_selected: selectedSet.has(slide.slide_id),
+        default_selected: selectedSet.has(slide.slide_id),
+        order: orderMap.has(slide.slide_id) ? orderMap.get(slide.slide_id)! : 999,
+      }));
+      allSlides.sort((a, b) => a.order - b.order);
+      setSlides(allSlides.map((s, i) => ({ ...s, order: i })));
+      setHasManualEdits(false);
+      return;
+    }
     setSlides(getDefaultSlideSelection(pt));
     setHasManualEdits(false);
   }
@@ -409,7 +479,7 @@ export default function Proposals() {
 
   function confirmProjectTypeReset() {
     if (pendingProjectType) {
-      applyProjectType(pendingProjectType);
+      resetSlidesToProjectType(pendingProjectType);
     }
     setShowResetConfirm(false);
     setPendingProjectType(null);
@@ -462,7 +532,8 @@ export default function Proposals() {
 
   function resetToDefaults() {
     if (projectType) {
-      // Reset to hardcoded defaults (not learned) — user can use this to "unlearn"
+      // Reset to hardcoded defaults (not learned) — user can use this to "unlearn".
+      // This is a destructive, explicit user action and WILL drop customizations.
       setSlides(getDefaultSlideSelection(projectType));
       setHasManualEdits(false);
     }
