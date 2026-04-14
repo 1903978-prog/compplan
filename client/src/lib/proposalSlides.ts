@@ -140,7 +140,8 @@ export interface SlideSelectionEntry {
   generation_answers?: Record<string, string>;
   generated_content?: string;
   quality_score?: { clarity: number; relevance: number; visual: number; persuasion: number; total: number; tip: string } | null;
-  reference_image?: string | null;  // base64 data URL of uploaded reference image
+  reference_image?: string | null;
+  preview_html?: string | null;    // Generated HTML preview (persisted)
 }
 
 // ── Generate default selection for a project type ────────────────────────────

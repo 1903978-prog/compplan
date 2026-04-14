@@ -299,7 +299,17 @@ export default function Proposals() {
     setCurrent(p);
     // Restore slide selection state
     setProjectType((p.project_type as ProjectType) || "");
-    setSlides(Array.isArray(p.slide_selection) && p.slide_selection.length > 0 ? p.slide_selection : []);
+    const loadedSlides = Array.isArray(p.slide_selection) && p.slide_selection.length > 0 ? p.slide_selection : [];
+    setSlides(loadedSlides);
+    // Restore saved previews and quality scores from slide data
+    const restoredPreviews: Record<string, string> = {};
+    const restoredScores: Record<string, any> = {};
+    for (const s of loadedSlides) {
+      if (s.preview_html) restoredPreviews[s.slide_id] = s.preview_html;
+      if (s.quality_score) restoredScores[s.slide_id] = s.quality_score;
+    }
+    if (Object.keys(restoredPreviews).length > 0) setPreviewHtml(restoredPreviews);
+    if (Object.keys(restoredScores).length > 0) setSlideScores(restoredScores);
     setBriefs(Array.isArray(p.slide_briefs) && p.slide_briefs.length > 0 ? p.slide_briefs : []);
     setProjectApproach(p.project_approach ?? "");
     // Restore call checklist
@@ -590,6 +600,7 @@ export default function Proposals() {
       if (!res.ok) throw new Error("Page generation failed");
       const data = await res.json();
       setPreviewHtml(prev => ({ ...prev, [slideId]: data.html }));
+      updateSlideField(slideId, "preview_html", data.html);
       if (data.quality_score) {
         setSlideScores(prev => ({ ...prev, [slideId]: data.quality_score }));
         updateSlideField(slideId, "quality_score", data.quality_score);
@@ -652,6 +663,7 @@ export default function Proposals() {
       if (!res.ok) throw new Error("Modification failed");
       const { html } = await res.json();
       setPreviewHtml(prev => ({ ...prev, [slideId]: html }));
+      updateSlideField(slideId, "preview_html", html);
       setSlideChatHistory(prev => ({
         ...prev,
         [slideId]: [...(prev[slideId] ?? []), { role: "ai" as const, text: "Page updated." }],
