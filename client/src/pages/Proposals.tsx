@@ -3131,6 +3131,82 @@ Root cause: Territory allocation..."
             </div>
           </Card>
         )}
+
+        {/* ── Storage footer + Delete this proposal ─────────────────────
+            Shows how much the current proposal weighs (mostly preview_html
+            blobs) so the user can decide whether it's worth keeping.
+            Delete is always one click away, always at the bottom. */}
+        {current?.id && (() => {
+          // Serialize the live state so the number reflects unsaved edits
+          // too — otherwise it would only ever show the last-saved snapshot.
+          const payload = {
+            form,
+            slides,
+            briefs,
+            callChecklist,
+            projectType,
+            projectApproach,
+            options: current?.options ?? [],
+          };
+          const totalBytes = new Blob([JSON.stringify(payload)]).size;
+          const previewBytes = slides.reduce(
+            (sum, s) => sum + (s.preview_html ? new Blob([s.preview_html]).size : 0),
+            0
+          );
+          const contentBytes = slides.reduce(
+            (sum, s) =>
+              sum +
+              (s.generated_content ? new Blob([s.generated_content]).size : 0) +
+              (s.content_prompt ? new Blob([s.content_prompt]).size : 0) +
+              (s.visual_prompt ? new Blob([s.visual_prompt]).size : 0),
+            0
+          );
+          const fmt = (b: number) => {
+            if (b < 1024) return `${b} B`;
+            if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+            return `${(b / (1024 * 1024)).toFixed(2)} MB`;
+          };
+          const previewsGenerated = slides.filter(s => !!s.preview_html).length;
+          return (
+            <Card className="p-4 mt-6 border-red-200 bg-red-50/30">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1 text-xs">
+                  <div className="font-semibold text-sm flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Proposal storage
+                  </div>
+                  <div className="text-muted-foreground">
+                    Total size of this proposal in the database: <strong>{fmt(totalBytes)}</strong>
+                    {previewsGenerated > 0 && <> — {previewsGenerated} slide preview{previewsGenerated === 1 ? "" : "s"} saved ({fmt(previewBytes)})</>}
+                  </div>
+                  <div className="text-muted-foreground">
+                    Prompts + generated content: {fmt(contentBytes)}. Slide previews are the bulk of the size; delete the whole proposal below to reclaim space.
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-red-300 text-red-700 hover:bg-red-100 shrink-0"
+                  onClick={async () => {
+                    if (!current?.id) return;
+                    const ok = window.confirm(
+                      `Delete this proposal?\n\n"${current.company_name}"\n\nThis will permanently remove all slides, prompts, generated content, and ${previewsGenerated} saved preview${previewsGenerated === 1 ? "" : "s"}, freeing about ${fmt(totalBytes)}.\n\nThis cannot be undone.`
+                    );
+                    if (!ok) return;
+                    // Clear dirty state so the unload handler doesn't try
+                    // to resurrect the proposal we just deleted.
+                    markClean();
+                    await deleteProposal(current.id);
+                    setCurrent(null);
+                    setView("list");
+                  }}
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1" />
+                  Delete proposal ({fmt(totalBytes)})
+                </Button>
+              </div>
+            </Card>
+          );
+        })()}
       </div>
     );
   }
