@@ -445,6 +445,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // Bulk-delete blank drafts. Cleans up debris from the old stale-closure
+  // auto-save bug that used to create empty proposals. Deletes every row
+  // where company_name is null or trims to an empty string.
+  app.post("/api/proposals/cleanup-blank", requireAuth, async (_req, res) => {
+    try {
+      const deleted = await storage.deleteBlankProposals();
+      res.json({ deleted });
+    } catch (err: any) {
+      console.error("[cleanup-blank] error:", err);
+      res.status(500).json({ message: err.message || "Cleanup failed" });
+    }
+  });
+
   // ── Beacon save endpoints (page unload flush) ────────────────────────────
   // navigator.sendBeacon() from the client can only POST. These endpoints
   // give the unload handler a way to persist last-second edits when the

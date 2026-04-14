@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   employees, roleGridEntries, appSettings, daysOffEntries, salaryHistoryEntries,
@@ -399,6 +399,15 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteProposal(id: number) {
     await db.delete(proposals).where(eq(proposals.id, id));
+  }
+  // Delete every proposal where company_name is null, empty, or whitespace.
+  // Used by the cleanup-blank admin endpoint to remove auto-save debris.
+  async deleteBlankProposals(): Promise<number> {
+    const result: any = await db.execute(
+      sql`DELETE FROM proposals WHERE company_name IS NULL OR trim(company_name) = ''`
+    );
+    // Neon/pg returns rowCount on the command tag.
+    return Number(result?.rowCount ?? result?.rows?.length ?? 0);
   }
 
   // ── Proposal Templates ──────────────────────────────────────────────────────

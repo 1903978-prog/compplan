@@ -479,7 +479,23 @@ export default function Proposals() {
   }
 
   function startNew() {
-    setForm({ company_name: "", website: "", transcript: "", notes: "", revenue: "", ebitda_margin: "", scope_perimeter: "", objective: "", urgency: "Medium" });
+    // Kill any pending auto-save for whatever was open before.
+    if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+    markClean();
+    // Synchronously reset the refs that auto-save reads. Without this,
+    // there's a window between setCurrent(null) and the latestCurrentRef
+    // effect where a pending save could PUT the new empty form data onto
+    // the PREVIOUSLY open proposal, corrupting it.
+    const emptyForm = { company_name: "", website: "", transcript: "", notes: "", revenue: "", ebitda_margin: "", scope_perimeter: "", objective: "", urgency: "Medium" };
+    latestCurrentRef.current = null;
+    latestFormRef.current = emptyForm;
+    latestSlidesRef.current = [];
+    latestBriefsRef.current = [];
+    latestProjectTypeRef.current = "";
+    latestProjectApproachRef.current = "";
+    // Also block the first auto-save fire after this state cascade.
+    justOpenedRef.current = true;
+    setForm(emptyForm);
     setCurrent(null);
     setProjectType("");
     setSlides([]);
@@ -3329,6 +3345,27 @@ Root cause: Territory allocation..."
         description="Internal proposal operating system"
         actions={
           <div className="flex gap-2">
+            {proposals.some(p => !p.company_name || !p.company_name.trim()) && (
+              <Button
+                variant="outline"
+                className="border-red-300 text-red-700 hover:bg-red-50"
+                onClick={async () => {
+                  const blankCount = proposals.filter(p => !p.company_name || !p.company_name.trim()).length;
+                  if (!window.confirm(`Delete ${blankCount} blank draft${blankCount === 1 ? "" : "s"}?\n\nThese are leftover empty rows from an earlier bug. They have no company name and no content. This cannot be undone.`)) return;
+                  try {
+                    const res = await fetch("/api/proposals/cleanup-blank", { method: "POST", credentials: "include" });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const { deleted } = await res.json();
+                    toast({ title: `Deleted ${deleted} blank draft${deleted === 1 ? "" : "s"}` });
+                    await loadProposals();
+                  } catch (err: any) {
+                    toast({ title: "Cleanup failed", description: err.message, variant: "destructive" });
+                  }
+                }}
+              >
+                <Trash2 className="w-4 h-4 mr-1" /> Clean blank drafts
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setShowTemplates(true)}>
               <Upload className="w-4 h-4 mr-1" /> Templates
             </Button>
