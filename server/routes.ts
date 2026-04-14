@@ -430,6 +430,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Beacon save endpoints (page unload flush) ────────────────────────────
+  // navigator.sendBeacon() from the client can only POST. These endpoints
+  // give the unload handler a way to persist last-second edits when the
+  // normal debounced PUT never gets a chance to fire. They are deliberately
+  // lenient: no strict validation, best-effort semantics. Same DB calls as
+  // the regular POST/PUT so there is no second code path to keep in sync.
+  app.post("/api/proposals/:id/beacon-save", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await storage.updateProposal(id, req.body);
+      res.status(204).end();
+    } catch (err: any) {
+      console.error("[beacon-save PUT] error:", err?.message || err);
+      res.status(500).end();
+    }
+  });
+
+  app.post("/api/proposals/beacon-save", requireAuth, async (req, res) => {
+    try {
+      await storage.createProposal(req.body);
+      res.status(204).end();
+    } catch (err: any) {
+      console.error("[beacon-save POST] error:", err?.message || err);
+      res.status(500).end();
+    }
+  });
+
   app.post("/api/proposals/:id/generate-briefs", requireAuth, async (req, res) => {
     try {
       if (await guardApiAsync(res)) return;

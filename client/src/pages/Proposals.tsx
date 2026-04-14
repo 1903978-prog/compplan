@@ -242,24 +242,142 @@ export default function Proposals() {
   const [projectApproach, setProjectApproach] = useState<string>("");
   const [generatingApproach, setGeneratingApproach] = useState(false);
 
-  // Auto-save: debounced save after any modification (2 second delay)
+  // ── Auto-save with dirty tracking + unload flush ────────────────────────
+  //
+  // Bug we are fixing: the previous version debounced saves on a 2-second
+  // timer. If the user typed into a textarea (e.g. content_prompt) and
+  // refreshed the tab within that window, the pending timer was cancelled
+  // on unmount and the edit was silently dropped. Now:
+  //
+  //   1. `dirtyRef` is set on every edit and cleared only after a
+  //      successful save round-trip. It's the single source of truth for
+  //      "there is unsaved work".
+  //   2. Debounce is shortened from 2000 ms to 800 ms — shorter window of
+  //      potential loss.
+  //   3. Textarea onBlur calls `flushSave()` directly (no debounce), so
+  //      clicking away from a field saves instantly.
+  //   4. `beforeunload` both (a) flushes via `navigator.sendBeacon()` —
+  //      which is the only fetch-style API the browser reliably allows
+  //      during unload — AND (b) prompts the user to confirm leaving.
+  //
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoSaving, setAutoSaving] = useState(false);
+  // dirtyRef: synchronous truth, read by beforeunload + flushSave.
+  // isDirty: same info mirrored into state so React re-renders the
+  // "Unsaved changes" indicator when the state flips.
+  const dirtyRef = useRef(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const markDirty = useCallback(() => {
+    dirtyRef.current = true;
+    setIsDirty(true);
+  }, []);
+  const markClean = useCallback(() => {
+    dirtyRef.current = false;
+    setIsDirty(false);
+  }, []);
+
+  // Refs that always point to the latest state — used by the beforeunload
+  // handler so it can build a save payload without going through a stale
+  // closure.
+  const latestFormRef = useRef(form);
+  const latestSlidesRef = useRef(slides);
+  const latestBriefsRef = useRef(briefs);
+  const latestChecklistRef = useRef(callChecklist);
+  const latestProjectTypeRef = useRef(projectType);
+  const latestProjectApproachRef = useRef(projectApproach);
+  const latestCurrentRef = useRef(current);
+  useEffect(() => { latestFormRef.current = form; }, [form]);
+  useEffect(() => { latestSlidesRef.current = slides; }, [slides]);
+  useEffect(() => { latestBriefsRef.current = briefs; }, [briefs]);
+  useEffect(() => { latestChecklistRef.current = callChecklist; }, [callChecklist]);
+  useEffect(() => { latestProjectTypeRef.current = projectType; }, [projectType]);
+  useEffect(() => { latestProjectApproachRef.current = projectApproach; }, [projectApproach]);
+  useEffect(() => { latestCurrentRef.current = current; }, [current]);
+
+  // Force-flush the current state to the server without debouncing.
+  // Called from textarea onBlur and from the unload handler's fallback.
+  const flushSave = useCallback(async () => {
+    if (!dirtyRef.current) return;
+    if (!latestFormRef.current.company_name) return;
+    if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+    setAutoSaving(true);
+    try {
+      await saveProgress();
+      markClean();
+    } catch { /* keep dirty so next attempt retries */ }
+    setAutoSaving(false);
+  }, [markClean]);
+
   const triggerAutoSave = useCallback(() => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(async () => {
-      if (!form.company_name) return; // don't save empty proposals
+      if (!latestFormRef.current.company_name) return;
       setAutoSaving(true);
-      try { await saveProgress(); } catch { /* silent */ }
+      try {
+        await saveProgress();
+        markClean();
+      } catch { /* keep dirty, retry on next change or blur */ }
       setAutoSaving(false);
-    }, 2000);
-  }, [form, slides, briefs, callChecklist, projectType, projectApproach]);
+    }, 800);
+  }, [markClean]);
 
-  // Trigger auto-save when key data changes
+  // Trigger auto-save when key data changes. Important: NO cleanup that
+  // clears the timer — the previous version did that, which is exactly why
+  // rapid edits could end with an un-fired timer and lost data.
   useEffect(() => {
-    if (step >= 1 && form.company_name) triggerAutoSave();
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  }, [form.company_name, form.website, form.revenue, form.ebitda_margin, form.objective, form.urgency, form.scope_perimeter, form.transcript, form.notes, slides, briefs, projectApproach, callChecklist, projectType]);
+    if (step < 1 || !form.company_name) return;
+    markDirty();
+    triggerAutoSave();
+  }, [form.company_name, form.website, form.revenue, form.ebitda_margin, form.objective, form.urgency, form.scope_perimeter, form.transcript, form.notes, slides, briefs, projectApproach, callChecklist, projectType, step, triggerAutoSave, markDirty]);
+
+  // beforeunload: warn the user if there's unsaved work AND attempt to
+  // flush synchronously via sendBeacon (the only network call browsers
+  // honour during page unload).
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      const cur = latestCurrentRef.current;
+      const f = latestFormRef.current;
+      if (!f.company_name) return;
+      try {
+        const body = {
+          company_name: f.company_name,
+          website: f.website || null,
+          transcript: f.transcript || null,
+          notes: f.notes || null,
+          revenue: f.revenue ? Number(f.revenue) : null,
+          ebitda_margin: f.ebitda_margin ? Number(f.ebitda_margin) : null,
+          scope_perimeter: f.scope_perimeter || null,
+          objective: f.objective || null,
+          urgency: f.urgency || null,
+          project_type: latestProjectTypeRef.current,
+          project_approach: latestProjectApproachRef.current || null,
+          slide_selection: latestSlidesRef.current,
+          slide_briefs: latestBriefsRef.current,
+          call_checklist: latestChecklistRef.current,
+          status: cur?.status || "draft",
+          options: cur?.options || [],
+          created_at: cur?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const blob = new Blob([JSON.stringify(body)], { type: "application/json" });
+        if (cur?.id) {
+          // sendBeacon only does POST; server supports POST-with-id fallback
+          // below. For PUT, fall through to XHR sync as a secondary attempt.
+          navigator.sendBeacon(`/api/proposals/${cur.id}/beacon-save`, blob);
+        } else {
+          navigator.sendBeacon("/api/proposals/beacon-save", blob);
+        }
+      } catch { /* best-effort */ }
+      // Block the unload and ask the user to confirm — this is the user's
+      // safety net if the beacon fails for any reason.
+      e.preventDefault();
+      (e as any).returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
 
   // Drag state
   const dragItem = useRef<number | null>(null);
@@ -1493,6 +1611,19 @@ export default function Proposals() {
             <span className="max-w-[280px] truncate">{aiStatus}</span>
           </div>
         )}
+        {/* Floating save-status indicator — tells the user if anything is
+            still pending before they refresh/close the tab. */}
+        {!aiStatus && (autoSaving || isDirty) && (
+          <div className={`fixed top-4 right-4 z-40 flex items-center gap-2 px-3 py-1.5 rounded-lg shadow-md text-[11px] font-medium ${
+            autoSaving ? "bg-amber-500 text-white" : "bg-orange-100 text-orange-800 border border-orange-300"
+          }`}>
+            {autoSaving ? (
+              <><Loader2 className="w-3 h-3 animate-spin shrink-0" /> Saving…</>
+            ) : (
+              <><div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" /> Unsaved changes</>
+            )}
+          </div>
+        )}
         <PageHeader
           title={step === 1 ? "New Proposal" : step === 2 ? "Proposal Structure" : step === 3 ? "Slide Briefing" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
           description={stepDescriptions[step]}
@@ -2012,6 +2143,7 @@ Example:
                             <Textarea
                               value={slide.visual_prompt ?? ""}
                               onChange={e => updateSlideField(slide.slide_id, "visual_prompt", e.target.value)}
+                              onBlur={() => { flushSave(); }}
                               placeholder={slideDefaultPrompts[slide.slide_id]?.visual || "Describe how this slide should look: layout, columns, imagery, branding..."}
                               rows={12}
                               className="text-xs"
@@ -2033,6 +2165,7 @@ Example:
                             <Textarea
                               value={slide.content_prompt ?? ""}
                               onChange={e => updateSlideField(slide.slide_id, "content_prompt", e.target.value)}
+                              onBlur={() => { flushSave(); }}
                               placeholder={slideDefaultPrompts[slide.slide_id]?.content || "Define the workflow/questions to guide content generation for this slide..."}
                               rows={20}
                               className="text-xs font-mono"
@@ -2076,6 +2209,7 @@ Example:
                               <Textarea
                                 value={slide.generated_content}
                                 onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
+                                onBlur={() => { flushSave(); }}
                                 rows={10}
                                 className="text-xs font-mono"
                                 placeholder="Generated content will appear here. You can edit it before previewing."
@@ -2089,6 +2223,7 @@ Example:
                                 <Textarea
                                   value=""
                                   onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
+                                  onBlur={() => { flushSave(); }}
                                   rows={6}
                                   className="text-xs font-mono mt-1"
                                   placeholder="Type or paste slide content here..."
