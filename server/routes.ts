@@ -1033,6 +1033,18 @@ RULES:
             pendingChanges.push({ invoice_id: invId, invoice_number: invNum, client_name: clientName,
               amount, change_type: "amount_changed", old_value: String(prev.amount), new_value: String(amount) });
           }
+          // ALWAYS update all snapshot fields (fixes missing due_date, client_id, etc.)
+          await db.execute(sql`
+            UPDATE invoice_snapshots SET
+              invoice_number = ${invNum}, client_id = ${inv.client?.id ?? null}, client_name = ${clientName},
+              amount = ${amount}, due_amount = ${dueAmount}, due_date = ${inv.due_date ?? null},
+              state = ${state}, currency = ${inv.currency ?? "EUR"}, subject = ${inv.subject ?? null},
+              sent_at = ${inv.sent_at ?? null}, paid_at = ${inv.paid_at ?? null},
+              invoice_created_at = ${inv.created_at ?? null},
+              period_start = ${inv.period_start ?? null}, period_end = ${inv.period_end ?? null},
+              updated_at = ${now}
+            WHERE invoice_id = ${invId}
+          `);
         }
       }
 
