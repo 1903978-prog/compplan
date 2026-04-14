@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, CheckCircle, AlertTriangle, XCircle, ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
+import { Shield, CheckCircle, AlertTriangle, XCircle, ChevronDown, ExternalLink, RefreshCw, Search, FileWarning, X } from "lucide-react";
 
 // ── Control definitions ────────────────────────────────────────────────────────
 type Status = "green" | "yellow" | "red" | "unknown";
@@ -40,9 +40,9 @@ const CONTROLS: SecurityControl[] = [
     howToFix: "GitHub > Repo Settings > Code security > Enable Dependabot alerts.",
     actionUrl: "https://github.com/1903978-prog/compplan/settings/security_analysis" },
   { id: "gh_no_secrets_in_code", platform: "github", severity: "critical", name: "No hardcoded secrets in code",
-    description: "API keys, tokens, and passwords must never be committed to the repository.",
-    howToFix: "Search codebase for tokens/keys. Move any found to environment variables. Rotate compromised credentials.",
-    autoCheckId: "app_gitignore" },
+    description: "API keys, tokens, and passwords must never be committed to the repository. Use the Secrets Scanner above to detect any leaks.",
+    howToFix: "Use the Secrets Scanner at the top of this page to scan all code. Remove any findings and move values to environment variables. Then rotate the compromised credentials immediately.",
+    autoCheckId: "app_secrets_scan" },
   { id: "gh_signed_commits", platform: "github", severity: "medium", name: "Signed commits required",
     description: "Cryptographically signed commits verify that code comes from a trusted author.",
     howToFix: "GitHub > Repo Settings > Branches > Edit protection rule > Require signed commits." },
@@ -155,6 +155,9 @@ export default function AppAdmin() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [autoChecks, setAutoChecks] = useState<Record<string, { status: Status; detail: string }>>({});
   const [checking, setChecking] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanResults, setScanResults] = useState<{ file: string; line: number; pattern: string; snippet: string }[] | null>(null);
+  const [scanTime, setScanTime] = useState<string | null>(null);
 
   // Load auto-checks from server
   const runAutoChecks = async () => {
@@ -171,6 +174,24 @@ export default function AppAdmin() {
       }
     } catch { /* silent */ }
     setChecking(false);
+  };
+
+  const scanSecrets = async () => {
+    setScanning(true);
+    try {
+      const res = await fetch("/api/security/scan-secrets", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setScanResults(data.findings ?? []);
+        setScanTime(data.scanned_at);
+        if (data.finding_count > 0) {
+          toast({ title: `Found ${data.finding_count} potential secret(s)`, description: "Review findings below and remove from code", variant: "destructive" });
+        } else {
+          toast({ title: "No secrets found", description: "Codebase is clean" });
+        }
+      }
+    } catch { toast({ title: "Scan failed", variant: "destructive" }); }
+    setScanning(false);
   };
 
   useEffect(() => { runAutoChecks(); }, []);
@@ -258,6 +279,73 @@ export default function AppAdmin() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Secrets Scanner */}
+      <Card className={scanResults && scanResults.length > 0 ? "border-red-300 bg-red-50/30" : ""}>
+        <CardContent className="pt-4 pb-3">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <FileWarning className="w-4 h-4 text-primary" />
+              <span className="text-sm font-bold uppercase tracking-wide">Secrets Scanner</span>
+              {scanResults !== null && (
+                <Badge variant={scanResults.length === 0 ? "default" : "destructive"} className="text-[10px]">
+                  {scanResults.length === 0 ? "Clean" : `${scanResults.length} found`}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {scanTime && <span className="text-[10px] text-muted-foreground">Last scan: {new Date(scanTime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>}
+              <Button size="sm" variant="outline" onClick={scanSecrets} disabled={scanning}>
+                <Search className={`w-3.5 h-3.5 mr-1.5 ${scanning ? "animate-pulse" : ""}`} />
+                {scanning ? "Scanning..." : "Scan Codebase"}
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mb-2">
+            Scans all .ts, .tsx, .js, .json, .env files for hardcoded API keys, tokens, passwords, connection strings, and other secrets.
+          </p>
+          {scanResults === null && (
+            <div className="text-xs text-muted-foreground italic">Click "Scan Codebase" to run the first scan</div>
+          )}
+          {scanResults !== null && scanResults.length === 0 && (
+            <div className="flex items-center gap-2 text-xs text-emerald-600">
+              <CheckCircle className="w-4 h-4" /> No hardcoded secrets detected in codebase
+            </div>
+          )}
+          {scanResults !== null && scanResults.length > 0 && (
+            <div className="space-y-1.5 mt-2">
+              <div className="text-xs font-semibold text-red-700 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Action required: remove these secrets from code and move to environment variables. Then rotate the compromised credentials.
+              </div>
+              <div className="rounded border border-red-200 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-red-100/50 text-red-800">
+                      <th className="text-left px-2 py-1.5 font-semibold">File</th>
+                      <th className="text-left px-2 py-1.5 font-semibold w-16">Line</th>
+                      <th className="text-left px-2 py-1.5 font-semibold">Type</th>
+                      <th className="text-left px-2 py-1.5 font-semibold">Code Snippet</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scanResults.map((f, i) => (
+                      <tr key={i} className="border-t border-red-100">
+                        <td className="px-2 py-1.5 font-mono text-[11px]">{f.file}</td>
+                        <td className="px-2 py-1.5 font-mono text-[11px]">{f.line}</td>
+                        <td className="px-2 py-1.5">
+                          <Badge variant="destructive" className="text-[9px]">{f.pattern}</Badge>
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-[10px] text-red-700 max-w-[400px] truncate">{f.snippet}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Controls by platform */}
       {PLATFORM_ORDER.map(platform => {

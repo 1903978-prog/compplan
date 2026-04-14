@@ -1154,7 +1154,121 @@ RULES:
         detail: HARVEST_TOKEN ? "HARVEST_TOKEN env var configured" : "HARVEST_TOKEN not set",
       });
 
+      // Check 6: scan code for hardcoded secrets
+      try {
+        const secretPatterns = [
+          { name: "API key/token", regex: /(?:api[_-]?key|token|bearer)\s*[:=]\s*["'][A-Za-z0-9._\-]{20,}["']/gi },
+          { name: "AWS key", regex: /AKIA[0-9A-Z]{16}/g },
+          { name: "Private key", regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g },
+          { name: "Password string", regex: /(?:password|passwd|secret)\s*[:=]\s*["'][^"']{8,}["']/gi },
+          { name: "Connection string", regex: /(?:postgres|mysql|mongodb):\/\/[^\s"']+:[^\s"']+@[^\s"']+/gi },
+          { name: "Harvest token", regex: /\d{7}\.pt\.[A-Za-z0-9_\-]{20,}/g },
+          { name: "JWT", regex: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
+        ];
+        const scanDirs = ["server", "client/src", "shared"];
+        const findings: { file: string; line: number; pattern: string; snippet: string }[] = [];
+
+        const walkDir = (dir: string) => {
+          try {
+            const entries = fs.readdirSync(path.resolve(dir), { withFileTypes: true });
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "dist") {
+                walkDir(fullPath);
+              } else if (entry.isFile() && /\.(ts|tsx|js|json|env|yaml|yml)$/i.test(entry.name) && entry.name !== "package-lock.json") {
+                try {
+                  const content = fs.readFileSync(path.resolve(fullPath), "utf-8");
+                  const lines = content.split("\n");
+                  for (let i = 0; i < lines.length; i++) {
+                    for (const pat of secretPatterns) {
+                      if (pat.regex.test(lines[i])) {
+                        // Skip env var references like process.env.X
+                        if (/process\.env/.test(lines[i])) continue;
+                        // Skip comments explaining patterns (like this very code)
+                        if (/regex|pattern|match|test\(|secretPatterns/i.test(lines[i])) continue;
+                        const snippet = lines[i].trim().substring(0, 120);
+                        findings.push({ file: fullPath, line: i + 1, pattern: pat.name, snippet });
+                      }
+                      pat.regex.lastIndex = 0; // reset global regex
+                    }
+                  }
+                } catch { /* skip unreadable files */ }
+              }
+            }
+          } catch { /* skip unreadable dirs */ }
+        };
+        for (const d of scanDirs) walkDir(d);
+
+        checks.push({
+          id: "app_secrets_scan",
+          status: findings.length === 0 ? "green" : "red",
+          detail: findings.length === 0
+            ? "No hardcoded secrets found in codebase"
+            : `Found ${findings.length} potential secret(s) in code`,
+          ...(findings.length > 0 ? { findings } : {}),
+        } as any);
+      } catch { /* skip */ }
+
       res.json({ checks });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/security/scan-secrets — dedicated deep scan for hardcoded secrets
+  app.get("/api/security/scan-secrets", requireAuth, async (_req, res) => {
+    try {
+      const secretPatterns = [
+        { name: "API key/token", regex: /(?:api[_-]?key|token|bearer)\s*[:=]\s*["'][A-Za-z0-9._\-]{20,}["']/gi },
+        { name: "AWS access key", regex: /AKIA[0-9A-Z]{16}/g },
+        { name: "Private key block", regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g },
+        { name: "Hardcoded password", regex: /(?:password|passwd|secret)\s*[:=]\s*["'][^"']{8,}["']/gi },
+        { name: "DB connection string", regex: /(?:postgres|mysql|mongodb):\/\/[^\s"']+:[^\s"']+@[^\s"']+/gi },
+        { name: "Harvest personal token", regex: /\d{7}\.pt\.[A-Za-z0-9_\-]{20,}/g },
+        { name: "JWT token", regex: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
+        { name: "Generic long secret", regex: /(?:SECRET|KEY|TOKEN|PASS)\s*[:=]\s*["'][A-Za-z0-9+\/=_\-]{32,}["']/gi },
+      ];
+      const scanDirs = ["server", "client/src", "shared"];
+      const findings: { file: string; line: number; pattern: string; snippet: string }[] = [];
+
+      const walkDir = (dir: string) => {
+        try {
+          const entries = fs.readdirSync(path.resolve(dir), { withFileTypes: true });
+          for (const entry of entries) {
+            const fp = path.join(dir, entry.name);
+            if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "dist") {
+              walkDir(fp);
+            } else if (entry.isFile() && /\.(ts|tsx|js|jsx|json|env|yaml|yml|sh|md)$/i.test(entry.name) && entry.name !== "package-lock.json") {
+              try {
+                const content = fs.readFileSync(path.resolve(fp), "utf-8");
+                const lines = content.split("\n");
+                for (let i = 0; i < lines.length; i++) {
+                  for (const pat of secretPatterns) {
+                    if (pat.regex.test(lines[i])) {
+                      if (/process\.env/.test(lines[i])) continue;
+                      if (/regex|pattern|match|test\(|secretPatterns/i.test(lines[i])) continue;
+                      const raw = lines[i].trim();
+                      // Mask the actual secret value for safety
+                      const snippet = raw.length > 80 ? raw.substring(0, 80) + "..." : raw;
+                      findings.push({ file: fp, line: i + 1, pattern: pat.name, snippet });
+                    }
+                    pat.regex.lastIndex = 0;
+                  }
+                }
+              } catch { /* skip */ }
+            }
+          }
+        } catch { /* skip */ }
+      };
+      for (const d of scanDirs) walkDir(d);
+
+      res.json({
+        scanned_at: new Date().toISOString(),
+        files_scanned: scanDirs.join(", "),
+        finding_count: findings.length,
+        status: findings.length === 0 ? "clean" : "secrets_found",
+        findings,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
