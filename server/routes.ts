@@ -1199,6 +1199,92 @@ RULES:
     }
   });
 
+  // POST /api/harvest/backfill-projects — one-time backfill of project codes from Harvest
+  app.post("/api/harvest/backfill-projects", requireAuth, async (_req, res) => {
+    if (!HARVEST_TOKEN || !HARVEST_ACCOUNT) {
+      return res.status(503).json({ error: "Harvest credentials not configured" });
+    }
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const now = new Date().toISOString();
+
+      // Find snapshots missing project_codes
+      const missing = await db.execute(sql`SELECT invoice_id FROM invoice_snapshots WHERE project_codes IS NULL`);
+      if (missing.rows.length === 0) {
+        return res.json({ backfilled: 0, message: "All snapshots already have project codes" });
+      }
+
+      // Fetch all invoices from Harvest (includes line_items)
+      let allInvoices: any[] = [];
+      let page = 1;
+      let hasMore = true;
+      while (hasMore) {
+        const resp = await fetch(`${HARVEST_BASE}/invoices?per_page=100&page=${page}`, { headers: harvestHeaders() });
+        if (!resp.ok) throw new Error(`Harvest API ${resp.status}`);
+        const data = await resp.json();
+        allInvoices = allInvoices.concat(data.invoices ?? []);
+        hasMore = data.next_page !== null;
+        page++;
+      }
+
+      // Build lookup
+      const invMap = new Map<number, any>();
+      for (const inv of allInvoices) invMap.set(Number(inv.id), inv);
+
+      let updated = 0;
+      for (const row of missing.rows) {
+        const invId = Number(row.invoice_id);
+        const inv = invMap.get(invId);
+        if (!inv) continue;
+
+        const lineItems: any[] = inv.line_items ?? [];
+        const rawCodes: string[] = [];
+        const rawNames: string[] = [];
+        for (const li of lineItems) {
+          const proj = li.project;
+          if (!proj) continue;
+          const name = proj.name ?? "";
+          const code = proj.code ?? "";
+          if (code) { rawCodes.push(code); rawNames.push(name); }
+          else if (name) {
+            const m = name.match(/^([A-Z]{2,5}\d{1,3})/i);
+            rawCodes.push(m ? m[1].toUpperCase() : name);
+            rawNames.push(name);
+          }
+        }
+        if (rawCodes.length === 0 && inv.subject) {
+          const m = inv.subject.match(/\b([A-Z]{2,5})\s*[-]?\s*(\d{1,3})\b/i);
+          if (m) { rawCodes.push(`${m[1].toUpperCase()}${m[2].padStart(2, "0")}`); rawNames.push(inv.subject); }
+        }
+        const projectCodes = [...new Set(rawCodes)].join(",") || null;
+        const projectNames = [...new Set(rawNames)].join(",") || null;
+
+        // Also backfill any other missing fields
+        await db.execute(sql`
+          UPDATE invoice_snapshots SET
+            project_codes = ${projectCodes}, project_names = ${projectNames},
+            client_id = COALESCE(client_id, ${inv.client?.id ?? null}),
+            due_amount = COALESCE(NULLIF(due_amount, 0), ${Math.round(Number(inv.due_amount) || 0)}),
+            due_date = COALESCE(due_date, ${inv.due_date ?? null}),
+            currency = COALESCE(NULLIF(currency, 'EUR'), ${inv.currency ?? "EUR"}),
+            subject = COALESCE(subject, ${inv.subject ?? null}),
+            sent_at = COALESCE(sent_at, ${inv.sent_at ?? null}),
+            paid_at = COALESCE(paid_at, ${inv.paid_at ?? null}),
+            invoice_created_at = COALESCE(invoice_created_at, ${inv.created_at ?? null}),
+            updated_at = ${now}
+          WHERE invoice_id = ${invId}
+        `);
+        updated++;
+      }
+
+      res.json({ backfilled: updated, total: missing.rows.length });
+    } catch (err: any) {
+      console.error("[Harvest] Backfill failed:", err.message);
+      res.status(502).json({ error: err.message });
+    }
+  });
+
   // POST /api/harvest/invoices/:id/reminder — send reminder via Harvest
   app.post("/api/harvest/invoices/:id/reminder", requireAuth, async (req, res) => {
     if (!HARVEST_TOKEN || !HARVEST_ACCOUNT) {

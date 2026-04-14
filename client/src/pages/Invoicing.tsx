@@ -195,7 +195,36 @@ export default function Invoicing() {
     await fetch(`/api/harvest/changes/${changeId}/dismiss`, { method: "POST", credentials: "include" }).catch(() => {});
   };
 
-  useEffect(() => { loadInvoices(); loadChanges(); }, []);
+  // Auto-backfill project codes if any invoices are missing them
+  const backfillIfNeeded = async (invs: HarvestInvoice[]) => {
+    const missingCount = invs.filter(i => !i.project_codes).length;
+    if (missingCount > 0 && invs.length > 0) {
+      try {
+        const res = await fetch("/api/harvest/backfill-projects", { method: "POST", credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.backfilled > 0) {
+            toast({ title: `Backfilled project codes for ${data.backfilled} invoices` });
+            await loadInvoices(); // reload with updated data
+          }
+        }
+      } catch { /* silent — backfill is best-effort */ }
+    }
+  };
+
+  useEffect(() => {
+    loadInvoices().then(() => {
+      // Check after invoices load
+      setTimeout(async () => {
+        const res = await fetch("/api/harvest/invoices", { credentials: "include" }).catch(() => null);
+        if (res?.ok) {
+          const data = await res.json();
+          backfillIfNeeded(data.invoices ?? []);
+        }
+      }, 500);
+    });
+    loadChanges();
+  }, []);
 
   // Send reminder
   const sendReminder = async (invoiceId: number) => {
@@ -507,6 +536,7 @@ export default function Invoicing() {
                   <TableHead className="text-xs font-semibold cursor-pointer select-none" onClick={() => handleSort("client")}>
                     <span className="flex items-center">Client <SortIcon col="client" /></span>
                   </TableHead>
+                  <TableHead className="text-xs font-semibold">Project</TableHead>
                   <TableHead className="text-xs font-semibold">Subject</TableHead>
                   <TableHead className="text-xs font-semibold text-right cursor-pointer select-none" onClick={() => handleSort("amount")}>
                     <span className="flex items-center justify-end">Amount <SortIcon col="amount" /></span>
@@ -526,7 +556,7 @@ export default function Invoicing() {
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                       {invoices.length === 0 ? "No invoices found in Harvest" : "No invoices match your filters"}
                     </TableCell>
                   </TableRow>
@@ -542,6 +572,11 @@ export default function Invoicing() {
                     <TableRow key={inv.id} className={`${overdue && !hidden ? "bg-red-50/50" : ""} ${hidden ? "opacity-40" : ""}`}>
                       <TableCell className="font-mono text-sm font-semibold">{inv.number}</TableCell>
                       <TableCell className="text-sm">{inv.client?.name ?? "\u2014"}</TableCell>
+                      <TableCell className="text-xs font-mono font-semibold text-primary">
+                        {inv.project_codes ? inv.project_codes.split(",").map((c, i) => (
+                          <Badge key={i} variant="secondary" className="text-[9px] mr-0.5 font-mono">{c}</Badge>
+                        )) : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{inv.subject ?? "\u2014"}</TableCell>
                       <TableCell className="text-sm font-mono text-right font-semibold">{fmtCurrency(inv.amount, inv.currency)}</TableCell>
                       <TableCell className={`text-sm font-mono text-right font-bold ${overdue && !hidden ? "text-red-600" : inv.due_amount > 0 ? "text-amber-600" : "text-emerald-600"}`}>
