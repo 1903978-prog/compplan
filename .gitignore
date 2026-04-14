@@ -10,3 +10,14 @@ vite.config.ts.*
 .config/
 attached_assets/
 .claude/
+
+# Backup secrets and dumps
+.env.backup
+*.dump
+*.dump.gz
+*.bundle
+*.bundle.gz
+*.sha256
+*.pem
+*.p12
+credentials.json
