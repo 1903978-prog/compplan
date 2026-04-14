@@ -375,6 +375,8 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS invoice_created_at TEXT`);
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS period_start TEXT`);
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS period_end TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_codes TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_names TEXT`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS invoice_changes (

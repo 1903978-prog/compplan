@@ -617,6 +617,8 @@ export const invoiceSnapshots = pgTable("invoice_snapshots", {
   invoice_created_at: text("invoice_created_at"),
   period_start: text("period_start"),
   period_end: text("period_end"),
+  project_codes: text("project_codes"),    // comma-separated Harvest project codes from line_items (e.g. "COE02,COE03")
+  project_names: text("project_names"),    // comma-separated Harvest project names
   updated_at: text("updated_at").notNull(),
 });
 

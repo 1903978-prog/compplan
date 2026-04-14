@@ -945,10 +945,9 @@ RULES:
         SELECT invoice_id as id, invoice_number as number, client_id, client_name,
                amount, due_amount, due_date, state, currency, subject,
                sent_at, paid_at, invoice_created_at as created_at,
-               period_start, period_end, updated_at
+               period_start, period_end, project_codes, project_names, updated_at
         FROM invoice_snapshots ORDER BY invoice_created_at DESC NULLS LAST
       `);
-      // Reshape to match HarvestInvoice interface expected by frontend
       const invoices = rows.rows.map((r: any) => ({
         id: r.id, number: r.number,
         client: r.client_name ? { id: r.client_id ?? 0, name: r.client_name } : null,
@@ -957,6 +956,8 @@ RULES:
         subject: r.subject, sent_at: r.sent_at, paid_at: r.paid_at,
         created_at: r.created_at ?? r.updated_at, notes: null,
         period_start: r.period_start, period_end: r.period_end,
+        project_codes: r.project_codes ?? null,
+        project_names: r.project_names ?? null,
       }));
       res.json({ invoices });
     } catch (err: any) {
@@ -1009,31 +1010,33 @@ RULES:
         const dueAmount = Math.round(Number(inv.due_amount) || 0);
         const state = inv.state ?? "";
 
+        // Extract project codes/names from line_items
+        const lineItems: any[] = inv.line_items ?? [];
+        const projectCodes = [...new Set(lineItems.map((li: any) => li.project?.code).filter(Boolean))].join(",") || null;
+        const projectNames = [...new Set(lineItems.map((li: any) => li.project?.name).filter(Boolean))].join(",") || null;
+
         if (!snapMap.has(invId)) {
           // New invoice
           if (!isFirstLoad) {
             pendingChanges.push({ invoice_id: invId, invoice_number: invNum, client_name: clientName,
               amount, change_type: "new_invoice", old_value: null, new_value: state });
           }
-          // Always insert snapshot (even on first load)
           await db.execute(sql`
-            INSERT INTO invoice_snapshots (invoice_id, invoice_number, client_id, client_name, amount, due_amount, due_date, state, currency, subject, sent_at, paid_at, invoice_created_at, period_start, period_end, updated_at)
-            VALUES (${invId}, ${invNum}, ${inv.client?.id ?? null}, ${clientName}, ${amount}, ${dueAmount}, ${inv.due_date ?? null}, ${state}, ${inv.currency ?? "EUR"}, ${inv.subject ?? null}, ${inv.sent_at ?? null}, ${inv.paid_at ?? null}, ${inv.created_at ?? null}, ${inv.period_start ?? null}, ${inv.period_end ?? null}, ${now})
+            INSERT INTO invoice_snapshots (invoice_id, invoice_number, client_id, client_name, amount, due_amount, due_date, state, currency, subject, sent_at, paid_at, invoice_created_at, period_start, period_end, project_codes, project_names, updated_at)
+            VALUES (${invId}, ${invNum}, ${inv.client?.id ?? null}, ${clientName}, ${amount}, ${dueAmount}, ${inv.due_date ?? null}, ${state}, ${inv.currency ?? "EUR"}, ${inv.subject ?? null}, ${inv.sent_at ?? null}, ${inv.paid_at ?? null}, ${inv.created_at ?? null}, ${inv.period_start ?? null}, ${inv.period_end ?? null}, ${projectCodes}, ${projectNames}, ${now})
             ON CONFLICT (invoice_id) DO NOTHING
           `);
         } else {
           const prev = snapMap.get(invId)!;
-          // State changed to paid
           if (prev.state !== "paid" && state === "paid") {
             pendingChanges.push({ invoice_id: invId, invoice_number: invNum, client_name: clientName,
               amount, change_type: "paid", old_value: prev.state, new_value: "paid" });
           }
-          // Amount changed
           if (prev.amount !== amount && Math.abs(prev.amount - amount) > 1) {
             pendingChanges.push({ invoice_id: invId, invoice_number: invNum, client_name: clientName,
               amount, change_type: "amount_changed", old_value: String(prev.amount), new_value: String(amount) });
           }
-          // ALWAYS update all snapshot fields (fixes missing due_date, client_id, etc.)
+          // ALWAYS update all snapshot fields including project codes
           await db.execute(sql`
             UPDATE invoice_snapshots SET
               invoice_number = ${invNum}, client_id = ${inv.client?.id ?? null}, client_name = ${clientName},
@@ -1042,6 +1045,7 @@ RULES:
               sent_at = ${inv.sent_at ?? null}, paid_at = ${inv.paid_at ?? null},
               invoice_created_at = ${inv.created_at ?? null},
               period_start = ${inv.period_start ?? null}, period_end = ${inv.period_end ?? null},
+              project_codes = ${projectCodes}, project_names = ${projectNames},
               updated_at = ${now}
             WHERE invoice_id = ${invId}
           `);
@@ -1121,14 +1125,19 @@ RULES:
             const resp = await fetch(`${HARVEST_BASE}/invoices/${ch.invoice_id}`, { headers: harvestHeaders() });
             if (resp.ok) {
               const inv = await resp.json();
+              const lineItems: any[] = inv.line_items ?? [];
+              const projCodes = [...new Set(lineItems.map((li: any) => li.project?.code).filter(Boolean))].join(",") || null;
+              const projNames = [...new Set(lineItems.map((li: any) => li.project?.name).filter(Boolean))].join(",") || null;
               await db.execute(sql`
-                INSERT INTO invoice_snapshots (invoice_id, invoice_number, client_id, client_name, amount, due_amount, due_date, state, currency, subject, sent_at, paid_at, invoice_created_at, period_start, period_end, updated_at)
-                VALUES (${Number(inv.id)}, ${inv.number}, ${inv.client?.id ?? null}, ${inv.client?.name ?? ""}, ${Math.round(Number(inv.amount))}, ${Math.round(Number(inv.due_amount))}, ${inv.due_date}, ${inv.state}, ${inv.currency ?? "EUR"}, ${inv.subject}, ${inv.sent_at}, ${inv.paid_at}, ${inv.created_at}, ${inv.period_start}, ${inv.period_end}, ${now})
+                INSERT INTO invoice_snapshots (invoice_id, invoice_number, client_id, client_name, amount, due_amount, due_date, state, currency, subject, sent_at, paid_at, invoice_created_at, period_start, period_end, project_codes, project_names, updated_at)
+                VALUES (${Number(inv.id)}, ${inv.number}, ${inv.client?.id ?? null}, ${inv.client?.name ?? ""}, ${Math.round(Number(inv.amount))}, ${Math.round(Number(inv.due_amount))}, ${inv.due_date}, ${inv.state}, ${inv.currency ?? "EUR"}, ${inv.subject}, ${inv.sent_at}, ${inv.paid_at}, ${inv.created_at}, ${inv.period_start}, ${inv.period_end}, ${projCodes}, ${projNames}, ${now})
                 ON CONFLICT (invoice_id) DO UPDATE SET
                   invoice_number = EXCLUDED.invoice_number, client_name = EXCLUDED.client_name, amount = EXCLUDED.amount,
                   due_amount = EXCLUDED.due_amount, due_date = EXCLUDED.due_date, state = EXCLUDED.state, currency = EXCLUDED.currency,
                   subject = EXCLUDED.subject, sent_at = EXCLUDED.sent_at, paid_at = EXCLUDED.paid_at,
-                  period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end, updated_at = EXCLUDED.updated_at
+                  period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end,
+                  project_codes = EXCLUDED.project_codes, project_names = EXCLUDED.project_names,
+                  updated_at = EXCLUDED.updated_at
               `);
             }
           } catch { /* fallback: just mark approved without fresh fetch */ }

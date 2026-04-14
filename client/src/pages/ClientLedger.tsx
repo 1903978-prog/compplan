@@ -25,10 +25,13 @@ interface HarvestInvoice {
   notes: string | null;
   period_start: string | null;
   period_end: string | null;
+  project_codes: string | null;
+  project_names: string | null;
 }
 
 interface ProjectGroup {
-  code: string;         // e.g. "FED01" or "General"
+  code: string;         // e.g. "COE02" from Harvest, or "General"
+  name: string;         // Harvest project name, e.g. "Cohesia SPA - Phase 2"
   invoices: HarvestInvoice[];
   totalInvoiced: number;
   totalPaid: number;
@@ -57,17 +60,20 @@ function fmtDate(d: string | null): string {
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-// Extract project code from invoice number or subject
-// Patterns: "FED01", "FED-01", "FED 01", or 3-letter prefix + 2-digit number
-function extractProjectCode(inv: HarvestInvoice): string {
-  // Try invoice subject first (more descriptive)
+// Extract project codes from Harvest line_items data (stored as comma-separated string)
+// Falls back to regex on subject/number if no Harvest project codes available
+function extractProjectCodes(inv: HarvestInvoice): string[] {
+  // Use real Harvest project codes if available
+  if (inv.project_codes) {
+    return inv.project_codes.split(",").map(c => c.trim()).filter(Boolean);
+  }
+  // Fallback: try to extract from subject/number
   const text = `${inv.subject ?? ""} ${inv.number ?? ""}`;
-  // Match patterns like FED01, FED-01, FED 01, ABC01, etc.
   const match = text.match(/\b([A-Z]{2,5})\s*[-]?\s*(0[1-9]|[1-9]\d?)\b/i);
   if (match) {
-    return `${match[1].toUpperCase()}${match[2].padStart(2, "0")}`;
+    return [`${match[1].toUpperCase()}${match[2].padStart(2, "0")}`];
   }
-  return "General";
+  return ["General"];
 }
 
 function getPaidAmount(inv: HarvestInvoice): number {
@@ -126,22 +132,37 @@ export default function ClientLedger() {
       const totalPaid = clientInvs.reduce((s, i) => s + getPaidAmount(i), 0);
       const totalOutstanding = totalInvoiced - totalPaid;
 
-      // Group by project code
+      // Group by project code (an invoice can belong to multiple projects)
       const projectMap = new Map<string, HarvestInvoice[]>();
       for (const inv of clientInvs) {
-        const code = extractProjectCode(inv);
-        if (!projectMap.has(code)) projectMap.set(code, []);
-        projectMap.get(code)!.push(inv);
+        const codes = extractProjectCodes(inv);
+        for (const code of codes) {
+          if (!projectMap.has(code)) projectMap.set(code, []);
+          projectMap.get(code)!.push(inv);
+        }
       }
 
       const projects: ProjectGroup[] = [...projectMap.entries()]
-        .map(([code, pinvs]) => ({
-          code,
-          invoices: pinvs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
-          totalInvoiced: pinvs.reduce((s, i) => s + i.amount, 0),
-          totalPaid: pinvs.reduce((s, i) => s + getPaidAmount(i), 0),
-          totalOutstanding: pinvs.reduce((s, i) => s + i.amount, 0) - pinvs.reduce((s, i) => s + getPaidAmount(i), 0),
-        }))
+        .map(([code, pinvs]) => {
+          // Find the Harvest project name for this code
+          let projectName = code;
+          for (const inv of pinvs) {
+            if (inv.project_codes && inv.project_names) {
+              const codes = inv.project_codes.split(",");
+              const names = inv.project_names.split(",");
+              const idx = codes.indexOf(code);
+              if (idx >= 0 && names[idx]) { projectName = names[idx]; break; }
+            }
+          }
+          return {
+            code,
+            name: projectName,
+            invoices: pinvs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+            totalInvoiced: pinvs.reduce((s, i) => s + i.amount, 0),
+            totalPaid: pinvs.reduce((s, i) => s + getPaidAmount(i), 0),
+            totalOutstanding: pinvs.reduce((s, i) => s + i.amount, 0) - pinvs.reduce((s, i) => s + getPaidAmount(i), 0),
+          };
+        })
         .sort((a, b) => a.code.localeCompare(b.code));
 
       summaries.push({ clientId, clientName, currency, totalInvoiced, totalPaid, totalOutstanding, invoiceCount: clientInvs.length, projects });
@@ -327,6 +348,9 @@ export default function ClientLedger() {
                             <Badge variant={project.code === "General" ? "outline" : "secondary"} className="text-xs font-mono">
                               {project.code}
                             </Badge>
+                            {project.name !== project.code && (
+                              <span className="text-xs text-muted-foreground truncate max-w-[250px]">{project.name}</span>
+                            )}
                             <span className="text-xs text-muted-foreground">{project.invoices.length} invoice{project.invoices.length !== 1 ? "s" : ""}</span>
                             <div className="flex-1" />
                             <span className="text-xs font-mono font-semibold">{fmtCurrency(project.totalInvoiced, client.currency)}</span>

@@ -26,6 +26,8 @@ interface HarvestInvoice {
   notes: string | null;
   period_start: string | null;
   period_end: string | null;
+  project_codes: string | null;
+  project_names: string | null;
 }
 
 interface InvoiceChange {
