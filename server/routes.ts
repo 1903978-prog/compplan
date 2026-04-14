@@ -676,6 +676,70 @@ Return ONLY JSON:
     }
   });
 
+  // POST /api/proposals/:id/analyze-reference — AI analyzes a reference image to improve prompts
+  app.post("/api/proposals/:id/analyze-reference", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const { slide_id, slide_title, image_base64, image_type, current_visual_prompt, current_content_prompt } = req.body;
+      if (!slide_id || !image_base64) { res.status(400).json({ message: "slide_id and image required" }); return; }
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) { res.status(503).json({ message: "ANTHROPIC_API_KEY not set" }); return; }
+      const client = new Anthropic({ apiKey });
+
+      const mediaType = (image_type || "image/png").replace("image/", "") as "jpeg" | "png" | "gif" | "webp";
+      const validType = ["jpeg", "png", "gif", "webp"].includes(mediaType) ? mediaType : "png";
+
+      const response = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2000,
+        system: `You are a slide design analyst at a management consulting firm. Analyze the uploaded reference slide image and extract two types of insights:
+
+1. VISUAL ELEMENTS: layout structure, column arrangement, font sizes and hierarchy, color palette, spacing, alignment, use of icons/graphics, header/footer style, background treatment, accent elements (lines, bars, shapes)
+
+2. CONTENT STRUCTURE: how information is organized, bullet point style, heading hierarchy, use of data/numbers, tone and phrasing patterns, level of detail
+
+Return ONLY JSON:
+{
+  "visual_prompt_update": "Concise rules to add to the visual instructions based on what you see in the image (layout, fonts, colors, spacing). Write as imperative instructions for an AI that generates slides. Only include what's DIFFERENT or MORE SPECIFIC than the current visual prompt.",
+  "content_prompt_update": "Concise rules to add to the content prompt based on the text structure you observe (if applicable — empty string if the image doesn't reveal content patterns).",
+  "elements_detected": ["list", "of", "key", "visual", "elements", "found"]
+}`,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: `image/${validType}`, data: image_base64 },
+            },
+            {
+              type: "text",
+              text: `Analyze this reference slide for "${slide_title}".
+
+Current visual prompt:
+${current_visual_prompt || "(empty)"}
+
+Current content prompt:
+${current_content_prompt || "(empty)"}
+
+Extract visual and content patterns from the image. Only suggest additions that are NEW — don't repeat what's already in the prompts.`,
+            },
+          ],
+        }],
+      });
+      logApiUsage("analyze-reference", response);
+
+      const text = response.content.find(b => b.type === "text")?.text ?? "{}";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const result = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+      res.json(result);
+    } catch (err: any) {
+      console.error("Reference analysis error:", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // POST /api/proposals/:id/download-slide — generate PPTX for a single slide
   app.post("/api/proposals/:id/download-slide", requireAuth, async (req, res) => {
     try {

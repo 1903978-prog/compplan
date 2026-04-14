@@ -192,6 +192,7 @@ export default function Proposals() {
   const [updatingPrompts, setUpdatingPrompts] = useState(false);
   const [slideScores, setSlideScores] = useState<Record<string, any>>({});
   const [showFullSlideView, setShowFullSlideView] = useState(false);
+  const [analyzingRef, setAnalyzingRef] = useState<string | null>(null);
 
   // Knowledge Center
   const [knowledgeFiles, setKnowledgeFiles] = useState<{ id: number; category: string; filename: string; file_size: number; uploaded_at: string }[]>([]);
@@ -615,6 +616,61 @@ export default function Proposals() {
   }
 
   // Update prompts from chat corrections (learning loop)
+  // Analyze uploaded reference image to improve prompts
+  async function analyzeReferenceImage(slideId: string, file: File) {
+    const slide = slides.find(s => s.slide_id === slideId);
+    if (!slide) return;
+    if (!current?.id) { await saveProgress(); }
+    if (!current?.id) { toast({ title: "Save the proposal first", variant: "destructive" }); return; }
+
+    setAnalyzingRef(slideId);
+    toast({ title: `Analyzing "${file.name}" for ${slide.title}...` });
+
+    try {
+      // Read file as base64
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // Store the reference image on the slide
+      updateSlideField(slideId, "reference_image", `data:${file.type};base64,${base64}`);
+
+      // Send to server for analysis
+      const res = await fetch(`/api/proposals/${current.id}/analyze-reference`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: slideId,
+          slide_title: slide.title,
+          image_base64: base64,
+          image_type: file.type,
+          current_visual_prompt: slide.visual_prompt ?? "",
+          current_content_prompt: slide.content_prompt ?? "",
+        }),
+      });
+      if (!res.ok) throw new Error("Analysis failed");
+      const data = await res.json();
+
+      // Update prompts with analysis results
+      if (data.visual_prompt_update) {
+        updateSlideField(slideId, "visual_prompt",
+          (slide.visual_prompt ?? "") + "\n\n--- Learned from reference image ---\n" + data.visual_prompt_update);
+      }
+      if (data.content_prompt_update) {
+        updateSlideField(slideId, "content_prompt",
+          (slide.content_prompt ?? "") + "\n\n--- Learned from reference image ---\n" + data.content_prompt_update);
+      }
+      await saveProgress();
+      toast({ title: `Prompts updated from reference image for "${slide.title}"` });
+    } catch (err: any) {
+      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+    }
+    setAnalyzingRef(null);
+  }
+
   async function updatePromptsFromChat(slideId: string) {
     const history = slideChatHistory[slideId] ?? [];
     if (history.filter(m => m.role === "user").length === 0 || !current?.id) return;
@@ -1667,6 +1723,21 @@ Example:
                             }`}>
                             {generatingPage === slide.slide_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
+                          <label title="Upload reference image — AI will analyze it to improve prompts"
+                            className={`p-1.5 rounded hover:bg-muted transition-colors cursor-pointer ${
+                              analyzingRef === slide.slide_id ? "text-violet-600 animate-pulse"
+                              : slide.reference_image ? "text-violet-600 bg-violet-50"
+                              : "text-muted-foreground"
+                            }`}>
+                            {analyzingRef === slide.slide_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                            <input type="file" className="hidden" accept="image/*"
+                              disabled={analyzingRef === slide.slide_id}
+                              onChange={e => {
+                                const file = e.target.files?.[0];
+                                if (file) analyzeReferenceImage(slide.slide_id, file);
+                                e.target.value = "";
+                              }} />
+                          </label>
                         </div>
                       )}
                       <button title="Delete slide" onClick={e => {
