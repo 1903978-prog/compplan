@@ -189,6 +189,8 @@ export default function Proposals() {
   const [slideChatInput, setSlideChatInput] = useState("");
   const [slideChatHistory, setSlideChatHistory] = useState<Record<string, { role: "user" | "ai"; text: string }[]>>({});
   const [slideChatLoading, setSlideChatLoading] = useState(false);
+  const [updatingPrompts, setUpdatingPrompts] = useState(false);
+  const [slideScores, setSlideScores] = useState<Record<string, any>>({});
 
   // Knowledge Center
   const [knowledgeFiles, setKnowledgeFiles] = useState<{ id: number; category: string; filename: string; file_size: number; uploaded_at: string }[]>([]);
@@ -490,8 +492,12 @@ export default function Proposals() {
         }),
       });
       if (!res.ok) throw new Error("Page generation failed");
-      const { html } = await res.json();
-      setPreviewHtml(prev => ({ ...prev, [slideId]: html }));
+      const data = await res.json();
+      setPreviewHtml(prev => ({ ...prev, [slideId]: data.html }));
+      if (data.quality_score) {
+        setSlideScores(prev => ({ ...prev, [slideId]: data.quality_score }));
+        updateSlideField(slideId, "quality_score", data.quality_score);
+      }
       toast({ title: `Page preview ready for "${slide?.title}"` });
     } catch (err: any) {
       toast({ title: "Page generation failed", description: err.message, variant: "destructive" });
@@ -560,6 +566,51 @@ export default function Proposals() {
       }));
     }
     setSlideChatLoading(false);
+  }
+
+  // Update prompts from chat corrections (learning loop)
+  async function updatePromptsFromChat(slideId: string) {
+    const history = slideChatHistory[slideId] ?? [];
+    if (history.filter(m => m.role === "user").length === 0 || !current?.id) return;
+    const slide = slides.find(s => s.slide_id === slideId);
+
+    setUpdatingPrompts(true);
+    try {
+      const res = await fetch(`/api/proposals/${current.id}/update-prompts`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: slideId,
+          chat_history: history,
+          current_visual_prompt: slide?.visual_prompt ?? "",
+          current_content_prompt: slide?.content_prompt ?? "",
+        }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const data = await res.json();
+
+      // Show what will be added and apply
+      let updated = false;
+      if (data.visual_additions?.trim()) {
+        const newVisual = (slide?.visual_prompt ?? "") + "\n\n--- Learned from feedback ---\n" + data.visual_additions;
+        updateSlideField(slideId, "visual_prompt", newVisual);
+        updated = true;
+      }
+      if (data.content_additions?.trim()) {
+        const newContent = (slide?.content_prompt ?? "") + "\n\n--- Learned from feedback ---\n" + data.content_additions;
+        updateSlideField(slideId, "content_prompt", newContent);
+        updated = true;
+      }
+      if (updated) {
+        await saveProgress();
+        toast({ title: "Prompts updated with your feedback — future generations will incorporate these learnings" });
+      } else {
+        toast({ title: "No prompt changes needed from this feedback" });
+      }
+    } catch (err: any) {
+      toast({ title: "Failed to update prompts", variant: "destructive" });
+    }
+    setUpdatingPrompts(false);
   }
 
   // ── Step 2 → Step 3: Save slide selection & generate briefs ─────────────────
@@ -1839,7 +1890,52 @@ Example:
                               {slideChatLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Send"}
                             </Button>
                           </div>
+                          {/* Update Prompts — learn from chat corrections */}
+                          {(slideChatHistory[previewSlideId] ?? []).filter(m => m.role === "user").length > 0 && (
+                            <Button size="sm" variant="outline" className="w-full h-7 text-[10px] mt-1"
+                              onClick={() => updatePromptsFromChat(previewSlideId)} disabled={updatingPrompts}>
+                              {updatingPrompts ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Learning...</>
+                                : <><Sparkles className="w-3 h-3 mr-1" />Update Prompts from Feedback</>}
+                            </Button>
+                          )}
                         </div>
+                        {/* Quality Score */}
+                        {slideScores[previewSlideId] && (() => {
+                          const sc = slideScores[previewSlideId];
+                          const total = sc.total ?? 0;
+                          const color = total >= 80 ? "text-emerald-600" : total >= 60 ? "text-amber-600" : "text-red-500";
+                          const barColor = total >= 80 ? "bg-emerald-500" : total >= 60 ? "bg-amber-500" : "bg-red-500";
+                          return (
+                            <div className="border-t px-3 py-2 space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-semibold text-muted-foreground uppercase">Quality Score</span>
+                                <span className={`text-sm font-bold ${color}`}>{total}%</span>
+                              </div>
+                              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${total}%` }} />
+                              </div>
+                              <div className="grid grid-cols-4 gap-1 text-[9px]">
+                                <div className="text-center">
+                                  <div className="font-bold">{sc.clarity ?? 0}</div>
+                                  <div className="text-muted-foreground">Clarity</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="font-bold">{sc.relevance ?? 0}</div>
+                                  <div className="text-muted-foreground">Relevance</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="font-bold">{sc.visual ?? 0}</div>
+                                  <div className="text-muted-foreground">Visual</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="font-bold">{sc.persuasion ?? 0}</div>
+                                  <div className="text-muted-foreground">Persuasion</div>
+                                </div>
+                              </div>
+                              {sc.tip && <p className="text-[9px] text-muted-foreground italic">{sc.tip}</p>}
+                            </div>
+                          );
+                        })()}
                       </Card>
                     ) : (
                       /* ── Selected Slides Summary ────────────────────── */

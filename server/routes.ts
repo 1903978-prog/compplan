@@ -577,14 +577,80 @@ Keep the same 960×540 format and Eendigo branding. Output ONLY the updated HTML
 
       const textBlock = response.content.find(b => b.type === "text");
       let html = textBlock?.text ?? "<div>Generation failed</div>";
-      // Extract just the div if wrapped in markdown code block
       const codeMatch = html.match(/```html?\s*([\s\S]*?)```/);
       if (codeMatch) html = codeMatch[1].trim();
 
-      res.json({ slide_id, html });
+      // Quality score — quick evaluation of the generated slide
+      let quality_score = null;
+      try {
+        const scoreRes = await client.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 300,
+          system: `You are a management consulting proposal quality reviewer. Score the slide on 4 criteria (0-25 each, total 0-100):
+- Clarity: Is the message clear, concise, and actionable?
+- Relevance: Is it specific to this client (not generic filler)?
+- Visual Impact: Good layout hierarchy, readable, professional?
+- Persuasion: Does it drive the client toward a decision?
+Return ONLY JSON: {"clarity":N,"relevance":N,"visual":N,"persuasion":N,"total":N,"tip":"one sentence improvement suggestion"}`,
+          messages: [{ role: "user", content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):\n\n${html.substring(0, 2000)}` }],
+        });
+        const scoreText = scoreRes.content.find(b => b.type === "text")?.text ?? "";
+        const jsonMatch = scoreText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) quality_score = JSON.parse(jsonMatch[0]);
+      } catch { /* scoring is best-effort */ }
+
+      res.json({ slide_id, html, quality_score });
     } catch (err: any) {
       console.error("Page generation error:", err.message);
       res.status(500).json({ message: err.message || "Generation failed" });
+    }
+  });
+
+  // POST /api/proposals/:id/update-prompts — AI learns from chat corrections
+  app.post("/api/proposals/:id/update-prompts", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const { slide_id, chat_history, current_visual_prompt, current_content_prompt } = req.body;
+      if (!slide_id || !chat_history?.length) { res.status(400).json({ message: "slide_id and chat_history required" }); return; }
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) { res.status(503).json({ message: "ANTHROPIC_API_KEY not set" }); return; }
+      const client = new Anthropic({ apiKey });
+
+      const corrections = chat_history
+        .filter((m: any) => m.role === "user")
+        .map((m: any) => `- ${m.text}`)
+        .join("\n");
+
+      const response = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1500,
+        system: `You analyze user corrections to a consulting slide and generate permanent prompt improvements.
+
+For each user correction, classify it as "visual" (layout, font, color, spacing, imagery), "content" (text, wording, structure, data, messaging), or "both".
+
+Then generate concise, reusable rules to append to the appropriate prompt(s). These rules should be:
+- Specific and actionable (not vague)
+- Written as instructions for an AI that generates slides
+- Applicable to future slides of the same type (not one-time fixes)
+
+Return ONLY JSON:
+{
+  "visual_additions": "rules to append to visual_prompt (empty string if none)",
+  "content_additions": "rules to append to content_prompt (empty string if none)",
+  "classification": [{"correction": "...", "type": "visual|content|both"}]
+}`,
+        messages: [{ role: "user", content: `Current visual prompt:\n${current_visual_prompt || "(empty)"}\n\nCurrent content prompt:\n${current_content_prompt || "(empty)"}\n\nUser corrections made via chat:\n${corrections}` }],
+      });
+
+      const text = response.content.find(b => b.type === "text")?.text ?? "{}";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const result = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+      res.json(result);
+    } catch (err: any) {
+      console.error("Update prompts error:", err.message);
+      res.status(500).json({ message: err.message });
     }
   });
 
