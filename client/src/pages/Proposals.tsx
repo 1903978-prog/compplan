@@ -1536,42 +1536,57 @@ Example:
 
                         {activePanel === "generate" && (
                           <>
-                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                              <Sparkles className="w-3 h-3" /> Generate Content for "{slide.title}"
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                                <Sparkles className="w-3 h-3" /> Content for "{slide.title}"
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {!slide.generated_content && !isGen && (
+                                  <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => generateSlideContent(slide.slide_id)}>
+                                    <Sparkles className="w-3 h-3 mr-1" /> Auto-generate
+                                  </Button>
+                                )}
+                                {slide.generated_content && (
+                                  <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => generateSlideContent(slide.slide_id)} disabled={isGen}>
+                                    {isGen ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                                    Regenerate
+                                  </Button>
+                                )}
+                                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={saveProgress} disabled={saving}>
+                                  {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+                                  Save
+                                </Button>
+                              </div>
                             </div>
 
-                            {/* Follow-up questions */}
-                            {questions.length > 0 && (
-                              <div className="space-y-2 py-1">
-                                <div className="text-[11px] text-muted-foreground">Answer these questions to guide the AI:</div>
-                                {questions.map(q => (
-                                  <div key={q.key} className="space-y-0.5">
-                                    <label className="text-xs font-medium">{q.question}</label>
-                                    <Input
-                                      value={(slide.generation_answers ?? {})[q.key] ?? ""}
-                                      onChange={e => {
-                                        const answers = { ...(slide.generation_answers ?? {}), [q.key]: e.target.value };
-                                        updateSlideField(slide.slide_id, "generation_answers", answers);
-                                      }}
-                                      placeholder="Your answer..."
-                                      className="h-8 text-xs"
-                                    />
-                                  </div>
-                                ))}
+                            {isGen && !slide.generated_content && (
+                              <div className="flex items-center gap-2 py-4 justify-center text-xs text-muted-foreground">
+                                <Loader2 className="w-4 h-4 animate-spin" /> Generating content from your prompts and proposal context...
                               </div>
                             )}
 
-                            <Button size="sm" onClick={() => generateSlideContent(slide.slide_id)} disabled={isGen}>
-                              {isGen ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating...</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" />Generate</>}
-                            </Button>
-
-                            {/* Generated content display */}
+                            {/* Editable generated content */}
                             {slide.generated_content && (
-                              <div className="mt-2 space-y-1">
-                                <div className="text-[11px] font-semibold text-emerald-700">Generated Content:</div>
-                                <div className="rounded border bg-background p-3 text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">
-                                  {slide.generated_content}
-                                </div>
+                              <Textarea
+                                value={slide.generated_content}
+                                onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
+                                rows={10}
+                                className="text-xs font-mono"
+                                placeholder="Generated content will appear here. You can edit it before previewing."
+                              />
+                            )}
+
+                            {!slide.generated_content && !isGen && (
+                              <div className="text-[11px] text-muted-foreground py-2">
+                                Click "Auto-generate" to create content using your visual instructions, content prompt, and proposal context.
+                                Or type content directly below:
+                                <Textarea
+                                  value=""
+                                  onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
+                                  rows={6}
+                                  className="text-xs font-mono mt-1"
+                                  placeholder="Type or paste slide content here..."
+                                />
                               </div>
                             )}
                           </>
