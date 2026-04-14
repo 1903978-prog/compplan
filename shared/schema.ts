@@ -604,9 +604,19 @@ export const invoiceSnapshots = pgTable("invoice_snapshots", {
   id: serial("id").primaryKey(),
   invoice_id: integer("invoice_id").notNull().unique(),  // Harvest invoice ID
   invoice_number: text("invoice_number"),
+  client_id: integer("client_id"),
   client_name: text("client_name"),
-  amount: integer("amount").notNull().default(0),        // in cents or whole units
+  amount: integer("amount").notNull().default(0),
+  due_amount: integer("due_amount").notNull().default(0),
+  due_date: text("due_date"),
   state: text("state").notNull().default(""),
+  currency: text("currency").notNull().default("EUR"),
+  subject: text("subject"),
+  sent_at: text("sent_at"),
+  paid_at: text("paid_at"),
+  invoice_created_at: text("invoice_created_at"),
+  period_start: text("period_start"),
+  period_end: text("period_end"),
   updated_at: text("updated_at").notNull(),
 });
 
@@ -617,7 +627,10 @@ export const invoiceChanges = pgTable("invoice_changes", {
   invoice_number: text("invoice_number"),
   client_name: text("client_name"),
   amount: integer("amount").notNull().default(0),
-  change_type: text("change_type").notNull(),              // "new_invoice" | "paid"
+  change_type: text("change_type").notNull(),              // "new_invoice" | "paid" | "amount_changed" | "deleted"
+  old_value: text("old_value"),                            // previous state/amount for context
+  new_value: text("new_value"),                            // new state/amount
   detected_at: text("detected_at").notNull(),
-  dismissed: integer("dismissed").notNull().default(0),    // 1 = user dismissed
+  approval_status: text("approval_status").notNull().default("pending"), // "pending" | "approved" | "rejected"
+  dismissed: integer("dismissed").notNull().default(0),    // 1 = user dismissed from notification banner
 });

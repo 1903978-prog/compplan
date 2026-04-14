@@ -34,8 +34,11 @@ interface InvoiceChange {
   invoice_number: string;
   client_name: string;
   amount: number;
-  change_type: "new_invoice" | "paid";
+  change_type: "new_invoice" | "paid" | "amount_changed" | "deleted";
+  old_value: string | null;
+  new_value: string | null;
   detected_at: string;
+  approval_status: "pending" | "approved" | "rejected";
   dismissed: number;
 }
 
@@ -96,6 +99,8 @@ export default function Invoicing() {
   const [sortCol, setSortCol] = useState<SortColumn>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [changes, setChanges] = useState<InvoiceChange[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [approvingId, setApprovingId] = useState<number | null>(null);
 
   const toggleHide = (id: number) => {
     setHiddenIds(prev => {
@@ -120,21 +125,17 @@ export default function Invoicing() {
     return sortDir === "asc" ? <ArrowUp className="w-3 h-3 ml-1" /> : <ArrowDown className="w-3 h-3 ml-1" />;
   };
 
-  // Fetch all invoices
+  // Load invoices from LOCAL DB (instant, no Harvest call)
   const loadInvoices = async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/harvest/invoices", { credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setInvoices(data.invoices ?? []);
     } catch (err: any) {
-      setError(err.message ?? "Failed to load invoices");
-      toast({ title: "Failed to load invoices", description: err.message, variant: "destructive" });
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -145,19 +146,54 @@ export default function Invoicing() {
       const res = await fetch("/api/harvest/changes", { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
-        setChanges((data.changes ?? []).filter((c: InvoiceChange) => !c.dismissed));
+        setChanges(data.changes ?? []);
       }
     } catch { /* silent */ }
   };
 
-  const dismissChange = async (changeId: number) => {
-    setChanges(prev => prev.filter(c => c.id !== changeId));
+  // Sync with Harvest — only when user clicks "Update from Harvest"
+  const syncFromHarvest = async () => {
+    setSyncing(true);
     try {
-      await fetch(`/api/harvest/changes/${changeId}/dismiss`, { method: "POST", credentials: "include" });
-    } catch { /* silent */ }
+      const res = await fetch("/api/harvest/sync", { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.first_load) {
+        toast({ title: `Initial sync: ${data.synced} invoices imported` });
+      } else if (data.new_changes > 0) {
+        toast({ title: `${data.new_changes} change(s) detected — review below`, variant: "destructive" });
+      } else {
+        toast({ title: "No changes found — everything is up to date" });
+      }
+      await loadInvoices();
+      await loadChanges();
+    } catch (err: any) {
+      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
   };
 
-  useEffect(() => { loadInvoices().then(loadChanges); }, []);
+  // Approve / reject a pending change
+  const handleChangeAction = async (changeId: number, action: "approve" | "reject") => {
+    setApprovingId(changeId);
+    try {
+      await fetch(`/api/harvest/changes/${changeId}/${action}`, { method: "POST", credentials: "include" });
+      toast({ title: action === "approve" ? "Change approved" : "Change rejected" });
+      await loadInvoices();
+      await loadChanges();
+    } catch {
+      toast({ title: `Failed to ${action}`, variant: "destructive" });
+    }
+    setApprovingId(null);
+  };
+
+  const dismissChange = async (changeId: number) => {
+    setChanges(prev => prev.filter(c => c.id !== changeId));
+    await fetch(`/api/harvest/changes/${changeId}/dismiss`, { method: "POST", credentials: "include" }).catch(() => {});
+  };
+
+  useEffect(() => { loadInvoices(); loadChanges(); }, []);
 
   // Send reminder
   const sendReminder = async (invoiceId: number) => {
@@ -269,44 +305,103 @@ export default function Invoicing() {
             </Button>
             <Button variant="outline" size="sm" onClick={loadInvoices} disabled={loading}>
               <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
-              Refresh
+              Reload
+            </Button>
+            <Button size="sm" onClick={syncFromHarvest} disabled={syncing}
+              className="bg-primary text-primary-foreground hover:bg-primary/90">
+              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Syncing..." : "Update from Harvest"}
             </Button>
           </div>
         }
       />
 
-      {/* Change notifications */}
-      {changes.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Bell className="w-3.5 h-3.5" />
-            <span className="font-semibold uppercase tracking-wide">Recent changes (last 30 days)</span>
-            <span className="text-muted-foreground/60">{changes.length}</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {changes.map(c => (
-              <div key={c.id} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs ${
-                c.change_type === "new_invoice"
-                  ? "bg-blue-50 border-blue-200 text-blue-800"
-                  : "bg-emerald-50 border-emerald-200 text-emerald-800"
-              }`}>
-                {c.change_type === "new_invoice"
-                  ? <Plus className="w-3 h-3 shrink-0" />
-                  : <CreditCard className="w-3 h-3 shrink-0" />
-                }
-                <span className="font-semibold">#{c.invoice_number}</span>
-                <span className="text-muted-foreground">{c.client_name}</span>
-                <span className="font-mono font-bold">{fmtCurrency(c.amount)}</span>
-                <span className="text-[9px] text-muted-foreground">{fmtDate(c.detected_at)}</span>
-                <button onClick={() => dismissChange(c.id)}
-                  className="ml-1 p-0.5 rounded hover:bg-black/10 transition-colors" title="Dismiss">
-                  <X className="w-3 h-3" />
-                </button>
+      {/* Pending changes requiring approval */}
+      {(() => {
+        const pending = changes.filter(c => c.approval_status === "pending");
+        const recent = changes.filter(c => c.approval_status !== "pending" && !c.dismissed);
+        const CHANGE_COLORS: Record<string, string> = {
+          new_invoice: "bg-blue-50 border-blue-200 text-blue-800",
+          paid: "bg-emerald-50 border-emerald-200 text-emerald-800",
+          amount_changed: "bg-amber-50 border-amber-200 text-amber-800",
+          deleted: "bg-red-50 border-red-200 text-red-800",
+        };
+        const CHANGE_LABELS: Record<string, string> = {
+          new_invoice: "New Invoice", paid: "Marked Paid",
+          amount_changed: "Amount Changed", deleted: "Deleted in Harvest",
+        };
+        const CHANGE_ICONS: Record<string, typeof Plus> = {
+          new_invoice: Plus, paid: CreditCard, amount_changed: AlertTriangle, deleted: X,
+        };
+
+        return (
+          <>
+            {pending.length > 0 && (
+              <Card className="border-amber-300 bg-amber-50/30">
+                <CardContent className="pt-4 pb-3">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Bell className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-bold uppercase tracking-wide text-amber-800">Pending Approval</span>
+                    <Badge variant="destructive" className="text-[10px]">{pending.length}</Badge>
+                    <span className="text-[10px] text-muted-foreground ml-auto">Click "Update from Harvest" to check for new changes</span>
+                  </div>
+                  <div className="space-y-2">
+                    {pending.map(c => {
+                      const Icon = CHANGE_ICONS[c.change_type] ?? Bell;
+                      const isProcessing = approvingId === c.id;
+                      return (
+                        <div key={c.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${CHANGE_COLORS[c.change_type] ?? "bg-muted/30 border-border"}`}>
+                          <Icon className="w-4 h-4 shrink-0" />
+                          <Badge variant="outline" className="text-[9px] shrink-0">{CHANGE_LABELS[c.change_type] ?? c.change_type}</Badge>
+                          <span className="text-xs font-semibold">#{c.invoice_number}</span>
+                          <span className="text-xs">{c.client_name}</span>
+                          <span className="text-xs font-mono font-bold">{fmtCurrency(c.amount)}</span>
+                          {c.old_value && c.new_value && (
+                            <span className="text-[10px] text-muted-foreground">{c.old_value} → {c.new_value}</span>
+                          )}
+                          <span className="text-[9px] text-muted-foreground">{fmtDate(c.detected_at)}</span>
+                          <div className="flex items-center gap-1 ml-auto shrink-0">
+                            <Button size="sm" className="h-6 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white"
+                              disabled={isProcessing} onClick={() => handleChangeAction(c.id, "approve")}>
+                              {isProcessing ? "..." : "Approve"}
+                            </Button>
+                            <Button size="sm" variant="outline" className="h-6 text-[10px]"
+                              disabled={isProcessing} onClick={() => handleChangeAction(c.id, "reject")}>
+                              Reject
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Recently processed changes (approved/rejected, last 30 days, not dismissed) */}
+            {recent.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {recent.slice(0, 10).map(c => {
+                  const Icon = CHANGE_ICONS[c.change_type] ?? Bell;
+                  return (
+                    <div key={c.id} className="flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] bg-muted/20 text-muted-foreground">
+                      <Icon className="w-3 h-3" />
+                      <span>#{c.invoice_number}</span>
+                      <span>{c.client_name}</span>
+                      <Badge variant={c.approval_status === "approved" ? "default" : "secondary"} className="text-[8px] px-1">
+                        {c.approval_status}
+                      </Badge>
+                      <button onClick={() => dismissChange(c.id)} className="p-0.5 hover:bg-black/10 rounded" title="Dismiss">
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
+          </>
+        );
+      })()}
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

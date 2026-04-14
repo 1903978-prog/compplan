@@ -348,12 +348,34 @@ export async function seedDatabase() {
       id SERIAL PRIMARY KEY,
       invoice_id INTEGER NOT NULL UNIQUE,
       invoice_number TEXT,
+      client_id INTEGER,
       client_name TEXT,
       amount INTEGER NOT NULL DEFAULT 0,
+      due_amount INTEGER NOT NULL DEFAULT 0,
+      due_date TEXT,
       state TEXT NOT NULL DEFAULT '',
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      subject TEXT,
+      sent_at TEXT,
+      paid_at TEXT,
+      invoice_created_at TEXT,
+      period_start TEXT,
+      period_end TEXT,
       updated_at TEXT NOT NULL
     )
   `);
+  // Add new columns if table already exists (idempotent)
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS client_id INTEGER`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS due_amount INTEGER NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS due_date TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'EUR'`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS subject TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS sent_at TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS paid_at TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS invoice_created_at TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS period_start TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS period_end TEXT`);
+
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS invoice_changes (
       id SERIAL PRIMARY KEY,
@@ -362,10 +384,16 @@ export async function seedDatabase() {
       client_name TEXT,
       amount INTEGER NOT NULL DEFAULT 0,
       change_type TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
       detected_at TEXT NOT NULL,
+      approval_status TEXT NOT NULL DEFAULT 'pending',
       dismissed INTEGER NOT NULL DEFAULT 0
     )
   `);
+  await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS old_value TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS new_value TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'pending'`);
 
   // Seed pricing_proposals from historical win/loss Excel (idempotent by project_name)
   // Note: no count-gate here — the WHERE NOT EXISTS guard ensures deleted rows stay deleted.
