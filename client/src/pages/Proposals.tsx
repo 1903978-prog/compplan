@@ -2028,29 +2028,26 @@ Example:
                             <div
                               ref={el => {
                                 if (!el) return;
-                                // Font inspector: on hover over any text element, show font info popup
-                                const handler = (e: MouseEvent) => {
+                                // Remove ALL existing popups first
+                                const clearPopups = () => document.querySelectorAll(".font-inspector-popup").forEach(p => p.remove());
+
+                                // Single popup on hover — only 1 at a time
+                                el.addEventListener("mouseover", (e: MouseEvent) => {
                                   const target = e.target as HTMLElement;
                                   if (!target || target === el) return;
+                                  clearPopups();
                                   const computed = window.getComputedStyle(target);
-                                  const fontSize = computed.fontSize;
-                                  const fontWeight = computed.fontWeight;
-                                  // Remove old popup
-                                  el.querySelectorAll(".font-inspector-popup").forEach(p => p.remove());
-                                  // Create popup
                                   const popup = document.createElement("div");
                                   popup.className = "font-inspector-popup";
-                                  popup.style.cssText = "position:fixed;z-index:9999;background:#1e293b;color:white;padding:4px 8px;border-radius:4px;font-size:10px;font-family:Arial;pointer-events:auto;display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);";
-                                  popup.style.left = e.clientX + 10 + "px";
-                                  popup.style.top = e.clientY - 30 + "px";
-                                  popup.innerHTML = `<span>Arial ${fontSize} ${parseInt(fontWeight) >= 700 ? "Bold" : ""}</span>
-                                    <button style="background:#374151;border:none;color:white;width:18px;height:18px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:bold;" onclick="this.parentElement.remove();const t=document.elementFromPoint(${e.clientX},${e.clientY});if(t)t.style.fontSize=(parseFloat(getComputedStyle(t).fontSize)-1)+'px'">−</button>
-                                    <button style="background:#374151;border:none;color:white;width:18px;height:18px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:bold;" onclick="this.parentElement.remove();const t=document.elementFromPoint(${e.clientX},${e.clientY});if(t)t.style.fontSize=(parseFloat(getComputedStyle(t).fontSize)+1)+'px'">+</button>`;
+                                  popup.style.cssText = "position:fixed;z-index:9999;background:#1e293b;color:white;padding:4px 8px;border-radius:4px;font-size:10px;font-family:Arial;pointer-events:none;display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);";
+                                  popup.style.left = (e.clientX + 10) + "px";
+                                  popup.style.top = (e.clientY - 30) + "px";
+                                  popup.textContent = `Arial ${computed.fontSize} ${parseInt(computed.fontWeight) >= 700 ? "Bold" : ""}`;
                                   document.body.appendChild(popup);
-                                  setTimeout(() => popup.remove(), 3000);
-                                };
-                                el.removeEventListener("mouseover", handler);
-                                el.addEventListener("mouseover", handler);
+                                });
+
+                                // Clear popup when mouse leaves the preview entirely
+                                el.addEventListener("mouseleave", clearPopups);
                               }}
                               dangerouslySetInnerHTML={{ __html: previewHtml[previewSlideId] }}
                               style={{ transform: "scale(0.7)", transformOrigin: "top left", width: "143%", height: "143%", fontFamily: "Arial, sans-serif" }}
