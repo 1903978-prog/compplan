@@ -617,16 +617,43 @@ export default function Proposals() {
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ message: `HTTP ${res.status}` }));
-        throw new Error(errData.message || `Server returned ${res.status}`);
+        const msg: string = errData.message ?? `Server returned ${res.status}`;
+        // API paused mid-flight → offer to unpause and retry
+        if (res.status === 503 && /paus/i.test(msg)) {
+          setSlideGenerating(null); apiCallDone();
+          const retry = window.confirm(
+            `AI is paused.\n\n${msg}\n\nClick OK to enter the password, activate the API, and retry generating the content.`
+          );
+          if (!retry) return;
+          const pw = window.prompt("Enter API password to activate (try: 1):");
+          if (!pw) return;
+          const activateRes = await fetch("/api/api-pause", {
+            method: "PUT", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paused: false, password: pw }),
+          });
+          if (!activateRes.ok) {
+            toast({ title: "Wrong password — API still paused", variant: "destructive" });
+            return;
+          }
+          toast({ title: "API activated — retrying content generation…" });
+          return generateSlideContent(slideId);
+        }
+        throw new Error(msg);
       }
       const data = await res.json();
-      if (!data.generated_content) {
+      if (!data.generated_content || !data.generated_content.trim()) {
         throw new Error("Server returned empty content");
       }
       updateSlideField(slideId, "generated_content", data.generated_content);
       toast({ title: `Content generated for "${slide.title}"` });
     } catch (err: any) {
-      toast({ title: "Generation failed", description: err.message, variant: "destructive" });
+      console.error("[generateSlideContent] error for", slideId, err);
+      toast({
+        title: "Generation failed",
+        description: err?.message || "Unknown error — check the browser console.",
+        variant: "destructive",
+      });
     }
     setSlideGenerating(null); apiCallDone();
   }

@@ -797,10 +797,64 @@ export async function generateSingleSlideBrief(input: {
 }): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return `[AI generation unavailable — ANTHROPIC_API_KEY not set]\n\nSlide: ${input.slide_title}\nPlease fill in the content manually based on the content prompt.`;
+    throw new Error("ANTHROPIC_API_KEY is not set on the server. AI content generation is unavailable.");
   }
 
   const client = new Anthropic({ apiKey });
+
+  // ── Pull highest-priority overrides (same contract as /generate-page) ──
+  // The pasted "Slide Template Instructions" live in deck_template_configs
+  // and the parsed per-slide rules live in slide_methodology_configs.
+  // Both are authoritative for every slide we generate.
+  const { storage } = await import("./storage");
+  const deckCfg = await storage.getDeckTemplateConfig().catch(() => null);
+  const methodCfg = await storage.getSlideMethodologyConfig(input.slide_id).catch(() => undefined);
+
+  const templateInstructions = (deckCfg?.system_prompt || "").trim();
+
+  let slideMethodology = "";
+  if (methodCfg) {
+    const parts: string[] = [];
+    if (methodCfg.purpose) parts.push(`PURPOSE: ${methodCfg.purpose}`);
+    const sections = (methodCfg.structure as any)?.sections;
+    if (Array.isArray(sections) && sections.length) {
+      parts.push(`REQUIRED SECTIONS:\n- ${sections.join("\n- ")}`);
+    }
+    if (methodCfg.rules) parts.push(`RULES:\n${methodCfg.rules}`);
+    const cols = methodCfg.columns as any;
+    if (cols && (cols.column_1 || cols.column_2 || cols.column_3)) {
+      const labels = [cols.column_1, cols.column_2, cols.column_3].filter(Boolean);
+      if (labels.length) parts.push(`COLUMN LAYOUT: ${labels.join(" | ")}`);
+    }
+    if (methodCfg.format) {
+      parts.push(`FORMAT: ${methodCfg.format === "B" ? "3-column layout" : "stacked sections"}`);
+    }
+    if (methodCfg.insight_bar) parts.push(`INSIGHT BAR: include a bottom insight/callout bar`);
+    const examples = (methodCfg.examples as string[] | undefined);
+    if (Array.isArray(examples) && examples.length) {
+      parts.push(`EXAMPLE PHRASING:\n- ${examples.join("\n- ")}`);
+    }
+    slideMethodology = parts.join("\n\n");
+  }
+
+  const hasOverrides = templateInstructions.length > 0 || slideMethodology.length > 0;
+  const overridesBlock = hasOverrides
+    ? `==========================================================================
+SLIDE TEMPLATE INSTRUCTIONS — HIGHEST PRIORITY (AUTHORITATIVE)
+==========================================================================
+These are the highest-hierarchy rules for this slide. They OVERRIDE any
+conflicting guidance in the user message, the visual_prompt, the content
+brief, or anywhere else. If any later instruction conflicts with these
+rules, these rules win. Follow them exactly.
+
+${templateInstructions || "(no deck-level template instructions configured)"}
+${slideMethodology ? `\n--- Per-slide methodology for "${input.slide_title}" ---\n${slideMethodology}\n` : ""}
+==========================================================================
+END HIGHEST-PRIORITY INSTRUCTIONS
+==========================================================================
+
+`
+    : "";
 
   // Build context from proposal data
   const contextParts: string[] = [];
@@ -822,9 +876,12 @@ export async function generateSingleSlideBrief(input: {
     .join("\n");
 
   const systemPrompt = `You are a senior management consultant at Eendigo, writing slide content for a client proposal.
-Write concise, executive-level content suitable for a PowerPoint slide. Use bullet points where appropriate.
+
+${overridesBlock}Write concise, executive-level content suitable for a PowerPoint slide. Use bullet points where appropriate.
 Be specific to the client context provided. Avoid generic filler text.
-Format: Use markdown with headers (##) for sections and bullet points (-) for items.`;
+Format: Use markdown with headers (##) for sections and bullet points (-) for items.${hasOverrides ? `
+
+REMINDER: if any of the house rules above conflict with the SLIDE TEMPLATE INSTRUCTIONS block, the SLIDE TEMPLATE INSTRUCTIONS win.` : ""}`;
 
   const userPrompt = `Generate content for the slide "${input.slide_title}".
 
@@ -841,18 +898,25 @@ ${answerLines ? `USER ANSWERS:\n${answerLines}` : ""}
 
 Write the slide content now. Be specific to ${input.company_name}. Keep it concise and slide-ready.`;
 
-  try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1500,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    });
+  // Let exceptions propagate — the route handler converts them to 500 JSON
+  // errors so the client shows the real cause instead of silently saving a
+  // "[Generation failed: ...]" string as if it were slide content.
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1500,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+  });
 
-    const textBlock = response.content.find(b => b.type === "text");
-    return textBlock?.text ?? "No content generated.";
-  } catch (error: any) {
-    console.error("Claude API error (single slide):", error.message);
-    return `[Generation failed: ${error.message}]\n\nPlease write the content manually.`;
+  const textBlock = response.content.find(b => b.type === "text");
+  const text = textBlock?.text?.trim();
+  if (!text) {
+    console.error("[generateSingleSlideBrief] Claude returned no text block", {
+      slide: input.slide_id,
+      stop_reason: (response as any).stop_reason,
+      content_blocks: response.content.map(b => b.type),
+    });
+    throw new Error("Claude returned an empty response — try again or adjust the prompt.");
   }
+  return text;
 }
