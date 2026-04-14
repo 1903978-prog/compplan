@@ -670,8 +670,34 @@ export default function Proposals() {
           include_quality_score: enableQualityScore,
         }),
       });
-      if (!res.ok) throw new Error("Page generation failed");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ message: `Server returned ${res.status}` }));
+        const msg: string = errData.message ?? `Server returned ${res.status}`;
+        // Server reports API is paused → offer to unpause and auto-retry
+        if (res.status === 503 && /paus/i.test(msg)) {
+          setGeneratingPage(null); apiCallDone();
+          const retry = window.confirm(
+            `AI is paused.\n\n${msg}\n\nClick OK to enter the password, activate the API, and retry the preview.`
+          );
+          if (!retry) return;
+          const pw = window.prompt("Enter API password to activate (try: 1):");
+          if (!pw) return;
+          const activateRes = await fetch("/api/api-pause", {
+            method: "PUT", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paused: false, password: pw }),
+          });
+          if (!activateRes.ok) {
+            toast({ title: "Wrong password — API still paused", variant: "destructive" });
+            return;
+          }
+          toast({ title: "API activated — retrying preview…" });
+          return generatePage(slideId);
+        }
+        throw new Error(msg);
+      }
       const data = await res.json();
+      if (!data.html) throw new Error("Server returned an empty preview");
       setPreviewHtml(prev => ({ ...prev, [slideId]: data.html }));
       updateSlideField(slideId, "preview_html", data.html);
       if (data.quality_score) {
@@ -680,7 +706,12 @@ export default function Proposals() {
       }
       toast({ title: `Page preview ready for "${slide?.title}"` });
     } catch (err: any) {
-      toast({ title: "Page generation failed", description: err.message, variant: "destructive" });
+      toast({
+        title: "Page generation failed",
+        description: err?.message || "Unknown error — check the browser console.",
+        variant: "destructive",
+      });
+      console.error("[generatePage] error for", slideId, err);
     }
     setGeneratingPage(null); apiCallDone();
   }
@@ -1806,9 +1837,10 @@ Example:
                         {slide.is_selected && <Check className="w-3 h-3" />}
                       </button>
                       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
-                        // ONLY show existing preview — NEVER auto-generate (costs money)
-                        if (previewHtml[slide.slide_id]) { setPreviewSlideId(slide.slide_id); }
-                        else { toggleSlidePanel(slide.slide_id, "generate"); }
+                        // Always reveal the right-side preview panel — either shows the
+                        // existing preview or an explicit "Generate preview" placeholder.
+                        // Never auto-generates (costs money).
+                        setPreviewSlideId(slide.slide_id);
                       }}>
                         <div className="flex items-center gap-2">
                           <span
@@ -2020,9 +2052,9 @@ Example:
               }
 
               return (
-                <div className={`grid grid-cols-1 gap-4 ${previewSlideId && previewHtml[previewSlideId] ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
+                <div className={`grid grid-cols-1 gap-4 ${previewSlideId ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
                   {/* Left: Grouped slide list */}
-                  <div className={`space-y-4 ${previewSlideId && previewHtml[previewSlideId] ? "" : "lg:col-span-2"}`}>
+                  <div className={`space-y-4 ${previewSlideId ? "" : "lg:col-span-2"}`}>
                     {/* Core Pages — hidden when editing an optional slide */}
                     <Card className={`p-0 overflow-hidden ${expandedSlidePanel && optionalSlides.some(s => s.slide_id === expandedSlidePanel.slideId) ? "hidden" : ""}`}>
                       <div className="px-4 py-3 border-b bg-blue-50 dark:bg-blue-950/30">
@@ -2123,7 +2155,50 @@ Example:
 
                   {/* Right: Preview panel OR slide list */}
                   <div>
-                    {previewSlideId && previewHtml[previewSlideId] ? (
+                    {previewSlideId && !previewHtml[previewSlideId] ? (
+                      /* ── Empty preview placeholder ─────────────────── */
+                      <Card className="p-0 overflow-hidden sticky top-20">
+                        <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between">
+                          <div>
+                            <h3 className="text-xs font-semibold">{slides.find(s => s.slide_id === previewSlideId)?.title ?? "Preview"}</h3>
+                            <p className="text-[10px] text-muted-foreground">No preview yet</p>
+                          </div>
+                          <button onClick={() => setPreviewSlideId(null)}
+                            className="p-1 rounded hover:bg-muted text-muted-foreground">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="p-6 flex flex-col items-center justify-center gap-3 text-center bg-gray-50" style={{ minHeight: 280 }}>
+                          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                            <Eye className="w-5 h-5 text-muted-foreground" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">This slide has no preview yet</p>
+                            <p className="text-[11px] text-muted-foreground mt-1 max-w-[260px]">
+                              Generating a preview calls Claude and costs a few cents. You'll be prompted to activate the AI if it's paused.
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            className="h-8 text-xs bg-violet-600 hover:bg-violet-700 text-white"
+                            disabled={generatingPage === previewSlideId}
+                            onClick={() => generatePage(previewSlideId!)}
+                          >
+                            {generatingPage === previewSlideId ? (
+                              <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating…</>
+                            ) : (
+                              <><Eye className="w-3.5 h-3.5 mr-1.5" /> Generate preview</>
+                            )}
+                          </Button>
+                          <button
+                            className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                            onClick={() => toggleSlidePanel(previewSlideId!, "generate")}
+                          >
+                            Or edit the content prompt first
+                          </button>
+                        </div>
+                      </Card>
+                    ) : previewSlideId && previewHtml[previewSlideId] ? (
                       /* ── Slide Preview ─────────────────────────────── */
                       <Card className="p-0 overflow-hidden sticky top-20">
                         <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between">
