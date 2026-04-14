@@ -1388,6 +1388,44 @@ RULES:
     "User-Agent": "CompPlan App",
   });
 
+  // Harvest's LIST endpoint (GET /v2/invoices) does NOT return line_items —
+  // only the per-invoice endpoint does. Call this when you need project data.
+  async function fetchHarvestInvoiceDetail(invoiceId: number): Promise<any | null> {
+    try {
+      const resp = await fetch(`${HARVEST_BASE}/invoices/${invoiceId}`, { headers: harvestHeaders() });
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch { return null; }
+  }
+
+  // Shared helper: derive (project_codes, project_names) from a full invoice.
+  // Priority: line_items[*].project.code > derive from project.name > derive from subject.
+  function extractProjectCodeStrings(inv: any): { projectCodes: string | null; projectNames: string | null } {
+    const lineItems: any[] = inv?.line_items ?? [];
+    const rawCodes: string[] = [];
+    const rawNames: string[] = [];
+    for (const li of lineItems) {
+      const proj = li?.project;
+      if (!proj) continue;
+      const name = proj.name ?? "";
+      const code = proj.code ?? "";
+      if (code) { rawCodes.push(code); rawNames.push(name); }
+      else if (name) {
+        const m = name.match(/^([A-Z]{2,5}\d{1,3})/i);
+        rawCodes.push(m ? m[1].toUpperCase() : name);
+        rawNames.push(name);
+      }
+    }
+    if (rawCodes.length === 0 && inv?.subject) {
+      const m = inv.subject.match(/\b([A-Z]{2,5})\s*[-]?\s*(\d{1,3})\b/i);
+      if (m) { rawCodes.push(`${m[1].toUpperCase()}${m[2].padStart(2, "0")}`); rawNames.push(inv.subject); }
+    }
+    return {
+      projectCodes: [...new Set(rawCodes)].join(",") || null,
+      projectNames: [...new Set(rawNames)].join(",") || null,
+    };
+  }
+
   // GET /api/harvest/invoices — reads from LOCAL DB (instant, no Harvest call)
   app.get("/api/harvest/invoices", requireAuth, async (_req, res) => {
     try {
@@ -1441,11 +1479,16 @@ RULES:
         page++;
       }
 
-      // 2. Load existing snapshots
-      const snapRows = await db.execute(sql`SELECT invoice_id, state, amount FROM invoice_snapshots`);
-      const snapMap = new Map<number, { state: string; amount: number }>();
+      // 2. Load existing snapshots (including project_codes so we can skip
+      //    the per-invoice detail fetch for rows that are already populated).
+      const snapRows = await db.execute(sql`SELECT invoice_id, state, amount, project_codes FROM invoice_snapshots`);
+      const snapMap = new Map<number, { state: string; amount: number; hasCodes: boolean }>();
       for (const r of snapRows.rows) {
-        snapMap.set(Number(r.invoice_id), { state: String(r.state), amount: Number(r.amount) });
+        snapMap.set(Number(r.invoice_id), {
+          state: String(r.state),
+          amount: Number(r.amount),
+          hasCodes: r.project_codes !== null && String(r.project_codes).length > 0,
+        });
       }
       const isFirstLoad = snapMap.size === 0;
 
@@ -1462,31 +1505,23 @@ RULES:
         const dueAmount = Math.round(Number(inv.due_amount) || 0);
         const state = inv.state ?? "";
 
-        // Extract project codes/names from line_items
-        // Priority: project.code > derive from project.name > derive from subject
-        const lineItems: any[] = inv.line_items ?? [];
-        const rawCodes: string[] = [];
-        const rawNames: string[] = [];
-        for (const li of lineItems) {
-          const proj = li.project;
-          if (!proj) continue;
-          const name = proj.name ?? "";
-          const code = proj.code ?? "";
-          if (code) { rawCodes.push(code); rawNames.push(name); }
-          else if (name) {
-            // Try to derive code from project name (e.g. "DAI01 - Dainese Phase 1" → "DAI01")
-            const m = name.match(/^([A-Z]{2,5}\d{1,3})/i);
-            rawCodes.push(m ? m[1].toUpperCase() : name);
-            rawNames.push(name);
+        // Extract project codes/names. The LIST response does NOT include
+        // line_items, so we must call the per-invoice endpoint to see
+        // project data. Only do this for invoices where our snapshot
+        // doesn't already have codes (new invoices or a prior sync that
+        // ran before the per-invoice fetch was added).
+        let projectCodes: string | null = null;
+        let projectNames: string | null = null;
+        const existingSnap = snapMap.get(invId);
+        const needsDetail = !existingSnap || !existingSnap.hasCodes;
+        if (needsDetail) {
+          const detail = await fetchHarvestInvoiceDetail(invId);
+          if (detail) {
+            const extracted = extractProjectCodeStrings(detail);
+            projectCodes = extracted.projectCodes;
+            projectNames = extracted.projectNames;
           }
         }
-        // If no line_items had projects, try to extract from invoice subject
-        if (rawCodes.length === 0 && inv.subject) {
-          const m = inv.subject.match(/\b([A-Z]{2,5})\s*[-]?\s*(\d{1,3})\b/i);
-          if (m) { rawCodes.push(`${m[1].toUpperCase()}${m[2].padStart(2, "0")}`); rawNames.push(inv.subject); }
-        }
-        const projectCodes = [...new Set(rawCodes)].join(",") || null;
-        const projectNames = [...new Set(rawNames)].join(",") || null;
 
         if (!snapMap.has(invId)) {
           // New invoice
@@ -1509,7 +1544,9 @@ RULES:
             pendingChanges.push({ invoice_id: invId, invoice_number: invNum, client_name: clientName,
               amount, change_type: "amount_changed", old_value: String(prev.amount), new_value: String(amount) });
           }
-          // ALWAYS update all snapshot fields including project codes
+          // Update all fields. For project codes, only overwrite when we
+          // actually fetched new values — otherwise preserve existing codes
+          // (we skipped the per-invoice detail fetch above).
           await db.execute(sql`
             UPDATE invoice_snapshots SET
               invoice_number = ${invNum}, client_id = ${inv.client?.id ?? null}, client_name = ${clientName},
@@ -1518,7 +1555,8 @@ RULES:
               sent_at = ${inv.sent_at ?? null}, paid_at = ${inv.paid_at ?? null},
               invoice_created_at = ${inv.created_at ?? null},
               period_start = ${inv.period_start ?? null}, period_end = ${inv.period_end ?? null},
-              project_codes = ${projectCodes}, project_names = ${projectNames},
+              project_codes = CASE WHEN ${needsDetail} THEN ${projectCodes} ELSE project_codes END,
+              project_names = CASE WHEN ${needsDetail} THEN ${projectNames} ELSE project_names END,
               updated_at = ${now}
             WHERE invoice_id = ${invId}
           `);
@@ -1598,9 +1636,7 @@ RULES:
             const resp = await fetch(`${HARVEST_BASE}/invoices/${ch.invoice_id}`, { headers: harvestHeaders() });
             if (resp.ok) {
               const inv = await resp.json();
-              const lineItems: any[] = inv.line_items ?? [];
-              const projCodes = [...new Set(lineItems.map((li: any) => li.project?.code).filter(Boolean))].join(",") || null;
-              const projNames = [...new Set(lineItems.map((li: any) => li.project?.name).filter(Boolean))].join(",") || null;
+              const { projectCodes: projCodes, projectNames: projNames } = extractProjectCodeStrings(inv);
               await db.execute(sql`
                 INSERT INTO invoice_snapshots (invoice_id, invoice_number, client_id, client_name, amount, due_amount, due_date, state, currency, subject, sent_at, paid_at, invoice_created_at, period_start, period_end, project_codes, project_names, updated_at)
                 VALUES (${Number(inv.id)}, ${inv.number}, ${inv.client?.id ?? null}, ${inv.client?.name ?? ""}, ${Math.round(Number(inv.amount))}, ${Math.round(Number(inv.due_amount))}, ${inv.due_date}, ${inv.state}, ${inv.currency ?? "EUR"}, ${inv.subject}, ${inv.sent_at}, ${inv.paid_at}, ${inv.created_at}, ${inv.period_start}, ${inv.period_end}, ${projCodes}, ${projNames}, ${now})
@@ -1799,50 +1835,15 @@ RULES:
         return res.json({ backfilled: 0, message: "All snapshots already have project codes" });
       }
 
-      // Fetch all invoices from Harvest (includes line_items)
-      let allInvoices: any[] = [];
-      let page = 1;
-      let hasMore = true;
-      while (hasMore) {
-        const resp = await fetch(`${HARVEST_BASE}/invoices?per_page=100&page=${page}`, { headers: harvestHeaders() });
-        if (!resp.ok) throw new Error(`Harvest API ${resp.status}`);
-        const data = await resp.json();
-        allInvoices = allInvoices.concat(data.invoices ?? []);
-        hasMore = data.next_page !== null;
-        page++;
-      }
-
-      // Build lookup
-      const invMap = new Map<number, any>();
-      for (const inv of allInvoices) invMap.set(Number(inv.id), inv);
-
+      // Harvest's list endpoint does NOT return line_items — we must fetch
+      // each invoice individually to see its project data.
       let updated = 0;
       for (const row of missing.rows) {
         const invId = Number(row.invoice_id);
-        const inv = invMap.get(invId);
+        const inv = await fetchHarvestInvoiceDetail(invId);
         if (!inv) continue;
 
-        const lineItems: any[] = inv.line_items ?? [];
-        const rawCodes: string[] = [];
-        const rawNames: string[] = [];
-        for (const li of lineItems) {
-          const proj = li.project;
-          if (!proj) continue;
-          const name = proj.name ?? "";
-          const code = proj.code ?? "";
-          if (code) { rawCodes.push(code); rawNames.push(name); }
-          else if (name) {
-            const m = name.match(/^([A-Z]{2,5}\d{1,3})/i);
-            rawCodes.push(m ? m[1].toUpperCase() : name);
-            rawNames.push(name);
-          }
-        }
-        if (rawCodes.length === 0 && inv.subject) {
-          const m = inv.subject.match(/\b([A-Z]{2,5})\s*[-]?\s*(\d{1,3})\b/i);
-          if (m) { rawCodes.push(`${m[1].toUpperCase()}${m[2].padStart(2, "0")}`); rawNames.push(inv.subject); }
-        }
-        const projectCodes = [...new Set(rawCodes)].join(",") || null;
-        const projectNames = [...new Set(rawNames)].join(",") || null;
+        const { projectCodes, projectNames } = extractProjectCodeStrings(inv);
 
         // Also backfill any other missing fields
         await db.execute(sql`
