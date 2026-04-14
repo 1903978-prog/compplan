@@ -1235,51 +1235,6 @@ export default function Proposals() {
                 )}
               </div>
 
-              {/* ── Knowledge Center ──────────────────────────────── */}
-              <div className="border-t pt-3 mt-2">
-                <button onClick={() => setShowKnowledge(v => !v)}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide hover:text-foreground w-full text-left">
-                  <ChevronDown className={`w-3 h-3 transition-transform ${showKnowledge ? "rotate-180" : ""}`} />
-                  Knowledge Center ({knowledgeFiles.length} files)
-                </button>
-                {showKnowledge && (
-                  <div className="mt-2 space-y-2">
-                    {knowledgeFiles.length > 0 && (
-                      <div className="space-y-1">
-                        {knowledgeFiles.map(f => (
-                          <div key={f.id} className="flex items-center gap-2 text-[10px] py-1 px-2 rounded bg-muted/30">
-                            <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
-                            <span className="truncate flex-1">{f.filename}</span>
-                            <span className="text-muted-foreground shrink-0">{f.category}</span>
-                            <span className="text-muted-foreground shrink-0">{Math.round(f.file_size / 1024)}KB</span>
-                            <button onClick={() => deleteKnowledgeFile(f.id)}
-                              className="text-muted-foreground hover:text-destructive shrink-0">
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="file"
-                        accept=".txt,.md,.pdf,.docx,.pptx,.csv"
-                        onChange={e => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const cat = window.prompt("Category (e.g. Past Proposals, Methodologies, Frameworks):", "General");
-                            if (cat !== null) uploadKnowledgeFile(file, cat || "General");
-                          }
-                          e.target.value = "";
-                        }}
-                        className="h-7 text-[10px] flex-1"
-                      />
-                    </div>
-                    <p className="text-[9px] text-muted-foreground">Upload .txt, .md, .pdf, .docx, .pptx — AI uses these as reference when generating approaches and slide content.</p>
-                  </div>
-                )}
-              </div>
-
               <div className="flex justify-end mt-3">
                 <Button size="sm" onClick={handleGoToSlides}>
                   Choose Slides <ArrowRight className="w-3.5 h-3.5 ml-1" />

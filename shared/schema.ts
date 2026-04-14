@@ -638,12 +638,23 @@ export const invoiceChanges = pgTable("invoice_changes", {
 });
 
 // ── Knowledge Center ────────────────────────────────────────────────────────
+// Knowledge topics (e.g. "Timelines", "Methodologies", "Past Proposals")
+export const knowledgeTopics = pgTable("knowledge_topics", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  sort_order: integer("sort_order").notNull().default(0),
+  created_at: text("created_at").notNull(),
+});
+
+// Knowledge files — each belongs to a topic
 export const knowledgeFiles = pgTable("knowledge_files", {
   id: serial("id").primaryKey(),
+  topic_id: integer("topic_id").notNull(),
   category: text("category").notNull().default("General"),
   filename: text("filename").notNull(),
   file_path: text("file_path").notNull(),
   file_size: integer("file_size").notNull().default(0),
-  content_text: text("content_text"),   // extracted text for AI context
+  content_text: text("content_text"),
   uploaded_at: text("uploaded_at").notNull(),
 });

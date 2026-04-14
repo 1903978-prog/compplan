@@ -399,8 +399,18 @@ export async function seedDatabase() {
 
   // ── Knowledge Center + Project Approach ──────────────────────────────────
   await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS knowledge_topics (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
     CREATE TABLE IF NOT EXISTS knowledge_files (
       id SERIAL PRIMARY KEY,
+      topic_id INTEGER NOT NULL DEFAULT 0,
       category TEXT NOT NULL DEFAULT 'General',
       filename TEXT NOT NULL,
       file_path TEXT NOT NULL,
@@ -409,6 +419,7 @@ export async function seedDatabase() {
       uploaded_at TEXT NOT NULL
     )
   `);
+  await db.execute(sql`ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS topic_id INTEGER NOT NULL DEFAULT 0`);
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS project_approach TEXT`);
 
   // Seed pricing_proposals from historical win/loss Excel (idempotent by project_name)

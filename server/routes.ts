@@ -1362,23 +1362,61 @@ RULES:
   });
 
   // ── Knowledge Center ──────────────────────────────────────────────────────
+
+  // Topics CRUD
+  app.get("/api/knowledge/topics", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const topics = await db.execute(sql`SELECT * FROM knowledge_topics ORDER BY sort_order, created_at`);
+      const files = await db.execute(sql`SELECT * FROM knowledge_files ORDER BY uploaded_at DESC`);
+      res.json({ topics: topics.rows, files: files.rows });
+    } catch { res.json({ topics: [], files: [] }); }
+  });
+
+  app.post("/api/knowledge/topics", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const { name, description } = req.body;
+      if (!name?.trim()) { res.status(400).json({ message: "name required" }); return; }
+      const now = new Date().toISOString();
+      await db.execute(sql`INSERT INTO knowledge_topics (name, description, created_at) VALUES (${name.trim()}, ${description || ""}, ${now})`);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.delete("/api/knowledge/topics/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      // Delete files in this topic
+      const files = await db.execute(sql`SELECT file_path FROM knowledge_files WHERE topic_id = ${id}`);
+      for (const f of files.rows) { try { fs.unlinkSync((f as any).file_path); } catch {} }
+      await db.execute(sql`DELETE FROM knowledge_files WHERE topic_id = ${id}`);
+      await db.execute(sql`DELETE FROM knowledge_topics WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // Files CRUD (within a topic)
   app.get("/api/knowledge", requireAuth, async (_req, res) => {
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const rows = await db.execute(sql`SELECT * FROM knowledge_files ORDER BY uploaded_at DESC`);
       res.json({ files: rows.rows });
-    } catch (err: any) { res.json({ files: [] }); }
+    } catch { res.json({ files: [] }); }
   });
 
   app.post("/api/knowledge", requireAuth, async (req, res) => {
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
-      const { category, filename, file_data, file_size } = req.body;
+      const { topic_id, filename, file_data, file_size } = req.body;
       if (!filename || !file_data) { res.status(400).json({ message: "filename and file_data required" }); return; }
 
-      // Save file to disk
       const uploadsDir = path.join(process.cwd(), "uploads", "knowledge");
       fs.mkdirSync(uploadsDir, { recursive: true });
       const safeFilename = filename.replace(/[^a-zA-Z0-9._\-() ]/g, "_");
@@ -1386,25 +1424,20 @@ RULES:
       const buffer = Buffer.from(file_data, "base64");
       fs.writeFileSync(filePath, buffer);
 
-      // Extract text content for AI context (plain text files only; for others store filename)
       let contentText = "";
-      if (/\.txt$/i.test(filename)) {
-        contentText = buffer.toString("utf-8").substring(0, 50000);
-      } else if (/\.md$/i.test(filename)) {
+      if (/\.(txt|md|csv)$/i.test(filename)) {
         contentText = buffer.toString("utf-8").substring(0, 50000);
       } else {
-        contentText = `[File: ${filename}, ${Math.round((file_size || buffer.length) / 1024)}KB — content not extracted (binary format)]`;
+        contentText = `[File: ${filename}, ${Math.round((file_size || buffer.length) / 1024)}KB — binary, content not extracted]`;
       }
 
       const now = new Date().toISOString();
       await db.execute(sql`
-        INSERT INTO knowledge_files (category, filename, file_path, file_size, content_text, uploaded_at)
-        VALUES (${category || "General"}, ${filename}, ${filePath}, ${file_size || buffer.length}, ${contentText}, ${now})
+        INSERT INTO knowledge_files (topic_id, category, filename, file_path, file_size, content_text, uploaded_at)
+        VALUES (${topic_id || 0}, ${"General"}, ${filename}, ${filePath}, ${file_size || buffer.length}, ${contentText}, ${now})
       `);
       res.json({ ok: true });
-    } catch (err: any) {
-      res.status(500).json({ message: err.message });
-    }
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   app.delete("/api/knowledge/:id", requireAuth, async (req, res) => {
@@ -1412,12 +1445,8 @@ RULES:
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const id = safeInt(req.params.id);
-      // Get file path before deleting
       const row = await db.execute(sql`SELECT file_path FROM knowledge_files WHERE id = ${id}`);
-      if (row.rows.length > 0) {
-        const fp = (row.rows[0] as any).file_path;
-        try { fs.unlinkSync(fp); } catch { /* file may not exist */ }
-      }
+      if (row.rows.length > 0) { try { fs.unlinkSync((row.rows[0] as any).file_path); } catch {} }
       await db.execute(sql`DELETE FROM knowledge_files WHERE id = ${id}`);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
