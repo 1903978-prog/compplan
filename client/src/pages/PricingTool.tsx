@@ -1756,9 +1756,8 @@ export default function PricingTool() {
         running += delta;
       }
     }
-    running += manualDelta;
-
-    // Clamp to green band (same as waterfall recommendedNwf logic)
+    // Clamp to green band BEFORE manual adjustment
+    // (manual price adj overrides the green band — user decision takes priority)
     const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
     const weeklyBench = benchmarks.find(b =>
       countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
@@ -1769,6 +1768,11 @@ export default function PricingTool() {
     if (gLow > 0 && gHigh > 0) {
       running = Math.min(gHigh, Math.max(gLow, running));
     }
+
+    // Apply manual price adjustment AFTER green band clamp
+    // This intentionally overrides the band — the user has explicitly chosen this price
+    running += manualDelta;
+
     return Math.round(running);
   }, [recommendation, manualDelta, form.region, benchmarks, disabledBars]);
 
@@ -3498,16 +3502,16 @@ export default function PricingTool() {
                     </SelectContent>
                   </Select>
                 </div>
-                {/* Model adjustment */}
+                {/* Price adjustment ±500 */}
                 <div className="space-y-1">
-                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Model adj. (±500)</Label>
+                  <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Price adj. ±500</Label>
                   <div className="flex items-center gap-1">
-                    <button onClick={() => setManualDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">−</button>
-                    <span className={`text-sm font-mono font-bold flex-1 text-center ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                    <button onClick={() => setManualDelta(d => d - 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted shrink-0">−</button>
+                    <span className={`text-sm font-mono font-bold w-20 text-center shrink-0 ${manualDelta > 0 ? "text-emerald-600" : manualDelta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
                       {manualDelta === 0 ? "±€0" : `${manualDelta > 0 ? "+" : ""}€${Math.abs(manualDelta).toLocaleString("it-IT")}`}
                     </span>
-                    <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted">+</button>
-                    {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[9px] text-muted-foreground hover:text-foreground underline ml-1">reset</button>}
+                    <button onClick={() => setManualDelta(d => d + 500)} className="w-7 h-7 rounded border text-sm font-bold flex items-center justify-center hover:bg-muted shrink-0">+</button>
+                    {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[9px] text-muted-foreground hover:text-foreground underline ml-1 shrink-0">reset</button>}
                   </div>
                 </div>
                 {/* Variable fee */}
@@ -3769,7 +3773,7 @@ export default function PricingTool() {
                             <text x={x + barW/2} y={up ? y - 3 : y + h + 8} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="bold">
                               {manualDelta > 0 ? "+" : ""}{fmt(manualDelta)}
                             </text>
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">Adj.</text>
+                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">Price adj.</text>
                           </g>
                         );
                       })()}
