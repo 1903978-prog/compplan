@@ -19,6 +19,7 @@ import TimeTracker from "@/pages/TimeTracker";
 import Proposals from "@/pages/Proposals";
 import SlideMethodologyAdmin from "@/pages/SlideMethodologyAdmin";
 import Invoicing from "@/pages/Invoicing";
+import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
 import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -179,9 +180,10 @@ function Navigation() {
               <NavDropdown
                 label="AR"
                 icon={Receipt}
-                basePaths={["/invoicing"]}
+                basePaths={["/invoicing", "/clients"]}
                 items={[
                   { href: "/invoicing", label: "Invoicing", icon: Receipt },
+                  { href: "/clients", label: "Client Ledger", icon: Users },
                 ]}
               />
               <NavDropdown
@@ -233,6 +235,7 @@ function Router() {
       <Route path="/proposals/methodology" component={SlideMethodologyAdmin} />
       <Route path="/hiring" component={Hiring} />
       <Route path="/invoicing" component={Invoicing} />
+      <Route path="/clients" component={ClientLedger} />
       <Route path="/admin" component={AppAdmin} />
       <Route component={NotFound} />
     </Switch>
