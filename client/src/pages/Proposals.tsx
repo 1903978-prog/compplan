@@ -294,38 +294,118 @@ export default function Proposals() {
   useEffect(() => { latestProjectApproachRef.current = projectApproach; }, [projectApproach]);
   useEffect(() => { latestCurrentRef.current = current; }, [current]);
 
-  // Force-flush the current state to the server without debouncing.
-  // Called from textarea onBlur and from the unload handler's fallback.
+  // ROOT-CAUSE FIX (2026-04): the previous implementation called
+  // `saveProgress()` from inside a memoized `triggerAutoSave`. Because
+  // `useCallback([markClean])` returned the first-render function forever,
+  // the setTimeout body referenced the FIRST-render `saveProgress`, whose
+  // closure captured the INITIAL empty `form`/`slides`/`current`. Every
+  // auto-save was therefore POSTing an empty proposal — so typed content
+  // never persisted and stray blank rows accumulated that looked like
+  // "deleted proposals reappearing". Fix: the timer no longer calls
+  // `saveProgress` at all. It builds the payload from the latest refs
+  // and fires the fetch directly — same data path the beacon handler
+  // already uses correctly.
+  //
+  // `justOpenedRef` blocks the very first auto-save fire after opening a
+  // proposal, so simply loading a proposal never writes back to the DB.
+  const justOpenedRef = useRef(false);
+
+  // Build a save body from the LATEST refs. Never reads closed-over state.
+  const buildLatestBody = useCallback(() => {
+    const f = latestFormRef.current;
+    const cur = latestCurrentRef.current;
+    const now = new Date().toISOString();
+    return {
+      company_name: f.company_name,
+      website: f.website || null,
+      transcript: f.transcript || null,
+      notes: f.notes || null,
+      revenue: f.revenue ? Number(f.revenue) : null,
+      ebitda_margin: f.ebitda_margin ? Number(f.ebitda_margin) : null,
+      scope_perimeter: f.scope_perimeter || null,
+      objective: f.objective || null,
+      urgency: f.urgency || null,
+      project_type: latestProjectTypeRef.current,
+      project_approach: latestProjectApproachRef.current || null,
+      slide_selection: latestSlidesRef.current,
+      slide_briefs: latestBriefsRef.current,
+      call_checklist: latestChecklistRef.current,
+      status: cur?.status || "draft",
+      options: cur?.options || [],
+      created_at: cur?.created_at || now,
+      updated_at: now,
+    };
+  }, []);
+
+  // Direct save — fetches against the latest state, no stale closures,
+  // no dependency on `saveProgress`. Shared by flushSave and the timer.
+  const doAutoSave = useCallback(async () => {
+    const f = latestFormRef.current;
+    const cur = latestCurrentRef.current;
+    // HARD GUARD: never auto-save a proposal without a company name.
+    // This prevents blank rows from ever being created by accident.
+    if (!f.company_name || !f.company_name.trim()) return;
+    const body = buildLatestBody();
+    try {
+      if (cur?.id) {
+        const res = await fetch(`/api/proposals/${cur.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`PUT ${res.status}`);
+        const updated = await res.json();
+        setCurrent(updated);
+        latestCurrentRef.current = updated;
+      } else {
+        const res = await fetch("/api/proposals", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`POST ${res.status}`);
+        const created = await res.json();
+        setCurrent(created);
+        latestCurrentRef.current = created;
+      }
+      markClean();
+    } catch (err) {
+      console.error("[auto-save] failed, keeping dirty flag:", err);
+      // Leave dirtyRef set so the next change or onBlur retries.
+    }
+  }, [buildLatestBody, markClean]);
+
+  // Force-flush (no debounce). Called from textarea onBlur, manual actions.
   const flushSave = useCallback(async () => {
     if (!dirtyRef.current) return;
-    if (!latestFormRef.current.company_name) return;
     if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
     setAutoSaving(true);
-    try {
-      await saveProgress();
-      markClean();
-    } catch { /* keep dirty so next attempt retries */ }
+    await doAutoSave();
     setAutoSaving(false);
-  }, [markClean]);
+  }, [doAutoSave]);
 
   const triggerAutoSave = useCallback(() => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(async () => {
-      if (!latestFormRef.current.company_name) return;
       setAutoSaving(true);
-      try {
-        await saveProgress();
-        markClean();
-      } catch { /* keep dirty, retry on next change or blur */ }
+      await doAutoSave();
       setAutoSaving(false);
     }, 800);
-  }, [markClean]);
+  }, [doAutoSave]);
 
-  // Trigger auto-save when key data changes. Important: NO cleanup that
-  // clears the timer — the previous version did that, which is exactly why
-  // rapid edits could end with an un-fired timer and lost data.
+  // Trigger auto-save when key data changes. Intentionally no cleanup
+  // cancellation — a dep change just reschedules via clearTimeout inside
+  // triggerAutoSave. The justOpenedRef gate prevents the very first fire
+  // after openProposal from overwriting the freshly-loaded data.
   useEffect(() => {
     if (step < 1 || !form.company_name) return;
+    if (justOpenedRef.current) {
+      // Skip this effect run — it was triggered by the openProposal state
+      // cascade, not by a user edit. Clear the flag so the NEXT real change
+      // auto-saves normally.
+      justOpenedRef.current = false;
+      return;
+    }
     markDirty();
     triggerAutoSave();
   }, [form.company_name, form.website, form.revenue, form.ebitda_margin, form.objective, form.urgency, form.scope_perimeter, form.transcript, form.notes, slides, briefs, projectApproach, callChecklist, projectType, step, triggerAutoSave, markDirty]);
@@ -416,7 +496,15 @@ export default function Proposals() {
   }
 
   function openProposal(p: Proposal) {
+    // Block the auto-save effect from firing a save for the state cascade
+    // that setCurrent/setSlides/... is about to cause. Without this, simply
+    // loading a proposal would schedule a PUT that writes the just-loaded
+    // data back — safe but wasteful — and any race with a subsequent edit
+    // could clobber state.
+    justOpenedRef.current = true;
+    markClean();
     setCurrent(p);
+    latestCurrentRef.current = p;
     // Restore slide selection state
     setProjectType((p.project_type as ProjectType) || "");
     const loadedSlides = Array.isArray(p.slide_selection) && p.slide_selection.length > 0 ? p.slide_selection : [];
@@ -468,8 +556,33 @@ export default function Proposals() {
   }
 
   async function deleteProposal(id: number) {
-    await fetch(`/api/proposals/${id}`, { method: "DELETE", credentials: "include" });
-    setProposals(prev => prev.filter(p => p.id !== id));
+    // Belt-and-braces: cancel any pending auto-save for THIS proposal
+    // before we delete it, clear the dirty flag so the unload beacon
+    // won't try to recreate it, then verify the server actually deleted
+    // it by reloading the list from the source of truth.
+    if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+    markClean();
+    let ok = false;
+    try {
+      const res = await fetch(`/api/proposals/${id}`, { method: "DELETE", credentials: "include" });
+      ok = res.ok;
+    } catch (err) {
+      console.error("[deleteProposal] network error:", err);
+    }
+    if (!ok) {
+      toast({ title: "Delete failed — proposal still on server", variant: "destructive" });
+      await loadProposals();
+      return;
+    }
+    // If we're deleting the currently-open proposal, clear it so no
+    // subsequent effect can write to the deleted id.
+    if (latestCurrentRef.current?.id === id) {
+      setCurrent(null);
+      latestCurrentRef.current = null;
+    }
+    // Reload from server — do NOT filter locally. If the row is still
+    // there the user should see it.
+    await loadProposals();
     toast({ title: "Proposal deleted" });
   }
 

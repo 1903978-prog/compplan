@@ -415,12 +415,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(p);
   });
 
+  // Hard guard against blank/junk writes. A proposal MUST have a non-empty
+  // company_name. This is a belt-and-braces safety net against any client-
+  // side bug (e.g. stale closure in auto-save) that might POST empty data.
+  function isBlankCompanyName(body: any): boolean {
+    return !body || typeof body.company_name !== "string" || body.company_name.trim() === "";
+  }
+
   app.post("/api/proposals", requireAuth, async (req, res) => {
+    if (isBlankCompanyName(req.body)) {
+      res.status(400).json({ message: "company_name is required" });
+      return;
+    }
     const p = await storage.createProposal(req.body);
     res.status(201).json(p);
   });
 
   app.put("/api/proposals/:id", requireAuth, async (req, res) => {
+    if (isBlankCompanyName(req.body)) {
+      res.status(400).json({ message: "company_name is required" });
+      return;
+    }
     const p = await storage.updateProposal(safeInt(req.params.id), req.body);
     res.json(p);
   });
@@ -438,6 +453,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // the regular POST/PUT so there is no second code path to keep in sync.
   app.post("/api/proposals/:id/beacon-save", requireAuth, async (req, res) => {
     try {
+      if (isBlankCompanyName(req.body)) { res.status(204).end(); return; }
       const id = safeInt(req.params.id);
       await storage.updateProposal(id, req.body);
       res.status(204).end();
@@ -449,6 +465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/proposals/beacon-save", requireAuth, async (req, res) => {
     try {
+      if (isBlankCompanyName(req.body)) { res.status(204).end(); return; }
       await storage.createProposal(req.body);
       res.status(204).end();
     } catch (err: any) {
@@ -834,7 +851,10 @@ Extract visual and content patterns from the image. Only suggest additions that 
   // POST /api/proposals/:id/download-slide — generate PPTX for a single slide
   app.post("/api/proposals/:id/download-slide", requireAuth, async (req, res) => {
     try {
-      if (await guardApiAsync(res)) return;
+      // NOTE: no guardApiAsync here. This route does NOT call Claude —
+      // it assembles a PPTX from already-stored content. Gating it on
+      // the AI-pause switch used to make downloads silently fail
+      // whenever the pause indicator was red.
       const id = safeInt(req.params.id);
       const proposal = await storage.getProposal(id);
       if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
@@ -910,7 +930,10 @@ Extract visual and content patterns from the image. Only suggest additions that 
 
   app.post("/api/proposals/:id/generate-deck", requireAuth, async (req, res) => {
     try {
-      if (await guardApiAsync(res)) return;
+      // NOTE: no guardApiAsync here. Deck generation does NOT call Claude
+      // (it writes a PPTX from already-stored content + the active template).
+      // It used to return 423 whenever the AI pause was on — silently failing
+      // every download.
       const id = safeInt(req.params.id);
       const proposal = await storage.getProposal(id);
       if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
