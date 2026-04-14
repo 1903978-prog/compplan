@@ -614,6 +614,131 @@ ${slideList}`;
 // Export for route use
 export { SLIDE_STRUCTURES };
 
+// ── Project Approach Generator ──────────────────────────────────────────────
+
+export async function generateProjectApproach(input: {
+  company_name: string;
+  website?: string | null;
+  revenue?: number | null;
+  ebitda_margin?: number | null;
+  objective?: string | null;
+  urgency?: string | null;
+  scope_perimeter?: string | null;
+  transcript?: string | null;
+  notes?: string | null;
+  project_type?: string | null;
+  knowledge_context?: string;
+}): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return JSON.stringify({
+      summary: "AI unavailable — ANTHROPIC_API_KEY not set. Please configure it and try again.",
+      team: [
+        { role: "Partner", count: 1, days_per_week: 1 },
+        { role: "Manager", count: 1, days_per_week: 5 },
+        { role: "Associate", count: 2, days_per_week: 5 }
+      ],
+      duration_weeks: 12,
+      options: [
+        { name: "Accelerated", weeks: 8, description: "Focused diagnostic with limited implementation" },
+        { name: "Standard", weeks: 12, description: "Full diagnostic + design + early implementation" },
+        { name: "Extended", weeks: 16, description: "Comprehensive transformation with full implementation support" }
+      ],
+      workstreams: [
+        { name: "Diagnostic", weeks: "1-4", activities: "Current state assessment, data collection, stakeholder interviews" },
+        { name: "Design", weeks: "5-8", activities: "Solution design, business case, roadmap development" },
+        { name: "Implementation", weeks: "9-12", activities: "Pilot execution, change management, handover" }
+      ]
+    }, null, 2);
+  }
+
+  const client = new Anthropic({ apiKey });
+
+  const contextParts: string[] = [];
+  contextParts.push(`Company: ${input.company_name}`);
+  if (input.website) contextParts.push(`Website: ${input.website}`);
+  if (input.revenue) contextParts.push(`Revenue: €${input.revenue}M`);
+  if (input.ebitda_margin) contextParts.push(`EBITDA margin: ${input.ebitda_margin}%`);
+  if (input.objective) contextParts.push(`Objective: ${input.objective}`);
+  if (input.urgency) contextParts.push(`Urgency: ${input.urgency}`);
+  if (input.scope_perimeter) contextParts.push(`Scope: ${input.scope_perimeter}`);
+  if (input.project_type) contextParts.push(`Project type: ${input.project_type}`);
+  if (input.transcript) contextParts.push(`Transcript/Notes:\n${input.transcript.substring(0, 3000)}`);
+  if (input.notes) contextParts.push(`Additional notes:\n${input.notes.substring(0, 1000)}`);
+
+  const systemPrompt = `You are a senior partner at Eendigo, a management consulting firm specializing in commercial excellence, pricing, SFE, and operational improvement for PE-backed and family-owned companies.
+
+Generate a structured project approach recommendation as a JSON object. The default team is:
+- 1 Partner (1 day/week oversight)
+- 1 Manager (5 days/week, project lead)
+- 2 Associates (5 days/week, execution)
+
+Default duration: 12 weeks. Shorter option: 8 weeks (diagnostic only). Extended: 16 weeks (full implementation).
+
+Typical Eendigo project structure:
+- Phase 1 (weeks 1-4): Diagnostic — interviews, data analysis, current state assessment
+- Phase 2 (weeks 5-8): Design — solution design, quick wins, business case
+- Phase 3 (weeks 9-12): Implementation — pilot, change management, sustainability plan
+
+If knowledge files are provided, reference them to align the approach with past successful projects.
+
+Return ONLY valid JSON matching this exact structure:
+{
+  "summary": "2-3 sentence recommendation overview",
+  "team": [{ "role": "Partner", "count": 1, "days_per_week": 1 }, ...],
+  "duration_weeks": 12,
+  "options": [{ "name": "...", "weeks": N, "description": "..." }, ...],
+  "workstreams": [{ "name": "...", "weeks": "1-4", "activities": "..." }, ...],
+  "key_deliverables": ["deliverable 1", "deliverable 2", ...]
+}`;
+
+  let userPrompt = `Generate a project approach for this client:\n\n${contextParts.join("\n")}`;
+  if (input.knowledge_context) {
+    userPrompt += `\n\n=== COMPANY KNOWLEDGE (reference for approach) ===\n${input.knowledge_context.substring(0, 15000)}`;
+  }
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+
+    const textBlock = response.content.find(b => b.type === "text");
+    let text = textBlock?.text ?? "{}";
+    // Extract JSON from markdown code block if present
+    const jsonMatch = text.match(/```json?\s*([\s\S]*?)```/);
+    if (jsonMatch) text = jsonMatch[1].trim();
+    // Validate it's parseable JSON
+    JSON.parse(text);
+    return text;
+  } catch (error: any) {
+    console.error("Claude API error (approach):", error.message);
+    // Return a sensible default
+    return JSON.stringify({
+      summary: `Recommended approach for ${input.company_name}: 12-week engagement with diagnostic, design, and implementation phases.`,
+      team: [
+        { role: "Partner", count: 1, days_per_week: 1 },
+        { role: "Manager", count: 1, days_per_week: 5 },
+        { role: "Associate", count: 2, days_per_week: 5 }
+      ],
+      duration_weeks: 12,
+      options: [
+        { name: "Accelerated", weeks: 8, description: "Focused diagnostic" },
+        { name: "Standard", weeks: 12, description: "Full engagement" },
+        { name: "Extended", weeks: 16, description: "Comprehensive transformation" }
+      ],
+      workstreams: [
+        { name: "Diagnostic", weeks: "1-4", activities: "Assessment and data collection" },
+        { name: "Design", weeks: "5-8", activities: "Solution design and business case" },
+        { name: "Implementation", weeks: "9-12", activities: "Execution and handover" }
+      ],
+      key_deliverables: ["Current state diagnostic report", "Solution design document", "Implementation roadmap", "Business case with ROI"]
+    }, null, 2);
+  }
+}
+
 // ── Per-slide defaults & generation ─────────────────────────────────────────
 
 export function getSlideDefaults(slideId: string, adminConfig?: any): {

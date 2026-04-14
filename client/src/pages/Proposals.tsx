@@ -68,6 +68,7 @@ interface Proposal {
   slide_briefs: SlideBrief[];
   options: ProposalOption[];
   call_checklist?: CallChecklistItem[];
+  project_approach?: string | null;
   ai_analysis?: any;
   status: string;
   created_at: string;
@@ -189,6 +190,13 @@ export default function Proposals() {
   const [slideChatHistory, setSlideChatHistory] = useState<Record<string, { role: "user" | "ai"; text: string }[]>>({});
   const [slideChatLoading, setSlideChatLoading] = useState(false);
 
+  // Knowledge Center
+  const [knowledgeFiles, setKnowledgeFiles] = useState<{ id: number; category: string; filename: string; file_size: number; uploaded_at: string }[]>([]);
+  const [showKnowledge, setShowKnowledge] = useState(false);
+  // Project Approach
+  const [projectApproach, setProjectApproach] = useState<string>("");
+  const [generatingApproach, setGeneratingApproach] = useState(false);
+
   // Drag state
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
@@ -231,6 +239,7 @@ export default function Proposals() {
     setProjectType((p.project_type as ProjectType) || "");
     setSlides(Array.isArray(p.slide_selection) && p.slide_selection.length > 0 ? p.slide_selection : []);
     setBriefs(Array.isArray(p.slide_briefs) && p.slide_briefs.length > 0 ? p.slide_briefs : []);
+    setProjectApproach(p.project_approach ?? "");
     // Restore call checklist
     setCallChecklist(
       Array.isArray(p.call_checklist) && p.call_checklist.length > 0
@@ -589,6 +598,7 @@ export default function Proposals() {
       objective: form.objective || null,
       urgency: form.urgency || null,
       project_type: projectType,
+      project_approach: projectApproach || null,
       slide_selection: slides,
       slide_briefs: briefs,
       call_checklist: callChecklist,
@@ -829,6 +839,7 @@ export default function Proposals() {
       objective: form.objective || null,
       urgency: form.urgency || null,
       project_type: projectType,
+      project_approach: projectApproach || null,
       slide_selection: slides,
       slide_briefs: briefs,
       call_checklist: callChecklist,
@@ -861,6 +872,56 @@ export default function Proposals() {
       toast({ title: "Save failed", variant: "destructive" });
     }
     setSaving(false);
+  }
+
+  // ── Knowledge Center ──────────────────────────────────────────────────────
+  async function loadKnowledge() {
+    try {
+      const res = await fetch("/api/knowledge", { credentials: "include" });
+      if (res.ok) { const d = await res.json(); setKnowledgeFiles(d.files ?? []); }
+    } catch { /* silent */ }
+  }
+  useEffect(() => { loadKnowledge(); }, []);
+
+  async function uploadKnowledgeFile(file: File, category: string) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = (reader.result as string).split(",")[1];
+      try {
+        await fetch("/api/knowledge", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category, filename: file.name, file_data: base64, file_size: file.size }),
+        });
+        toast({ title: `Uploaded: ${file.name}` });
+        loadKnowledge();
+      } catch { toast({ title: "Upload failed", variant: "destructive" }); }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function deleteKnowledgeFile(id: number) {
+    await fetch(`/api/knowledge/${id}`, { method: "DELETE", credentials: "include" }).catch(() => {});
+    loadKnowledge();
+  }
+
+  // ── Project Approach ────────────────────────────────────────────────────────
+  async function suggestApproach() {
+    if (!current?.id) { await saveProgress(); }
+    if (!current?.id) { toast({ title: "Save the proposal first", variant: "destructive" }); return; }
+    setGeneratingApproach(true);
+    try {
+      const res = await fetch(`/api/proposals/${current.id}/suggest-approach`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error("Generation failed");
+      const { approach } = await res.json();
+      setProjectApproach(approach);
+      toast({ title: "Project approach generated" });
+    } catch (err: any) {
+      toast({ title: "Failed to generate approach", description: err.message, variant: "destructive" });
+    }
+    setGeneratingApproach(false);
   }
 
   // ── Step 3 → Step 4: Submit briefs & trigger AI analysis ──────────────────
@@ -1148,6 +1209,77 @@ export default function Proposals() {
                   <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Anything else relevant..." rows={1} className="text-xs min-h-[32px]" />
                 </div>
               </div>
+              {/* ── Project Approach ──────────────────────────────── */}
+              <div className="border-t pt-3 mt-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Project Approach</h4>
+                  <Button size="sm" variant="outline" className="h-6 text-[10px]"
+                    onClick={suggestApproach} disabled={generatingApproach || !form.company_name}>
+                    {generatingApproach ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Generating...</>
+                      : <><Sparkles className="w-3 h-3 mr-1" />Suggest Approach</>}
+                  </Button>
+                </div>
+                {projectApproach ? (
+                  <Textarea
+                    value={(() => {
+                      try { return JSON.stringify(JSON.parse(projectApproach), null, 2); } catch { return projectApproach; }
+                    })()}
+                    onChange={e => setProjectApproach(e.target.value)}
+                    rows={8}
+                    className="text-[10px] font-mono"
+                  />
+                ) : (
+                  <p className="text-[10px] text-muted-foreground italic">
+                    Click "Suggest Approach" to generate team, duration, workstreams based on your inputs and knowledge files.
+                  </p>
+                )}
+              </div>
+
+              {/* ── Knowledge Center ──────────────────────────────── */}
+              <div className="border-t pt-3 mt-2">
+                <button onClick={() => setShowKnowledge(v => !v)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide hover:text-foreground w-full text-left">
+                  <ChevronDown className={`w-3 h-3 transition-transform ${showKnowledge ? "rotate-180" : ""}`} />
+                  Knowledge Center ({knowledgeFiles.length} files)
+                </button>
+                {showKnowledge && (
+                  <div className="mt-2 space-y-2">
+                    {knowledgeFiles.length > 0 && (
+                      <div className="space-y-1">
+                        {knowledgeFiles.map(f => (
+                          <div key={f.id} className="flex items-center gap-2 text-[10px] py-1 px-2 rounded bg-muted/30">
+                            <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <span className="truncate flex-1">{f.filename}</span>
+                            <span className="text-muted-foreground shrink-0">{f.category}</span>
+                            <span className="text-muted-foreground shrink-0">{Math.round(f.file_size / 1024)}KB</span>
+                            <button onClick={() => deleteKnowledgeFile(f.id)}
+                              className="text-muted-foreground hover:text-destructive shrink-0">
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="file"
+                        accept=".txt,.md,.pdf,.docx,.pptx,.csv"
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const cat = window.prompt("Category (e.g. Past Proposals, Methodologies, Frameworks):", "General");
+                            if (cat !== null) uploadKnowledgeFile(file, cat || "General");
+                          }
+                          e.target.value = "";
+                        }}
+                        className="h-7 text-[10px] flex-1"
+                      />
+                    </div>
+                    <p className="text-[9px] text-muted-foreground">Upload .txt, .md, .pdf, .docx, .pptx — AI uses these as reference when generating approaches and slide content.</p>
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-end mt-3">
                 <Button size="sm" onClick={handleGoToSlides}>
                   Choose Slides <ArrowRight className="w-3.5 h-3.5 ml-1" />

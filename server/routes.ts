@@ -1361,6 +1361,109 @@ RULES:
     }
   });
 
+  // ── Knowledge Center ──────────────────────────────────────────────────────
+  app.get("/api/knowledge", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const rows = await db.execute(sql`SELECT * FROM knowledge_files ORDER BY uploaded_at DESC`);
+      res.json({ files: rows.rows });
+    } catch (err: any) { res.json({ files: [] }); }
+  });
+
+  app.post("/api/knowledge", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const { category, filename, file_data, file_size } = req.body;
+      if (!filename || !file_data) { res.status(400).json({ message: "filename and file_data required" }); return; }
+
+      // Save file to disk
+      const uploadsDir = path.join(process.cwd(), "uploads", "knowledge");
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      const safeFilename = filename.replace(/[^a-zA-Z0-9._\-() ]/g, "_");
+      const filePath = path.join(uploadsDir, `${Date.now()}_${safeFilename}`);
+      const buffer = Buffer.from(file_data, "base64");
+      fs.writeFileSync(filePath, buffer);
+
+      // Extract text content for AI context (plain text files only; for others store filename)
+      let contentText = "";
+      if (/\.txt$/i.test(filename)) {
+        contentText = buffer.toString("utf-8").substring(0, 50000);
+      } else if (/\.md$/i.test(filename)) {
+        contentText = buffer.toString("utf-8").substring(0, 50000);
+      } else {
+        contentText = `[File: ${filename}, ${Math.round((file_size || buffer.length) / 1024)}KB — content not extracted (binary format)]`;
+      }
+
+      const now = new Date().toISOString();
+      await db.execute(sql`
+        INSERT INTO knowledge_files (category, filename, file_path, file_size, content_text, uploaded_at)
+        VALUES (${category || "General"}, ${filename}, ${filePath}, ${file_size || buffer.length}, ${contentText}, ${now})
+      `);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/knowledge/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      // Get file path before deleting
+      const row = await db.execute(sql`SELECT file_path FROM knowledge_files WHERE id = ${id}`);
+      if (row.rows.length > 0) {
+        const fp = (row.rows[0] as any).file_path;
+        try { fs.unlinkSync(fp); } catch { /* file may not exist */ }
+      }
+      await db.execute(sql`DELETE FROM knowledge_files WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/proposals/:id/suggest-approach — AI generates project approach
+  app.post("/api/proposals/:id/suggest-approach", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      // Load knowledge files for AI context
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const knowledgeRows = await db.execute(sql`SELECT filename, content_text FROM knowledge_files ORDER BY uploaded_at DESC LIMIT 20`);
+      const knowledgeContext = knowledgeRows.rows
+        .filter((r: any) => r.content_text)
+        .map((r: any) => `--- ${r.filename} ---\n${(r.content_text as string).substring(0, 5000)}`)
+        .join("\n\n");
+
+      const { generateProjectApproach } = await import("./proposalBriefs");
+      const approach = await generateProjectApproach({
+        company_name: proposal.company_name,
+        website: proposal.website,
+        revenue: proposal.revenue,
+        ebitda_margin: proposal.ebitda_margin,
+        objective: proposal.objective,
+        urgency: proposal.urgency,
+        scope_perimeter: proposal.scope_perimeter,
+        transcript: proposal.transcript,
+        notes: proposal.notes,
+        project_type: proposal.project_type,
+        knowledge_context: knowledgeContext,
+      });
+
+      // Save to proposal
+      await storage.updateProposal(id, { project_approach: approach });
+      res.json({ approach });
+    } catch (err: any) {
+      console.error("Suggest approach error:", err.message);
+      res.status(500).json({ message: err.message || "Failed to generate approach" });
+    }
+  });
+
   // POST /api/harvest/backfill-projects — one-time backfill of project codes from Harvest
   app.post("/api/harvest/backfill-projects", requireAuth, async (_req, res) => {
     if (!HARVEST_TOKEN || !HARVEST_ACCOUNT) {

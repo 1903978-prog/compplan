@@ -636,3 +636,14 @@ export const invoiceChanges = pgTable("invoice_changes", {
   approval_status: text("approval_status").notNull().default("pending"), // "pending" | "approved" | "rejected"
   dismissed: integer("dismissed").notNull().default(0),    // 1 = user dismissed from notification banner
 });
+
+// ── Knowledge Center ────────────────────────────────────────────────────────
+export const knowledgeFiles = pgTable("knowledge_files", {
+  id: serial("id").primaryKey(),
+  category: text("category").notNull().default("General"),
+  filename: text("filename").notNull(),
+  file_path: text("file_path").notNull(),
+  file_size: integer("file_size").notNull().default(0),
+  content_text: text("content_text"),   // extracted text for AI context
+  uploaded_at: text("uploaded_at").notNull(),
+});

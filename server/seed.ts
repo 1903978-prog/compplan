@@ -397,6 +397,20 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS new_value TEXT`);
   await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'pending'`);
 
+  // ── Knowledge Center + Project Approach ──────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS knowledge_files (
+      id SERIAL PRIMARY KEY,
+      category TEXT NOT NULL DEFAULT 'General',
+      filename TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      content_text TEXT,
+      uploaded_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS project_approach TEXT`);
+
   // Seed pricing_proposals from historical win/loss Excel (idempotent by project_name)
   // Note: no count-gate here — the WHERE NOT EXISTS guard ensures deleted rows stay deleted.
   try {
