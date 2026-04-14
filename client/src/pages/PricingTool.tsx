@@ -2561,35 +2561,91 @@ export default function PricingTool() {
                                   <Trash2 className="w-3 h-3" />
                                 </button>
                               </div>
-                              <div className="grid grid-cols-[300px,1fr] gap-4 items-start">
-                                {/* Left: number table */}
-                                <table className="text-xs w-full border rounded overflow-hidden">
-                                  <thead>
-                                    <tr className="bg-muted/30 border-b">
-                                      <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Parameter</th>
-                                      <th className="text-center px-3 py-1.5 font-semibold text-emerald-700">Corridor</th>
-                                      <th className="text-center px-3 py-1.5 font-semibold text-muted-foreground">Decisive</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {rows.map((row, i) => {
-                                      const isWeeklyRow = row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee");
-                                      return (
-                                        <tr key={i} className={`border-b last:border-0 ${isWeeklyRow ? "bg-emerald-50/30" : ""}`}>
-                                          <td className={`px-3 py-1.5 font-medium ${isWeeklyRow ? "text-foreground font-semibold" : "text-muted-foreground"}`}>{row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}</td>
-                                          <td className={`px-3 py-1.5 text-center font-mono ${isWeeklyRow ? "text-emerald-700 font-bold text-sm" : "text-emerald-600"}`}>
-                                            {row.green_high === 0
-                                              ? (avgWonWeekly && isWeeklyRow
-                                                  ? <span className="text-emerald-600 italic">{fB(avgWonWeekly * 0.9)}–{fB(avgWonWeekly * 1.1)}</span>
-                                                  : <span className="text-muted-foreground italic">n/a</span>)
-                                              : `${fB(row.green_low)}–${fB(row.green_high)}`}
-                                          </td>
-                                          <td className="px-3 py-1.5 text-center font-semibold">{row.decisiveness_pct}%</td>
+                              <div className="grid grid-cols-[1fr,1fr] gap-4 items-start">
+                                {/* Left: editable corridor table */}
+                                {(() => {
+                                  // Find the actual benchmark rows for this region so we can update them
+                                  const regionCountryNames = benchmarkCountries.filter(c => countryToReg(c) === country);
+
+                                  const updateCorridorValue = (param: string, field: "green_low" | "green_high" | "yellow_low" | "yellow_high", delta: number) => {
+                                    const updated = benchmarks.map(b => {
+                                      const matches = regionCountryNames.includes(b.country) && b.parameter === param;
+                                      if (!matches) return b;
+                                      const newVal = Math.max(0, (b[field] || 0) + delta);
+                                      return { ...b, [field]: newVal };
+                                    });
+                                    // If no matching row exists yet, create one
+                                    if (!updated.some(b => regionCountryNames.includes(b.country) && b.parameter === param)) {
+                                      const cName = regionCountryNames[0] ?? country;
+                                      updated.push({
+                                        country: cName, parameter: param,
+                                        yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0,
+                                        decisiveness_pct: 25, [field]: Math.max(0, delta),
+                                      });
+                                    }
+                                    setBenchmarks(updated);
+                                    setBenchmarksLocal(updated);
+                                    saveBenchmarks(updated);
+                                  };
+
+                                  const StepperCell = ({ value, onChange, highlight }: { value: number; onChange: (delta: number) => void; highlight?: boolean }) => (
+                                    <div className="flex items-center justify-center gap-0.5">
+                                      <button onClick={() => onChange(-500)}
+                                        className="w-5 h-5 rounded text-[10px] font-bold flex items-center justify-center hover:bg-muted border border-transparent hover:border-border">−</button>
+                                      <span className={`w-14 text-center font-mono text-xs ${highlight ? "font-bold text-emerald-700" : "text-foreground"}`}>
+                                        {value > 0 ? fB(value) : "—"}
+                                      </span>
+                                      <button onClick={() => onChange(500)}
+                                        className="w-5 h-5 rounded text-[10px] font-bold flex items-center justify-center hover:bg-muted border border-transparent hover:border-border">+</button>
+                                    </div>
+                                  );
+
+                                  return (
+                                    <table className="text-xs w-full border rounded overflow-hidden">
+                                      <thead>
+                                        <tr className="bg-muted/30 border-b">
+                                          <th className="text-left px-2 py-1.5 font-semibold text-muted-foreground">Param</th>
+                                          <th className="text-center px-1 py-1.5 font-semibold text-amber-600 text-[10px]">Yellow low</th>
+                                          <th className="text-center px-1 py-1.5 font-semibold text-emerald-700 text-[10px]">Corridor low</th>
+                                          <th className="text-center px-1 py-1.5 font-semibold text-emerald-700 text-[10px]">Corridor high</th>
+                                          <th className="text-center px-1 py-1.5 font-semibold text-amber-600 text-[10px]">Yellow high</th>
+                                          <th className="text-center px-2 py-1.5 font-semibold text-muted-foreground text-[10px]">Decisive</th>
                                         </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
+                                      </thead>
+                                      <tbody>
+                                        {rows.map((row, i) => {
+                                          const isWeekly = row.parameter.toLowerCase().includes("weekly") || row.parameter.toLowerCase().includes("fee");
+                                          // Find the actual raw parameter name to match against benchmarks
+                                          const rawParam = benchmarks.find(b =>
+                                            regionCountryNames.includes(b.country) &&
+                                            (b.parameter.toLowerCase().includes("weekly") === isWeekly || b.parameter === row.parameter)
+                                          )?.parameter ?? row.parameter;
+
+                                          return (
+                                            <tr key={i} className={`border-b last:border-0 ${isWeekly ? "bg-emerald-50/30" : ""}`}>
+                                              <td className={`px-2 py-1 font-medium ${isWeekly ? "text-foreground font-semibold" : "text-muted-foreground"}`}>
+                                                {row.parameter.replace("Total project cost", "Total").replace("Weekly fee", "Weekly")}
+                                              </td>
+                                              <td className="px-0 py-0.5">
+                                                <StepperCell value={row.yellow_low} onChange={d => updateCorridorValue(rawParam, "yellow_low", d)} />
+                                              </td>
+                                              <td className="px-0 py-0.5">
+                                                <StepperCell value={row.green_low} onChange={d => updateCorridorValue(rawParam, "green_low", d)} highlight={isWeekly} />
+                                              </td>
+                                              <td className="px-0 py-0.5">
+                                                <StepperCell value={row.green_high} onChange={d => updateCorridorValue(rawParam, "green_high", d)} highlight={isWeekly} />
+                                              </td>
+                                              <td className="px-0 py-0.5">
+                                                <StepperCell value={row.yellow_high} onChange={d => updateCorridorValue(rawParam, "yellow_high", d)} />
+                                              </td>
+                                              <td className="px-2 py-1 text-center font-semibold text-muted-foreground">{row.decisiveness_pct}%</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  );
+                                })()}
                                 {/* Right: visual band bars (shared scale) */}
                                 <div className="space-y-2 pt-1">
                                   {/* Market benchmark bar (Italy green × country multiplier) — weekly only */}
