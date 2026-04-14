@@ -1002,93 +1002,92 @@ export default function Proposals() {
 
         {/* ── Step 1: Input Form ─────────────────────────────────────────── */}
         {step === 1 && (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
             {/* ── Left: Input Fields ──────────────────────────────────── */}
-            <Card className="lg:col-span-3 p-6">
-              <h3 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wide">Proposal Inputs</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Company Name *</label>
-                  <Input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Acme Corp" />
+            <Card className="lg:col-span-3 p-4">
+              <h3 className="text-xs font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Proposal Inputs</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="col-span-2">
+                  <label className="text-[11px] font-medium mb-0.5 block">Company Name *</label>
+                  <Input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Acme Corp" className="h-8 text-xs" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[11px] font-medium mb-0.5 block">Website</label>
+                  <Input value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." className="h-8 text-xs" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1 block">Website</label>
-                  <Input value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
+                  <label className="text-[11px] font-medium mb-0.5 block">Revenue (EUR M)</label>
+                  <Input type="number" value={form.revenue} onChange={e => setForm(f => ({ ...f, revenue: e.target.value }))} placeholder="150" className="h-8 text-xs" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1 block">Revenue (EUR M)</label>
-                  <Input type="number" value={form.revenue} onChange={e => setForm(f => ({ ...f, revenue: e.target.value }))} placeholder="150" />
+                  <label className="text-[11px] font-medium mb-0.5 block">EBITDA Margin %</label>
+                  <Input type="number" value={form.ebitda_margin} onChange={e => setForm(f => ({ ...f, ebitda_margin: e.target.value }))} placeholder="12" className="h-8 text-xs" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1 block">EBITDA Margin %</label>
-                  <Input type="number" value={form.ebitda_margin} onChange={e => setForm(f => ({ ...f, ebitda_margin: e.target.value }))} placeholder="12" />
+                  <label className="text-[11px] font-medium mb-0.5 block">Objective</label>
+                  <Input value={form.objective} onChange={e => setForm(f => ({ ...f, objective: e.target.value }))} placeholder="Improve commercial..." className="h-8 text-xs" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1 block">Objective</label>
-                  <Input value={form.objective} onChange={e => setForm(f => ({ ...f, objective: e.target.value }))} placeholder="Improve commercial effectiveness..." />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Urgency</label>
+                  <label className="text-[11px] font-medium mb-0.5 block">Urgency</label>
                   <select
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    className="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
                     value={form.urgency}
                     onChange={e => setForm(f => ({ ...f, urgency: e.target.value }))}
                   >
                     {URGENCY_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
-                <div className="md:col-span-2">
-                  <label className="text-sm font-medium mb-1 block">Scope / Perimeter</label>
-                  <Textarea value={form.scope_perimeter} onChange={e => setForm(f => ({ ...f, scope_perimeter: e.target.value }))} placeholder="Which functions, geographies, products..." rows={2} />
+                <div className="col-span-2">
+                  <label className="text-[11px] font-medium mb-0.5 block">Scope / Perimeter</label>
+                  <Textarea value={form.scope_perimeter} onChange={e => setForm(f => ({ ...f, scope_perimeter: e.target.value }))} placeholder="Functions, geographies, products..." rows={1} className="text-xs min-h-[32px]" />
                 </div>
-                <div className="md:col-span-2">
-                  <label className="text-sm font-medium mb-1 block">Call Transcript / Meeting Notes</label>
-                  <Textarea value={form.transcript} onChange={e => setForm(f => ({ ...f, transcript: e.target.value }))} placeholder="Paste call transcript or key notes..." rows={4} />
+                <div className="col-span-2">
+                  <label className="text-[11px] font-medium mb-0.5 block">Call Transcript / Notes</label>
+                  <Textarea value={form.transcript} onChange={e => setForm(f => ({ ...f, transcript: e.target.value }))} placeholder="Paste transcript or key notes..." rows={2} className="text-xs" />
                 </div>
-                <div className="md:col-span-2">
-                  <label className="text-sm font-medium mb-1 block">Additional Notes</label>
-                  <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Anything else relevant..." rows={2} />
+                <div className="col-span-4">
+                  <label className="text-[11px] font-medium mb-0.5 block">Additional Notes</label>
+                  <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Anything else relevant..." rows={1} className="text-xs min-h-[32px]" />
                 </div>
               </div>
-              <div className="flex justify-end mt-6">
-                <Button onClick={handleGoToSlides}>
-                  Choose Slides <ArrowRight className="w-4 h-4 ml-1" />
+              <div className="flex justify-end mt-3">
+                <Button size="sm" onClick={handleGoToSlides}>
+                  Choose Slides <ArrowRight className="w-3.5 h-3.5 ml-1" />
                 </Button>
               </div>
             </Card>
 
             {/* ── Right: Intro Call Checklist ─────────────────────────── */}
-            <Card className="lg:col-span-2 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Intro Call Questions</h3>
-                <span className="text-xs text-muted-foreground">
+            <Card className="lg:col-span-2 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Intro Call Questions</h3>
+                <span className="text-[10px] text-muted-foreground">
                   {callChecklist.filter(c => c.checked).length}/{callChecklist.length} answered
                 </span>
               </div>
-              {/* Progress bar */}
-              <div className="w-full h-1.5 bg-muted rounded-full mb-3 overflow-hidden">
+              <div className="w-full h-1 bg-muted rounded-full mb-2 overflow-hidden">
                 <div
                   className="h-full bg-green-500 rounded-full transition-all"
                   style={{ width: `${callChecklist.length > 0 ? (callChecklist.filter(c => c.checked).length / callChecklist.length) * 100 : 0}%` }}
                 />
               </div>
-              <div className="space-y-1 max-h-[calc(100vh-300px)] overflow-y-auto">
+              <div className="space-y-0.5 max-h-[calc(100vh-280px)] overflow-y-auto">
                 {callChecklist.map((item, idx) => (
                   <div
                     key={idx}
-                    className={`group flex items-start gap-2 p-2 rounded-md transition-colors ${
+                    className={`group flex items-start gap-1.5 px-1.5 py-1 rounded transition-colors ${
                       item.checked ? "bg-green-50 dark:bg-green-950/20" : "hover:bg-accent/30"
                     }`}
                   >
                     <button
-                      className={`mt-0.5 w-5 h-5 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${
+                      className={`mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${
                         item.checked
                           ? "bg-green-500 border-green-500 text-white"
                           : "border-muted-foreground/40 hover:border-primary"
                       }`}
                       onClick={() => setCallChecklist(prev => prev.map((c, i) => i === idx ? { ...c, checked: !c.checked } : c))}
                     >
-                      {item.checked && <Check className="w-3 h-3" />}
+                      {item.checked && <Check className="w-2.5 h-2.5" />}
                     </button>
                     <div className="flex-1 min-w-0">
                       {editingQuestion === idx ? (
@@ -1103,7 +1102,7 @@ export default function Proposals() {
                         />
                       ) : (
                         <span
-                          className={`text-xs text-left w-full leading-relaxed cursor-pointer ${
+                          className={`text-[11px] text-left w-full leading-snug cursor-pointer ${
                             item.checked ? "text-muted-foreground line-through" : "text-foreground"
                           }`}
                           onClick={() => setEditingQuestion(idx)}
@@ -1147,14 +1146,14 @@ export default function Proposals() {
             </Card>
 
             {/* Save + Next */}
-            <div className="flex justify-between pt-2">
-              <Button variant="outline" onClick={saveProgress} disabled={saving || !form.company_name}>
-                {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+            <div className="flex justify-between pt-1 lg:col-span-5">
+              <Button variant="outline" size="sm" onClick={saveProgress} disabled={saving || !form.company_name}>
+                {saving ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
                 Save Progress
               </Button>
-              <Button onClick={() => setStep(2)} disabled={!form.company_name}>
+              <Button size="sm" onClick={() => setStep(2)} disabled={!form.company_name}>
                 Select Slides
-                <ArrowRight className="w-4 h-4 ml-1" />
+                <ArrowRight className="w-3.5 h-3.5 ml-1" />
               </Button>
             </div>
           </div>
