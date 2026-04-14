@@ -606,3 +606,121 @@ ${slideList}`;
 
 // Export for route use
 export { SLIDE_STRUCTURES };
+
+// ── Per-slide defaults & generation ─────────────────────────────────────────
+
+export function getSlideDefaults(slideId: string, adminConfig?: any): {
+  visual_prompt: string;
+  content_prompt: string;
+  follow_up_questions: { key: string; question: string }[];
+} {
+  const structure = SLIDE_STRUCTURES[slideId];
+
+  // Visual prompt from admin config or generic default
+  let visualPrompt = "Standard single-column slide with header, body content, and Eendigo footer bar.";
+  if (adminConfig) {
+    const parts: string[] = [];
+    if (adminConfig.format) parts.push(`Format: ${adminConfig.format}`);
+    if (adminConfig.columns?.column_1) parts.push(`Column 1: ${adminConfig.columns.column_1}`);
+    if (adminConfig.columns?.column_2) parts.push(`Column 2: ${adminConfig.columns.column_2}`);
+    if (adminConfig.rules) parts.push(`Rules: ${adminConfig.rules}`);
+    if (parts.length > 0) visualPrompt = parts.join("\n");
+  }
+
+  // Content prompt as a workflow of guiding questions
+  let contentPrompt = "Describe the key content for this slide.";
+  const followUpQuestions: { key: string; question: string }[] = [];
+
+  if (structure) {
+    const lines: string[] = [];
+    lines.push(`Purpose: ${structure.purpose}`);
+    lines.push("");
+    lines.push("Answer the following to generate this slide's content:");
+    structure.fields.forEach((f, i) => {
+      lines.push(`${i + 1}. ${f.label}: ${f.hint}`);
+      followUpQuestions.push({ key: f.key, question: `${f.label} — ${f.hint}` });
+    });
+    contentPrompt = lines.join("\n");
+  }
+
+  return { visual_prompt: visualPrompt, content_prompt: contentPrompt, follow_up_questions: followUpQuestions };
+}
+
+export async function generateSingleSlideBrief(input: {
+  slide_id: string;
+  slide_title: string;
+  visual_prompt: string;
+  content_prompt: string;
+  answers: Record<string, string>;
+  company_name: string;
+  website?: string | null;
+  transcript?: string | null;
+  notes?: string | null;
+  revenue?: number | null;
+  ebitda_margin?: number | null;
+  scope_perimeter?: string | null;
+  objective?: string | null;
+  urgency?: string | null;
+  project_type: string;
+}): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return `[AI generation unavailable — ANTHROPIC_API_KEY not set]\n\nSlide: ${input.slide_title}\nPlease fill in the content manually based on the content prompt.`;
+  }
+
+  const client = new Anthropic({ apiKey });
+
+  // Build context from proposal data
+  const contextParts: string[] = [];
+  contextParts.push(`Company: ${input.company_name}`);
+  if (input.website) contextParts.push(`Website: ${input.website}`);
+  if (input.project_type) contextParts.push(`Project type: ${input.project_type}`);
+  if (input.revenue) contextParts.push(`Revenue: €${input.revenue}M`);
+  if (input.ebitda_margin) contextParts.push(`EBITDA margin: ${input.ebitda_margin}%`);
+  if (input.scope_perimeter) contextParts.push(`Scope: ${input.scope_perimeter}`);
+  if (input.objective) contextParts.push(`Objective: ${input.objective}`);
+  if (input.urgency) contextParts.push(`Urgency: ${input.urgency}`);
+  if (input.transcript) contextParts.push(`Call transcript / notes:\n${input.transcript.substring(0, 3000)}`);
+  if (input.notes) contextParts.push(`Additional notes:\n${input.notes.substring(0, 1000)}`);
+
+  // Build the answers section
+  const answerLines = Object.entries(input.answers)
+    .filter(([, v]) => v.trim())
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join("\n");
+
+  const systemPrompt = `You are a senior management consultant at Eendigo, writing slide content for a client proposal.
+Write concise, executive-level content suitable for a PowerPoint slide. Use bullet points where appropriate.
+Be specific to the client context provided. Avoid generic filler text.
+Format: Use markdown with headers (##) for sections and bullet points (-) for items.`;
+
+  const userPrompt = `Generate content for the slide "${input.slide_title}".
+
+PROPOSAL CONTEXT:
+${contextParts.join("\n")}
+
+VISUAL INSTRUCTIONS:
+${input.visual_prompt}
+
+CONTENT BRIEF:
+${input.content_prompt}
+
+${answerLines ? `USER ANSWERS:\n${answerLines}` : ""}
+
+Write the slide content now. Be specific to ${input.company_name}. Keep it concise and slide-ready.`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+
+    const textBlock = response.content.find(b => b.type === "text");
+    return textBlock?.text ?? "No content generated.";
+  } catch (error: any) {
+    console.error("Claude API error (single slide):", error.message);
+    return `[Generation failed: ${error.message}]\n\nPlease write the content manually.`;
+  }
+}

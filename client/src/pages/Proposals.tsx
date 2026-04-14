@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -176,6 +176,11 @@ export default function Proposals() {
   const [showSlideInstructions, setShowSlideInstructions] = useState(false);
   const [slideInstructionsText, setSlideInstructionsText] = useState("");
   const [slideInstructionsParsing, setSlideInstructionsParsing] = useState(false);
+
+  // Per-slide prompt editing (Step 2)
+  const [expandedSlidePanel, setExpandedSlidePanel] = useState<{ slideId: string; panel: "visual" | "content" | "generate" } | null>(null);
+  const [slideGenerating, setSlideGenerating] = useState<string | null>(null);
+  const [slideFollowUpQs, setSlideFollowUpQs] = useState<Record<string, { key: string; question: string }[]>>({});
 
   // Drag state
   const dragItem = useRef<number | null>(null);
@@ -373,6 +378,79 @@ export default function Proposals() {
       setSlides(getDefaultSlideSelection(projectType));
       setHasManualEdits(false);
     }
+  }
+
+  // ── Per-slide prompt helpers ────────────────────────────────────────────────
+
+  function toggleSlidePanel(slideId: string, panel: "visual" | "content" | "generate") {
+    if (expandedSlidePanel?.slideId === slideId && expandedSlidePanel.panel === panel) {
+      setExpandedSlidePanel(null);
+    } else {
+      setExpandedSlidePanel({ slideId, panel });
+      // Load defaults if prompts are empty
+      const slide = slides.find(s => s.slide_id === slideId);
+      if (!slide?.visual_prompt || !slide?.content_prompt || !slideFollowUpQs[slideId]) {
+        loadSlideDefaults(slideId);
+      }
+    }
+  }
+
+  async function loadSlideDefaults(slideId: string) {
+    try {
+      const res = await fetch(`/api/slide-defaults/${slideId}`, { credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setSlides(prev => prev.map(s =>
+        s.slide_id === slideId ? {
+          ...s,
+          visual_prompt: s.visual_prompt || data.visual_prompt,
+          content_prompt: s.content_prompt || data.content_prompt,
+        } : s
+      ));
+      if (data.follow_up_questions?.length > 0) {
+        setSlideFollowUpQs(prev => ({ ...prev, [slideId]: data.follow_up_questions }));
+      }
+    } catch { /* silent */ }
+  }
+
+  function updateSlideField(slideId: string, field: string, value: any) {
+    setSlides(prev => prev.map(s => s.slide_id === slideId ? { ...s, [field]: value } : s));
+    setHasManualEdits(true);
+  }
+
+  async function generateSlideContent(slideId: string) {
+    const slide = slides.find(s => s.slide_id === slideId);
+    if (!slide) return;
+
+    // Must save proposal first to get an ID
+    if (!current?.id) {
+      await saveProgress();
+    }
+    if (!current?.id) {
+      toast({ title: "Save the proposal first", variant: "destructive" });
+      return;
+    }
+
+    setSlideGenerating(slideId);
+    try {
+      const res = await fetch(`/api/proposals/${current.id}/generate-slide`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: slideId,
+          visual_prompt: slide.visual_prompt ?? "",
+          content_prompt: slide.content_prompt ?? "",
+          answers: slide.generation_answers ?? {},
+        }),
+      });
+      if (!res.ok) throw new Error("Generation failed");
+      const { generated_content } = await res.json();
+      updateSlideField(slideId, "generated_content", generated_content);
+      toast({ title: `Content generated for "${slide.title}"` });
+    } catch (err: any) {
+      toast({ title: "Generation failed", description: err.message, variant: "destructive" });
+    }
+    setSlideGenerating(null);
   }
 
   // ── Step 2 → Step 3: Save slide selection & generate briefs ─────────────────
@@ -1202,51 +1280,156 @@ Example:
 
               function renderSlideRow(slide: SlideSelectionEntry, idx: number, globalIdx: number) {
                 const masterDef = MASTER_SLIDES.find(m => m.slide_id === slide.slide_id);
+                const isExpanded = expandedSlidePanel?.slideId === slide.slide_id;
+                const activePanel = expandedSlidePanel?.panel;
+                const isGen = slideGenerating === slide.slide_id;
+                const questions = slideFollowUpQs[slide.slide_id] ?? [];
+
                 return (
-                  <div
-                    key={slide.slide_id}
-                    draggable
-                    onDragStart={() => handleDragStart(globalIdx)}
-                    onDragEnter={() => handleDragEnter(globalIdx)}
-                    onDragEnd={handleDragEnd}
-                    onDragOver={e => e.preventDefault()}
-                    className={`flex items-center gap-3 px-4 py-2.5 transition-colors cursor-grab active:cursor-grabbing ${
-                      slide.is_selected ? "bg-primary/5" :
-                      slide.is_suggested && !slide.is_selected ? "bg-amber-50 dark:bg-amber-950/20" :
-                      "bg-background opacity-60"
-                    }`}
-                  >
-                    <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <div className="flex flex-col gap-0.5">
-                      <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" onClick={() => moveSlide(globalIdx, "up")} disabled={globalIdx === 0}>
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" onClick={() => moveSlide(globalIdx, "down")} disabled={globalIdx === slides.length - 1}>
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => toggleSlide(slide.slide_id)}
-                      className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                        slide.is_selected ? "bg-primary border-primary text-primary-foreground" : "border-input hover:border-primary"
+                  <React.Fragment key={slide.slide_id}>
+                    <div
+                      draggable
+                      onDragStart={() => { setExpandedSlidePanel(null); handleDragStart(globalIdx); }}
+                      onDragEnter={() => handleDragEnter(globalIdx)}
+                      onDragEnd={handleDragEnd}
+                      onDragOver={e => e.preventDefault()}
+                      className={`flex items-center gap-3 px-4 py-2.5 transition-colors cursor-grab active:cursor-grabbing ${
+                        slide.is_selected ? "bg-primary/5" :
+                        slide.is_suggested && !slide.is_selected ? "bg-amber-50 dark:bg-amber-950/20" :
+                        "bg-background opacity-60"
                       }`}
                     >
-                      {slide.is_selected && <Check className="w-3 h-3" />}
-                    </button>
-                    <div className="flex-1 min-w-0" onClick={() => toggleSlide(slide.slide_id)}>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"}`}>{slide.title}</span>
-                        {slide.group === "core" && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 font-medium">CORE</span>
+                      <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <div className="flex flex-col gap-0.5">
+                        <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" onClick={() => moveSlide(globalIdx, "up")} disabled={globalIdx === 0}>
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" onClick={() => moveSlide(globalIdx, "down")} disabled={globalIdx === slides.length - 1}>
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => toggleSlide(slide.slide_id)}
+                        className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                          slide.is_selected ? "bg-primary border-primary text-primary-foreground" : "border-input hover:border-primary"
+                        }`}
+                      >
+                        {slide.is_selected && <Check className="w-3 h-3" />}
+                      </button>
+                      <div className="flex-1 min-w-0" onClick={() => toggleSlide(slide.slide_id)}>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-medium ${slide.is_selected ? "" : "text-muted-foreground"}`}>{slide.title}</span>
+                          {slide.group === "core" && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">CORE</span>
+                          )}
+                          {slide.is_suggested && !slide.is_selected && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium animate-pulse">SUGGESTED</span>
+                          )}
+                          {slide.generated_content && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">GENERATED</span>
+                          )}
+                        </div>
+                        {masterDef && <p className="text-xs text-muted-foreground truncate">{masterDef.description}</p>}
+                      </div>
+                      {/* Per-slide prompt buttons */}
+                      {slide.is_selected && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button title="Visual Instructions" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "visual"); }}
+                            className={`p-1.5 rounded hover:bg-muted transition-colors ${isExpanded && activePanel === "visual" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                            <ImageIcon className="w-3.5 h-3.5" />
+                          </button>
+                          <button title="Content Prompt" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "content"); }}
+                            className={`p-1.5 rounded hover:bg-muted transition-colors ${isExpanded && activePanel === "content" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                            <FileText className="w-3.5 h-3.5" />
+                          </button>
+                          <button title="Generate Content" onClick={e => { e.stopPropagation(); toggleSlidePanel(slide.slide_id, "generate"); }}
+                            disabled={isGen}
+                            className={`p-1.5 rounded hover:bg-muted transition-colors ${isExpanded && activePanel === "generate" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                            {isGen ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      )}
+                      <span className="text-xs text-muted-foreground w-6 text-right shrink-0">{globalIdx + 1}</span>
+                    </div>
+
+                    {/* Inline expansion panel */}
+                    {isExpanded && (
+                      <div className="px-6 py-3 bg-muted/20 border-t border-dashed space-y-2">
+                        {activePanel === "visual" && (
+                          <>
+                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                              <ImageIcon className="w-3 h-3" /> Visual Instructions
+                            </div>
+                            <Textarea
+                              value={slide.visual_prompt ?? ""}
+                              onChange={e => updateSlideField(slide.slide_id, "visual_prompt", e.target.value)}
+                              placeholder="Describe how this slide should look: layout, columns, imagery, branding..."
+                              rows={4}
+                              className="text-xs"
+                            />
+                          </>
                         )}
-                        {slide.is_suggested && !slide.is_selected && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 font-medium animate-pulse">SUGGESTED</span>
+
+                        {activePanel === "content" && (
+                          <>
+                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                              <FileText className="w-3 h-3" /> Content Prompt
+                            </div>
+                            <Textarea
+                              value={slide.content_prompt ?? ""}
+                              onChange={e => updateSlideField(slide.slide_id, "content_prompt", e.target.value)}
+                              placeholder="Define the workflow/questions to guide content generation for this slide..."
+                              rows={6}
+                              className="text-xs font-mono"
+                            />
+                          </>
+                        )}
+
+                        {activePanel === "generate" && (
+                          <>
+                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                              <Sparkles className="w-3 h-3" /> Generate Content for "{slide.title}"
+                            </div>
+
+                            {/* Follow-up questions */}
+                            {questions.length > 0 && (
+                              <div className="space-y-2 py-1">
+                                <div className="text-[11px] text-muted-foreground">Answer these questions to guide the AI:</div>
+                                {questions.map(q => (
+                                  <div key={q.key} className="space-y-0.5">
+                                    <label className="text-xs font-medium">{q.question}</label>
+                                    <Input
+                                      value={(slide.generation_answers ?? {})[q.key] ?? ""}
+                                      onChange={e => {
+                                        const answers = { ...(slide.generation_answers ?? {}), [q.key]: e.target.value };
+                                        updateSlideField(slide.slide_id, "generation_answers", answers);
+                                      }}
+                                      placeholder="Your answer..."
+                                      className="h-8 text-xs"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <Button size="sm" onClick={() => generateSlideContent(slide.slide_id)} disabled={isGen}>
+                              {isGen ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating...</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" />Generate</>}
+                            </Button>
+
+                            {/* Generated content display */}
+                            {slide.generated_content && (
+                              <div className="mt-2 space-y-1">
+                                <div className="text-[11px] font-semibold text-emerald-700">Generated Content:</div>
+                                <div className="rounded border bg-background p-3 text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">
+                                  {slide.generated_content}
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
-                      {masterDef && <p className="text-xs text-muted-foreground truncate">{masterDef.description}</p>}
-                    </div>
-                    <span className="text-xs text-muted-foreground w-6 text-right shrink-0">{globalIdx + 1}</span>
-                  </div>
+                    )}
+                  </React.Fragment>
                 );
               }
 

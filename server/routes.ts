@@ -464,6 +464,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/slide-defaults/:slideId — returns default prompts for a slide
+  app.get("/api/slide-defaults/:slideId", requireAuth, async (req, res) => {
+    try {
+      const { getSlideDefaults } = await import("./proposalBriefs");
+      const slideId = req.params.slideId;
+      // Try to load admin config for this slide
+      let adminConfig = null;
+      try {
+        const configs = await storage.getSlideMethodologyConfigs();
+        adminConfig = configs.find((c: any) => c.slide_id === slideId) ?? null;
+      } catch { /* no admin configs */ }
+      const defaults = getSlideDefaults(slideId, adminConfig);
+      res.json(defaults);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/proposals/:id/generate-slide — generate content for a single slide
+  app.post("/api/proposals/:id/generate-slide", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Proposal not found" }); return; }
+
+      const { slide_id, visual_prompt, content_prompt, answers } = req.body;
+      if (!slide_id) { res.status(400).json({ message: "slide_id required" }); return; }
+
+      const slideSelection = Array.isArray(proposal.slide_selection) ? proposal.slide_selection : [];
+      const slide = slideSelection.find((s: any) => s.slide_id === slide_id);
+      const slideTitle = slide?.title ?? slide_id;
+
+      const { generateSingleSlideBrief } = await import("./proposalBriefs");
+      const generated = await generateSingleSlideBrief({
+        slide_id,
+        slide_title: slideTitle,
+        visual_prompt: visual_prompt ?? "",
+        content_prompt: content_prompt ?? "",
+        answers: answers ?? {},
+        company_name: proposal.company_name,
+        website: proposal.website,
+        transcript: proposal.transcript,
+        notes: proposal.notes,
+        revenue: proposal.revenue,
+        ebitda_margin: proposal.ebitda_margin,
+        scope_perimeter: proposal.scope_perimeter,
+        objective: proposal.objective,
+        urgency: proposal.urgency,
+        project_type: proposal.project_type || "Strategy",
+      });
+
+      res.json({ slide_id, generated_content: generated });
+    } catch (err: any) {
+      console.error("Single slide generation error:", err);
+      res.status(500).json({ message: err.message || "Generation failed" });
+    }
+  });
+
   app.post("/api/proposals/:id/analyze", requireAuth, async (req, res) => {
     try {
       if (await guardApiAsync(res)) return;

@@ -133,6 +133,11 @@ export interface SlideSelectionEntry {
   is_suggested: boolean;
   group: "core" | "optional";
   order: number;
+  // Per-slide prompt editing (persisted in proposal JSONB)
+  visual_prompt?: string;       // Layout/design instructions for this slide
+  content_prompt?: string;      // Text generation workflow/questions
+  generation_answers?: Record<string, string>; // User answers to follow-up questions
+  generated_content?: string;   // AI-generated slide text
 }
 
 // ── Generate default selection for a project type ────────────────────────────
