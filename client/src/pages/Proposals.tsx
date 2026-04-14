@@ -202,8 +202,24 @@ export default function Proposals() {
       const res = await fetch("/api/api-pause", { credentials: "include" });
       const data = await res.json();
       if (data.paused) {
-        toast({ title: `API is paused — ${action} requires AI. Activate the API first.`, variant: "destructive" });
-        return false;
+        // Offer to activate the API right here
+        const activate = window.confirm(
+          `API is paused.\n\n"${action}" requires AI and will incur costs.\n\nClick OK to enter the password and activate the API.`
+        );
+        if (!activate) return false;
+        const pw = window.prompt("Enter API password to activate:");
+        if (!pw) return false;
+        const activateRes = await fetch("/api/api-pause", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paused: false, password: pw }),
+        });
+        if (!activateRes.ok) {
+          const err = await activateRes.json().catch(() => ({ message: "Wrong password" }));
+          toast({ title: err.message || "Wrong password", variant: "destructive" });
+          return false;
+        }
+        toast({ title: "API activated" });
       }
     } catch { return false; }
     const ok = window.confirm(`This will use the Claude AI API and incur costs.\n\nAction: ${action}\n\nProceed?`);
