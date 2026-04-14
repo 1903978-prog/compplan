@@ -194,6 +194,19 @@ export default function Proposals() {
   const [showFullSlideView, setShowFullSlideView] = useState(false);
   const [analyzingRef, setAnalyzingRef] = useState<string | null>(null);
 
+  // COST GUARD: check API status and require explicit confirmation before any AI call
+  async function confirmApiUsage(action: string): Promise<boolean> {
+    try {
+      const res = await fetch("/api/api-pause", { credentials: "include" });
+      const data = await res.json();
+      if (data.paused) {
+        toast({ title: `API is paused — ${action} requires AI. Activate the API first.`, variant: "destructive" });
+        return false;
+      }
+    } catch { return false; }
+    return window.confirm(`This will use the Claude AI API and incur costs.\n\nAction: ${action}\n\nProceed?`);
+  }
+
   // Knowledge Center
   const [knowledgeFiles, setKnowledgeFiles] = useState<{ id: number; category: string; filename: string; file_size: number; uploaded_at: string }[]>([]);
   const [showKnowledge, setShowKnowledge] = useState(false);
@@ -459,6 +472,7 @@ export default function Proposals() {
   }
 
   async function generateSlideContent(slideId: string) {
+    if (!await confirmApiUsage("Generate slide content")) return;
     const slide = slides.find(s => s.slide_id === slideId);
     if (!slide) return;
 
@@ -504,6 +518,7 @@ export default function Proposals() {
 
   // Generate visual page preview (HTML)
   async function generatePage(slideId: string) {
+    if (!await confirmApiUsage("Generate page preview")) return;
     const slide = slides.find(s => s.slide_id === slideId);
     if (!current?.id) {
       await saveProgress();
@@ -579,6 +594,7 @@ export default function Proposals() {
   // Chat modification for slide preview
   async function sendSlideChat(slideId: string) {
     if (!slideChatInput.trim() || !current?.id) return;
+    if (!await confirmApiUsage("Modify slide via chat")) return;
     const instruction = slideChatInput.trim();
     setSlideChatInput("");
     setSlideChatHistory(prev => ({
@@ -619,6 +635,7 @@ export default function Proposals() {
   // Update prompts from chat corrections (learning loop)
   // Analyze uploaded reference image to improve prompts
   async function analyzeReferenceImage(slideId: string, file: File) {
+    if (!await confirmApiUsage("Analyze reference image")) return;
     const slide = slides.find(s => s.slide_id === slideId);
     if (!slide) return;
     if (!current?.id) { await saveProgress(); await new Promise(r => setTimeout(r, 500)); }
@@ -673,6 +690,7 @@ export default function Proposals() {
   }
 
   async function updatePromptsFromChat(slideId: string) {
+    if (!await confirmApiUsage("Update prompts from feedback")) return;
     const history = slideChatHistory[slideId] ?? [];
     if (history.filter(m => m.role === "user").length === 0 || !current?.id) return;
     const slide = slides.find(s => s.slide_id === slideId);
@@ -1063,6 +1081,7 @@ export default function Proposals() {
 
   // ── Project Approach ────────────────────────────────────────────────────────
   async function suggestApproach() {
+    if (!await confirmApiUsage("Suggest project approach")) return;
     if (!current?.id) { await saveProgress(); await new Promise(r => setTimeout(r, 500)); }
     if (!current?.id) return;
     setGeneratingApproach(true);
@@ -1667,8 +1686,9 @@ Example:
                         {slide.is_selected && <Check className="w-3 h-3" />}
                       </button>
                       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
+                        // ONLY show existing preview — NEVER auto-generate (costs money)
                         if (previewHtml[slide.slide_id]) { setPreviewSlideId(slide.slide_id); }
-                        else if (slide.is_selected) { generatePage(slide.slide_id); }
+                        else { toggleSlidePanel(slide.slide_id, "generate"); }
                       }}>
                         <div className="flex items-center gap-2">
                           <span
