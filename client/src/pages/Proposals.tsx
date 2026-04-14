@@ -1365,8 +1365,14 @@ Example:
                       <div className="px-6 py-3 bg-muted/20 border-t border-dashed space-y-2">
                         {activePanel === "visual" && (
                           <>
-                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                              <ImageIcon className="w-3 h-3" /> Visual Instructions
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                                <ImageIcon className="w-3 h-3" /> Visual Instructions
+                              </div>
+                              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={saveProgress} disabled={saving}>
+                                {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+                                Save
+                              </Button>
                             </div>
                             <Textarea
                               value={slide.visual_prompt ?? ""}
@@ -1380,8 +1386,14 @@ Example:
 
                         {activePanel === "content" && (
                           <>
-                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                              <FileText className="w-3 h-3" /> Content Prompt
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                                <FileText className="w-3 h-3" /> Content Prompt
+                              </div>
+                              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={saveProgress} disabled={saving}>
+                                {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+                                Save
+                              </Button>
                             </div>
                             <Textarea
                               value={slide.content_prompt ?? ""}
