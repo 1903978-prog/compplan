@@ -561,14 +561,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!apiKey) { res.status(503).json({ message: "ANTHROPIC_API_KEY not set" }); return; }
       const client = new Anthropic({ apiKey });
 
+      // ── HIGHEST-PRIORITY OVERRIDES ────────────────────────────────────────
+      // The "Slide Template Instructions" that the user pastes / maintains
+      // live in two places and must be treated as authoritative for every
+      // slide generation. Fetch them both and splice them into the system
+      // prompt BEFORE the house-style defaults so the model knows which
+      // rules win when something conflicts.
+      const deckCfg = await storage.getDeckTemplateConfig().catch(() => null);
+      const methodCfg = await storage.getSlideMethodologyConfig(slide_id).catch(() => undefined);
+
+      const templateInstructions = (deckCfg?.system_prompt || "").trim();
+
+      let slideMethodology = "";
+      if (methodCfg) {
+        const parts: string[] = [];
+        if (methodCfg.purpose) parts.push(`PURPOSE: ${methodCfg.purpose}`);
+        const sections = (methodCfg.structure as any)?.sections;
+        if (Array.isArray(sections) && sections.length) {
+          parts.push(`REQUIRED SECTIONS:\n- ${sections.join("\n- ")}`);
+        }
+        if (methodCfg.rules) parts.push(`RULES:\n${methodCfg.rules}`);
+        const cols = methodCfg.columns as any;
+        if (cols && (cols.column_1 || cols.column_2 || cols.column_3)) {
+          const labels = [cols.column_1, cols.column_2, cols.column_3].filter(Boolean);
+          if (labels.length) parts.push(`COLUMN LAYOUT: ${labels.join(" | ")}`);
+        }
+        if (methodCfg.format) {
+          parts.push(`FORMAT: ${methodCfg.format === "B" ? "3-column layout" : "stacked sections"}`);
+        }
+        if (methodCfg.insight_bar) parts.push(`INSIGHT BAR: include a bottom insight/callout bar`);
+        const examples = methodCfg.examples as string[] | undefined;
+        if (Array.isArray(examples) && examples.length) {
+          parts.push(`EXAMPLE PHRASING:\n- ${examples.join("\n- ")}`);
+        }
+        slideMethodology = parts.join("\n\n");
+      }
+
+      const hasOverrides = templateInstructions.length > 0 || slideMethodology.length > 0;
+
+      const overridesBlock = hasOverrides
+        ? `==========================================================================
+SLIDE TEMPLATE INSTRUCTIONS — HIGHEST PRIORITY (AUTHORITATIVE)
+==========================================================================
+The rules in this block are the highest-hierarchy instructions for this
+slide. They OVERRIDE any conflicting formatting, layout, structure, or
+styling guidance that appears anywhere else — in the house-style rules
+below, in the user message, in visual_prompt, in content_prompt, or in
+any chat instruction. If any later guidance conflicts with these rules,
+these rules win. Follow them exactly.
+
+${templateInstructions || "(no deck-level template instructions configured)"}
+${slideMethodology ? `\n--- Per-slide methodology for "${slideTitle}" ---\n${slideMethodology}\n` : ""}
+==========================================================================
+END HIGHEST-PRIORITY INSTRUCTIONS
+==========================================================================
+
+`
+        : "";
+
       const systemPrompt = `You are a senior slide designer at Eendigo, a management consulting firm.
+
+${overridesBlock}HOUSE STYLE (apply only where it does NOT conflict with the Slide Template Instructions above):
 Generate a single HTML page that looks like a PowerPoint slide preview.
 Use inline CSS. The slide should be 960px wide × 540px tall (16:9 ratio).
 Brand colors: primary teal #1A6571, text dark #1e293b, accent light teal #e0f2f1.
 Use ONLY Arial font (font-family: Arial, sans-serif) for ALL text. Never use other fonts.
 Include "eendigo" text in small font (10px) at the bottom-right corner. Do NOT add any colored bars, lines, or horizontal rules anywhere on the slide.
 The HTML must be a complete self-contained div (no external resources).
-Output ONLY the HTML div, no explanation.`;
+Output ONLY the HTML div, no explanation.${hasOverrides ? `
+
+REMINDER: if any house-style rule above (dimensions, colors, font, footer, etc.) contradicts the SLIDE TEMPLATE INSTRUCTIONS block, the SLIDE TEMPLATE INSTRUCTIONS win.` : ""}`;
 
       let userPrompt = `Create a slide for: "${slideTitle}"
 
