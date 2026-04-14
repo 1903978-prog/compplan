@@ -91,21 +91,23 @@ function formatDate(iso: string): string {
 const URGENCY_OPTIONS = ["Low", "Medium", "High", "Critical"];
 
 const DEFAULT_CALL_QUESTIONS: string[] = [
-  "What decision are you trying to make or what problem are you trying to solve now?",
-  "Why does this project matter now? What are the top 3\u20135 structural challenges or performance gaps today? What is the quantified value at stake if nothing changes (revenue opportunity, margin gap, cost leakage, etc.)?",
-  "What are the 2\u20133 biggest pain points or value levers you want to address?",
-  "What are sources of revenue growth: new clients, cross sell or share of wallet or pricing?",
-  "What outcomes would define success in 12\u201318 months?",
-  "Revenues, EBITDA, sales org. size",
-  "What has already been tried, and why has it not solved the issue?",
-  "What measurable business outcomes and KPIs matter most? Do you have any target ranges or assumptions on value creation?",
-  "What scope do you want help on: diagnostic, design, implementation, or execution support?",
-  "Which business units, geographies, products, channels, or customer segments are in scope?",
-  "Who are the decision makers, sponsors, and day-to-day owners on the client side?",
-  "Proposed Approach \u2014 From your perspective, what is the overall logic or architecture needed to solve this? Are there any specific workstreams or value drivers you already see as critical?",
-  "When is ideal start date? What timing matters \u2014 key deadlines, board dates, budget cycle, or transformation milestones?",
-  "What budget range or investment logic should we design the proposal around?",
-  "What is your ideal project duration and key milestones? Are you open to different scope/intensity options (light vs full, phased, etc.)?",
+  "What are the three or four structural challenges / performance gaps you see today?",
+  "Is the main pain point strategic clarity, or execution / follow-through?",
+  "Sources of growth: new clients, cross-sell, share of wallet, or pricing \u2014 which would you rate?",
+  "How many active clients do you have in this scope and FTES, offices?",
+  "How concentrated is the business / where are the biggest accounts?",
+  "Is part of the EBITDA improvement expected from extracting more value from existing customers / pricing / margin?",
+  "Which portion of this growth should come from what we are discussing today?",
+  "Can you remind us revenues and EBITDA margin of the organization today?",
+  "How you define success at end of this project?",
+  "Which geographies would you consider in scope? Where will you start from?",
+  "Should we consider only existing clients, or also prospects?",
+  "What are the five things you want to deep dive on?",
+  "How big is the sales organization \u2014 how many people, teams, countries?",
+  "Do you want to start with execution / action or a diagnostic?",
+  "what we need to do for you to chose us and do this?",
+  "Now that we discussed everything, what would you say are the top priorities?",
+  "When should we start?",
 ];
 
 const WIZARD_STEPS = [
