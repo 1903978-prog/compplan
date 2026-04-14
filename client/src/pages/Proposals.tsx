@@ -1477,6 +1477,29 @@ Example:
                           return renderSlideRow(slide, coreIdx, globalIdx);
                         })}
                       </div>
+                      <div className="px-4 py-2 border-t bg-muted/10">
+                        <button
+                          onClick={() => {
+                            const name = window.prompt("New core slide title:");
+                            if (!name?.trim()) return;
+                            const id = "custom_" + name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+                            setSlides(prev => {
+                              const lastCore = prev.filter(s => s.group === "core").length;
+                              const entry: SlideSelectionEntry = {
+                                slide_id: id, title: name.trim(), is_selected: true,
+                                default_selected: false, is_suggested: false, group: "core", order: lastCore,
+                              };
+                              const next = [...prev];
+                              next.splice(lastCore, 0, entry);
+                              return next.map((s, i) => ({ ...s, order: i }));
+                            });
+                            setHasManualEdits(true);
+                          }}
+                          className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add core slide
+                        </button>
+                      </div>
                     </Card>
 
                     {/* Optional Pages */}
@@ -1505,6 +1528,26 @@ Example:
                           const optIdx = optionalSlides.indexOf(slide);
                           return renderSlideRow(slide, optIdx, globalIdx);
                         })}
+                      </div>
+                      <div className="px-4 py-2 border-t bg-muted/10">
+                        <button
+                          onClick={() => {
+                            const name = window.prompt("New optional slide title:");
+                            if (!name?.trim()) return;
+                            const id = "custom_" + name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+                            setSlides(prev => {
+                              const entry: SlideSelectionEntry = {
+                                slide_id: id, title: name.trim(), is_selected: true,
+                                default_selected: false, is_suggested: false, group: "optional", order: prev.length,
+                              };
+                              return [...prev, entry].map((s, i) => ({ ...s, order: i }));
+                            });
+                            setHasManualEdits(true);
+                          }}
+                          className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add optional slide
+                        </button>
                       </div>
                     </Card>
                   </div>

@@ -10,6 +10,7 @@ export interface SlideDefinition {
 export const MASTER_SLIDES: SlideDefinition[] = [
   // ── CORE PAGES (always selected by default) ──────────────────────────────
   { slide_id: "cover",             title: "Cover Page",             description: "Title slide with company name, date, and Eendigo branding",       group: "core" },
+  { slide_id: "confidentiality",   title: "Confidentiality",        description: "Confidentiality notice and intellectual property protection",     group: "core" },
   { slide_id: "agenda",            title: "Agenda",                 description: "Overview of what the proposal covers",                            group: "core" },
   { slide_id: "exec_summary",      title: "Executive Summary",      description: "High-level overview of the engagement",                           group: "core" },
   { slide_id: "context",           title: "Context",                description: "Client situation, market dynamics, and urgency drivers",           group: "core" },
@@ -146,23 +147,41 @@ export function getDefaultSlideSelection(projectType: ProjectType): SlideSelecti
   const coreSet = new Set(CORE_SLIDE_IDS);
   const suggestedSet = new Set(SUGGESTED_OPTIONALS[projectType] || []);
 
-  return MASTER_SLIDES.map((slide, idx) => ({
-    slide_id: slide.slide_id,
-    title: slide.title,
-    is_selected: coreSet.has(slide.slide_id),        // only core pages ticked
-    default_selected: coreSet.has(slide.slide_id),
-    is_suggested: suggestedSet.has(slide.slide_id),   // optional pages highlighted
-    group: slide.group,
-    order: idx,
-  }));
+  return MASTER_SLIDES.map((slide, idx) => {
+    const entry: SlideSelectionEntry = {
+      slide_id: slide.slide_id,
+      title: slide.title,
+      is_selected: coreSet.has(slide.slide_id),
+      default_selected: coreSet.has(slide.slide_id),
+      is_suggested: suggestedSet.has(slide.slide_id),
+      group: slide.group,
+      order: idx,
+    };
+    // Pre-fill confidentiality slide with fixed content (always the same)
+    if (slide.slide_id === "confidentiality") {
+      entry.visual_prompt = `Two-column layout:
+- Left side: Large title "Confidentiality" in Eendigo teal (#1A6571), vertically centered
+- Right side: Body text in italic teal, separated by a vertical teal accent line
+- Footer: Eendigo logo bottom-right with page number
+- Clean white background, no imagery`;
+      entry.content_prompt = `This slide is FIXED — do not modify the text.
+
+Eendigo enforces rigorous confidentiality practices to ensure that all client materials, insights, and discussions remain fully protected. Protecting these assets is essential to maintaining competitive advantage.
+
+Equally, our methodologies, analytical frameworks, and proprietary approaches represent core intellectual property developed through years of experience. We rely on our clients to safeguard this knowledge. No portion of this proposal, its analyses, or supporting materials may be shared, reproduced, or disclosed to any external party without prior written consent.
+
+Copyright 2026© Eendigo LLC`;
+    }
+    return entry;
+  });
 }
 
 // ── Slide count rules ────────────────────────────────────────────────────────
 
 export const SLIDE_COUNT = {
-  IDEAL_MIN: 13,
-  IDEAL_MAX: 18,
-  ACCEPTABLE_MIN: 13,
+  IDEAL_MIN: 14,
+  IDEAL_MAX: 19,
+  ACCEPTABLE_MIN: 14,
   ACCEPTABLE_MAX: 22,
 };
 

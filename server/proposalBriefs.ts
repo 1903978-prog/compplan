@@ -42,6 +42,13 @@ const SLIDE_STRUCTURES: Record<string, { purpose: string; fields: { key: string;
       { key: "date", label: "Date", hint: "Proposal date" },
     ],
   },
+  confidentiality: {
+    purpose: "Confidentiality notice and intellectual property protection statement",
+    fields: [
+      { key: "confidentiality_text", label: "Confidentiality Statement", hint: "Standard Eendigo confidentiality and IP protection text" },
+      { key: "copyright", label: "Copyright Line", hint: "e.g. Copyright 2026 Eendigo LLC" },
+    ],
+  },
   agenda: {
     purpose: "Overview of what the proposal covers",
     fields: [
