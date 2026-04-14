@@ -16,6 +16,7 @@ import {
   MASTER_SLIDES, PROJECT_TYPES, type ProjectType, type SlideSelectionEntry,
   getDefaultSlideSelection, getSlideCountStatus, SLIDE_COUNT,
 } from "@/lib/proposalSlides";
+import { signalApiStart, signalApiEnd } from "@/App";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -192,6 +193,7 @@ export default function Proposals() {
   const [updatingPrompts, setUpdatingPrompts] = useState(false);
   const [slideScores, setSlideScores] = useState<Record<string, any>>({});
   const [showFullSlideView, setShowFullSlideView] = useState(false);
+  const [enableQualityScore, setEnableQualityScore] = useState(false);
   const [analyzingRef, setAnalyzingRef] = useState<string | null>(null);
 
   // COST GUARD: check API status and require explicit confirmation before any AI call
@@ -204,7 +206,15 @@ export default function Proposals() {
         return false;
       }
     } catch { return false; }
-    return window.confirm(`This will use the Claude AI API and incur costs.\n\nAction: ${action}\n\nProceed?`);
+    const ok = window.confirm(`This will use the Claude AI API and incur costs.\n\nAction: ${action}\n\nProceed?`);
+    if (ok) signalApiStart();
+    return ok;
+  }
+  // Call after every AI function completes
+  function apiCallDone() {
+    signalApiEnd();
+    // Refresh cost display
+    fetch("/api/api-cost", { credentials: "include" }).then(r => r.json()).catch(() => null);
   }
 
   // Knowledge Center
@@ -513,7 +523,7 @@ export default function Proposals() {
     } catch (err: any) {
       toast({ title: "Generation failed", description: err.message, variant: "destructive" });
     }
-    setSlideGenerating(null);
+    setSlideGenerating(null); apiCallDone();
   }
 
   // Generate visual page preview (HTML)
@@ -552,6 +562,7 @@ export default function Proposals() {
           visual_prompt: slide?.visual_prompt ?? "",
           content_prompt: pageContentPrompt,
           generated_content: pageGenContent,
+          include_quality_score: enableQualityScore,
         }),
       });
       if (!res.ok) throw new Error("Page generation failed");
@@ -565,7 +576,7 @@ export default function Proposals() {
     } catch (err: any) {
       toast({ title: "Page generation failed", description: err.message, variant: "destructive" });
     }
-    setGeneratingPage(null);
+    setGeneratingPage(null); apiCallDone();
   }
 
   // Download single slide as PPTX
@@ -629,7 +640,7 @@ export default function Proposals() {
         [slideId]: [...(prev[slideId] ?? []), { role: "ai" as const, text: `Error: ${err.message}` }],
       }));
     }
-    setSlideChatLoading(false);
+    setSlideChatLoading(false); apiCallDone();
   }
 
   // Update prompts from chat corrections (learning loop)
@@ -686,7 +697,7 @@ export default function Proposals() {
     } catch (err: any) {
       toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
     }
-    setAnalyzingRef(null);
+    setAnalyzingRef(null); apiCallDone();
   }
 
   async function updatePromptsFromChat(slideId: string) {
@@ -731,7 +742,7 @@ export default function Proposals() {
     } catch (err: any) {
       toast({ title: "Failed to update prompts", variant: "destructive" });
     }
-    setUpdatingPrompts(false);
+    setUpdatingPrompts(false); apiCallDone();
   }
 
   // ── Step 2 → Step 3: Save slide selection & generate briefs ─────────────────
@@ -1094,7 +1105,7 @@ export default function Proposals() {
     } catch (err: any) {
       toast({ title: "Failed to generate approach", description: err.message, variant: "destructive" });
     }
-    setGeneratingApproach(false);
+    setGeneratingApproach(false); apiCallDone();
   }
 
   // ── Step 3 → Step 4: Submit briefs & trigger AI analysis ──────────────────
@@ -1332,7 +1343,8 @@ export default function Proposals() {
               <span className={`text-sm ${step === n ? "font-medium cursor-pointer" : step > n ? "text-foreground cursor-pointer" : "text-muted-foreground"}`}
                 onClick={() => {
                   if (n < step) setStep(n);
-                  // Clicking current step label does nothing special
+                  // Clicking current step resets to full view (collapse panels)
+                  if (n === step) { setExpandedSlidePanel(null); setPreviewSlideId(null); }
                 }}
               >{label}</span>
               {n < WIZARD_STEPS.length && <div className={`w-8 h-0.5 ${step > n ? "bg-green-500" : "bg-muted"}`} />}
@@ -2080,43 +2092,45 @@ Example:
                             </Button>
                           )}
                         </div>
-                        {/* Quality Score */}
-                        {slideScores[previewSlideId] && (() => {
-                          const sc = slideScores[previewSlideId];
-                          const total = sc.total ?? 0;
-                          const color = total >= 80 ? "text-emerald-600" : total >= 60 ? "text-amber-600" : "text-red-500";
-                          const barColor = total >= 80 ? "bg-emerald-500" : total >= 60 ? "bg-amber-500" : "bg-red-500";
-                          return (
-                            <div className="border-t px-3 py-2 space-y-1.5">
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-semibold text-muted-foreground uppercase">Quality Score</span>
-                                <span className={`text-sm font-bold ${color}`}>{total}%</span>
-                              </div>
-                              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${total}%` }} />
-                              </div>
-                              <div className="grid grid-cols-4 gap-1 text-[9px]">
-                                <div className="text-center">
-                                  <div className="font-bold">{sc.clarity ?? 0}</div>
-                                  <div className="text-muted-foreground">Clarity</div>
+                        {/* Quality Score toggle + display */}
+                        <div className="border-t px-3 py-2 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input type="checkbox" checked={enableQualityScore}
+                                onChange={e => setEnableQualityScore(e.target.checked)}
+                                className="w-3 h-3 rounded" />
+                              <span className="text-[10px] font-semibold text-muted-foreground uppercase">Quality Score</span>
+                              <span className="text-[8px] text-violet-500">(AI)</span>
+                            </label>
+                            {slideScores[previewSlideId] && (
+                              <span className={`text-sm font-bold ${
+                                (slideScores[previewSlideId].total ?? 0) >= 80 ? "text-emerald-600" :
+                                (slideScores[previewSlideId].total ?? 0) >= 60 ? "text-amber-600" : "text-red-500"
+                              }`}>{slideScores[previewSlideId].total ?? 0}%</span>
+                            )}
+                          </div>
+                          {slideScores[previewSlideId] && (() => {
+                            const sc = slideScores[previewSlideId];
+                            const barColor = (sc.total ?? 0) >= 80 ? "bg-emerald-500" : (sc.total ?? 0) >= 60 ? "bg-amber-500" : "bg-red-500";
+                            return (
+                              <>
+                                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${sc.total}%` }} />
                                 </div>
-                                <div className="text-center">
-                                  <div className="font-bold">{sc.relevance ?? 0}</div>
-                                  <div className="text-muted-foreground">Relevance</div>
+                                <div className="grid grid-cols-4 gap-1 text-[8px]">
+                                  <div className="text-center"><div className="font-bold">{sc.clarity ?? 0}</div><div className="text-muted-foreground">Clarity</div></div>
+                                  <div className="text-center"><div className="font-bold">{sc.relevance ?? 0}</div><div className="text-muted-foreground">Relevance</div></div>
+                                  <div className="text-center"><div className="font-bold">{sc.visual ?? 0}</div><div className="text-muted-foreground">Visual</div></div>
+                                  <div className="text-center"><div className="font-bold">{sc.persuasion ?? 0}</div><div className="text-muted-foreground">Persuasion</div></div>
                                 </div>
-                                <div className="text-center">
-                                  <div className="font-bold">{sc.visual ?? 0}</div>
-                                  <div className="text-muted-foreground">Visual</div>
-                                </div>
-                                <div className="text-center">
-                                  <div className="font-bold">{sc.persuasion ?? 0}</div>
-                                  <div className="text-muted-foreground">Persuasion</div>
-                                </div>
-                              </div>
-                              {sc.tip && <p className="text-[9px] text-muted-foreground italic">{sc.tip}</p>}
-                            </div>
-                          );
-                        })()}
+                                {sc.tip && <p className="text-[9px] text-muted-foreground italic">{sc.tip}</p>}
+                              </>
+                            );
+                          })()}
+                          {!enableQualityScore && !slideScores[previewSlideId] && (
+                            <p className="text-[9px] text-muted-foreground italic">Enable to score slides on clarity, relevance, visual impact, and persuasion</p>
+                          )}
+                        </div>
                       </Card>
                     ) : (
                       /* ── Selected Slides Summary ────────────────────── */

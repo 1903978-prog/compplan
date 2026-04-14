@@ -564,7 +564,7 @@ Generate a single HTML page that looks like a PowerPoint slide preview.
 Use inline CSS. The slide should be 960px wide × 540px tall (16:9 ratio).
 Brand colors: primary teal #1A6571, text dark #1e293b, accent light teal #e0f2f1.
 Use ONLY Arial font (font-family: Arial, sans-serif) for ALL text. Never use other fonts.
-Include a thin teal footer bar at the bottom with "eendigo" text right-aligned.
+Include "eendigo" text in small font (10px) at the bottom-right corner. Do NOT add any colored bars, lines, or horizontal rules anywhere on the slide.
 The HTML must be a complete self-contained div (no external resources).
 Output ONLY the HTML div, no explanation.`;
 
@@ -600,9 +600,9 @@ Keep the same 960×540 format and Eendigo branding. Output ONLY the updated HTML
       const codeMatch = html.match(/```html?\s*([\s\S]*?)```/);
       if (codeMatch) html = codeMatch[1].trim();
 
-      // Quality score — quick evaluation of the generated slide
+      // Quality score — only if explicitly requested (costs extra API call)
       let quality_score = null;
-      try {
+      if (req.body.include_quality_score) try {
         const scoreRes = await client.messages.create({
           model: "claude-sonnet-4-20250514",
           max_tokens: 300,

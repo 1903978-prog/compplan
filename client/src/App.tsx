@@ -77,10 +77,24 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
   );
 }
 
+// Global API activity tracking via window events
+let apiCallCount = 0;
+export function signalApiStart() { apiCallCount++; window.dispatchEvent(new Event("api-activity")); }
+export function signalApiEnd() { apiCallCount = Math.max(0, apiCallCount - 1); window.dispatchEvent(new Event("api-activity")); }
+export function isApiActive() { return apiCallCount > 0; }
+
 function Navigation() {
   const [apiPaused, setApiPaused] = useState<boolean>(true);
+  const [apiActive, setApiActive] = useState(false);
   const [apiCost, setApiCost] = useState<{ month: string; today: string } | null>(null);
   const [location] = useLocation();
+
+  // Listen for API activity events
+  useEffect(() => {
+    const handler = () => setApiActive(isApiActive());
+    window.addEventListener("api-activity", handler);
+    return () => window.removeEventListener("api-activity", handler);
+  }, []);
 
   // On every page load: FORCE pause in DB, then read state
   // This ensures the API is ALWAYS paused when the page loads
@@ -210,9 +224,11 @@ function Navigation() {
           <div className="flex items-center gap-2">
             {/* Live API activity indicator + cost */}
             <div className="flex items-center gap-1.5">
-              <div className={`w-2 h-2 rounded-full transition-all ${
-                !apiPaused ? "bg-green-500 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.6)]" : "bg-muted-foreground/20"
-              }`} title={apiPaused ? "API inactive" : "API active — calls may be in progress"} />
+              <div className={`w-2.5 h-2.5 rounded-full transition-all ${
+                apiActive ? "bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"
+                : !apiPaused ? "bg-green-400"
+                : "bg-muted-foreground/20"
+              }`} title={apiActive ? "API call in progress!" : apiPaused ? "API paused" : "API active (idle)"} />
               {apiCost && (
                 <span className="text-[10px] font-mono text-muted-foreground" title={`Today: $${apiCost.today} | Month: $${apiCost.month}`}>
                   ${apiCost.month}
