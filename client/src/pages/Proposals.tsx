@@ -466,6 +466,45 @@ export default function Proposals() {
   useEffect(() => {
     loadProposals();
     loadTemplates();
+    loadSlideInstructionsFromDeckTemplate();
+  }, []);
+
+  // Load the persisted Slide Template Instructions free-text from the
+  // deck_template_configs row so it survives page reloads.
+  async function loadSlideInstructionsFromDeckTemplate() {
+    try {
+      const res = await fetch("/api/deck-template", { credentials: "include" });
+      if (!res.ok) return;
+      const cfg = await res.json();
+      if (cfg?.slide_instructions_text) {
+        setSlideInstructionsText(cfg.slide_instructions_text);
+      }
+    } catch { /* silent */ }
+  }
+
+  // Debounced auto-save for the Slide Template Instructions textarea.
+  // Saves the raw text into deck_template_configs so it persists across
+  // reloads and re-opens of the dialog. Independent from the Claude-based
+  // bulk-parse action (which writes into slide_methodology_configs).
+  const slideInstructionsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveSlideInstructionsText = useCallback((text: string) => {
+    if (slideInstructionsSaveTimer.current) clearTimeout(slideInstructionsSaveTimer.current);
+    slideInstructionsSaveTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/deck-template", { credentials: "include" });
+        const existing = res.ok ? await res.json() : {};
+        await fetch("/api/deck-template", {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(existing || {}),
+            slide_instructions_text: text,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+      } catch { /* silent — user will see it missing on reload if save truly failed */ }
+    }, 600);
   }, []);
 
   async function loadProposals() {
@@ -2001,7 +2040,10 @@ export default function Proposals() {
                   </p>
                   <Textarea
                     value={slideInstructionsText}
-                    onChange={e => setSlideInstructionsText(e.target.value)}
+                    onChange={e => {
+                      setSlideInstructionsText(e.target.value);
+                      saveSlideInstructionsText(e.target.value);
+                    }}
                     rows={20}
                     className="flex-1 text-sm font-mono"
                     placeholder={`Paste your slide-by-slide instructions here...

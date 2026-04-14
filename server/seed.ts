@@ -335,6 +335,10 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS attachment_url TEXT`);
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS excluded_from_analysis INTEGER NOT NULL DEFAULT 0`);
 
+  // Raw free-text the user pastes into the "Slide Template Instructions"
+  // bulk-parse dialog. Persisted so it survives reloads.
+  await db.execute(sql`ALTER TABLE deck_template_configs ADD COLUMN IF NOT EXISTS slide_instructions_text TEXT NOT NULL DEFAULT ''`);
+
   // API pause flag — default paused; reset to paused on every restart.
   // This runs unconditionally so the API cannot silently stay unpaused across deploys.
   await db.execute(sql`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS api_paused INTEGER NOT NULL DEFAULT 1`);

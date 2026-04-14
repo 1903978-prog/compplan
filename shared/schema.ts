@@ -560,6 +560,7 @@ export const deckTemplateConfigSchema = z.object({
   footer_left: z.string().default(""),
   footer_right: z.string().default(""),
   system_prompt: z.string().default(""), // full combined template instructions
+  slide_instructions_text: z.string().default(""), // raw bulk-parse source text
   updated_at: z.string(),
 });
 export type DeckTemplateConfig = z.infer<typeof deckTemplateConfigSchema>;
@@ -573,6 +574,10 @@ export const deckTemplateConfigs = pgTable("deck_template_configs", {
   footer_left: text("footer_left").notNull().default(""),
   footer_right: text("footer_right").notNull().default(""),
   system_prompt: text("system_prompt").notNull().default(""),
+  // Raw "Slide Template Instructions" free-text the user pastes into the
+  // Proposals bulk-parse dialog. Persisted so it survives reloads and can
+  // be re-edited later. The parsed output lives in slide_methodology_configs.
+  slide_instructions_text: text("slide_instructions_text").notNull().default(""),
   updated_at: text("updated_at").notNull(),
 });
 
