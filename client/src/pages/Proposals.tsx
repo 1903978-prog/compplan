@@ -1749,6 +1749,19 @@ Example:
                             }}
                             title="Double-click to rename"
                           >{slide.title}</span>
+                          <button
+                            title="Rename slide"
+                            onClick={e => {
+                              e.stopPropagation();
+                              const newName = window.prompt("Rename slide:", slide.title);
+                              if (newName?.trim() && newName.trim() !== slide.title) {
+                                updateSlideField(slide.slide_id, "title", newName.trim());
+                              }
+                            }}
+                            className="p-0.5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
                           {slide.group === "core" && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">CORE</span>
                           )}
