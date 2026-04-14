@@ -191,6 +191,7 @@ export default function Proposals() {
   const [slideChatLoading, setSlideChatLoading] = useState(false);
   const [updatingPrompts, setUpdatingPrompts] = useState(false);
   const [slideScores, setSlideScores] = useState<Record<string, any>>({});
+  const [showFullSlideView, setShowFullSlideView] = useState(false);
 
   // Knowledge Center
   const [knowledgeFiles, setKnowledgeFiles] = useState<{ id: number; category: string; filename: string; file_size: number; uploaded_at: string }[]>([]);
@@ -964,6 +965,8 @@ export default function Proposals() {
       }
       loadProposals();
       toast({ title: "Progress saved" });
+      // After manual save on step 2, show full slide view
+      if (step === 2) setShowFullSlideView(true);
     } catch {
       toast({ title: "Save failed", variant: "destructive" });
     }
@@ -1252,8 +1255,11 @@ export default function Proposals() {
               >
                 {step > n ? <Check className="w-4 h-4" /> : n}
               </button>
-              <span className={`text-sm ${step === n ? "font-medium" : step > n ? "text-foreground cursor-pointer" : "text-muted-foreground"}`}
-                onClick={() => { if (n < step) setStep(n); }}
+              <span className={`text-sm ${step === n ? "font-medium cursor-pointer" : step > n ? "text-foreground cursor-pointer" : "text-muted-foreground"}`}
+                onClick={() => {
+                  if (n < step) setStep(n);
+                  if (n === 2 && step === 2) setShowFullSlideView(v => !v);
+                }}
               >{label}</span>
               {n < WIZARD_STEPS.length && <div className={`w-8 h-0.5 ${step > n ? "bg-green-500" : "bg-muted"}`} />}
             </div>
@@ -1908,13 +1914,42 @@ Example:
                             </button>
                           </div>
                         </div>
-                        {/* Preview iframe */}
-                        <div className="bg-gray-100 p-2">
-                          <div className="bg-white shadow-lg mx-auto" style={{ width: "100%", aspectRatio: "16/9", overflow: "hidden" }}>
+                        {/* Preview with font inspector */}
+                        <div className="bg-gray-100 p-2 relative group">
+                          <div className="bg-white shadow-lg mx-auto" style={{ width: "100%", aspectRatio: "16/9", overflow: "hidden", position: "relative" }}>
                             <div
+                              ref={el => {
+                                if (!el) return;
+                                // Font inspector: on hover over any text element, show font info popup
+                                const handler = (e: MouseEvent) => {
+                                  const target = e.target as HTMLElement;
+                                  if (!target || target === el) return;
+                                  const computed = window.getComputedStyle(target);
+                                  const fontSize = computed.fontSize;
+                                  const fontWeight = computed.fontWeight;
+                                  // Remove old popup
+                                  el.querySelectorAll(".font-inspector-popup").forEach(p => p.remove());
+                                  // Create popup
+                                  const popup = document.createElement("div");
+                                  popup.className = "font-inspector-popup";
+                                  popup.style.cssText = "position:fixed;z-index:9999;background:#1e293b;color:white;padding:4px 8px;border-radius:4px;font-size:10px;font-family:Arial;pointer-events:auto;display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);";
+                                  popup.style.left = e.clientX + 10 + "px";
+                                  popup.style.top = e.clientY - 30 + "px";
+                                  popup.innerHTML = `<span>Arial ${fontSize} ${parseInt(fontWeight) >= 700 ? "Bold" : ""}</span>
+                                    <button style="background:#374151;border:none;color:white;width:18px;height:18px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:bold;" onclick="this.parentElement.remove();const t=document.elementFromPoint(${e.clientX},${e.clientY});if(t)t.style.fontSize=(parseFloat(getComputedStyle(t).fontSize)-1)+'px'">−</button>
+                                    <button style="background:#374151;border:none;color:white;width:18px;height:18px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:bold;" onclick="this.parentElement.remove();const t=document.elementFromPoint(${e.clientX},${e.clientY});if(t)t.style.fontSize=(parseFloat(getComputedStyle(t).fontSize)+1)+'px'">+</button>`;
+                                  document.body.appendChild(popup);
+                                  setTimeout(() => popup.remove(), 3000);
+                                };
+                                el.removeEventListener("mouseover", handler);
+                                el.addEventListener("mouseover", handler);
+                              }}
                               dangerouslySetInnerHTML={{ __html: previewHtml[previewSlideId] }}
-                              style={{ transform: "scale(0.7)", transformOrigin: "top left", width: "143%", height: "143%" }}
+                              style={{ transform: "scale(0.7)", transformOrigin: "top left", width: "143%", height: "143%", fontFamily: "Arial, sans-serif" }}
                             />
+                          </div>
+                          <div className="absolute bottom-3 left-3 text-[9px] text-muted-foreground/50 bg-white/80 px-1.5 py-0.5 rounded">
+                            Hover text to inspect font — use ±  to resize
                           </div>
                         </div>
                         {/* Chat for modifications */}
@@ -2058,6 +2093,52 @@ Example:
                 </Button>
               </div>
             </div>
+            {/* ── Full Slide View (overlay) ─────────────────────── */}
+            {showFullSlideView && (
+              <div className="fixed inset-0 bg-black/60 z-50 flex flex-col">
+                <div className="flex items-center justify-between px-6 py-3 bg-background border-b">
+                  <h2 className="text-sm font-bold">All Slides — {slides.filter(s => s.is_selected).length} pages</h2>
+                  <Button size="sm" variant="ghost" onClick={() => setShowFullSlideView(false)}>
+                    <X className="w-4 h-4 mr-1" /> Close
+                  </Button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-200">
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+                    {slides.filter(s => s.is_selected).sort((a, b) => a.order - b.order).map((s, i) => (
+                      <div key={s.slide_id} className="space-y-1">
+                        <div className="text-[10px] text-muted-foreground font-mono">{i + 1}. {s.title}</div>
+                        <div
+                          className="bg-white shadow-lg rounded cursor-pointer hover:ring-2 hover:ring-primary transition-all"
+                          style={{ aspectRatio: "16/9", overflow: "hidden", position: "relative" }}
+                          onClick={() => { setPreviewSlideId(s.slide_id); setShowFullSlideView(false); }}
+                        >
+                          {previewHtml[s.slide_id] ? (
+                            <div
+                              dangerouslySetInnerHTML={{ __html: previewHtml[s.slide_id] }}
+                              style={{ transform: "scale(0.33)", transformOrigin: "top left", width: "303%", height: "303%", fontFamily: "Arial, sans-serif" }}
+                            />
+                          ) : (
+                            <div className="flex items-center justify-center h-full text-muted-foreground/30">
+                              <div className="text-center">
+                                <FileText className="w-8 h-8 mx-auto mb-1" />
+                                <span className="text-[10px]">Not generated</span>
+                              </div>
+                            </div>
+                          )}
+                          {slideScores[s.slide_id] && (
+                            <div className={`absolute bottom-1 right-1 text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                              slideScores[s.slide_id].total >= 80 ? "bg-emerald-500 text-white" :
+                              slideScores[s.slide_id].total >= 60 ? "bg-amber-500 text-white" : "bg-red-500 text-white"
+                            }`}>{slideScores[s.slide_id].total}%</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 

@@ -563,7 +563,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 Generate a single HTML page that looks like a PowerPoint slide preview.
 Use inline CSS. The slide should be 960px wide × 540px tall (16:9 ratio).
 Brand colors: primary teal #1A6571, text dark #1e293b, accent light teal #e0f2f1.
-Use clean, professional fonts (system sans-serif stack).
+Use ONLY Arial font (font-family: Arial, sans-serif) for ALL text. Never use other fonts.
 Include a thin teal footer bar at the bottom with "eendigo" text right-aligned.
 The HTML must be a complete self-contained div (no external resources).
 Output ONLY the HTML div, no explanation.`;
