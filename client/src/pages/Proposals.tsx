@@ -1466,8 +1466,33 @@ export default function Proposals() {
       6: "Generate and download deck",
     };
 
+    // ── Live AI activity indicator ─────────────────────────────────────
+    // Shows a floating badge in the top-right whenever any AI operation
+    // is in flight, so the user always knows something is actually
+    // happening in the background instead of wondering if the app stalled.
+    const slideTitleFor = (id: string | null) =>
+      (id && slides.find(s => s.slide_id === id)?.title) || id || "";
+    let aiStatus: string | null = null;
+    if (analyzing) aiStatus = "Analyzing proposal with Claude…";
+    else if (briefMode === "generating") aiStatus = "Generating slide briefs…";
+    else if (slideInstructionsParsing) aiStatus = "Parsing Slide Template Instructions…";
+    else if (generatingApproach) aiStatus = "Generating project approach…";
+    else if (updatingPrompts) aiStatus = "Updating slide prompts from feedback…";
+    else if (analyzingRef) aiStatus = `Analyzing reference image for "${slideTitleFor(analyzingRef)}"…`;
+    else if (slideGenerating) aiStatus = `Generating content for "${slideTitleFor(slideGenerating)}"…`;
+    else if (generatingPage) aiStatus = `Generating page preview for "${slideTitleFor(generatingPage)}"…`;
+    else if (slideChatLoading) aiStatus = "Applying chat modification to slide…";
+    else if (generating) aiStatus = "Generating PPTX deck…";
+
     return (
       <div>
+        {/* Floating AI activity indicator — top-right, always visible */}
+        {aiStatus && (
+          <div className="fixed top-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg bg-violet-600 text-white text-xs font-medium animate-in fade-in slide-in-from-top-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span className="max-w-[280px] truncate">{aiStatus}</span>
+          </div>
+        )}
         <PageHeader
           title={step === 1 ? "New Proposal" : step === 2 ? "Proposal Structure" : step === 3 ? "Slide Briefing" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
           description={stepDescriptions[step]}
