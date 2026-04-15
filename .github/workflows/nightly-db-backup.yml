@@ -1,0 +1,130 @@
+name: Nightly DB Backup (compplan)
+
+# Daily at 01:00 UTC = 02:00 CET (winter) / 03:00 CEST (summer) Italy time.
+# Close enough to "3am CET" without having to juggle DST. Manual trigger
+# always available from the Actions tab.
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Public URL of the running compplan instance.
+      BACKUP_URL: https://compplan.onrender.com/api/admin/download-backup
+      # Shared secret that must match BACKUP_TOKEN on the Render service.
+      # Set both to the same value in GitHub and Render settings.
+      BACKUP_TOKEN: ${{ secrets.BACKUP_TOKEN }}
+
+    steps:
+      - name: Build date tag
+        id: meta
+        run: |
+          DATE_TAG="$(date -u +%Y-%m-%d)"
+          DATE_HUMAN="$(date -u +'%Y-%m-%d %H:%M UTC')"
+          echo "date_tag=${DATE_TAG}"     >> "$GITHUB_OUTPUT"
+          echo "date_human=${DATE_HUMAN}" >> "$GITHUB_OUTPUT"
+          echo "json_name=compplan-db-${DATE_TAG}.json"    >> "$GITHUB_OUTPUT"
+          echo "gz_name=compplan-db-${DATE_TAG}.json.gz"   >> "$GITHUB_OUTPUT"
+
+      - name: Fail early if secrets missing
+        run: |
+          if [[ -z "${BACKUP_TOKEN:-}" ]]; then
+            echo "::error::BACKUP_TOKEN secret is empty. Set it in repo Settings → Secrets → Actions AND in Render → Environment."
+            exit 1
+          fi
+
+      - name: Download DB dump from compplan
+        id: dump
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          OUT_JSON="out/${{ steps.meta.outputs.json_name }}"
+          OUT_GZ="out/${{ steps.meta.outputs.gz_name }}"
+
+          echo "==> GET ${BACKUP_URL}"
+          HTTP_CODE="$(curl -sS -o "$OUT_JSON" -w '%{http_code}' \
+            -H "X-Backup-Token: ${BACKUP_TOKEN}" \
+            "${BACKUP_URL}")"
+
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "::error::Backup endpoint returned HTTP ${HTTP_CODE}"
+            head -c 500 "$OUT_JSON" || true
+            exit 1
+          fi
+
+          # Sanity check: must be valid JSON with a tables key
+          if ! jq -e '.tables | type == "object"' "$OUT_JSON" >/dev/null; then
+            echo "::error::Dump is not valid JSON or missing .tables"
+            head -c 500 "$OUT_JSON" || true
+            exit 1
+          fi
+
+          # Summary stats for the email
+          TABLE_COUNT="$(jq '.tables | length' "$OUT_JSON")"
+          ROW_COUNT="$(jq '[.tables[] | length] | add' "$OUT_JSON")"
+          EXPORTED_AT="$(jq -r '.exportedAt' "$OUT_JSON")"
+
+          gzip -9 -k "$OUT_JSON"
+          JSON_BYTES="$(stat -c%s "$OUT_JSON")"
+          GZ_BYTES="$(stat -c%s "$OUT_GZ")"
+          GZ_HUMAN="$(du -h "$OUT_GZ" | awk '{print $1}')"
+          GZ_SHA="$(sha256sum "$OUT_GZ" | awk '{print $1}')"
+
+          echo "out_json=${OUT_JSON}"       >> "$GITHUB_OUTPUT"
+          echo "out_gz=${OUT_GZ}"           >> "$GITHUB_OUTPUT"
+          echo "gz_bytes=${GZ_BYTES}"       >> "$GITHUB_OUTPUT"
+          echo "gz_human=${GZ_HUMAN}"       >> "$GITHUB_OUTPUT"
+          echo "gz_sha=${GZ_SHA}"           >> "$GITHUB_OUTPUT"
+          echo "table_count=${TABLE_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "row_count=${ROW_COUNT}"     >> "$GITHUB_OUTPUT"
+          echo "exported_at=${EXPORTED_AT}" >> "$GITHUB_OUTPUT"
+
+          echo "Dump OK: ${TABLE_COUNT} tables, ${ROW_COUNT} rows, ${GZ_HUMAN} gzipped."
+
+      # Retained for 90 days on the Actions tab. If you need an older one,
+      # bump retention-days or add an S3 upload step.
+      - name: Upload dump as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.gz_name }}
+          path: ${{ steps.dump.outputs.out_gz }}
+          retention-days: 90
+
+      - name: Send email with dump attached
+        if: ${{ env.GMAIL_USERNAME != '' }}
+        env:
+          GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          from: "Backup Bot <${{ secrets.GMAIL_USERNAME }}>"
+          to: ${{ secrets.BACKUP_EMAIL_TO }}
+          subject: "compplan DB backup — ${{ steps.meta.outputs.date_tag }}"
+          attachments: ${{ steps.dump.outputs.out_gz }}
+          body: |
+            Nightly compplan database backup.
+
+            File:       ${{ steps.meta.outputs.gz_name }}
+            Size:       ${{ steps.dump.outputs.gz_human }} (${{ steps.dump.outputs.gz_bytes }} bytes)
+            SHA-256:    ${{ steps.dump.outputs.gz_sha }}
+            Tables:     ${{ steps.dump.outputs.table_count }}
+            Rows:       ${{ steps.dump.outputs.row_count }}
+            Dumped at:  ${{ steps.dump.outputs.exported_at }}
+            Run at:     ${{ steps.meta.outputs.date_human }}
+
+            Restore procedure:
+              1. gunzip ${{ steps.meta.outputs.gz_name }}
+              2. Log in to compplan, open the Admin → Import DB button.
+              3. Select the .json file and confirm.
+
+            Also available as a workflow artifact for 90 days:
+            https://github.com/1903978-prog/compplan/actions

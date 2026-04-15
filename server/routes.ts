@@ -1451,7 +1451,21 @@ RULES:
     "knowledge_topics", "knowledge_files",
   ];
 
-  app.get("/api/admin/download-backup", requireAuth, async (_req, res) => {
+  // Auth for the backup endpoint: accept either a normal logged-in cookie
+  // OR an X-Backup-Token header matching the BACKUP_TOKEN env var. This lets
+  // a scheduled job (GitHub Actions, Render cron, etc.) pull a nightly dump
+  // without storing a user session. If BACKUP_TOKEN is unset the token path
+  // is disabled and only cookie auth works.
+  const backupAuth = (req: any, res: any, next: any) => {
+    const provided = req.headers["x-backup-token"];
+    const expected = process.env.BACKUP_TOKEN;
+    if (expected && typeof provided === "string" && provided && provided === expected) {
+      return next();
+    }
+    return requireAuth(req, res, next);
+  };
+
+  app.get("/api/admin/download-backup", backupAuth, async (_req, res) => {
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
@@ -1836,16 +1850,25 @@ RULES:
         page++;
       }
 
-      // 2. Load existing snapshots
-      const snapRows = await db.execute(sql`SELECT invoice_id, state, amount FROM invoice_snapshots`);
-      const snapMap = new Map<number, { state: string; amount: number }>();
+      // 2. Load existing snapshots — include project_codes_manual so we can
+      //    detect conflicts between Harvest's fresh data and user overrides.
+      const snapRows = await db.execute(sql`SELECT invoice_id, state, amount, project_codes_manual FROM invoice_snapshots`);
+      const snapMap = new Map<number, { state: string; amount: number; manual: string | null }>();
       for (const r of snapRows.rows) {
         snapMap.set(Number(r.invoice_id), {
           state: String(r.state),
           amount: Number(r.amount),
+          manual: r.project_codes_manual == null ? null : String(r.project_codes_manual),
         });
       }
       const isFirstLoad = snapMap.size === 0;
+
+      // Normalise a comma-separated code list so "KPS02,KPS01" === "KPS01,KPS02"
+      // === " KPS01 , KPS02 ". Used for conflict comparison only.
+      const normaliseCodes = (s: string | null | undefined): string => {
+        if (!s) return "";
+        return String(s).split(",").map(x => x.trim().toUpperCase()).filter(Boolean).sort().join(",");
+      };
 
       // 3. Diff: detect new, paid, amount changed
       const pendingChanges: any[] = [];
@@ -1884,6 +1907,20 @@ RULES:
           if (prev.amount !== amount && Math.abs(prev.amount - amount) > 1) {
             pendingChanges.push({ invoice_id: invId, invoice_number: invNum, client_name: clientName,
               amount, change_type: "amount_changed", old_value: String(prev.amount), new_value: String(amount) });
+          }
+          // Project-code CONFLICT detection: if the user has set a manual
+          // override AND Harvest now reports a different code, DO NOT silently
+          // overwrite — stage a pending change so the user explicitly approves
+          // or rejects the switch. The DB remains the single source of truth.
+          const manualNorm = normaliseCodes(prev.manual);
+          const harvestNorm = normaliseCodes(projectCodes);
+          if (manualNorm && harvestNorm && manualNorm !== harvestNorm) {
+            pendingChanges.push({
+              invoice_id: invId, invoice_number: invNum, client_name: clientName,
+              amount, change_type: "project_code_conflict",
+              old_value: prev.manual ?? "",       // current manual override
+              new_value: projectCodes ?? "",      // fresh Harvest value
+            });
           }
           // Update all fields. NOTE: we deliberately do NOT touch
           // project_codes_manual / project_names_manual — those are user
@@ -1995,6 +2032,17 @@ RULES:
         }
       } else if (ch.change_type === "deleted") {
         await db.execute(sql`DELETE FROM invoice_snapshots WHERE invoice_id = ${ch.invoice_id}`);
+      } else if (ch.change_type === "project_code_conflict") {
+        // User explicitly approved Harvest's fresh value — overwrite the
+        // manual override with it. The single source of truth remains the
+        // DB; this is a user-confirmed write into that DB.
+        const newCodes = ch.new_value == null ? null : String(ch.new_value);
+        await db.execute(sql`
+          UPDATE invoice_snapshots
+          SET project_codes_manual = ${newCodes},
+              updated_at = ${now}
+          WHERE invoice_id = ${ch.invoice_id}
+        `);
       }
 
       await db.execute(sql`UPDATE invoice_changes SET approval_status = 'approved' WHERE id = ${changeId}`);

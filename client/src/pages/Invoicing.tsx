@@ -41,7 +41,7 @@ interface InvoiceChange {
   invoice_number: string;
   client_name: string;
   amount: number;
-  change_type: "new_invoice" | "paid" | "amount_changed" | "deleted";
+  change_type: "new_invoice" | "paid" | "amount_changed" | "deleted" | "project_code_conflict";
   old_value: string | null;
   new_value: string | null;
   detected_at: string;
@@ -308,8 +308,21 @@ export default function Invoicing() {
     }
   };
 
-  // Approve / reject a pending change
+  // Approve / reject a pending change. For project-code conflicts we force an
+  // explicit confirm so the user can never lose a manual override by reflex.
   const handleChangeAction = async (changeId: number, action: "approve" | "reject") => {
+    const ch = changes.find(c => c.id === changeId);
+    if (ch?.change_type === "project_code_conflict" && action === "approve") {
+      const ok = window.confirm(
+        `Overwrite your manual project code?\n\n` +
+        `Invoice #${ch.invoice_number} (${ch.client_name})\n` +
+        `Your code: ${ch.old_value || "(none)"}\n` +
+        `Harvest now says: ${ch.new_value || "(none)"}\n\n` +
+        `Approving will REPLACE your manual code with Harvest's value.\n` +
+        `Click Cancel to keep your own code.`
+      );
+      if (!ok) return;
+    }
     setApprovingId(changeId);
     try {
       await fetch(`/api/harvest/changes/${changeId}/${action}`, { method: "POST", credentials: "include" });
@@ -471,13 +484,16 @@ export default function Invoicing() {
           paid: "bg-emerald-50 border-emerald-200 text-emerald-800",
           amount_changed: "bg-amber-50 border-amber-200 text-amber-800",
           deleted: "bg-red-50 border-red-200 text-red-800",
+          project_code_conflict: "bg-fuchsia-50 border-fuchsia-300 text-fuchsia-900",
         };
         const CHANGE_LABELS: Record<string, string> = {
           new_invoice: "New Invoice", paid: "Marked Paid",
           amount_changed: "Amount Changed", deleted: "Deleted in Harvest",
+          project_code_conflict: "Project Code Conflict",
         };
         const CHANGE_ICONS: Record<string, typeof Plus> = {
           new_invoice: Plus, paid: CreditCard, amount_changed: AlertTriangle, deleted: X,
+          project_code_conflict: AlertTriangle,
         };
 
         return (
@@ -495,25 +511,38 @@ export default function Invoicing() {
                     {pending.map(c => {
                       const Icon = CHANGE_ICONS[c.change_type] ?? Bell;
                       const isProcessing = approvingId === c.id;
+                      const isConflict = c.change_type === "project_code_conflict";
                       return (
                         <div key={c.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${CHANGE_COLORS[c.change_type] ?? "bg-muted/30 border-border"}`}>
                           <Icon className="w-4 h-4 shrink-0" />
                           <Badge variant="outline" className="text-[9px] shrink-0">{CHANGE_LABELS[c.change_type] ?? c.change_type}</Badge>
                           <span className="text-xs font-semibold">#{c.invoice_number}</span>
                           <span className="text-xs">{c.client_name}</span>
-                          <span className="text-xs font-mono font-bold">{fmtCurrency(c.amount)}</span>
-                          {c.old_value && c.new_value && (
-                            <span className="text-[10px] text-muted-foreground">{c.old_value} → {c.new_value}</span>
+                          {!isConflict && (
+                            <span className="text-xs font-mono font-bold">{fmtCurrency(c.amount)}</span>
                           )}
+                          {isConflict ? (
+                            <span className="text-[11px] font-mono">
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                yours: {c.old_value || "(none)"}
+                              </span>
+                              <span className="mx-1 text-muted-foreground">vs</span>
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                harvest: {c.new_value || "(none)"}
+                              </span>
+                            </span>
+                          ) : (c.old_value && c.new_value && (
+                            <span className="text-[10px] text-muted-foreground">{c.old_value} → {c.new_value}</span>
+                          ))}
                           <span className="text-[9px] text-muted-foreground">{fmtDate(c.detected_at)}</span>
                           <div className="flex items-center gap-1 ml-auto shrink-0">
                             <Button size="sm" className="h-6 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white"
                               disabled={isProcessing} onClick={() => handleChangeAction(c.id, "approve")}>
-                              {isProcessing ? "..." : "Approve"}
+                              {isProcessing ? "..." : (isConflict ? "Use Harvest" : "Approve")}
                             </Button>
                             <Button size="sm" variant="outline" className="h-6 text-[10px]"
                               disabled={isProcessing} onClick={() => handleChangeAction(c.id, "reject")}>
-                              Reject
+                              {isConflict ? "Keep mine" : "Reject"}
                             </Button>
                           </div>
                         </div>
