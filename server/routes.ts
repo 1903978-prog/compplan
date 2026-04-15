@@ -30,6 +30,58 @@ async function guardApiAsync(res: any): Promise<boolean> {
 // Claude Sonnet 4 pricing: $3/M input, $15/M output
 const PRICING = { input_per_million: 3, output_per_million: 15 };
 
+// ─── Slide background compositing ──────────────────────────────────────────
+// If a slide_id has a stored PNG template background (e.g. a page exported
+// from a Canva template), we bake it into the slide's outermost <div> as a
+// CSS background-image. This happens as a POST-PROCESSING step on whatever
+// HTML Claude returns, so the model doesn't have to know about the data URL
+// (and we don't waste tokens shipping megabytes of base64 into every call).
+//
+// Rules:
+//   • Strip any `background-color` / `background:<color>` shorthand the
+//     model added, so the template actually shows through.
+//   • Inject `background-image:url(data:...);background-size:960px 540px;
+//     background-repeat:no-repeat;` into the style attribute.
+//   • If the outer element has no style attribute at all, add one.
+//   • If there's no outer <div> we give up and return the HTML unchanged —
+//     better to show a broken preview than crash the request.
+//
+// The inverse `stripBackgroundImage` is used when we send `currentHtml` back
+// into the model during /refine-page — otherwise every refinement round
+// round-trips the data URL, which is huge.
+function injectBackgroundImage(html: string, dataUrl: string): string {
+  if (!html || !dataUrl) return html;
+  // Escape any single quotes in the data URL so the resulting CSS is valid.
+  const safeUrl = dataUrl.replace(/'/g, "\\'");
+  const bgDecls = `background-image:url('${safeUrl}');background-size:960px 540px;background-repeat:no-repeat;background-position:0 0;`;
+
+  // Case 1: outer div has style="..."
+  const withStyleRe = /<div\b([^>]*?)\sstyle="([^"]*)"([^>]*)>/i;
+  const styleMatch = html.match(withStyleRe);
+  if (styleMatch) {
+    const cleanedStyle = styleMatch[2]
+      .replace(/background-image\s*:\s*[^;]+;?/gi, "")
+      .replace(/background-color\s*:\s*[^;]+;?/gi, "")
+      // `background:` shorthand that ISN'T already a url(...) — drop it.
+      .replace(/background\s*:\s*(?!url)[^;]+;?/gi, "");
+    const newStyle = `${bgDecls}${cleanedStyle}`;
+    return html.replace(withStyleRe, `<div${styleMatch[1]} style="${newStyle}"${styleMatch[3]}>`);
+  }
+
+  // Case 2: outer div has no style attribute — add one.
+  const noStyleRe = /<div\b([^>]*)>/i;
+  const noStyleMatch = html.match(noStyleRe);
+  if (noStyleMatch) {
+    return html.replace(noStyleRe, `<div${noStyleMatch[1]} style="${bgDecls}">`);
+  }
+  return html;
+}
+
+function stripBackgroundImage(html: string): string {
+  if (!html) return html;
+  return html.replace(/background-image\s*:\s*url\(['"]?data:[^)]+\)\s*;?/gi, "");
+}
+
 async function logApiUsage(endpoint: string, response: any) {
   try {
     const usage = response?.usage;
@@ -706,6 +758,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // rules win when something conflicts.
       const deckCfg = await storage.getDeckTemplateConfig().catch(() => null);
       const methodCfg = await storage.getSlideMethodologyConfig(slide_id).catch(() => undefined);
+      // Per-slide template background (Canva export, etc.). Optional — if
+      // present we (a) tell the model to compose transparent content and
+      // (b) bake the PNG into the returned HTML as a CSS background.
+      const slideBg = await storage.getSlideBackground(slide_id).catch(() => undefined);
 
       // Two sources of deck-level instructions, both authoritative:
       //   1. system_prompt — the parsed/curated system prompt
@@ -767,6 +823,24 @@ END HIGHEST-PRIORITY INSTRUCTIONS
 `
         : "";
 
+      // When a per-slide template background exists, the visual frame
+      // (colors, footer, logo, shapes) is already baked into the PNG —
+      // the model's job shrinks to laying down text content over it.
+      // Don't let the model repaint a background or re-add the footer.
+      const backgroundBlock = slideBg ? `
+
+TEMPLATE BACKGROUND MODE:
+A template background image is applied by the server at the 960×540 level — it already contains the brand color scheme, shapes, footer, and logo for this slide.
+Your job is ONLY to produce the TEXT CONTENT that sits on top.
+
+Strict rules:
+- Do NOT set a background-color or a background shorthand on the outer div. The template must show through.
+- Do NOT add the "eendigo" footer text, any brand bars, logos, or decorative shapes — the template already has them.
+- Keep all content inside a safe area: at least 50px from the top and bottom, 60px from the left and right.
+- Use text on a transparent container. You may use boxes/cards only if they are semi-transparent (rgba white with 0.85–0.95 alpha) and clearly needed for readability.
+- The outer container MUST be \`<div style="position:relative;width:960px;height:540px;...">\` with NO background color.
+` : "";
+
       const systemPrompt = `You are a senior slide designer at Eendigo, a management consulting firm.
 
 ${overridesBlock}HOUSE STYLE (apply only where it does NOT conflict with the Slide Template Instructions above):
@@ -774,9 +848,9 @@ Generate a single HTML page that looks like a PowerPoint slide preview.
 Use inline CSS. The slide should be 960px wide × 540px tall (16:9 ratio).
 Brand colors: primary teal #1A6571, text dark #1e293b, accent light teal #e0f2f1.
 Use ONLY Arial font (font-family: Arial, sans-serif) for ALL text. Never use other fonts.
-Include "eendigo" text in small font (10px) at the bottom-right corner. Do NOT add any colored bars, lines, or horizontal rules anywhere on the slide.
+${slideBg ? "" : `Include "eendigo" text in small font (10px) at the bottom-right corner. `}Do NOT add any colored bars, lines, or horizontal rules anywhere on the slide.
 The HTML must be a complete self-contained div (no external resources).
-Output ONLY the HTML div, no explanation.${hasOverrides ? `
+Output ONLY the HTML div, no explanation.${backgroundBlock}${hasOverrides ? `
 
 REMINDER: if any house-style rule above (dimensions, colors, font, footer, etc.) contradicts the SLIDE TEMPLATE INSTRUCTIONS block, the SLIDE TEMPLATE INSTRUCTIONS win.` : ""}`;
 
@@ -812,6 +886,13 @@ Keep the same 960×540 format and Eendigo branding. Output ONLY the updated HTML
       const codeMatch = html.match(/```html?\s*([\s\S]*?)```/);
       if (codeMatch) html = codeMatch[1].trim();
 
+      // Bake in the per-slide template PNG (if any) as a CSS background
+      // on the outer div. We strip any background-color the model added
+      // so the template shows through, then inject the data URL.
+      if (slideBg?.file_data) {
+        html = injectBackgroundImage(html, slideBg.file_data);
+      }
+
       // Quality score — only if explicitly requested (costs extra API call)
       let quality_score = null;
       if (req.body.include_quality_score) try {
@@ -832,7 +913,7 @@ For EACH dimension also return a specific actionable fix (cite the exact element
 
 Return ONLY JSON:
 {"clarity":N,"relevance":N,"visual":N,"persuasion":N,"total":N,"tip":"one sentence top priority","fix":{"clarity":"…","relevance":"…","visual":"…","persuasion":"…"}}`,
-          messages: [{ role: "user", content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):\n\n${html.substring(0, 3000)}` }],
+          messages: [{ role: "user", content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):\n\n${stripBackgroundImage(html).substring(0, 3000)}` }],
         });
         logApiUsage("quality-score", scoreRes);
         const scoreText = scoreRes.content.find(b => b.type === "text")?.text ?? "";
@@ -906,6 +987,11 @@ Return ONLY JSON:
       // (factoring this into a shared helper is a future cleanup).
       const deckCfg = await storage.getDeckTemplateConfig().catch(() => null);
       const methodCfg = await storage.getSlideMethodologyConfig(slide_id).catch(() => undefined);
+      // Per-slide template background (optional). Same semantics as
+      // /generate-page — baked into the outer div's CSS at the end,
+      // and stripped out of any `currentHtml` sent back into the model
+      // so we don't round-trip the base64 URL on every round.
+      const slideBg = await storage.getSlideBackground(slide_id).catch(() => undefined);
 
       const templateSystemPrompt = (deckCfg?.system_prompt || "").trim();
       const rawInstructionsText = ((deckCfg as any)?.slide_instructions_text || "").trim();
@@ -960,6 +1046,20 @@ END HIGHEST-PRIORITY INSTRUCTIONS
 `
         : "";
 
+      const backgroundBlock = slideBg ? `
+
+TEMPLATE BACKGROUND MODE:
+A template background image is applied by the server at the 960×540 level — it already contains the brand color scheme, shapes, footer, and logo for this slide.
+Your job is ONLY to produce the TEXT CONTENT that sits on top.
+
+Strict rules:
+- Do NOT set a background-color or a background shorthand on the outer div. The template must show through.
+- Do NOT add the "eendigo" footer text, any brand bars, logos, or decorative shapes — the template already has them.
+- Keep all content inside a safe area: at least 50px from the top and bottom, 60px from the left and right.
+- Use text on a transparent container. You may use boxes/cards only if they are semi-transparent (rgba white with 0.85–0.95 alpha) and clearly needed for readability.
+- The outer container MUST be \`<div style="position:relative;width:960px;height:540px;...">\` with NO background color.
+` : "";
+
       const systemPrompt = `You are a senior slide designer at Eendigo, a management consulting firm.
 
 ${overridesBlock}HOUSE STYLE (apply only where it does NOT conflict with the Slide Template Instructions above):
@@ -967,9 +1067,9 @@ Generate a single HTML page that looks like a PowerPoint slide preview.
 Use inline CSS. The slide should be 960px wide × 540px tall (16:9 ratio).
 Brand colors: primary teal #1A6571, text dark #1e293b, accent light teal #e0f2f1.
 Use ONLY Arial font (font-family: Arial, sans-serif) for ALL text. Never use other fonts.
-Include "eendigo" text in small font (10px) at the bottom-right corner. Do NOT add any colored bars, lines, or horizontal rules anywhere on the slide.
+${slideBg ? "" : `Include "eendigo" text in small font (10px) at the bottom-right corner. `}Do NOT add any colored bars, lines, or horizontal rules anywhere on the slide.
 The HTML must be a complete self-contained div (no external resources).
-Output ONLY the HTML div, no explanation.${hasOverrides ? `
+Output ONLY the HTML div, no explanation.${backgroundBlock}${hasOverrides ? `
 
 REMINDER: if any house-style rule above (dimensions, colors, font, footer, etc.) contradicts the SLIDE TEMPLATE INSTRUCTIONS block, the SLIDE TEMPLATE INSTRUCTIONS win.` : ""}
 
@@ -1050,10 +1150,10 @@ ${critiqueBlock}
 
 Rewrite the slide to address the fixes. Do NOT regress on dimensions that are already strong (${dims.filter(d => d.score >= 20).map(d => d.name).join(", ") || "none yet"}).
 
-Keep the same 960×540 format, brand colors, and Arial font. Keep the eendigo footer. Output ONLY the revised HTML div, no explanation.
+Keep the same 960×540 format, brand colors, and Arial font. ${slideBg ? "Do NOT re-add the eendigo footer — it's part of the template background." : "Keep the eendigo footer."} Output ONLY the revised HTML div, no explanation.
 
 PREVIOUS HTML:
-${currentHtml}
+${stripBackgroundImage(currentHtml)}
 
 SLIDE CONTEXT:
 ${baseUserPrompt}`;
@@ -1076,9 +1176,19 @@ ${baseUserPrompt}`;
           history.push({ round, total: currentScore?.total ?? 0, error: "Empty or invalid generation" });
           break;
         }
+        // Bake the template background into the outer div before scoring
+        // (so the scorer rates what the user will actually see) and before
+        // storing as currentHtml (so the final response already has it).
+        if (slideBg?.file_data) {
+          roundHtml = injectBackgroundImage(roundHtml, slideBg.file_data);
+        }
         currentHtml = roundHtml;
 
         // ── 2. Score the round ──────────────────────────────────────────
+        // Strip the template background data URL before sending to the
+        // scorer — it's a huge blob and the scorer only needs to see the
+        // layout/text, not the PNG.
+        const htmlForScoring = stripBackgroundImage(currentHtml).substring(0, 3500);
         const scoreRes = await client.messages.create({
           model: "claude-sonnet-4-20250514",
           max_tokens: 700,
@@ -1087,7 +1197,7 @@ ${baseUserPrompt}`;
             role: "user",
             content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):
 
-${currentHtml.substring(0, 3500)}`,
+${htmlForScoring}`,
           }],
         });
         logApiUsage(`refine-page-score-${round}`, scoreRes);
@@ -1575,6 +1685,81 @@ Extract visual and content patterns from the image. Only suggest additions that 
       ...base, guidance_image: image || null, updated_at: new Date().toISOString(),
     } as any);
     res.json(config);
+  });
+
+  // ── Slide Backgrounds (per-slide PNG templates) ──────────────────────────
+  // Upload one PNG per slide_id (e.g. exported from a Canva template).
+  // These are injected as the outer-most background-image on generated
+  // HTML previews so the live preview and Playwright export both inherit
+  // the template look, while the consulting content stays editable on top.
+  //
+  // GET returns only metadata (no file_data) so the admin screen can render
+  // the list without blowing the response size on megabytes of base64.
+  app.get("/api/slide-backgrounds", requireAuth, async (_req, res) => {
+    try {
+      const rows = await storage.getSlideBackgrounds();
+      const lite = rows.map(r => ({
+        slide_id: r.slide_id,
+        file_size: r.file_size,
+        source: r.source ?? null,
+        source_ref: r.source_ref ?? null,
+        updated_at: r.updated_at,
+        has_data: !!r.file_data,
+      }));
+      res.json(lite);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to load backgrounds" });
+    }
+  });
+
+  // Fetch a single background WITH the data URL. Used by the server prompt
+  // code (generate-page / refine-page) and the admin preview.
+  app.get("/api/slide-backgrounds/:slideId", requireAuth, async (req, res) => {
+    try {
+      const row = await storage.getSlideBackground(req.params.slideId);
+      if (!row) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to load background" });
+    }
+  });
+
+  // Upsert. Body: { file_data: "data:image/png;base64,...", file_size?, source?, source_ref? }
+  app.put("/api/slide-backgrounds/:slideId", requireAuth, async (req, res) => {
+    try {
+      const { file_data, file_size, source, source_ref } = req.body || {};
+      if (typeof file_data !== "string" || !file_data.startsWith("data:")) {
+        res.status(400).json({ message: "file_data must be a data: URL" }); return;
+      }
+      const row = await storage.upsertSlideBackground({
+        slide_id: req.params.slideId,
+        file_data,
+        file_size: Number(file_size) || Math.floor(file_data.length * 0.75),
+        source: source ?? "upload",
+        source_ref: source_ref ?? null,
+        updated_at: new Date().toISOString(),
+      });
+      // Echo the metadata only — don't round-trip the base64 to the client.
+      res.json({
+        slide_id: row.slide_id,
+        file_size: row.file_size,
+        source: row.source ?? null,
+        source_ref: row.source_ref ?? null,
+        updated_at: row.updated_at,
+        has_data: true,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to save background" });
+    }
+  });
+
+  app.delete("/api/slide-backgrounds/:slideId", requireAuth, async (req, res) => {
+    try {
+      await storage.deleteSlideBackground(req.params.slideId);
+      res.status(204).end();
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete background" });
+    }
   });
 
   // ── Parse Manual Briefs (ChatGPT paste) ───────────────────────────────────

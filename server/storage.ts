@@ -5,6 +5,7 @@ import {
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   performanceIssues, timeTrackingTopics, timeTrackingEntries,
   proposals, proposalTemplates, slideMethodologyConfigs, deckTemplateConfigs, projectTypeSlideDefaults,
+  slideBackgrounds,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
@@ -12,6 +13,7 @@ import {
   type Proposal, type ProposalTemplate,
   type SlideMethodologyConfig,
   type DeckTemplateConfig,
+  type SlideBackground,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -476,6 +478,36 @@ export class DatabaseStorage implements IStorage {
       .values({ project_type: projectType, slide_ids: slideIds, slide_order: slideOrder, updated_at: now })
       .returning();
     return created;
+  }
+
+  // ── Slide Backgrounds ─────────────────────────────────────────────────────
+  // One row per slide_id, keyed by the MASTER_SLIDES id. `file_data` is a
+  // data URL (data:image/png;base64,...) so it can be dropped directly into
+  // CSS or an <img>. Kept in a table rather than object storage to stay
+  // inside the existing single-DB deploy model.
+  async getSlideBackgrounds(): Promise<SlideBackground[]> {
+    return db.select().from(slideBackgrounds);
+  }
+  async getSlideBackground(slideId: string): Promise<SlideBackground | undefined> {
+    const [row] = await db.select().from(slideBackgrounds).where(eq(slideBackgrounds.slide_id, slideId));
+    return row as SlideBackground | undefined;
+  }
+  async upsertSlideBackground(data: SlideBackground): Promise<SlideBackground> {
+    const existing = await this.getSlideBackground(data.slide_id);
+    const now = new Date().toISOString();
+    const payload = { ...data, updated_at: now };
+    if (existing) {
+      const [updated] = await db.update(slideBackgrounds)
+        .set(payload)
+        .where(eq(slideBackgrounds.slide_id, data.slide_id))
+        .returning();
+      return updated as SlideBackground;
+    }
+    const [created] = await db.insert(slideBackgrounds).values(payload).returning();
+    return created as SlideBackground;
+  }
+  async deleteSlideBackground(slideId: string): Promise<void> {
+    await db.delete(slideBackgrounds).where(eq(slideBackgrounds.slide_id, slideId));
   }
 
   // ── Deck Template Config ──────────────────────────────────────────────────

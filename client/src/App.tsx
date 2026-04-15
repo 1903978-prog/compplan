@@ -18,6 +18,7 @@ import Hiring from "@/pages/Hiring";
 import TimeTracker from "@/pages/TimeTracker";
 import Proposals from "@/pages/Proposals";
 import SlideMethodologyAdmin from "@/pages/SlideMethodologyAdmin";
+import SlideBackgroundsAdmin from "@/pages/SlideBackgroundsAdmin";
 import Invoicing from "@/pages/Invoicing";
 import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
@@ -25,7 +26,7 @@ import AdminBackup from "@/pages/AdminBackup";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -324,6 +325,7 @@ function Navigation() {
                   { href: "/proposals", label: "Proposals", icon: FileText },
                   { href: "/knowledge", label: "Knowledge Center", icon: BookOpen },
                   { href: "/proposals/methodology", label: "Slide Methodology", icon: Layers },
+                  { href: "/proposals/backgrounds", label: "Slide Backgrounds", icon: ImageIcon },
                 ]}
               />
               <NavDropdown
@@ -434,6 +436,7 @@ function Router() {
       <Route path="/time-tracker" component={TimeTracker} />
       <Route path="/proposals" component={Proposals} />
       <Route path="/proposals/methodology" component={SlideMethodologyAdmin} />
+      <Route path="/proposals/backgrounds" component={SlideBackgroundsAdmin} />
       <Route path="/hiring" component={Hiring} />
       <Route path="/knowledge" component={KnowledgeCenter} />
       <Route path="/invoicing" component={Invoicing} />

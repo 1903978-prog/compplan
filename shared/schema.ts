@@ -542,6 +542,36 @@ export const proposalTemplates = pgTable("proposal_templates", {
   uploaded_at: text("uploaded_at").notNull(),
 });
 
+// ─── Slide Backgrounds ──────────────────────────────────────────────────────
+// Per-slide PNG backgrounds uploaded from a Canva (or any) template.
+// When a slide is generated, the server injects the matching background as a
+// CSS background-image on the outermost slide div, so the HTML preview —
+// and therefore the pixel-perfect Playwright export — visually matches the
+// Canva template while keeping the text fully editable.
+//
+// One row per slide_id from MASTER_SLIDES. file_data is a data: URL
+// (e.g. "data:image/png;base64,..."). We store the full data URL rather
+// than raw base64 so it can be used directly in <img src> or CSS url(),
+// and so the content-type is self-describing.
+export const slideBackgroundSchema = z.object({
+  slide_id: z.string(),
+  file_data: z.string(),            // data URL, e.g. "data:image/png;base64,..."
+  file_size: z.number().default(0), // bytes of the underlying binary
+  source: z.string().nullable().optional(), // "canva" | "upload" | etc.
+  source_ref: z.string().nullable().optional(), // e.g. Canva design_id/page index
+  updated_at: z.string(),
+});
+export type SlideBackground = z.infer<typeof slideBackgroundSchema>;
+
+export const slideBackgrounds = pgTable("slide_backgrounds", {
+  slide_id: text("slide_id").primaryKey(),
+  file_data: text("file_data").notNull(),
+  file_size: integer("file_size").notNull().default(0),
+  source: text("source"),
+  source_ref: text("source_ref"),
+  updated_at: text("updated_at").notNull(),
+});
+
 // ─── Slide Methodology Config ────────────────────────────────────────────────
 
 export const slideMethodologyConfigSchema = z.object({

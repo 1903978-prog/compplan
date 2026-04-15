@@ -577,6 +577,20 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE slide_methodology_configs ADD COLUMN IF NOT EXISTS guidance_image TEXT`);
   await db.execute(sql`ALTER TABLE employee_tasks ADD COLUMN IF NOT EXISTS body TEXT`);
 
+  // Per-slide PNG backgrounds (Canva template export, etc.). One row per
+  // slide_id. Used by /generate-page + /refine-page to layer generated
+  // content on top of the template background.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS slide_backgrounds (
+      slide_id TEXT PRIMARY KEY,
+      file_data TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      source TEXT,
+      source_ref TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // Seed default configs for Executive Summary + Deep Dive (idempotent)
   await db.execute(sql`
     INSERT INTO slide_methodology_configs (slide_id, purpose, structure, rules, columns, variations, examples, format, insight_bar, updated_at)
