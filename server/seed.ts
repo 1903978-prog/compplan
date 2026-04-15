@@ -334,6 +334,10 @@ export async function seedDatabase() {
 
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS attachment_url TEXT`);
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS excluded_from_analysis INTEGER NOT NULL DEFAULT 0`);
+  // Structured loss-debrief payload — see schema.ts pricingProposals
+  // for the expected shape. JSONB (not TEXT) so we can index/query
+  // individual survey fields later without a migration.
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS client_feedback JSONB`);
 
   // Raw free-text the user pastes into the "Slide Template Instructions"
   // bulk-parse dialog. Persisted so it survives reloads.

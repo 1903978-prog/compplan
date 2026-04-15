@@ -92,6 +92,7 @@ function emptyProposal(): PricingProposal {
     expected_ebitda_growth_pct: null,
     team_size: 1,
     notes: "",
+    client_feedback: null,
   };
 }
 
@@ -1257,22 +1258,215 @@ export default function PricingTool() {
           </Select>
         </div>
       </div>
-      {historyForm.outcome === "lost" && (
-        <div className="space-y-1 max-w-xs">
-          <Label className="text-xs">Loss reason</Label>
-          <Select value={historyForm.loss_reason || "__unknown__"} onValueChange={v => setHistoryForm(f => ({ ...f, loss_reason: v === "__unknown__" ? null : v }))}>
-            <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select reason" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__unknown__">— Unknown —</SelectItem>
-              <SelectItem value="price">Price</SelectItem>
-              <SelectItem value="brand">Brand</SelectItem>
-              <SelectItem value="team">Team</SelectItem>
-              <SelectItem value="quality">Quality</SelectItem>
-              <SelectItem value="relationship">Relationship</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
+      {historyForm.outcome === "lost" && (() => {
+        // ── Loss debrief section ────────────────────────────────────────
+        // Mirrors the MS Forms survey sent to clients after a lost deal.
+        // Everything is optional — partial surveys (or none at all) are
+        // the norm. Lives in `client_feedback` (JSONB) so we can add
+        // future survey questions without a migration; each setter just
+        // spreads into the current object.
+        const fb = historyForm.client_feedback || {};
+        const ratings = fb.ratings || {};
+
+        // Update helper — always returns a fresh object so React sees
+        // the state change, and clears the whole block to null when
+        // every field is empty (keeps the DB tidy).
+        const setFb = (patch: Partial<typeof fb>) => {
+          setHistoryForm(f => {
+            const cur = f.client_feedback || {};
+            const next = { ...cur, ...patch };
+            // Collapse to null only if everything is empty/null.
+            const hasAnything = Object.entries(next).some(([k, v]) => {
+              if (v == null || v === "") return false;
+              if (k === "ratings" && typeof v === "object") {
+                return Object.values(v as any).some(x => x != null && x !== "");
+              }
+              return true;
+            });
+            return { ...f, client_feedback: hasAnything ? next : null };
+          });
+        };
+
+        const setRating = (key: keyof NonNullable<typeof ratings>, val: number | null) => {
+          setFb({ ratings: { ...ratings, [key]: val } });
+        };
+
+        // Small reusable 1-5 stars picker. Clicking the same score
+        // a second time clears it (so you can mark "not answered").
+        const Stars = ({ value, onChange }: { value: number | null | undefined; onChange: (v: number | null) => void }) => (
+          <div className="flex items-center gap-0.5">
+            {[1, 2, 3, 4, 5].map(n => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => onChange(value === n ? null : n)}
+                className={`w-5 h-5 flex items-center justify-center rounded text-sm transition-colors ${
+                  (value ?? 0) >= n
+                    ? "text-amber-500 hover:text-amber-600"
+                    : "text-muted-foreground/30 hover:text-muted-foreground"
+                }`}
+                title={`${n}/5`}
+              >
+                ★
+              </button>
+            ))}
+            {value != null && (
+              <span className="text-[10px] text-muted-foreground ml-1 font-mono">{value}/5</span>
+            )}
+          </div>
+        );
+
+        return (
+          <div className="space-y-3 border-l-2 border-red-300 pl-4 mt-2 bg-red-50/30 py-3 pr-3 rounded-r">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wide text-red-700">
+                  Loss debrief
+                </div>
+                <div className="text-[10px] text-muted-foreground italic">
+                  Client feedback captured after the loss. Leave blank if the survey wasn't returned.
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-[10px]">Received on</Label>
+                <Input
+                  type="date"
+                  value={fb.received_date || ""}
+                  onChange={e => setFb({ received_date: e.target.value || null })}
+                  className="h-7 text-xs w-36"
+                />
+              </div>
+            </div>
+
+            {/* Quick quantitative block */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-0.5">
+                <Label className="text-xs">Loss reason</Label>
+                <Select value={historyForm.loss_reason || "__unknown__"} onValueChange={v => setHistoryForm(f => ({ ...f, loss_reason: v === "__unknown__" ? null : v }))}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select reason" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__unknown__">— Unknown —</SelectItem>
+                    <SelectItem value="price">Price</SelectItem>
+                    <SelectItem value="brand">Brand</SelectItem>
+                    <SelectItem value="team">Team</SelectItem>
+                    <SelectItem value="quality">Quality</SelectItem>
+                    <SelectItem value="relationship">Relationship</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-xs">Who won the deal?</Label>
+                <Input
+                  value={fb.winner_name || ""}
+                  onChange={e => setFb({ winner_name: e.target.value || null })}
+                  className="h-8 text-sm"
+                  placeholder="e.g. McKinsey, BCG, internal team"
+                />
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-xs">Would reconsider us?</Label>
+                <Select
+                  value={fb.would_reconsider || "__none__"}
+                  onValueChange={v => setFb({ would_reconsider: v === "__none__" ? null : (v as "yes" | "no" | "maybe") })}
+                >
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Not answered —</SelectItem>
+                    <SelectItem value="yes">Yes — in future RFPs</SelectItem>
+                    <SelectItem value="maybe">Maybe</SelectItem>
+                    <SelectItem value="no">No</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Rating block — 1 to 5 stars per dimension */}
+            <div className="space-y-1">
+              <Label className="text-xs">Client ratings (1–5)</Label>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 pl-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Overall experience</span>
+                  <Stars value={ratings.overall} onChange={v => setRating("overall", v)} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Team quality</span>
+                  <Stars value={ratings.team} onChange={v => setRating("team", v)} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Price fairness</span>
+                  <Stars value={ratings.price_fairness} onChange={v => setRating("price_fairness", v)} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Deck / proposal quality</span>
+                  <Stars value={ratings.deck_quality} onChange={v => setRating("deck_quality", v)} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Approach / methodology</span>
+                  <Stars value={ratings.approach} onChange={v => setRating("approach", v)} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Relationship / responsiveness</span>
+                  <Stars value={ratings.relationship} onChange={v => setRating("relationship", v)} />
+                </div>
+              </div>
+            </div>
+
+            {/* Free-text qualitative block */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-0.5">
+                <Label className="text-xs">What we did well</Label>
+                <Textarea
+                  value={fb.strengths || ""}
+                  onChange={e => setFb({ strengths: e.target.value || null })}
+                  className="text-xs min-h-[60px]"
+                  placeholder="Client's verbatim: what they liked about our pitch, team, process…"
+                />
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-xs">What to improve</Label>
+                <Textarea
+                  value={fb.weaknesses || ""}
+                  onChange={e => setFb({ weaknesses: e.target.value || null })}
+                  className="text-xs min-h-[60px]"
+                  placeholder="Gaps vs. the winner: seniority, industry refs, deck depth, speed…"
+                />
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-xs">Reasons for choosing the winner</Label>
+                <Textarea
+                  value={fb.reasons_for_choosing_winner || ""}
+                  onChange={e => setFb({ reasons_for_choosing_winner: e.target.value || null })}
+                  className="text-xs min-h-[60px]"
+                  placeholder="Price, brand, relationship, specific expertise, timeline…"
+                />
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-xs">Additional comments</Label>
+                <Textarea
+                  value={fb.additional_comments || ""}
+                  onChange={e => setFb({ additional_comments: e.target.value || null })}
+                  className="text-xs min-h-[60px]"
+                  placeholder="Anything else worth capturing for next time"
+                />
+              </div>
+            </div>
+
+            {/* Micro-help line pointing at the MS Forms survey */}
+            <div className="text-[9px] text-muted-foreground italic border-t pt-2">
+              Survey source:{" "}
+              <a
+                href="https://forms.cloud.microsoft/pages/responsepage.aspx?id=T0Pyhh4ZtUyfZzrLjQ4J_gLUxj3bPXJKsQcgYFFWMg5UNkZSM0dXRU1SUkFUQTNPNEtESVI3U1gzMC4u&route=shorturl"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                MS Forms loss-debrief
+              </a>
+              {" "}· paste the client's answers into each field above.
+            </div>
+          </div>
+        );
+      })()}
       <div className="flex gap-2 pt-1 flex-wrap">
         <Button size="sm" onClick={saveProposal} disabled={savingProposal}>
           {savingProposal ? "Saving…" : "Save"}

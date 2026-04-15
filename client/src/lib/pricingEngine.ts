@@ -388,6 +388,32 @@ export interface PricingCaseInput {
   procurement_involvement?: ProcurementInvolvement | null;
 }
 
+/**
+ * Loss-debrief survey answers, collected after a lost proposal.
+ * Shape mirrors the MS Forms survey we send to declined clients.
+ * Every field is optional — the survey may come back partial, or
+ * not at all.
+ */
+export interface ClientFeedback {
+  received_date?:               string | null;   // ISO date
+  winner_name?:                 string | null;   // which competitor won
+  would_reconsider?:            "yes" | "no" | "maybe" | null;
+  ratings?: {
+    overall?:        number | null;              // 1-5, higher is better
+    team?:           number | null;
+    price_fairness?: number | null;              // 1 = felt overpriced
+    deck_quality?:   number | null;
+    approach?:       number | null;
+    relationship?:   number | null;
+  } | null;
+  strengths?:                   string | null;   // what we did well
+  weaknesses?:                  string | null;   // what to improve
+  reasons_for_choosing_winner?: string | null;
+  additional_comments?:         string | null;
+  /** Catch-all for survey fields we haven't modelled yet (e.g. a new MS Forms question). */
+  extra?: Record<string, any> | null;
+}
+
 export interface PricingProposal {
   id?: number;
   proposal_date: string;
@@ -404,6 +430,13 @@ export interface PricingProposal {
   total_fee?: number | null;
   outcome: string;
   loss_reason?: string | null;
+  /**
+   * Structured loss-debrief answers from the client survey. Lives in a
+   * single JSONB column so the set of questions can grow without
+   * running migrations. Every field is optional — if the client never
+   * replies we keep the whole object null.
+   */
+  client_feedback?: ClientFeedback | null;
   sector?: string | null;
   project_type?: string | null;
   currency?: string | null;

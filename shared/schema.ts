@@ -352,6 +352,30 @@ export const pricingProposals = pgTable("pricing_proposals", {
   total_fee: real("total_fee"),
   outcome: text("outcome").notNull().default("pending"),
   loss_reason: text("loss_reason"),
+  // Structured client debrief captured after a LOST proposal. JSONB
+  // instead of individual columns so the survey shape can evolve without
+  // running a migration every time we add a question. Default shape
+  // mirrors the MS Forms loss-debrief sent to clients:
+  //   {
+  //     received_date:              "YYYY-MM-DD",
+  //     winner_name:                "McKinsey",
+  //     would_reconsider:           "yes" | "no" | "maybe",
+  //     ratings: {                  // 1-5, higher is better
+  //       overall:         4,
+  //       team:            5,
+  //       price_fairness:  2,       // low = client felt overpriced
+  //       deck_quality:    5,
+  //       approach:        4,
+  //       relationship:    3
+  //     },
+  //     strengths:                   "what Eendigo did well",
+  //     weaknesses:                  "what to improve",
+  //     reasons_for_choosing_winner: "price + industry references",
+  //     additional_comments:         "free text"
+  //   }
+  // Any field may be null/missing. An `extra` key is reserved for fields
+  // we haven't modelled yet — e.g. when importing MS Forms CSV.
+  client_feedback: jsonb("client_feedback"),
   sector: text("sector"),
   project_type: text("project_type"),
   currency: text("currency").notNull().default("EUR"),
