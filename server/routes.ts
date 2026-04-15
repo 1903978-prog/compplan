@@ -1416,16 +1416,38 @@ RULES:
     } catch { return null; }
   }
 
-  // Aggressive project-code scanner. Looks in EVERY plausible spot:
-  //   - line_items[*].project.code        (real Harvest project code)
-  //   - line_items[*].project.name        (regex anywhere in the string)
-  //   - line_items[*].description         (regex)
-  //   - inv.subject, inv.notes, inv.purchase_order, inv.number  (regex)
-  // Pattern: 2–5 letters, optional separator, 1–3 digits — e.g. COE01, COE-01, COE 1.
+  // Derive the canonical 3-letter prefix for a client from its name:
+  //   "Garnica Plywood"       → "GAR"
+  //   "FAST Logistics Group"  → "FAS"
+  //   "Aspire Advisors AG"    → "ASP"
+  // Keeps only letters, strips accents, uppercases.
+  function clientNamePrefix(clientName: string | null | undefined): string {
+    if (!clientName) return "";
+    return String(clientName)
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // strip accents
+      .replace(/[^A-Za-z]/g, "")
+      .slice(0, 3)
+      .toUpperCase();
+  }
+
+  // Project-code scanner with client-name enforcement. The rule is:
+  //   the letter prefix of every code MUST be the first 3 letters of the
+  //   client name (so "Garnica Plywood" → GAR*, "FAST Logistics" → FAS*).
+  // This kills regex false positives like "THAN30" matching "THANK YOU 30".
+  //
+  // Exception: if line_items[*].project.code is set, we trust it verbatim
+  // (Harvest is the authoritative source).
+  //
+  // Scans: line_items[*].project.{code,name}, line_items[*].description,
+  //        inv.subject, notes, purchase_order, number.
+  // Pattern: 2–5 letters, optional separator, 1–3 digits.
   // Returns codes UPPERCASED with the digit padded to 2.
   function extractProjectCodeStrings(inv: any): { projectCodes: string | null; projectNames: string | null } {
     const codes = new Set<string>();
     const names = new Set<string>();
+
+    const prefix = clientNamePrefix(inv?.client?.name);
+    const requirePrefix = prefix.length === 3;
 
     const PATTERN = /\b([A-Z]{2,5})\s*[-_ ]?\s*(\d{1,3})\b/gi;
     const scanText = (txt: string | null | undefined) => {
@@ -1435,8 +1457,8 @@ RULES:
       PATTERN.lastIndex = 0;
       while ((m = PATTERN.exec(s)) !== null) {
         const letters = m[1].toUpperCase();
-        // Skip pure noise like "VAT22" or "EUR01"
-        if (["VAT", "EUR", "USD", "GBP", "TAX", "PDF", "ID", "NO", "REF"].includes(letters)) continue;
+        // Enforce the convention: letters must match the client prefix.
+        if (requirePrefix && letters !== prefix) continue;
         codes.add(`${letters}${m[2].padStart(2, "0")}`);
       }
     };
@@ -1446,7 +1468,18 @@ RULES:
       const proj = li?.project;
       if (proj) {
         if (proj.code && String(proj.code).trim()) {
-          codes.add(String(proj.code).trim().toUpperCase());
+          // Trust Harvest's authoritative project.code — but still
+          // normalise and (if it matches client prefix) keep it.
+          const raw = String(proj.code).trim().toUpperCase();
+          const m = raw.match(/^([A-Z]{2,5})\s*[-_ ]?\s*(\d{1,3})$/);
+          if (m) {
+            const letters = m[1];
+            // Accept real Harvest codes even if they don't match the
+            // client prefix — they are authoritative.
+            codes.add(`${letters}${m[2].padStart(2, "0")}`);
+          } else {
+            codes.add(raw);
+          }
         }
         if (proj.name && String(proj.name).trim()) {
           names.add(String(proj.name).trim());

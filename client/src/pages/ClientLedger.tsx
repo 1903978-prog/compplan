@@ -65,20 +65,36 @@ function fmtDate(d: string | null): string {
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-// Extract project codes from Harvest line_items data (stored as comma-separated string)
-// Falls back to regex on subject/number if no Harvest project codes available
+// Derive the canonical 3-letter prefix from a client name (e.g. "Garnica Plywood" → "GAR").
+function clientPrefix(name: string | null | undefined): string {
+  if (!name) return "";
+  return name
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z]/g, "")
+    .slice(0, 3)
+    .toUpperCase();
+}
+
+// Extract project codes from Harvest line_items data (stored as comma-separated string).
+// Enforces the rule: letter prefix MUST equal first 3 letters of client name.
+// When no code is available, falls back to "<PREFIX>??" (e.g. "GAR??") so the
+// "needs assignment" bucket is clearly labelled per-client instead of a generic
+// "General" catch-all.
 function extractProjectCodes(inv: HarvestInvoice): string[] {
-  // Use real Harvest project codes if available
+  const prefix = clientPrefix(inv.client?.name);
   if (inv.project_codes) {
-    return inv.project_codes.split(",").map(c => c.trim()).filter(Boolean);
+    const codes = inv.project_codes.split(",").map(c => c.trim()).filter(Boolean);
+    // Filter out anything that doesn't match the client prefix (kills THAN30
+    // and similar regex false positives that snuck in before the fix).
+    // Exception: if the user has set this as a manual override, trust it.
+    if (prefix && inv.code_source !== "manual") {
+      const filtered = codes.filter(c => c.toUpperCase().startsWith(prefix));
+      if (filtered.length) return filtered;
+    } else {
+      return codes;
+    }
   }
-  // Fallback: try to extract from subject/number
-  const text = `${inv.subject ?? ""} ${inv.number ?? ""}`;
-  const match = text.match(/\b([A-Z]{2,5})\s*[-]?\s*(0[1-9]|[1-9]\d?)\b/i);
-  if (match) {
-    return [`${match[1].toUpperCase()}${match[2].padStart(2, "0")}`];
-  }
-  return ["General"];
+  return prefix ? [`${prefix}??`] : ["General"];
 }
 
 function getPaidAmount(inv: HarvestInvoice): number {
@@ -336,7 +352,7 @@ export default function ClientLedger() {
                       <span className="text-sm font-bold">{client.clientName}</span>
                       <Badge variant="secondary" className="text-[9px]">{client.invoiceCount} inv</Badge>
                       {client.projects.length > 1 && (
-                        <Badge variant="outline" className="text-[9px]">{client.projects.filter(p => p.code !== "General").length} projects</Badge>
+                        <Badge variant="outline" className="text-[9px]">{client.projects.filter(p => p.code !== "General" && !p.code.endsWith("??")).length} projects</Badge>
                       )}
                     </div>
                   </div>
@@ -383,7 +399,7 @@ export default function ClientLedger() {
                               ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                               : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
                             }
-                            <Badge variant={project.code === "General" ? "outline" : "secondary"} className="text-xs font-mono">
+                            <Badge variant={project.code === "General" || project.code.endsWith("??") ? "outline" : "secondary"} className={`text-xs font-mono ${project.code.endsWith("??") ? "border-dashed text-muted-foreground" : ""}`}>
                               {project.code}
                             </Badge>
                             {project.name !== project.code && (
