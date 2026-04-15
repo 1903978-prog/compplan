@@ -133,24 +133,46 @@ function buildClientCodeIndex(invoices: HarvestInvoice[]): Map<string, ClientCod
   return result;
 }
 
-// Suggest the most likely code for an invoice based on its date and the
-// distribution of already-tagged invoices for the same client. Algorithm:
-//   1. If the invoice already has a confirmed manual/auto code, return it.
-//   2. Else pick the code whose mean tagged-date is closest to this invoice's date.
-//   3. If no candidate codes exist for the client, return null (user must type).
+// Derive the canonical 3-letter client prefix from the client name.
+//   "KPS Capital Partners" → "KPS"
+//   "FAST Logistics Group" → "FAS"
+//   "Aspire Advisors AG"   → "ASP"
+//   "Metra SpA"            → "MET"
+// Strips accents + non-letters, uppercases, takes first 3 chars.
+function clientNamePrefix(clientName: string | null | undefined): string {
+  if (!clientName) return "";
+  return String(clientName)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // strip accents
+    .replace(/[^A-Za-z]/g, "")
+    .slice(0, 3)
+    .toUpperCase();
+}
+
+// Suggest the most likely code for an invoice. Priority order:
+//   1. Existing confirmed manual/auto code (return as-is).
+//   2. Closest-mean-date match among already-tagged codes for the client.
+//   3. Fall back to {ClientPrefix}01 (e.g. "KPS01" for KPS Capital Partners)
+//      — this covers the "brand-new client, no tagged invoices yet" case so
+//      the user isn't left staring at a hardcoded "FAS01" placeholder.
+//   4. Only return null if we can't even derive a client prefix.
 function suggestCodeForInvoice(inv: HarvestInvoice, clientStats: ClientCodeStats[] | undefined): string | null {
   if (inv.project_codes_manual) return inv.project_codes_manual.split(",")[0].trim();
   if (inv.project_codes_auto) return inv.project_codes_auto.split(",")[0].trim();
-  if (!clientStats || clientStats.length === 0) return null;
-  const dt = invoiceDateMs(inv);
-  if (!dt) return clientStats[0].code;
-  let best = clientStats[0];
-  let bestDist = Math.abs(dt - best.meanMs);
-  for (const s of clientStats.slice(1)) {
-    const dist = Math.abs(dt - s.meanMs);
-    if (dist < bestDist) { best = s; bestDist = dist; }
+  if (clientStats && clientStats.length > 0) {
+    const dt = invoiceDateMs(inv);
+    if (!dt) return clientStats[0].code;
+    let best = clientStats[0];
+    let bestDist = Math.abs(dt - best.meanMs);
+    for (const s of clientStats.slice(1)) {
+      const dist = Math.abs(dt - s.meanMs);
+      if (dist < bestDist) { best = s; bestDist = dist; }
+    }
+    return best.code;
   }
-  return best.code;
+  // No existing codes → synthesise {prefix}01 from the client name.
+  const prefix = clientNamePrefix(inv.client?.name);
+  if (prefix.length >= 2) return `${prefix}01`;
+  return null;
 }
 
 const HIDDEN_KEY = "invoicing_hidden_ids";
@@ -709,13 +731,15 @@ export default function Invoicing() {
                                     })}
                                   </div>
                                 )}
-                                {/* Free-form input for new codes */}
+                                {/* Free-form input for new codes. Save falls back to the
+                                    suggested code if the user leaves the input blank — so
+                                    clicking Save immediately on a fresh pick "just works". */}
                                 <div className="flex items-center gap-1">
                                   <Input
                                     value={editingCodeValue}
                                     onChange={e => setEditingCodeValue(e.target.value)}
                                     onKeyDown={e => {
-                                      if (e.key === "Enter") saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient);
+                                      if (e.key === "Enter") saveProjectCodeOverride(inv.id, (editingCodeValue.trim() || suggested || ""), editingApplyToClient);
                                       if (e.key === "Escape") setEditingCodeFor(null);
                                     }}
                                     placeholder={suggested ?? "MET01"}
@@ -724,7 +748,7 @@ export default function Invoicing() {
                                     disabled={savingCodeFor === inv.id}
                                   />
                                   <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
-                                    onClick={() => saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient)}
+                                    onClick={() => saveProjectCodeOverride(inv.id, (editingCodeValue.trim() || suggested || ""), editingApplyToClient)}
                                     disabled={savingCodeFor === inv.id}>
                                     {savingCodeFor === inv.id ? "..." : "Save"}
                                   </Button>

@@ -1512,18 +1512,23 @@ RULES:
             const cols = Object.keys(row);
             if (cols.length === 0) { skipped++; continue; }
             const colsSql = cols.map(c => `"${c}"`).join(", ");
-            const values = cols.map(c => (row as any)[c]);
+            const values = cols.map(c => {
+              const v = (row as any)[c];
+              // Serialise objects/arrays to JSON so Postgres can coerce them
+              // into jsonb columns. Primitive values pass through unchanged.
+              if (v !== null && typeof v === "object") return JSON.stringify(v);
+              return v;
+            });
             try {
-              // Build a Drizzle SQL template with interpolated values so the
-              // driver handles parameterisation & type coercion. ON CONFLICT
-              // DO NOTHING so merge-mode is idempotent.
-              const parts: any[] = [sql.raw(`INSERT INTO ${tableName} (${colsSql}) VALUES (`)];
-              values.forEach((v, i) => {
-                if (i > 0) parts.push(sql.raw(", "));
-                parts.push(sql`${v}`);
-              });
-              parts.push(sql.raw(") ON CONFLICT DO NOTHING"));
-              const query = sql.join(parts, sql.raw(""));
+              // Build the INSERT by nesting Drizzle sql templates. Each
+              // iteration appends ", ${value}" to the growing query, which
+              // is how drizzle expects parameterised SQL composition. Using
+              // sql.raw() for the static parts and ${v} for the values.
+              let query: any = sql`INSERT INTO ${sql.raw(tableName)} (${sql.raw(colsSql)}) VALUES (${values[0]}`;
+              for (let i = 1; i < values.length; i++) {
+                query = sql`${query}, ${values[i]}`;
+              }
+              query = sql`${query}) ON CONFLICT DO NOTHING`;
               const r: any = await db.execute(query);
               if ((r?.rowCount ?? 0) > 0) inserted++;
               else skipped++;
