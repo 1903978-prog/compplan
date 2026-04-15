@@ -416,6 +416,30 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS new_value TEXT`);
   await db.execute(sql`ALTER TABLE invoice_changes ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'pending'`);
 
+  // ── Won Projects (Invoicing Audit) ────────────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS won_projects (
+      id SERIAL PRIMARY KEY,
+      client_name TEXT NOT NULL,
+      client_code TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      project_code TEXT,
+      total_amount REAL NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      won_date TEXT NOT NULL,
+      start_date TEXT,
+      end_date TEXT,
+      invoicing_schedule_text TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`ALTER TABLE won_projects ADD COLUMN IF NOT EXISTS project_code TEXT`);
+  await db.execute(sql`ALTER TABLE won_projects ADD COLUMN IF NOT EXISTS start_date TEXT`);
+  await db.execute(sql`ALTER TABLE won_projects ADD COLUMN IF NOT EXISTS end_date TEXT`);
+
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS api_usage_log (

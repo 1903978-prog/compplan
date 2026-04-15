@@ -473,7 +473,17 @@ export default function PricingTool() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
-  const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
+  const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss" | "wonprojects">("cases");
+  // Won Projects state — for the invoicing audit submenu
+  const [wonProjects, setWonProjects] = useState<any[]>([]);
+  const [wonProjectForm, setWonProjectForm] = useState<any>({
+    client_name: "", client_code: "", project_name: "", project_code: "",
+    total_amount: 0, currency: "EUR", won_date: new Date().toISOString().slice(0, 10),
+    start_date: "", end_date: "", invoicing_schedule_text: "", notes: "", status: "active",
+  });
+  const [editingWonId, setEditingWonId] = useState<number | null>(null);
+  const [showWonForm, setShowWonForm] = useState(false);
+  const [savingWon, setSavingWon] = useState(false);
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
   const [showHistoryForm, setShowHistoryForm] = useState(false);
@@ -660,8 +670,76 @@ export default function PricingTool() {
       // IMPORTANT: do not call setProposals here — keep whatever is already in state.
     }
 
+    // Won Projects — non-critical, failures don't block the tool
+    try {
+      const wData = await loadOne<any[]>("/api/won-projects");
+      setWonProjects(Array.isArray(wData) ? wData : []);
+    } catch (err: any) {
+      console.error("[PricingTool] won-projects load failed:", err);
+      // Silent: the tab will just show 0 entries; a retry will fix it.
+    }
+
     setLoadErrors(errors);
     setLoading(false);
+  };
+
+  // Won-project save (create / update) + delete helpers.
+  const saveWonProject = async () => {
+    if (!wonProjectForm.client_name?.trim() || !wonProjectForm.project_name?.trim()) {
+      toast({ title: "Client name and project name are required", variant: "destructive" });
+      return;
+    }
+    if (!wonProjectForm.client_code?.trim() || wonProjectForm.client_code.trim().length < 2) {
+      toast({ title: "Client code is required (e.g. MET)", variant: "destructive" });
+      return;
+    }
+    setSavingWon(true);
+    try {
+      const payload = {
+        ...wonProjectForm,
+        total_amount: Number(wonProjectForm.total_amount) || 0,
+        client_code: wonProjectForm.client_code.trim().toUpperCase(),
+      };
+      const url = editingWonId ? `/api/won-projects/${editingWonId}` : "/api/won-projects";
+      const method = editingWonId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const saved = await res.json();
+      if (editingWonId) {
+        setWonProjects(prev => prev.map(w => w.id === editingWonId ? saved : w));
+      } else {
+        setWonProjects(prev => [saved, ...prev]);
+      }
+      toast({ title: editingWonId ? "Won project updated" : "Won project saved" });
+      setShowWonForm(false);
+      setEditingWonId(null);
+      setWonProjectForm({
+        client_name: "", client_code: "", project_name: "", project_code: "",
+        total_amount: 0, currency: "EUR", won_date: new Date().toISOString().slice(0, 10),
+        start_date: "", end_date: "", invoicing_schedule_text: "", notes: "", status: "active",
+      });
+    } catch (err: any) {
+      toast({ title: "Failed to save", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingWon(false);
+    }
+  };
+
+  const deleteWonProject = async (id: number) => {
+    if (!confirm("Delete this won project?")) return;
+    try {
+      const res = await fetch(`/api/won-projects/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setWonProjects(prev => prev.filter(w => w.id !== id));
+      toast({ title: "Deleted" });
+    } catch (err: any) {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    }
   };
 
   useEffect(() => { loadAll(); }, []);
@@ -1934,6 +2012,7 @@ export default function PricingTool() {
             { id: "cases" as const, label: "Pricing Cases", icon: DollarSign, count: cases.length },
             { id: "history" as const, label: "Past Projects", icon: History, count: proposals.length },
             { id: "winloss" as const, label: "Win-Loss", icon: TrendingUp, count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
+            { id: "wonprojects" as const, label: "Won Projects", icon: CheckCircle, count: wonProjects.length },
           ]).map(tab => (
             <button
               key={tab.id}
@@ -3158,6 +3237,239 @@ export default function PricingTool() {
 
           </div>
         )}
+
+        {/* ── WON PROJECTS TAB (invoicing audit) ─────────────────────── */}
+        {mainTab === "wonprojects" && (
+          <div className="space-y-4">
+            {/* Header + Add button */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-sm font-semibold uppercase tracking-wide">Won Projects — Invoicing Audit</CardTitle>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Track newly won deals with their total amount and invoicing schedule. Used to verify every expected invoice is actually issued.
+                    </p>
+                  </div>
+                  {!showWonForm && (
+                    <Button onClick={() => { setShowWonForm(true); setEditingWonId(null); }}>
+                      <Plus className="w-4 h-4 mr-2" /> Add Won Project
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+
+              {showWonForm && (
+                <CardContent className="space-y-3 border-t pt-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Client Name <span className="text-red-500">*</span></Label>
+                      <Input
+                        value={wonProjectForm.client_name}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, client_name: e.target.value }))}
+                        placeholder="Metra SpA"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Client Code <span className="text-red-500">*</span></Label>
+                      <Input
+                        value={wonProjectForm.client_code}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, client_code: e.target.value.toUpperCase() }))}
+                        placeholder="MET"
+                        maxLength={5}
+                        className="font-mono uppercase"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Project Name <span className="text-red-500">*</span></Label>
+                      <Input
+                        value={wonProjectForm.project_name}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, project_name: e.target.value }))}
+                        placeholder="Commercial Due Diligence"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Project Code (invoice tag)</Label>
+                      <Input
+                        value={wonProjectForm.project_code}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, project_code: e.target.value.toUpperCase() }))}
+                        placeholder="MET04"
+                        className="font-mono uppercase"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Total Expected Amount <span className="text-red-500">*</span></Label>
+                      <Input
+                        type="number"
+                        value={wonProjectForm.total_amount}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, total_amount: e.target.value }))}
+                        placeholder="150000"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Currency</Label>
+                      <select
+                        value={wonProjectForm.currency}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, currency: e.target.value }))}
+                        className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="EUR">EUR</option>
+                        <option value="USD">USD</option>
+                        <option value="GBP">GBP</option>
+                        <option value="CHF">CHF</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Won Date <span className="text-red-500">*</span></Label>
+                      <Input
+                        type="date"
+                        value={wonProjectForm.won_date}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, won_date: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Status</Label>
+                      <select
+                        value={wonProjectForm.status}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, status: e.target.value }))}
+                        className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="active">Active</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Start Date</Label>
+                      <Input
+                        type="date"
+                        value={wonProjectForm.start_date}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, start_date: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">End Date</Label>
+                      <Input
+                        type="date"
+                        value={wonProjectForm.end_date}
+                        onChange={e => setWonProjectForm((f: any) => ({ ...f, end_date: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Invoicing Schedule (paste from SOW contract)</Label>
+                    <Textarea
+                      value={wonProjectForm.invoicing_schedule_text}
+                      onChange={e => setWonProjectForm((f: any) => ({ ...f, invoicing_schedule_text: e.target.value }))}
+                      placeholder={"Paste the full invoicing schedule from the SOW here. Example:\n• 30% on kickoff — EUR 45,000\n• 40% at mid-point (8 weeks) — EUR 60,000\n• 30% on final delivery — EUR 45,000"}
+                      rows={8}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Notes</Label>
+                    <Input
+                      value={wonProjectForm.notes}
+                      onChange={e => setWonProjectForm((f: any) => ({ ...f, notes: e.target.value }))}
+                      placeholder="Any additional info"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <Button onClick={saveWonProject} disabled={savingWon}>
+                      {savingWon ? "Saving..." : editingWonId ? "Update" : "Save"}
+                    </Button>
+                    <Button variant="outline" onClick={() => { setShowWonForm(false); setEditingWonId(null); }}>
+                      Cancel
+                    </Button>
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+
+            {/* List of won projects */}
+            {wonProjects.length === 0 ? (
+              <Card className="p-8 text-center text-muted-foreground">
+                <CheckCircle className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No won projects yet. Click <strong>Add Won Project</strong> to track a newly won deal.</p>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {wonProjects.map(wp => {
+                  // Reconciliation: match invoices from invoice_snapshots via /api is out of scope here,
+                  // but we compute a rough "scheduled vs. tracked" summary using the total_amount only.
+                  // Full reconciliation (sum of issued invoices with matching project_code) is surfaced
+                  // via the invoice list already — here we just show the expected totals.
+                  const amt = wp.total_amount ?? 0;
+                  const sym = wp.currency === "USD" ? "$" : wp.currency === "GBP" ? "\u00A3" : wp.currency === "CHF" ? "CHF " : "\u20AC";
+                  return (
+                    <Card key={wp.id} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-sm">{wp.project_name}</h3>
+                            <Badge variant="secondary" className="font-mono text-[10px]">{wp.client_code}</Badge>
+                            {wp.project_code && (
+                              <Badge variant="default" className="font-mono text-[10px]">{wp.project_code}</Badge>
+                            )}
+                            <Badge
+                              variant={wp.status === "active" ? "default" : wp.status === "completed" ? "secondary" : "outline"}
+                              className="text-[10px]"
+                            >
+                              {wp.status}
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {wp.client_name} · Won {wp.won_date}
+                            {wp.start_date && <> · Start {wp.start_date}</>}
+                            {wp.end_date && <> · End {wp.end_date}</>}
+                          </div>
+                          <div className="text-sm font-semibold mt-1">
+                            Expected: {sym}{Math.round(amt).toLocaleString("it-IT")}
+                          </div>
+                          {wp.invoicing_schedule_text && (
+                            <details className="mt-2">
+                              <summary className="text-xs text-primary cursor-pointer hover:underline">
+                                View invoicing schedule
+                              </summary>
+                              <pre className="mt-2 text-[11px] bg-muted/40 rounded p-2 whitespace-pre-wrap font-mono max-h-60 overflow-y-auto">
+                                {wp.invoicing_schedule_text}
+                              </pre>
+                            </details>
+                          )}
+                          {wp.notes && (
+                            <div className="text-xs text-muted-foreground italic mt-1">{wp.notes}</div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setWonProjectForm({ ...wp });
+                              setEditingWonId(wp.id);
+                              setShowWonForm(true);
+                            }}
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => deleteWonProject(wp.id)}
+                            className="text-red-600 hover:text-red-700"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
     );
   }

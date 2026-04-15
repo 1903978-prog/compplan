@@ -603,6 +603,29 @@ export const hiringCandidates = pgTable("hiring_candidates", {
   created_at: text("created_at").notNull(),
 });
 
+// ── Won Projects (Invoicing Audit) ──────────────────────────────────────────
+// Newly won projects entered manually to audit that all expected invoices are
+// actually issued by the team. Each won project has a client code (e.g. "MET"),
+// a total expected amount, and the pasted invoicing schedule text from the SOW
+// contract. Used to reconcile against invoice_snapshots.
+export const wonProjects = pgTable("won_projects", {
+  id: serial("id").primaryKey(),
+  client_name: text("client_name").notNull(),
+  client_code: text("client_code").notNull(),             // e.g. "MET" (3-letter prefix used in project codes)
+  project_name: text("project_name").notNull(),
+  project_code: text("project_code"),                     // e.g. "MET04" — specific invoice code to match against
+  total_amount: real("total_amount").notNull(),
+  currency: text("currency").notNull().default("EUR"),
+  won_date: text("won_date").notNull(),                   // ISO date when deal was won
+  start_date: text("start_date"),                         // project start (optional)
+  end_date: text("end_date"),                             // project end (optional)
+  invoicing_schedule_text: text("invoicing_schedule_text"), // pasted from SOW contract
+  status: text("status").notNull().default("active"),     // "active" | "completed" | "cancelled"
+  notes: text("notes"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
 // ── Harvest Invoice Tracking ────────────────────────────────────────────────
 // Snapshot of last-seen state per invoice (for change detection)
 export const invoiceSnapshots = pgTable("invoice_snapshots", {

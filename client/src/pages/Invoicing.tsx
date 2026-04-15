@@ -83,6 +83,76 @@ function fmtDate(d: string | null): string {
   return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+// Return the invoice's most meaningful chronological date (falls back through
+// sent_at → invoice created_at → due_date). Used both for display in the code
+// picker and for the "nearest-code" suggestion heuristic.
+function invoiceDate(inv: HarvestInvoice): string | null {
+  return inv.sent_at ?? inv.created_at ?? inv.due_date ?? null;
+}
+function invoiceDateMs(inv: HarvestInvoice): number {
+  const d = invoiceDate(inv);
+  return d ? new Date(d).getTime() : 0;
+}
+
+// Given all invoices for a client, return a map: code -> { count, meanMs, firstMs, lastMs }
+// Only "confirmed" codes (auto or manual, not falls-back) are used as anchors.
+interface ClientCodeStats { code: string; count: number; meanMs: number; firstMs: number; lastMs: number; }
+function buildClientCodeIndex(invoices: HarvestInvoice[]): Map<string, ClientCodeStats[]> {
+  const byClient = new Map<string, HarvestInvoice[]>();
+  for (const inv of invoices) {
+    const name = inv.client?.name ?? "";
+    if (!name) continue;
+    const arr = byClient.get(name) ?? [];
+    arr.push(inv);
+    byClient.set(name, arr);
+  }
+  const result = new Map<string, ClientCodeStats[]>();
+  for (const [client, list] of byClient) {
+    const byCode = new Map<string, number[]>();  // code -> date ms list
+    for (const inv of list) {
+      // Prefer manual override, then auto — NOT client_default (that's a fallback, not a signal).
+      const src = inv.project_codes_manual ?? inv.project_codes_auto ?? null;
+      if (!src) continue;
+      const dt = invoiceDateMs(inv);
+      if (!dt) continue;
+      for (const raw of src.split(",").map(s => s.trim()).filter(Boolean)) {
+        const arr = byCode.get(raw) ?? [];
+        arr.push(dt);
+        byCode.set(raw, arr);
+      }
+    }
+    const stats: ClientCodeStats[] = [];
+    for (const [code, dates] of byCode) {
+      dates.sort((a, b) => a - b);
+      const mean = dates.reduce((s, v) => s + v, 0) / dates.length;
+      stats.push({ code, count: dates.length, meanMs: mean, firstMs: dates[0], lastMs: dates[dates.length - 1] });
+    }
+    stats.sort((a, b) => a.code.localeCompare(b.code));
+    result.set(client, stats);
+  }
+  return result;
+}
+
+// Suggest the most likely code for an invoice based on its date and the
+// distribution of already-tagged invoices for the same client. Algorithm:
+//   1. If the invoice already has a confirmed manual/auto code, return it.
+//   2. Else pick the code whose mean tagged-date is closest to this invoice's date.
+//   3. If no candidate codes exist for the client, return null (user must type).
+function suggestCodeForInvoice(inv: HarvestInvoice, clientStats: ClientCodeStats[] | undefined): string | null {
+  if (inv.project_codes_manual) return inv.project_codes_manual.split(",")[0].trim();
+  if (inv.project_codes_auto) return inv.project_codes_auto.split(",")[0].trim();
+  if (!clientStats || clientStats.length === 0) return null;
+  const dt = invoiceDateMs(inv);
+  if (!dt) return clientStats[0].code;
+  let best = clientStats[0];
+  let bestDist = Math.abs(dt - best.meanMs);
+  for (const s of clientStats.slice(1)) {
+    const dist = Math.abs(dt - s.meanMs);
+    if (dist < bestDist) { best = s; bestDist = dist; }
+  }
+  return best.code;
+}
+
 const HIDDEN_KEY = "invoicing_hidden_ids";
 function loadHidden(): Set<number> {
   try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]")); } catch { return new Set(); }
@@ -315,6 +385,11 @@ export default function Invoicing() {
       }
     });
   }, [visibleInvoices, searchQuery, statusFilter, sortCol, sortDir]);
+
+  // Per-client project-code statistics — recomputed whenever invoices change.
+  // Used by the project-code picker dropdown to show all known codes for the
+  // current client and the suggested one (nearest mean-date match).
+  const clientCodeIndex = useMemo(() => buildClientCodeIndex(invoices), [invoices]);
 
   // Summary metrics — computed ONLY from non-hidden invoices
   const metrics = useMemo(() => {
@@ -592,39 +667,95 @@ export default function Invoicing() {
                       <TableCell className="text-sm">{inv.client?.name ?? "\u2014"}</TableCell>
                       <TableCell className="text-xs font-mono font-semibold text-primary">
                         {editingCodeFor === inv.id ? (
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-1">
-                              <Input
-                                value={editingCodeValue}
-                                onChange={e => setEditingCodeValue(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === "Enter") saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient);
-                                  if (e.key === "Escape") setEditingCodeFor(null);
-                                }}
-                                placeholder="FAS01"
-                                className="h-6 text-[11px] font-mono w-24 px-1.5"
-                                autoFocus
-                                disabled={savingCodeFor === inv.id}
-                              />
-                              <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
-                                onClick={() => saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient)}
-                                disabled={savingCodeFor === inv.id}>
-                                {savingCodeFor === inv.id ? "..." : "Save"}
-                              </Button>
-                            </div>
-                            <label className="flex items-center gap-1 text-[9px] text-muted-foreground cursor-pointer whitespace-nowrap">
-                              <input type="checkbox" checked={editingApplyToClient}
-                                onChange={e => setEditingApplyToClient(e.target.checked)}
-                                className="h-3 w-3" />
-                              Apply to all {inv.client?.name?.split(" ")[0] ?? "client"} invoices
-                            </label>
-                          </div>
+                          (() => {
+                            const clientStats = clientCodeIndex.get(inv.client?.name ?? "") ?? [];
+                            const suggested = suggestCodeForInvoice(inv, clientStats);
+                            const invDate = invoiceDate(inv);
+                            return (
+                              <div className="flex flex-col gap-1 min-w-[220px]">
+                                {/* Context: invoice date — critical for picking the right sequential code */}
+                                <div className="text-[9px] text-muted-foreground leading-tight">
+                                  <span className="font-semibold">Invoice date:</span> {fmtDate(invDate)}
+                                  {suggested && (
+                                    <span className="ml-1.5 text-blue-600">
+                                      · Suggested: <span className="font-mono font-bold">{suggested}</span>
+                                    </span>
+                                  )}
+                                </div>
+                                {/* Known codes as clickable chips (sorted MET01..MET04) */}
+                                {clientStats.length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {clientStats.map(s => {
+                                      const isActive = editingCodeValue === s.code;
+                                      const isSuggested = s.code === suggested;
+                                      return (
+                                        <button
+                                          key={s.code}
+                                          type="button"
+                                          onClick={() => setEditingCodeValue(s.code)}
+                                          className={`font-mono text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                                            isActive
+                                              ? "bg-primary text-primary-foreground border-primary"
+                                              : isSuggested
+                                                ? "bg-blue-50 text-blue-700 border-blue-400 hover:bg-blue-100"
+                                                : "bg-muted/40 text-foreground border-muted hover:bg-muted"
+                                          }`}
+                                          title={`${s.count} invoice${s.count > 1 ? "s" : ""} tagged · ${fmtDate(new Date(s.firstMs).toISOString())} → ${fmtDate(new Date(s.lastMs).toISOString())}`}
+                                        >
+                                          {s.code}
+                                          <span className="ml-1 opacity-60">({s.count})</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                {/* Free-form input for new codes */}
+                                <div className="flex items-center gap-1">
+                                  <Input
+                                    value={editingCodeValue}
+                                    onChange={e => setEditingCodeValue(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === "Enter") saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient);
+                                      if (e.key === "Escape") setEditingCodeFor(null);
+                                    }}
+                                    placeholder={suggested ?? "MET01"}
+                                    className="h-6 text-[11px] font-mono w-24 px-1.5"
+                                    autoFocus
+                                    disabled={savingCodeFor === inv.id}
+                                  />
+                                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
+                                    onClick={() => saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient)}
+                                    disabled={savingCodeFor === inv.id}>
+                                    {savingCodeFor === inv.id ? "..." : "Save"}
+                                  </Button>
+                                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
+                                    onClick={() => setEditingCodeFor(null)}>
+                                    Cancel
+                                  </Button>
+                                </div>
+                                <label className="flex items-center gap-1 text-[9px] text-muted-foreground cursor-pointer whitespace-nowrap">
+                                  <input type="checkbox" checked={editingApplyToClient}
+                                    onChange={e => setEditingApplyToClient(e.target.checked)}
+                                    className="h-3 w-3" />
+                                  Apply to all {inv.client?.name?.split(" ")[0] ?? "client"} invoices as default
+                                </label>
+                              </div>
+                            );
+                          })()
                         ) : (
                           <button
                             onClick={() => {
                               setEditingCodeFor(inv.id);
-                              setEditingCodeValue(inv.project_codes_manual ?? inv.project_codes ?? "");
-                              setEditingApplyToClient(true);
+                              // Pre-populate: prefer manual > existing code > suggested code based on date.
+                              const existing = inv.project_codes_manual ?? inv.project_codes ?? "";
+                              if (existing) {
+                                setEditingCodeValue(existing);
+                              } else {
+                                const clientStats = clientCodeIndex.get(inv.client?.name ?? "") ?? [];
+                                const suggested = suggestCodeForInvoice(inv, clientStats);
+                                setEditingCodeValue(suggested ?? "");
+                              }
+                              setEditingApplyToClient(false);  // default OFF — user must opt in to "apply to all"
                             }}
                             className="flex items-center gap-1 hover:bg-muted/50 rounded px-1 -mx-1 group min-h-[24px]"
                             title={

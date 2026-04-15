@@ -1434,26 +1434,197 @@ RULES:
   });
 
   // Download all DB content as JSON backup
-  app.get("/api/admin/download-backup", requireAuth, async (_req, res) => {
-    const [employees, settings, pricingCases, pricingProposals, hiringCandidates] = await Promise.all([
-      storage.getEmployees(),
-      storage.getPricingSettings(),
-      storage.getPricingCases(),
-      storage.getPricingProposals().catch(() => []),
-      storage.getHiringCandidates(),
-    ]);
+  // Full-database export — dumps every user-data table as JSON so the user can
+  // store a complete offline backup and re-import it later. Generic loop over
+  // the list of tables rather than hand-rolled helpers so new tables get
+  // exported automatically as long as they're in the list below.
+  const BACKUP_TABLES = [
+    "employees", "salary_history", "app_settings", "role_grid",
+    "days_off_entries", "pricing_settings", "pricing_cases", "pricing_proposals",
+    "won_projects",
+    "employee_tasks", "performance_issues",
+    "time_tracking_topics", "time_tracking_entries",
+    "proposals", "proposal_templates", "slide_methodology_configs",
+    "project_type_slide_defaults", "deck_template_configs",
+    "hiring_candidates", "invoice_snapshots", "invoice_changes",
+    "client_project_defaults", "api_usage_log",
+    "knowledge_topics", "knowledge_files",
+  ];
 
-    const date = new Date().toISOString().slice(0, 10);
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Disposition", `attachment; filename="compplan-backup-${date}.json"`);
-    res.json({
-      exportedAt: new Date().toISOString(),
-      employees,
-      pricingSettings: settings,
-      pricingCases,
-      pricingProposals,
-      hiringCandidates,
-    });
+  app.get("/api/admin/download-backup", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const dump: Record<string, any[]> = {};
+      for (const t of BACKUP_TABLES) {
+        try {
+          const r = await db.execute(sql.raw(`SELECT * FROM ${t}`));
+          dump[t] = r.rows as any[];
+        } catch (e: any) {
+          // Table might not exist on older schemas — record as empty rather than fail
+          dump[t] = [];
+          console.warn(`[backup] table ${t} skipped: ${e.message}`);
+        }
+      }
+      const date = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename="compplan-backup-${date}.json"`);
+      res.json({
+        exportedAt: new Date().toISOString(),
+        schemaVersion: 2,
+        tables: dump,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Full-database IMPORT — accepts a backup JSON and upserts every row back
+  // into the database. Uses additive semantics by default: existing rows are
+  // kept, missing rows are inserted. When `?mode=replace` is passed the
+  // table is TRUNCATED first — use with extreme care.
+  app.post("/api/admin/import-backup", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const mode = (req.query.mode as string) === "replace" ? "replace" : "merge";
+      const body = req.body;
+      if (!body || typeof body !== "object" || !body.tables) {
+        return res.status(400).json({ error: "Invalid backup file: missing 'tables' key" });
+      }
+      const tables = body.tables as Record<string, any[]>;
+      const report: Record<string, { inserted: number; skipped: number; error?: string }> = {};
+
+      for (const tableName of BACKUP_TABLES) {
+        const rows = tables[tableName];
+        if (!Array.isArray(rows)) {
+          report[tableName] = { inserted: 0, skipped: 0, error: "not in backup" };
+          continue;
+        }
+        let inserted = 0;
+        let skipped = 0;
+        try {
+          if (mode === "replace") {
+            await db.execute(sql.raw(`TRUNCATE TABLE ${tableName} RESTART IDENTITY CASCADE`));
+          }
+          for (const row of rows) {
+            if (!row || typeof row !== "object") { skipped++; continue; }
+            const cols = Object.keys(row);
+            if (cols.length === 0) { skipped++; continue; }
+            const colsSql = cols.map(c => `"${c}"`).join(", ");
+            const values = cols.map(c => (row as any)[c]);
+            try {
+              // Build a Drizzle SQL template with interpolated values so the
+              // driver handles parameterisation & type coercion. ON CONFLICT
+              // DO NOTHING so merge-mode is idempotent.
+              const parts: any[] = [sql.raw(`INSERT INTO ${tableName} (${colsSql}) VALUES (`)];
+              values.forEach((v, i) => {
+                if (i > 0) parts.push(sql.raw(", "));
+                parts.push(sql`${v}`);
+              });
+              parts.push(sql.raw(") ON CONFLICT DO NOTHING"));
+              const query = sql.join(parts, sql.raw(""));
+              const r: any = await db.execute(query);
+              if ((r?.rowCount ?? 0) > 0) inserted++;
+              else skipped++;
+            } catch (rowErr: any) {
+              skipped++;
+              console.warn(`[import] ${tableName} row failed: ${rowErr.message}`);
+            }
+          }
+          report[tableName] = { inserted, skipped };
+        } catch (tableErr: any) {
+          report[tableName] = { inserted, skipped, error: tableErr.message };
+        }
+      }
+      res.json({ ok: true, mode, report });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ── Won Projects (invoicing audit) ────────────────────────────────────────
+  app.get("/api/won-projects", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`SELECT * FROM won_projects ORDER BY won_date DESC, id DESC`);
+      res.json(r.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/won-projects", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const b = req.body ?? {};
+      const now = new Date().toISOString();
+      if (!b.client_name || !b.project_name || !b.client_code || !b.won_date) {
+        return res.status(400).json({ error: "client_name, client_code, project_name and won_date are required" });
+      }
+      const r = await db.execute(sql`
+        INSERT INTO won_projects (
+          client_name, client_code, project_name, project_code,
+          total_amount, currency, won_date, start_date, end_date,
+          invoicing_schedule_text, status, notes, created_at, updated_at
+        ) VALUES (
+          ${b.client_name}, ${String(b.client_code).toUpperCase()}, ${b.project_name}, ${b.project_code ?? null},
+          ${Number(b.total_amount) || 0}, ${b.currency ?? "EUR"}, ${b.won_date},
+          ${b.start_date || null}, ${b.end_date || null},
+          ${b.invoicing_schedule_text ?? null}, ${b.status ?? "active"}, ${b.notes ?? null},
+          ${now}, ${now}
+        ) RETURNING *
+      `);
+      res.json(r.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/won-projects/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      const b = req.body ?? {};
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        UPDATE won_projects SET
+          client_name = ${b.client_name},
+          client_code = ${String(b.client_code ?? "").toUpperCase()},
+          project_name = ${b.project_name},
+          project_code = ${b.project_code ?? null},
+          total_amount = ${Number(b.total_amount) || 0},
+          currency = ${b.currency ?? "EUR"},
+          won_date = ${b.won_date},
+          start_date = ${b.start_date || null},
+          end_date = ${b.end_date || null},
+          invoicing_schedule_text = ${b.invoicing_schedule_text ?? null},
+          status = ${b.status ?? "active"},
+          notes = ${b.notes ?? null},
+          updated_at = ${now}
+        WHERE id = ${id}
+        RETURNING *
+      `);
+      if (r.rows.length === 0) return res.status(404).json({ error: "Not found" });
+      res.json(r.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/won-projects/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      await db.execute(sql`DELETE FROM won_projects WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ── Harvest Invoicing ───────────────────────────────────────────────────────
