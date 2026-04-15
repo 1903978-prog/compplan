@@ -1405,8 +1405,9 @@ RULES:
     "User-Agent": "CompPlan App",
   });
 
-  // Harvest's LIST endpoint (GET /v2/invoices) does NOT return line_items —
-  // only the per-invoice endpoint does. Call this when you need project data.
+  // Harvest's LIST endpoint (GET /v2/invoices) DOES return line_items with
+  // nested project { id, name, code }. Per-invoice fetch is only needed for
+  // debugging. See https://help.getharvest.com/api-v2/invoices-api/invoices/invoices/
   async function fetchHarvestInvoiceDetail(invoiceId: number): Promise<any | null> {
     try {
       const resp = await fetch(`${HARVEST_BASE}/invoices/${invoiceId}`, { headers: harvestHeaders() });
@@ -1415,31 +1416,55 @@ RULES:
     } catch { return null; }
   }
 
-  // Shared helper: derive (project_codes, project_names) from a full invoice.
-  // Priority: line_items[*].project.code > derive from project.name > derive from subject.
+  // Aggressive project-code scanner. Looks in EVERY plausible spot:
+  //   - line_items[*].project.code        (real Harvest project code)
+  //   - line_items[*].project.name        (regex anywhere in the string)
+  //   - line_items[*].description         (regex)
+  //   - inv.subject, inv.notes, inv.purchase_order, inv.number  (regex)
+  // Pattern: 2–5 letters, optional separator, 1–3 digits — e.g. COE01, COE-01, COE 1.
+  // Returns codes UPPERCASED with the digit padded to 2.
   function extractProjectCodeStrings(inv: any): { projectCodes: string | null; projectNames: string | null } {
+    const codes = new Set<string>();
+    const names = new Set<string>();
+
+    const PATTERN = /\b([A-Z]{2,5})\s*[-_ ]?\s*(\d{1,3})\b/gi;
+    const scanText = (txt: string | null | undefined) => {
+      if (!txt) return;
+      const s = String(txt);
+      let m: RegExpExecArray | null;
+      PATTERN.lastIndex = 0;
+      while ((m = PATTERN.exec(s)) !== null) {
+        const letters = m[1].toUpperCase();
+        // Skip pure noise like "VAT22" or "EUR01"
+        if (["VAT", "EUR", "USD", "GBP", "TAX", "PDF", "ID", "NO", "REF"].includes(letters)) continue;
+        codes.add(`${letters}${m[2].padStart(2, "0")}`);
+      }
+    };
+
     const lineItems: any[] = inv?.line_items ?? [];
-    const rawCodes: string[] = [];
-    const rawNames: string[] = [];
     for (const li of lineItems) {
       const proj = li?.project;
-      if (!proj) continue;
-      const name = proj.name ?? "";
-      const code = proj.code ?? "";
-      if (code) { rawCodes.push(code); rawNames.push(name); }
-      else if (name) {
-        const m = name.match(/^([A-Z]{2,5}\d{1,3})/i);
-        rawCodes.push(m ? m[1].toUpperCase() : name);
-        rawNames.push(name);
+      if (proj) {
+        if (proj.code && String(proj.code).trim()) {
+          codes.add(String(proj.code).trim().toUpperCase());
+        }
+        if (proj.name && String(proj.name).trim()) {
+          names.add(String(proj.name).trim());
+          scanText(proj.name);
+        }
       }
+      scanText(li?.description);
+      scanText(li?.kind);
     }
-    if (rawCodes.length === 0 && inv?.subject) {
-      const m = inv.subject.match(/\b([A-Z]{2,5})\s*[-]?\s*(\d{1,3})\b/i);
-      if (m) { rawCodes.push(`${m[1].toUpperCase()}${m[2].padStart(2, "0")}`); rawNames.push(inv.subject); }
-    }
+
+    scanText(inv?.subject);
+    scanText(inv?.notes);
+    scanText(inv?.purchase_order);
+    scanText(inv?.number);
+
     return {
-      projectCodes: [...new Set(rawCodes)].join(",") || null,
-      projectNames: [...new Set(rawNames)].join(",") || null,
+      projectCodes: codes.size ? [...codes].join(",") : null,
+      projectNames: names.size ? [...names].join(",") : null,
     };
   }
 
@@ -1452,20 +1477,35 @@ RULES:
         SELECT invoice_id as id, invoice_number as number, client_id, client_name,
                amount, due_amount, due_date, state, currency, subject,
                sent_at, paid_at, invoice_created_at as created_at,
-               period_start, period_end, project_codes, project_names, updated_at
+               period_start, period_end,
+               project_codes, project_names,
+               project_codes_manual, project_names_manual,
+               updated_at
         FROM invoice_snapshots ORDER BY invoice_created_at DESC NULLS LAST
       `);
-      const invoices = rows.rows.map((r: any) => ({
-        id: r.id, number: r.number,
-        client: r.client_name ? { id: r.client_id ?? 0, name: r.client_name } : null,
-        amount: Number(r.amount), due_amount: Number(r.due_amount),
-        due_date: r.due_date, state: r.state ?? "", currency: r.currency ?? "EUR",
-        subject: r.subject, sent_at: r.sent_at, paid_at: r.paid_at,
-        created_at: r.created_at ?? r.updated_at, notes: null,
-        period_start: r.period_start, period_end: r.period_end,
-        project_codes: r.project_codes ?? null,
-        project_names: r.project_names ?? null,
-      }));
+      const invoices = rows.rows.map((r: any) => {
+        // Effective project codes = manual override if set, else auto-extracted.
+        const effectiveCodes = (r.project_codes_manual && String(r.project_codes_manual).trim())
+          ? r.project_codes_manual
+          : (r.project_codes ?? null);
+        const effectiveNames = (r.project_names_manual && String(r.project_names_manual).trim())
+          ? r.project_names_manual
+          : (r.project_names ?? null);
+        return {
+          id: r.id, number: r.number,
+          client: r.client_name ? { id: r.client_id ?? 0, name: r.client_name } : null,
+          amount: Number(r.amount), due_amount: Number(r.due_amount),
+          due_date: r.due_date, state: r.state ?? "", currency: r.currency ?? "EUR",
+          subject: r.subject, sent_at: r.sent_at, paid_at: r.paid_at,
+          created_at: r.created_at ?? r.updated_at, notes: null,
+          period_start: r.period_start, period_end: r.period_end,
+          project_codes: effectiveCodes,
+          project_names: effectiveNames,
+          project_codes_auto: r.project_codes ?? null,
+          project_codes_manual: r.project_codes_manual ?? null,
+          has_manual_override: !!(r.project_codes_manual && String(r.project_codes_manual).trim()),
+        };
+      });
       res.json({ invoices });
     } catch (err: any) {
       console.error("[Harvest] Failed to read local invoices:", err.message);
@@ -1496,15 +1536,13 @@ RULES:
         page++;
       }
 
-      // 2. Load existing snapshots (including project_codes so we can skip
-      //    the per-invoice detail fetch for rows that are already populated).
-      const snapRows = await db.execute(sql`SELECT invoice_id, state, amount, project_codes FROM invoice_snapshots`);
-      const snapMap = new Map<number, { state: string; amount: number; hasCodes: boolean }>();
+      // 2. Load existing snapshots
+      const snapRows = await db.execute(sql`SELECT invoice_id, state, amount FROM invoice_snapshots`);
+      const snapMap = new Map<number, { state: string; amount: number }>();
       for (const r of snapRows.rows) {
         snapMap.set(Number(r.invoice_id), {
           state: String(r.state),
           amount: Number(r.amount),
-          hasCodes: r.project_codes !== null && String(r.project_codes).length > 0,
         });
       }
       const isFirstLoad = snapMap.size === 0;
@@ -1522,23 +1560,9 @@ RULES:
         const dueAmount = Math.round(Number(inv.due_amount) || 0);
         const state = inv.state ?? "";
 
-        // Extract project codes/names. The LIST response does NOT include
-        // line_items, so we must call the per-invoice endpoint to see
-        // project data. Only do this for invoices where our snapshot
-        // doesn't already have codes (new invoices or a prior sync that
-        // ran before the per-invoice fetch was added).
-        let projectCodes: string | null = null;
-        let projectNames: string | null = null;
-        const existingSnap = snapMap.get(invId);
-        const needsDetail = !existingSnap || !existingSnap.hasCodes;
-        if (needsDetail) {
-          const detail = await fetchHarvestInvoiceDetail(invId);
-          if (detail) {
-            const extracted = extractProjectCodeStrings(detail);
-            projectCodes = extracted.projectCodes;
-            projectNames = extracted.projectNames;
-          }
-        }
+        // Extract project codes/names from the LIST response — it already
+        // includes line_items[*].project, so no per-invoice fetch needed.
+        const { projectCodes, projectNames } = extractProjectCodeStrings(inv);
 
         if (!snapMap.has(invId)) {
           // New invoice
@@ -1561,9 +1585,9 @@ RULES:
             pendingChanges.push({ invoice_id: invId, invoice_number: invNum, client_name: clientName,
               amount, change_type: "amount_changed", old_value: String(prev.amount), new_value: String(amount) });
           }
-          // Update all fields. For project codes, only overwrite when we
-          // actually fetched new values — otherwise preserve existing codes
-          // (we skipped the per-invoice detail fetch above).
+          // Update all fields. NOTE: we deliberately do NOT touch
+          // project_codes_manual / project_names_manual — those are user
+          // overrides that must survive every Harvest re-sync.
           await db.execute(sql`
             UPDATE invoice_snapshots SET
               invoice_number = ${invNum}, client_id = ${inv.client?.id ?? null}, client_name = ${clientName},
@@ -1572,8 +1596,8 @@ RULES:
               sent_at = ${inv.sent_at ?? null}, paid_at = ${inv.paid_at ?? null},
               invoice_created_at = ${inv.created_at ?? null},
               period_start = ${inv.period_start ?? null}, period_end = ${inv.period_end ?? null},
-              project_codes = CASE WHEN ${needsDetail} THEN ${projectCodes} ELSE project_codes END,
-              project_names = CASE WHEN ${needsDetail} THEN ${projectNames} ELSE project_names END,
+              project_codes = ${projectCodes},
+              project_names = ${projectNames},
               updated_at = ${now}
             WHERE invoice_id = ${invId}
           `);
@@ -1664,6 +1688,7 @@ RULES:
                   period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end,
                   project_codes = EXCLUDED.project_codes, project_names = EXCLUDED.project_names,
                   updated_at = EXCLUDED.updated_at
+                  -- project_codes_manual / project_names_manual intentionally NOT touched
               `);
             }
           } catch { /* fallback: just mark approved without fresh fetch */ }
@@ -1846,43 +1871,81 @@ RULES:
       const { sql } = await import("drizzle-orm");
       const now = new Date().toISOString();
 
-      // Find snapshots missing project_codes
-      const missing = await db.execute(sql`SELECT invoice_id FROM invoice_snapshots WHERE project_codes IS NULL`);
-      if (missing.rows.length === 0) {
-        return res.json({ backfilled: 0, message: "All snapshots already have project codes" });
+      // Pull every invoice from Harvest LIST (which already includes
+      // line_items) and re-run the extractor against the fresh data.
+      let allInvoices: any[] = [];
+      let page = 1, hasMore = true;
+      while (hasMore) {
+        const resp = await fetch(`${HARVEST_BASE}/invoices?per_page=100&page=${page}`, { headers: harvestHeaders() });
+        if (!resp.ok) throw new Error(`Harvest API ${resp.status}: ${await resp.text()}`);
+        const data = await resp.json();
+        allInvoices = allInvoices.concat(data.invoices ?? []);
+        hasMore = data.next_page !== null;
+        page++;
       }
 
-      // Harvest's list endpoint does NOT return line_items — we must fetch
-      // each invoice individually to see its project data.
       let updated = 0;
-      for (const row of missing.rows) {
-        const invId = Number(row.invoice_id);
-        const inv = await fetchHarvestInvoiceDetail(invId);
-        if (!inv) continue;
-
+      for (const inv of allInvoices) {
+        const invId = Number(inv.id);
         const { projectCodes, projectNames } = extractProjectCodeStrings(inv);
-
-        // Also backfill any other missing fields
+        // Manual override columns are NEVER touched here.
         await db.execute(sql`
           UPDATE invoice_snapshots SET
             project_codes = ${projectCodes}, project_names = ${projectNames},
-            client_id = COALESCE(client_id, ${inv.client?.id ?? null}),
-            due_amount = COALESCE(NULLIF(due_amount, 0), ${Math.round(Number(inv.due_amount) || 0)}),
-            due_date = COALESCE(due_date, ${inv.due_date ?? null}),
-            currency = COALESCE(NULLIF(currency, 'EUR'), ${inv.currency ?? "EUR"}),
-            subject = COALESCE(subject, ${inv.subject ?? null}),
-            sent_at = COALESCE(sent_at, ${inv.sent_at ?? null}),
-            paid_at = COALESCE(paid_at, ${inv.paid_at ?? null}),
-            invoice_created_at = COALESCE(invoice_created_at, ${inv.created_at ?? null}),
             updated_at = ${now}
           WHERE invoice_id = ${invId}
         `);
-        updated++;
+        if (projectCodes) updated++;
       }
 
-      res.json({ backfilled: updated, total: missing.rows.length });
+      res.json({ backfilled: updated, total: allInvoices.length });
     } catch (err: any) {
       console.error("[Harvest] Backfill failed:", err.message);
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/harvest/invoices/:id/project-codes — set MANUAL override that
+  // survives every future Harvest sync. Pass { project_codes: "COE01,COE02" }
+  // (and optionally project_names). Pass empty string or null to clear.
+  app.patch("/api/harvest/invoices/:id/project-codes", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const invId = safeInt(req.params.id);
+      const rawCodes = req.body?.project_codes;
+      const rawNames = req.body?.project_names;
+      const codes = (rawCodes === null || rawCodes === undefined || String(rawCodes).trim() === "")
+        ? null
+        : String(rawCodes).trim().toUpperCase().replace(/\s*,\s*/g, ",");
+      const names = (rawNames === null || rawNames === undefined || String(rawNames).trim() === "")
+        ? null
+        : String(rawNames).trim();
+      const result = await db.execute(sql`
+        UPDATE invoice_snapshots SET
+          project_codes_manual = ${codes},
+          project_names_manual = ${names}
+        WHERE invoice_id = ${invId}
+      `);
+      res.json({ ok: true, invoice_id: invId, project_codes_manual: codes, project_names_manual: names, rows: result.rowCount ?? 0 });
+    } catch (err: any) {
+      console.error("[Harvest] PATCH project-codes failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/harvest/invoices/:id/raw — debug: dump raw Harvest JSON for a
+  // single invoice so we can SEE exactly where the project code lives.
+  app.get("/api/harvest/invoices/:id/raw", requireAuth, async (req, res) => {
+    if (!HARVEST_TOKEN || !HARVEST_ACCOUNT) {
+      return res.status(503).json({ error: "Harvest credentials not configured" });
+    }
+    try {
+      const inv = await fetchHarvestInvoiceDetail(safeInt(req.params.id));
+      if (!inv) return res.status(404).json({ error: "Not found" });
+      const extracted = extractProjectCodeStrings(inv);
+      res.json({ extracted, invoice: inv });
+    } catch (err: any) {
       res.status(502).json({ error: err.message });
     }
   });

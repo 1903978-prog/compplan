@@ -27,6 +27,9 @@ interface HarvestInvoice {
   period_end: string | null;
   project_codes: string | null;
   project_names: string | null;
+  project_codes_auto?: string | null;
+  project_codes_manual?: string | null;
+  has_manual_override?: boolean;
 }
 
 interface ProjectGroup {
@@ -92,6 +95,34 @@ export default function ClientLedger() {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedClient, setExpandedClient] = useState<number | null>(null);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
+  const [editingCodeFor, setEditingCodeFor] = useState<number | null>(null);
+  const [editingCodeValue, setEditingCodeValue] = useState<string>("");
+  const [savingCodeFor, setSavingCodeFor] = useState<number | null>(null);
+
+  const saveProjectCodeOverride = async (invoiceId: number, value: string) => {
+    setSavingCodeFor(invoiceId);
+    try {
+      const res = await fetch(`/api/harvest/invoices/${invoiceId}/project-codes`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_codes: value.trim() || null }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Optimistic local update
+      setInvoices(prev => prev.map(i => i.id === invoiceId
+        ? { ...i, project_codes: value.trim() || i.project_codes_auto || null,
+            project_codes_manual: value.trim() || null,
+            has_manual_override: !!value.trim() }
+        : i));
+      setEditingCodeFor(null);
+      toast({ title: "Project code saved", description: value.trim() || "(cleared)" });
+    } catch (err: any) {
+      toast({ title: "Failed to save", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingCodeFor(null);
+    }
+  };
 
   const loadInvoices = async () => {
     setLoading(true);
@@ -372,6 +403,7 @@ export default function ClientLedger() {
                                 <TableHeader>
                                   <TableRow className="bg-muted/20">
                                     <TableHead className="text-[10px] py-1.5">Invoice #</TableHead>
+                                    <TableHead className="text-[10px] py-1.5">Project Code</TableHead>
                                     <TableHead className="text-[10px] py-1.5">Subject</TableHead>
                                     <TableHead className="text-[10px] py-1.5">Date</TableHead>
                                     <TableHead className="text-[10px] py-1.5 text-right">Invoiced</TableHead>
@@ -388,6 +420,48 @@ export default function ClientLedger() {
                                     return (
                                       <TableRow key={inv.id} className={isOverdue ? "bg-red-50/50" : ""}>
                                         <TableCell className="text-xs font-mono font-semibold">{inv.number}</TableCell>
+                                        <TableCell className="text-[11px]">
+                                          {editingCodeFor === inv.id ? (
+                                            <div className="flex items-center gap-1">
+                                              <Input
+                                                value={editingCodeValue}
+                                                onChange={e => setEditingCodeValue(e.target.value)}
+                                                onKeyDown={e => {
+                                                  if (e.key === "Enter") saveProjectCodeOverride(inv.id, editingCodeValue);
+                                                  if (e.key === "Escape") setEditingCodeFor(null);
+                                                }}
+                                                placeholder="COE01"
+                                                className="h-6 text-[11px] font-mono w-24 px-1.5"
+                                                autoFocus
+                                                disabled={savingCodeFor === inv.id}
+                                              />
+                                              <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
+                                                onClick={() => saveProjectCodeOverride(inv.id, editingCodeValue)}
+                                                disabled={savingCodeFor === inv.id}>
+                                                {savingCodeFor === inv.id ? "..." : "Save"}
+                                              </Button>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              onClick={() => {
+                                                setEditingCodeFor(inv.id);
+                                                setEditingCodeValue(inv.project_codes_manual ?? inv.project_codes ?? "");
+                                              }}
+                                              className="flex items-center gap-1 hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 group"
+                                              title={inv.has_manual_override ? "Manual override (click to edit)" : "Click to set manual override"}
+                                            >
+                                              {inv.project_codes ? (
+                                                <span className={`font-mono font-semibold ${inv.has_manual_override ? "text-blue-600" : ""}`}>
+                                                  {inv.project_codes}
+                                                </span>
+                                              ) : (
+                                                <span className="text-muted-foreground italic">—</span>
+                                              )}
+                                              {inv.has_manual_override && <span className="text-[8px] text-blue-600">●</span>}
+                                              <span className="text-[9px] text-muted-foreground opacity-0 group-hover:opacity-100">edit</span>
+                                            </button>
+                                          )}
+                                        </TableCell>
                                         <TableCell className="text-[11px] text-muted-foreground max-w-[200px] truncate">{inv.subject ?? "\u2014"}</TableCell>
                                         <TableCell className="text-[11px]">{fmtDate(inv.created_at)}</TableCell>
                                         <TableCell className="text-xs font-mono text-right font-semibold">{fmtCurrency(inv.amount, inv.currency)}</TableCell>

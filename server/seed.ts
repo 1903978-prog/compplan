@@ -381,6 +381,9 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS period_end TEXT`);
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_codes TEXT`);
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_names TEXT`);
+  // Manual overrides — set by the user via the UI; the Harvest sync MUST NOT touch these.
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_codes_manual TEXT`);
+  await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_names_manual TEXT`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS invoice_changes (

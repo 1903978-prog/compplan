@@ -28,6 +28,9 @@ interface HarvestInvoice {
   period_end: string | null;
   project_codes: string | null;
   project_names: string | null;
+  project_codes_auto?: string | null;
+  project_codes_manual?: string | null;
+  has_manual_override?: boolean;
 }
 
 interface InvoiceChange {
@@ -103,6 +106,32 @@ export default function Invoicing() {
   const [changes, setChanges] = useState<InvoiceChange[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [editingCodeFor, setEditingCodeFor] = useState<number | null>(null);
+  const [editingCodeValue, setEditingCodeValue] = useState<string>("");
+  const [savingCodeFor, setSavingCodeFor] = useState<number | null>(null);
+
+  const saveProjectCodeOverride = async (invoiceId: number, value: string) => {
+    setSavingCodeFor(invoiceId);
+    try {
+      const res = await fetch(`/api/harvest/invoices/${invoiceId}/project-codes`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_codes: value.trim() || null }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setInvoices(prev => prev.map(i => i.id === invoiceId
+        ? { ...i, project_codes: value.trim() || i.project_codes_auto || null,
+            project_codes_manual: value.trim() || null,
+            has_manual_override: !!value.trim() }
+        : i));
+      setEditingCodeFor(null);
+    } catch (err: any) {
+      console.error("Failed to save override:", err);
+    } finally {
+      setSavingCodeFor(null);
+    }
+  };
 
   const toggleHide = (id: number) => {
     setHiddenIds(prev => {
@@ -573,9 +602,42 @@ export default function Invoicing() {
                       <TableCell className="font-mono text-sm font-semibold">{inv.number}</TableCell>
                       <TableCell className="text-sm">{inv.client?.name ?? "\u2014"}</TableCell>
                       <TableCell className="text-xs font-mono font-semibold text-primary">
-                        {inv.project_codes ? inv.project_codes.split(",").map((c, i) => (
-                          <Badge key={i} variant="secondary" className="text-[9px] mr-0.5 font-mono">{c}</Badge>
-                        )) : <span className="text-muted-foreground">—</span>}
+                        {editingCodeFor === inv.id ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              value={editingCodeValue}
+                              onChange={e => setEditingCodeValue(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") saveProjectCodeOverride(inv.id, editingCodeValue);
+                                if (e.key === "Escape") setEditingCodeFor(null);
+                              }}
+                              placeholder="COE01"
+                              className="h-6 text-[11px] font-mono w-24 px-1.5"
+                              autoFocus
+                              disabled={savingCodeFor === inv.id}
+                            />
+                            <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
+                              onClick={() => saveProjectCodeOverride(inv.id, editingCodeValue)}
+                              disabled={savingCodeFor === inv.id}>
+                              {savingCodeFor === inv.id ? "..." : "Save"}
+                            </Button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setEditingCodeFor(inv.id);
+                              setEditingCodeValue(inv.project_codes_manual ?? inv.project_codes ?? "");
+                            }}
+                            className="flex items-center gap-1 hover:bg-muted/50 rounded px-1 -mx-1 group min-h-[24px]"
+                            title={inv.has_manual_override ? "Manual override (click to edit)" : "Click to set manual override"}
+                          >
+                            {inv.project_codes ? inv.project_codes.split(",").map((c, i) => (
+                              <Badge key={i} variant={inv.has_manual_override ? "default" : "secondary"} className="text-[9px] mr-0.5 font-mono">{c}</Badge>
+                            )) : <span className="text-muted-foreground italic">—</span>}
+                            {inv.has_manual_override && <span className="text-[8px] text-blue-600">●</span>}
+                            <span className="text-[9px] text-muted-foreground opacity-0 group-hover:opacity-100 ml-1">edit</span>
+                          </button>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{inv.subject ?? "\u2014"}</TableCell>
                       <TableCell className="text-sm font-mono text-right font-semibold">{fmtCurrency(inv.amount, inv.currency)}</TableCell>
