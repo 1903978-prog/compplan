@@ -134,7 +134,12 @@ body.privacy-mode [data-privacy="hide"],
 body.privacy-mode [data-privacy="hide"] *,
 body.privacy-mode input[type="number"],
 body.privacy-mode .badge-value,
-body.privacy-mode [class*="badge"]:not(button):not(a) {
+body.privacy-mode [class*="badge"]:not(button):not(a),
+/* Universal catch: any element the JS TreeWalker flagged as holding a
+   digit-bearing text node. This is what actually covers SVG chart labels
+   (€29k, $43k) and ad-hoc counters like "15W · 9L" that don't fit any
+   specific class selector above. */
+body.privacy-mode .privacy-numeric {
   filter: blur(6px) !important;
   transition: filter 0.15s ease-out;
   user-select: none !important;

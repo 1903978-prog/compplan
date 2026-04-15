@@ -90,27 +90,101 @@ function Navigation() {
   const [apiCost, setApiCost] = useState<{ month: string; today: string } | null>(null);
   const [location] = useLocation();
 
-  // Privacy Mode — hides all confidential numbers across the entire app by
-  // adding a `privacy-mode` class to <body>. CSS in index.css then blurs
-  // every sensitive selector (table cells, font-mono text, number inputs,
-  // badges, anything marked data-privacy="hide"). Persisted to localStorage
-  // so the setting survives reloads and full screen-share sessions.
+  // Privacy Mode — hides every confidential number across the entire app.
   //
-  // The raw DOM text is NEVER mutated — we only apply a CSS filter. That
-  // means exports, copy/paste, and every downstream calculation keep
-  // working exactly as before; the only thing that changes is what a
-  // third party can actually read off the screen.
+  // Two-layer defence:
+  //   (1) A body class `privacy-mode` plus CSS selectors in index.css blur
+  //       obvious containers (table cells, font-mono, number inputs,
+  //       badges, anything tagged [data-privacy="hide"]).
+  //   (2) A TreeWalker sweeps every text node in the DOM and, whenever the
+  //       text contains a digit, marks its parent element with the
+  //       `privacy-numeric` class. A MutationObserver re-runs the sweep on
+  //       any DOM change so newly-rendered React output is covered too.
+  //       This is the universal catch: it handles SVG <text> in charts,
+  //       ad-hoc "15W · 9L" stat lines, inline badges, whatever.
+  //
+  // The raw DOM text is NEVER mutated — we only apply a CSS filter. Exports,
+  // copy/paste, and every downstream calculation keep working exactly as
+  // before; the only thing that changes is what someone watching a screen
+  // share can actually read.
   const [privacyMode, setPrivacyMode] = useState<boolean>(() => {
     try { return localStorage.getItem("compplan.privacy_mode") === "1"; }
     catch { return false; }
   });
   useEffect(() => {
-    if (privacyMode) {
-      document.body.classList.add("privacy-mode");
-    } else {
-      document.body.classList.remove("privacy-mode");
-    }
     try { localStorage.setItem("compplan.privacy_mode", privacyMode ? "1" : "0"); } catch {}
+
+    if (!privacyMode) {
+      document.body.classList.remove("privacy-mode");
+      // Sweep up the marks so nothing stays blurred after we flip off.
+      document.querySelectorAll(".privacy-numeric").forEach(el => el.classList.remove("privacy-numeric"));
+      return;
+    }
+
+    document.body.classList.add("privacy-mode");
+
+    // `privacy-mode-keep` is walked from data-privacy="show" at runtime:
+    // any element under a "show" subtree is explicitly exempt from blurring.
+    const isExempt = (el: Element | null): boolean => {
+      let cur: Element | null = el;
+      while (cur) {
+        if (cur.getAttribute && cur.getAttribute("data-privacy") === "show") return true;
+        cur = cur.parentElement;
+      }
+      return false;
+    };
+
+    // Walk every text node; mark parents whose text contains any digit.
+    // Using TreeWalker (vs querySelectorAll + textContent) gives us leaf
+    // granularity, which is critical because filter:blur on an ancestor
+    // would blur all its children visually, including labels we want to
+    // keep readable.
+    const sweep = () => {
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: (n) =>
+            /\d/.test((n as Text).data) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+        }
+      );
+      let n: Node | null;
+      while ((n = walker.nextNode())) {
+        const parent = (n as Text).parentElement;
+        if (!parent) continue;
+        // Never blur the nav, the privacy toggle itself, or explicitly-opted-in subtrees.
+        if (isExempt(parent)) continue;
+        if (!parent.classList.contains("privacy-numeric")) {
+          parent.classList.add("privacy-numeric");
+        }
+      }
+    };
+
+    sweep();
+
+    // React re-renders dump new text into the DOM on every state change;
+    // the observer re-runs sweep on the next animation frame so there's
+    // no visible flash of un-blurred numbers.
+    let queued = false;
+    const observer = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        sweep();
+      });
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    return () => {
+      observer.disconnect();
+      document.body.classList.remove("privacy-mode");
+      document.querySelectorAll(".privacy-numeric").forEach(el => el.classList.remove("privacy-numeric"));
+    };
   }, [privacyMode]);
   // Keyboard shortcut: Ctrl/Cmd + Shift + H = toggle privacy.
   // Lets you hide the screen instantly when someone walks up without
