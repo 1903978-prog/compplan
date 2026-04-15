@@ -1908,6 +1908,55 @@ export default function Proposals() {
 
   // ── Step 6: Generate deck ──────────────────────────────────────────────────
 
+  // Pixel-perfect export: server runs each slide's preview_html through
+  // headless Chromium, screenshots at 2× retina, and builds a PPTX where
+  // every slide is a full-bleed image. Looks IDENTICAL to the HTML preview
+  // (no layout drift) — cost is that the slides aren't text-editable in
+  // PowerPoint. Good default when you've already refined previews to 85+.
+  const [generatingImages, setGeneratingImages] = useState(false);
+  async function downloadDeckImages() {
+    if (!current?.id) return;
+    // Pre-flight: warn if there are selected slides with no preview_html,
+    // so the user knows why the exported deck has fewer slides than the outline.
+    const selected = slides.filter(s => s.is_selected !== false);
+    const withPreview = selected.filter(s => !!previewHtml[s.slide_id] || !!(s as any).preview_html);
+    if (withPreview.length === 0) {
+      toast({ title: "No previews generated yet", description: "Generate or refine at least one slide preview before exporting.", variant: "destructive" });
+      return;
+    }
+    if (withPreview.length < selected.length) {
+      const missing = selected.length - withPreview.length;
+      const ok = window.confirm(
+        `${missing} slide${missing === 1 ? " has" : "s have"} no preview yet and will be skipped.\n\nExport the ${withPreview.length} slide${withPreview.length === 1 ? "" : "s"} that do have previews?`
+      );
+      if (!ok) return;
+    }
+    setGeneratingImages(true);
+    try {
+      // Make sure the server is seeing the latest edits — otherwise an
+      // unsaved contentEditable tweak would ship the old HTML.
+      await saveProgress();
+      const res = await fetch(`/api/proposals/${current.id}/export-deck-images`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Export failed" }));
+        throw new Error(err.message || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Eendigo_Proposal_${current.company_name.replace(/[^a-zA-Z0-9]/g, "_")}_pixel_perfect.pptx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Pixel-perfect deck downloaded" });
+    } catch (err: any) {
+      toast({ title: "Image export failed", description: err.message, variant: "destructive" });
+    }
+    setGeneratingImages(false);
+  }
+
   async function generateDeck() {
     if (!current?.id) return;
     setGenerating(true);
@@ -3991,13 +4040,29 @@ Root cause: Territory allocation..."
               </Table>
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <Button variant="outline" onClick={() => setStep(5)}>
                 <ArrowLeft className="w-4 h-4 mr-1" /> Edit Architecture
               </Button>
-              <Button size="lg" onClick={generateDeck} disabled={generating}>
+              <Button size="lg" onClick={generateDeck} disabled={generating || generatingImages}>
                 {generating ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Download className="w-5 h-5 mr-2" />}
-                Download PowerPoint
+                Download PowerPoint (editable)
+              </Button>
+              {/* Pixel-perfect export — Chromium renders each preview_html
+                  and drops the screenshots into a PPTX. Looks identical to
+                  the preview, but slides are raster images (not editable
+                  text in PowerPoint). */}
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-violet-300 text-violet-700 hover:bg-violet-50"
+                onClick={downloadDeckImages}
+                disabled={generating || generatingImages}
+                title="Export every slide preview via headless Chromium — looks identical to the preview, but slides are raster images (not text-editable in PowerPoint)"
+              >
+                {generatingImages
+                  ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Rendering slides…</>
+                  : <><Sparkles className="w-5 h-5 mr-2" /> Export all previews (pixel-perfect)</>}
               </Button>
             </div>
           </Card>

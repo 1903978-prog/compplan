@@ -1486,6 +1486,42 @@ Extract visual and content patterns from the image. Only suggest additions that 
     }
   });
 
+  // ── Pixel-perfect PPTX export via Playwright ─────────────────────────────
+  // Runs every selected slide's `preview_html` through headless Chromium at
+  // native 960×540, screenshots each one, and builds a PPTX where each
+  // slide is a single full-bleed image. The resulting deck looks IDENTICAL
+  // to the HTML preview — no layout drift, no font substitution, no text
+  // wrapping surprises. Trade-off: slides aren't text-editable in
+  // PowerPoint (they're raster images). Use /generate-deck when you need
+  // editable text, use this when you need WYSIWYG.
+  app.post("/api/proposals/:id/export-deck-images", requireAuth, async (req, res) => {
+    try {
+      // No guardApiAsync — this does not call Claude, it only renders HTML
+      // that's already in the DB.
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { exportDeckAsImagePptx } = await import("./slideImageExporter");
+      const buffer = await exportDeckAsImagePptx({
+        company_name: proposal.company_name,
+        slide_selection: (proposal.slide_selection as any[]) || [],
+      });
+
+      const safeName = (proposal.company_name || "Proposal").replace(/[^a-zA-Z0-9]/g, "_");
+      const fileName = `Eendigo_Proposal_${safeName}_pixel_perfect.pptx`;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("Image deck export error:", err);
+      // 422 because the usual failure mode is "no previews generated yet",
+      // not a server bug. Let the client show a friendly message.
+      const isUserError = /No slides with preview HTML/i.test(err?.message || "");
+      res.status(isUserError ? 422 : 500).json({ message: err.message || "Image export failed" });
+    }
+  });
+
   // ── Proposal Templates ────────────────────────────────────────────────────
   app.get("/api/proposal-templates", requireAuth, async (_req, res) => {
     res.json(await storage.getProposalTemplates());
