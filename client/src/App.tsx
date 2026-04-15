@@ -21,10 +21,10 @@ import SlideMethodologyAdmin from "@/pages/SlideMethodologyAdmin";
 import Invoicing from "@/pages/Invoicing";
 import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
+import AdminBackup from "@/pages/AdminBackup";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Download, Upload, Eye, EyeOff } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
   label: string;
@@ -264,78 +264,12 @@ function Navigation() {
     window.location.reload();
   };
 
-  const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [downloadingDB, setDownloadingDB] = useState(false);
-  const [importingDB, setImportingDB] = useState(false);
-
-  // Full DB export — fetches /api/admin/download-backup (a complete JSON
-  // dump of every user-data table) and forces a download via a blob URL.
-  const downloadDB = async () => {
-    setDownloadingDB(true);
-    try {
-      const res = await fetch("/api/admin/download-backup", { credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const date = new Date().toISOString().slice(0, 10);
-      a.download = `compplan-backup-${date}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast({ title: "Database downloaded", description: "Full backup saved to your Downloads folder." });
-    } catch (err: any) {
-      toast({ title: "Download failed", description: err.message, variant: "destructive" });
-    } finally {
-      setDownloadingDB(false);
-    }
-  };
-
-  // DB import — prompt user to pick a backup JSON file and POST it to the
-  // import endpoint in MERGE mode (additive, uses ON CONFLICT DO NOTHING
-  // so existing rows are preserved).
-  const importDB = async (file: File) => {
-    const confirmed = window.confirm(
-      `Import backup "${file.name}"?\n\n` +
-      `This will ADD missing rows to every table. Existing rows will be preserved ` +
-      `(merge mode — no data will be overwritten).\n\nContinue?`
-    );
-    if (!confirmed) return;
-    setImportingDB(true);
-    try {
-      const text = await file.text();
-      let parsed: any;
-      try { parsed = JSON.parse(text); } catch { throw new Error("Invalid JSON file"); }
-      const res = await fetch("/api/admin/import-backup?mode=merge", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
-      }
-      const result = await res.json();
-      const summary = Object.entries(result.report ?? {})
-        .map(([t, r]: [string, any]) => `${t}: +${r.inserted}`)
-        .filter(s => !s.endsWith(": +0"))
-        .slice(0, 6)
-        .join(", ");
-      toast({
-        title: "Import complete",
-        description: summary || "No new rows inserted (everything was already present).",
-      });
-    } catch (err: any) {
-      toast({ title: "Import failed", description: err.message, variant: "destructive" });
-    } finally {
-      setImportingDB(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
+  // NOTE: full-DB Download / Import / Restore have moved to the dedicated
+  // page at /admin/backup (component: AdminBackup). Keeping the logic in
+  // one place lets us show per-table stats, a MERGE-vs-REPLACE mode picker,
+  // and the "last manual backup" indicator — all of which were cramped in
+  // the top nav. The top nav is now only: status light, API pause,
+  // privacy toggle, logout.
 
   return (
     <nav className="border-b bg-background sticky top-0 z-50">
@@ -401,6 +335,7 @@ function Navigation() {
                 basePaths={["/admin"]}
                 items={[
                   { href: "/admin", label: "Cybersecurity", icon: Shield },
+                  { href: "/admin/backup", label: "Backup & Restore", icon: Database },
                 ]}
               />
             </div>
@@ -431,39 +366,6 @@ function Navigation() {
                 {apiPaused ? "API Paused" : "API Active"}
               </Button>
             )}
-            {/* Global DB Download + Import — visible on every page. Download
-                writes a complete JSON dump of every user-data table; Import
-                accepts the same file and merges rows back (non-destructive). */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={downloadDB}
-              disabled={downloadingDB}
-              title="Download a full JSON backup of every table in the database"
-            >
-              <Download className="w-3.5 h-3.5 mr-1.5" />
-              {downloadingDB ? "..." : "Download DB"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={importingDB}
-              title="Import a previously-downloaded backup JSON (merges, does not overwrite)"
-            >
-              <Upload className="w-3.5 h-3.5 mr-1.5" />
-              {importingDB ? "..." : "Import DB"}
-            </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={e => {
-                const f = e.target.files?.[0];
-                if (f) importDB(f);
-              }}
-            />
             {/* Privacy Mode — hides every confidential number across the app
                 so screen-sharing is safe. Click or Ctrl/Cmd+Shift+H. */}
             <Button
@@ -511,6 +413,7 @@ function Router() {
       <Route path="/invoicing" component={Invoicing} />
       <Route path="/clients" component={ClientLedger} />
       <Route path="/admin" component={AppAdmin} />
+      <Route path="/admin/backup" component={AdminBackup} />
       <Route component={NotFound} />
     </Switch>
   );

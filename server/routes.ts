@@ -1438,17 +1438,37 @@ RULES:
   // store a complete offline backup and re-import it later. Generic loop over
   // the list of tables rather than hand-rolled helpers so new tables get
   // exported automatically as long as they're in the list below.
+  // Every user-data table the app touches. When a new pgTable is added to
+  // shared/schema.ts OR a new CREATE TABLE IF NOT EXISTS is added to seed.ts
+  // it MUST be added here too, otherwise it will silently be left out of
+  // nightly backups and manual dumps — which is a data-loss hazard.
+  //
+  // Tables listed here that don't (yet) exist on the running schema are
+  // fine: the dump endpoint catches per-table errors and records them as
+  // empty arrays, and the import endpoint skips them gracefully.
   const BACKUP_TABLES = [
-    "employees", "salary_history", "app_settings", "role_grid",
-    "days_off_entries", "pricing_settings", "pricing_cases", "pricing_proposals",
-    "won_projects",
+    // Auth
+    "users",
+    // HR / employees
+    "employees", "salary_history", "role_grid", "days_off_entries",
     "employee_tasks", "performance_issues",
-    "time_tracking_topics", "time_tracking_entries",
+    // App config
+    "app_settings",
+    // Pricing (settings JSON holds the country_benchmarks corridors)
+    "pricing_settings", "pricing_cases", "pricing_proposals", "won_projects",
+    // Proposals / slide methodology
     "proposals", "proposal_templates", "slide_methodology_configs",
     "project_type_slide_defaults", "deck_template_configs",
-    "hiring_candidates", "invoice_snapshots", "invoice_changes",
-    "client_project_defaults", "api_usage_log",
+    // Hiring
+    "hiring_candidates",
+    // AR / invoicing
+    "invoice_snapshots", "invoice_changes", "client_project_defaults",
+    // Time tracking
+    "time_tracking_topics", "time_tracking_entries",
+    // Knowledge center
     "knowledge_topics", "knowledge_files",
+    // Misc
+    "api_usage_log",
   ];
 
   // Auth for the backup endpoint: accept either a normal logged-in cookie
@@ -1464,6 +1484,41 @@ RULES:
     }
     return requireAuth(req, res, next);
   };
+
+  // Lightweight backup stats for the Admin → Backup & Restore page. Unlike
+  // /download-backup this does NOT dump every row — it just counts them,
+  // so the page can render instantly without pulling MB of JSON.
+  app.get("/api/admin/backup-info", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const per: Record<string, number> = {};
+      let total = 0;
+      let ok = 0;
+      for (const t of BACKUP_TABLES) {
+        try {
+          const r: any = await db.execute(sql.raw(`SELECT COUNT(*)::int AS n FROM ${t}`));
+          const n = Number(r.rows?.[0]?.n ?? 0);
+          per[t] = n;
+          total += n;
+          ok++;
+        } catch {
+          per[t] = -1; // table missing on this schema
+        }
+      }
+      res.json({
+        ok: true,
+        tables_total: BACKUP_TABLES.length,
+        tables_available: ok,
+        rows_total: total,
+        per_table: per,
+        server_time: new Date().toISOString(),
+        backup_token_configured: !!process.env.BACKUP_TOKEN,
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
 
   app.get("/api/admin/download-backup", backupAuth, async (_req, res) => {
     try {

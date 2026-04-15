@@ -1,0 +1,157 @@
+name: Weekly Code Backup (all apps)
+
+# Every Monday at 12:00 UTC = 13:00 (winter) / 14:00 (summer) Italy time.
+# Manual trigger always available from the Actions tab.
+on:
+  schedule:
+    - cron: '0 12 * * 1'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # All apps to back up. One per line, "owner/repo".
+      # To add a new app later, add a line here and re-run.
+      REPOS: |
+        1903978-prog/compplan
+        1903978-prog/lm-op-model
+        1903978-prog/eat-well-goal
+        1903978-prog/template-tiles
+        1903978-prog/macro-allocation-cockpit
+      # Personal access token with read access to all repos above.
+      GH_TOKEN: ${{ secrets.BACKUP_GH_PAT }}
+
+    steps:
+      - name: Build week tag
+        id: meta
+        run: |
+          WEEK_TAG="$(date -u +%Y-W%V)"
+          DATE_HUMAN="$(date -u +'%Y-%m-%d')"
+          echo "week_tag=${WEEK_TAG}" >> "$GITHUB_OUTPUT"
+          echo "date_human=${DATE_HUMAN}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=weekly-code-backup-${WEEK_TAG}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Clone every repo (latest commit, no .git, no node_modules)
+        run: |
+          set -euo pipefail
+          mkdir -p out staging
+          cd staging
+
+          MANIFEST="../out/MANIFEST.txt"
+          {
+            echo "Weekly Code Backup"
+            echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "Week:      ${{ steps.meta.outputs.week_tag }}"
+            echo
+          } > "$MANIFEST"
+
+          # Read REPOS line by line, skipping blanks
+          while IFS= read -r repo; do
+            repo="${repo// /}"
+            [[ -z "$repo" ]] && continue
+            app="${repo##*/}"
+            echo "==> Cloning $repo"
+            git clone --depth 1 --quiet \
+              "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" \
+              "$app"
+
+            # Capture the commit we backed up
+            pushd "$app" >/dev/null
+            COMMIT="$(git rev-parse HEAD)"
+            COMMIT_DATE="$(git log -1 --format=%cI)"
+            COMMIT_MSG="$(git log -1 --format=%s)"
+            popd >/dev/null
+
+            # Strip things that shouldn't be in a code backup
+            rm -rf "$app/.git" "$app/node_modules" "$app/.next" \
+                   "$app/dist" "$app/build" "$app/.cache" \
+                   "$app/.venv" "$app/venv" "$app/__pycache__" \
+                   "$app/.turbo" "$app/.parcel-cache"
+
+            FILE_COUNT="$(find "$app" -type f | wc -l)"
+            DIR_SIZE="$(du -sh "$app" | awk '{print $1}')"
+
+            {
+              echo "App: ${app}"
+              echo "  repo:   ${repo}"
+              echo "  commit: ${COMMIT}"
+              echo "  date:   ${COMMIT_DATE}"
+              echo "  msg:    ${COMMIT_MSG}"
+              echo "  files:  ${FILE_COUNT}"
+              echo "  size:   ${DIR_SIZE}"
+              echo
+            } >> "$MANIFEST"
+          done <<< "$REPOS"
+
+          cat "$MANIFEST"
+
+      - name: Build the zip
+        id: zip
+        run: |
+          set -euo pipefail
+          ZIP_NAME="${{ steps.meta.outputs.zip_name }}"
+          # Move MANIFEST inside staging so it ends up in the zip too
+          mv out/MANIFEST.txt staging/MANIFEST.txt
+          (cd staging && zip -rq "../out/${ZIP_NAME}" .)
+          ZIP_BYTES="$(stat -c%s "out/${ZIP_NAME}")"
+          ZIP_HUMAN="$(du -h "out/${ZIP_NAME}" | awk '{print $1}')"
+          ZIP_SHA="$(sha256sum "out/${ZIP_NAME}" | awk '{print $1}')"
+          echo "zip_bytes=${ZIP_BYTES}"  >> "$GITHUB_OUTPUT"
+          echo "zip_human=${ZIP_HUMAN}"  >> "$GITHUB_OUTPUT"
+          echo "zip_sha=${ZIP_SHA}"      >> "$GITHUB_OUTPUT"
+          echo "zip_path=out/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "ZIP: ${ZIP_NAME} (${ZIP_HUMAN}, ${ZIP_BYTES} bytes)"
+
+      - name: Fail loudly if zip is too big for Gmail (>24 MB)
+        run: |
+          MAX=$((24 * 1024 * 1024))
+          if [[ "${{ steps.zip.outputs.zip_bytes }}" -gt "$MAX" ]]; then
+            echo "::error::ZIP is ${{ steps.zip.outputs.zip_human }}, over the 24 MB Gmail attachment cap."
+            echo "::error::Tell Claude to add an S3 + presigned-URL fallback."
+            exit 1
+          fi
+
+      # Always upload the zip as a workflow artifact too — that way even if
+      # the email step fails, you can download it from the Actions tab for
+      # 90 days.
+      - name: Upload zip as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.zip_name }}
+          path: ${{ steps.zip.outputs.zip_path }}
+          retention-days: 90
+
+      - name: Send email with zip attached
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          from: "Backup Bot <${{ secrets.GMAIL_USERNAME }}>"
+          to: ${{ secrets.BACKUP_EMAIL_TO }}
+          subject: "Weekly code backup — ${{ steps.meta.outputs.date_human }} (${{ steps.meta.outputs.week_tag }})"
+          attachments: ${{ steps.zip.outputs.zip_path }}
+          body: |
+            Weekly code backup for all 5 apps.
+
+            File:    ${{ steps.meta.outputs.zip_name }}
+            Size:    ${{ steps.zip.outputs.zip_human }}
+            SHA-256: ${{ steps.zip.outputs.zip_sha }}
+
+            The ZIP contains one folder per app with the latest source code
+            (no .git history, no node_modules / build / cache).
+
+            Apps included:
+              - compplan
+              - lm-op-model
+              - eat-well-goal
+              - template-tiles
+              - macro-allocation-cockpit
+
+            Also available as a workflow artifact for 90 days:
+            https://github.com/1903978-prog/compplan/actions
