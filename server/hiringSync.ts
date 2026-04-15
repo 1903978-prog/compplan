@@ -147,20 +147,42 @@ async function loginAndFetchDashboard(): Promise<string> {
 }
 
 // ─── Stage mapping ────────────────────────────────────────────────────────────
+//
+// Stride exposes the pipeline value verbatim as data-pipeline="..." on every
+// candidate <tr>. The full enum we've observed:
+//
+//   Awaiting Intro, Intro Scheduled, Intro Sent, Intro Passed, Intro Failed,
+//   Awaiting CS, CS Scheduled, CS Sent, CS Passed, CS Failed, Failed HSA,
+//   Failed TG.
+//
+// Map it to our 4 Kanban stages. "Failed HSA" and "Failed TG" are dropped
+// (dead-ends, no value showing them on the board). "Intro Failed" is kept
+// in the Good-Potential column so you can still see who dropped out recently.
 
 /**
- * Map Eendigo pipeline status → our Kanban stage.
- * Precedence: check for the most-advanced status first.
+ * Map a Stride pipeline value → Kanban stage, or null to skip the row.
+ * Precedence matters: check the most-advanced status first so we don't
+ * park an "Awaiting CS" candidate back in Good Potential.
  */
-function detectStage(rowText: string): string | null {
-  if (/hsa.?fail/i.test(rowText)) return null;              // skip HSA failed only
-  if (/cs.?rated/i.test(rowText))   return "after_csi_asc";
-  if (/cs.?sent/i.test(rowText))    return "after_intro";
-  if (/awaiting.?cs/i.test(rowText)) return "after_intro";
-  if (/intro.?pass/i.test(rowText)) return "after_intro";
-  if (/intro.?fail/i.test(rowText)) return "potential";     // keep but in Good Potential
-  if (/awaiting.?intro/i.test(rowText)) return "potential";
-  return "potential"; // default
+function detectStageFromPipeline(pipeline: string): string | null {
+  const p = (pipeline || "").toLowerCase().trim();
+
+  // Dead-end filters — skip entirely.
+  if (p.startsWith("failed hsa") || p === "hsa failed") return null;
+  if (p.startsWith("failed tg")  || p === "tg failed")  return null;
+
+  // CS pipeline (furthest right on the board)
+  if (/^cs\s*(rated|passed|failed)/.test(p)) return "after_csi_asc";
+  if (/^cs\s*(sent|scheduled)/.test(p))      return "after_intro";
+  if (/^awaiting\s*cs/.test(p))              return "after_intro";
+
+  // Intro pipeline
+  if (/^intro\s*passed/.test(p))             return "after_intro";
+  if (/^intro\s*failed/.test(p))             return "potential";   // keep for visibility
+  if (/^intro\s*(scheduled|sent)/.test(p))   return "potential";
+  if (/^awaiting\s*intro/.test(p))           return "potential";
+
+  return "potential"; // unknown new status → default to Good Potential
 }
 
 // ─── HTML parser ──────────────────────────────────────────────────────────────
@@ -186,80 +208,126 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Read a `data-foo="..."` attribute off a tag string (first match only). */
+function attr(tag: string, name: string): string {
+  const m = tag.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`, "i"));
+  return m ? m[1] : "";
+}
+
+/**
+ * Parse candidates from the Stride dashboard HTML.
+ *
+ * Stride rebuilt its table and removed the email <td>, so the old approach
+ * — regex-scanning cell text for "@domain.com" + percentages — now drops
+ * every row. The rewrite targets the structured data the new template
+ * exposes on each <tr>:
+ *
+ *   <tr data-status="passed"
+ *       data-pipeline="Intro Scheduled"
+ *       data-name="riccardo del torre"
+ *       data-fullname="Riccardo Del Torre"
+ *       data-email="riccardo.deltorre@gmail.com"
+ *       data-date="2026-04-11"
+ *       data-stage="Intro Scheduled"
+ *       data-logic="81.8"
+ *       data-verbal="100.0"
+ *       ...>
+ *
+ * Attributes are authoritative; cell text is only used for values that
+ * aren't exposed as attrs yet (excel, p1, p2, TG score, ratings). The
+ * parser is tolerant of column re-ordering because we find each score
+ * by its cell position within the row + fallback to matching the %
+ * next to known labels.
+ */
 function parseCandidates(html: string): RawCandidate[] {
-  // Find the last tbody (the candidates table, not the funnel)
-  const tbodyMatches = [...html.matchAll(/<tbody[^>]*>([\s\S]*?)<\/tbody>/gi)];
-  if (!tbodyMatches.length) return [];
+  // Pick the candidateTable tbody if it exists; otherwise fall back to the
+  // largest tbody (old behavior). Being specific stops us from mis-parsing
+  // a funnel/summary table if one is ever re-added above it.
+  const namedTbody = html.match(/<tbody[^>]*id=["']candidateTable["'][^>]*>([\s\S]*?)<\/tbody>/i);
+  let tbodyContent: string;
+  if (namedTbody) {
+    tbodyContent = namedTbody[1];
+  } else {
+    const tbodies = [...html.matchAll(/<tbody[^>]*>([\s\S]*?)<\/tbody>/gi)];
+    if (!tbodies.length) return [];
+    tbodyContent = tbodies.reduce((a, b) => (a[1].length >= b[1].length ? a : b))[1];
+  }
 
-  // Use the largest tbody (candidates table)
-  const tbody = tbodyMatches.reduce((a, b) => (a[1].length >= b[1].length ? a : b))[1];
-
-  const rows = [...tbody.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+  // Split into <tr ...> ... </tr>, keeping the opening tag so we can read
+  // its data-* attributes.
+  const rowMatches = [...tbodyContent.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)];
   const results: RawCandidate[] = [];
 
-  for (const rowMatch of rows) {
-    const rowHtml = rowMatch[1];
-    const rowText = stripTags(rowHtml);
+  for (const match of rowMatches) {
+    const openTag = match[1] || "";
+    const rowHtml = match[2] || "";
 
-    // Extract all cell texts
-    const cells = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => stripTags(m[1]));
-    if (cells.length < 3) continue;
+    // Only candidate rows — skip any ghost/header row that lacks data-email.
+    const email = attr(openTag, "data-email");
+    if (!email) continue;
 
-    // Email (required for dedup)
-    const emailMatch = rowText.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-    if (!emailMatch) continue;
-    const email = emailMatch[0];
+    // Stage comes from data-pipeline (preferred) or data-stage as fallback.
+    const pipeline = attr(openTag, "data-pipeline") || attr(openTag, "data-stage");
+    const stage = detectStageFromPipeline(pipeline);
+    if (!stage) continue; // dead-end (HSA/TG failed) — drop
 
-    // Skip HSA failed only
-    if (/hsa.?fail/i.test(rowText)) continue;
+    // Identity
+    const name =
+      attr(openTag, "data-fullname") ||
+      // Title-case data-name ("riccardo del torre" → "Riccardo Del Torre")
+      (attr(openTag, "data-name") || "")
+        .split(/\s+/).filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
 
-    const stage = detectStage(rowText);
-    if (!stage) continue;
+    const date = attr(openTag, "data-date"); // ISO like "2026-04-11"
 
-    // Extract percentages in order
-    const pcts = (rowText.match(/\d+\.?\d*\s*%/g) ?? []).map(s => s.replace(/\s/, ""));
+    // Scores that *are* data-attributes
+    const logic  = attr(openTag, "data-logic");
+    const verbal = attr(openTag, "data-verbal");
 
-    // Try to find name: first cell that looks like a name (no @, not a %, not a date)
-    const nameCell = cells.find(c =>
-      c.length > 1 &&
-      !c.includes("@") &&
-      !/^\d+\.?\d*\s*%$/.test(c) &&
-      !/^\d{4}-\d{2}-\d{2}/.test(c) &&
-      !/^(Send|Upload|Import|Select|All|Passed|Logic|Verbal|Excel|Pres|Files|Intro|CS|TG|HSA)/i.test(c)
-    ) ?? "";
+    // Everything else needs cell parsing (no data-attr exposed). Extract
+    // cells in order and rely on the template's stable column sequence:
+    //   0 Status | 1 Name | 2 CV | 3 Date | 4 Logic | 5 Verbal | 6 Excel
+    //   7 P1 | 8 P2 | 9 TG✓ | 10 TG | 11 I.Owner | 12 I.Sched | 13 I.Rate
+    //   14 CS.Own | 15 CS.Sch | 16 CS.Rate | 17 CS LM
+    const cells = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)]
+      .map(m => stripTags(m[1]));
 
-    const dateCell = cells.find(c => /^\d{4}-\d{2}-\d{2}/.test(c)) ?? "";
+    const cellAt = (i: number) => (cells[i] ?? "").trim();
 
-    // Intro rating: look for a % preceded by "Intro" context, or the 5th+ %
-    const introRatingMatch = rowText.match(/intro[^%\d]{0,30}(\d+\.?\d*\s*%)/i) ??
-                             rowText.match(/(\d+\.?\d*\s*%).*notes/i);
-    const introRating = introRatingMatch ? introRatingMatch[1] : (pcts[4] ?? "");
+    // Pull a numeric score out of a cell ("60.0" or "60.0%" → "60.0%").
+    // Returning empty string for blanks keeps buildInfo concise.
+    const numCell = (i: number): string => {
+      const raw = cellAt(i);
+      if (!raw) return "";
+      const m = raw.match(/(\d+\.?\d*)/);
+      return m ? `${m[1]}%` : "";
+    };
 
-    // TG Score (TestGorilla) — look for a % near "TG" or "Score"
-    const tgMatch = rowText.match(/(?:tg|soft.?skill|gorilla)[^\d%]{0,20}(\d+\.?\d*\s*%)/i);
-    const tgScore = tgMatch ? tgMatch[1] : "";
+    const excel    = numCell(6);
+    const pres1    = numCell(7);
+    const pres2    = numCell(8);
+    const tgScore  = numCell(10);
+    const introRating = numCell(13);
+    const csRating = numCell(16);
 
-    // Intro owner — look for a name that appears near "Intro" keyword
-    const introOwnerMatch = rowText.match(/(?:intro[^@]{0,60}?)\b([A-Z][a-z]+ [A-Z][a-z]+)\b/);
-    const introOwner = introOwnerMatch ? introOwnerMatch[1] : "";
-
-    // Row status keywords
-    const statusMatch = rowText.match(/\b(Awaiting Intro|Awaiting CS|CS Sent|CS Rated|Intro Passed|Intro Failed|HSA Failed)\b/i);
-    const rowStatus = statusMatch ? statusMatch[1] : "";
+    const introOwner = cellAt(11);
+    const rowStatus  = cellAt(0) || pipeline;
 
     results.push({
-      name: nameCell,
+      name,
       email,
-      date: dateCell,
-      logic: pcts[0] ?? "",
-      verbal: pcts[1] ?? "",
-      excel: pcts[2] ?? "",
-      pres1: pcts[3] ?? "",
-      pres2: pcts[4] ?? "",
+      date,
+      logic:  logic  ? `${logic}%`  : "",
+      verbal: verbal ? `${verbal}%` : "",
+      excel,
+      pres1,
+      pres2,
       tgScore,
       introOwner,
       introRating,
-      csRating: "",
+      csRating,
       rowStatus,
       stage,
     });
