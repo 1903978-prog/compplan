@@ -3278,7 +3278,7 @@ export default function PricingTool() {
                       <div>
                         <CardTitle className="text-sm font-semibold uppercase tracking-wide">Project Fees by Region</CardTitle>
                         <p className="text-[10px] text-muted-foreground italic mt-1">
-                          All past projects ranked by total fee (k€) · colour = region · {rows.length} project{rows.length === 1 ? "" : "s"}
+                          All past projects ranked by total fee (k€) · bar = outcome (green = won, red = lost) · dot = region · {rows.length} project{rows.length === 1 ? "" : "s"}
                         </p>
                       </div>
                       {/* Legend */}
@@ -3294,36 +3294,52 @@ export default function PricingTool() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    {/* Bars */}
+                    {/* Bars.
+                        Visual encoding (per user request):
+                          · Bar color  → outcome: green (won) / red (lost)
+                          · Left dot   → region color (so you can still scan
+                                          by geography without losing the
+                                          win/loss signal on the bar itself)
+                        Projects that aren't marked won/lost yet use slate. */}
                     <div className="space-y-1 max-h-[520px] overflow-y-auto pr-2">
                       {rows.map(r => {
                         const pct = maxFee > 0 ? (r.feeK / maxFee) * 100 : 0;
-                        const color = regionColor(r.region);
-                        const dim = r.outcome === "lost" ? 0.45 : 1;
+                        const regColor = regionColor(r.region);
+                        const outcomeColor =
+                          r.outcome === "won"  ? "#10b981" : // emerald-500
+                          r.outcome === "lost" ? "#ef4444" : // red-500
+                                                  "#64748b"; // slate-500 (unknown)
                         return (
                           <div
                             key={r.id}
                             className="flex items-center gap-2 text-[11px] group"
-                            title={`${r.name} · ${r.client} · ${r.region} · ${r.feeK.toLocaleString("it-IT")} k€ · ${r.outcome}`}
+                            title={`${r.name} · ${r.client} · ${r.region} · ${r.feeK.toLocaleString("it-IT")} k€ · ${r.outcome ?? "pending"}`}
                           >
+                            {/* Region dot — small circle at the very left, colour = region */}
+                            <div
+                              className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/10"
+                              style={{ backgroundColor: regColor }}
+                              title={`Region: ${r.region}`}
+                            />
                             {/* Name */}
                             <div className="w-36 truncate text-muted-foreground group-hover:text-foreground" title={r.name}>
                               {r.name}
                             </div>
-                            {/* Bar */}
+                            {/* Bar — colour now reflects win (green) / loss (red) */}
                             <div className="flex-1 h-5 bg-muted/20 rounded-sm relative overflow-hidden">
                               <div
                                 className="h-full rounded-sm transition-all"
                                 style={{
                                   width: `${Math.max(pct, 0.5)}%`,
-                                  backgroundColor: color,
-                                  opacity: dim,
+                                  backgroundColor: outcomeColor,
                                 }}
                               />
-                              {/* Outcome pill inside bar */}
-                              <div className="absolute inset-0 flex items-center pl-2 text-[9px] font-semibold text-white/90 mix-blend-difference">
+                              {/* Outcome label inside bar */}
+                              <div className="absolute inset-0 flex items-center pl-2 text-[9px] font-semibold text-white/95 mix-blend-difference">
                                 {r.region}
-                                {r.outcome === "lost" && <span className="ml-1 opacity-80">· lost</span>}
+                                <span className="ml-1 opacity-80">
+                                  · {r.outcome === "won" ? "won" : r.outcome === "lost" ? "lost" : "pending"}
+                                </span>
                               </div>
                             </div>
                             {/* Value */}
@@ -3333,6 +3349,23 @@ export default function PricingTool() {
                           </div>
                         );
                       })}
+                    </div>
+
+                    {/* Legend: outcome colours (the dot colours are already
+                        shown in the region legend in the header). */}
+                    <div className="flex items-center gap-4 mt-3 text-[10px] text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-2 rounded-sm" style={{ backgroundColor: "#10b981" }} /> Won
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-2 rounded-sm" style={{ backgroundColor: "#ef4444" }} /> Lost
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-2 rounded-sm" style={{ backgroundColor: "#64748b" }} /> Pending
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 rounded-full border border-black/10" style={{ backgroundColor: "#64748b" }} /> Region dot
+                      </div>
                     </div>
 
                     {/* Summary footer */}
