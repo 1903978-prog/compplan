@@ -224,24 +224,26 @@ function getBandForPrice(
   benchmarks: CountryBenchmarkRow[],
   country?: string | null
 ): "green" | "yellow" | "red" | null {
-  // Try exact country name match first (for proposals that store full country name)
-  let bench: CountryBenchmarkRow | undefined;
-  if (country) {
-    bench = benchmarks.find(b =>
-      b.country.toLowerCase() === country.toLowerCase() &&
-      (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
-    );
-  }
-  if (!bench) {
-    const aliases = REGION_TO_COUNTRY[region] ?? [region];
-    bench = benchmarks.find(b =>
-      aliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
-      (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
-    );
-  }
-  if (!bench || bench.yellow_high === 0) return null;
-  if (weeklyPrice >= bench.green_low && weeklyPrice <= bench.green_high) return "green";
-  if (weeklyPrice >= bench.yellow_low && weeklyPrice <= bench.yellow_high) return "yellow";
+  // Task 12: merge across every country in the region (e.g. DACH = DE+AT+CH)
+  // so this matches the single-source-of-truth corridor displayed in the
+  // Pricing Corridors table and used by the pricing-cases clamp. `.find()`
+  // was returning whichever country row happened to come first and was giving
+  // different bands for the same region.
+  const aliases = REGION_TO_COUNTRY[region] ?? [region];
+  const aliasSet = new Set(aliases.map(a => a.toLowerCase()));
+  if (country) aliasSet.add(country.toLowerCase());
+  const rows = benchmarks.filter(b =>
+    aliasSet.has(b.country.toLowerCase()) &&
+    (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
+  );
+  const nonZero = rows.filter(r => r.yellow_high > 0);
+  if (nonZero.length === 0) return null;
+  const greenLow  = Math.min(...nonZero.map(r => r.green_low  || Infinity));
+  const greenHigh = Math.max(...nonZero.map(r => r.green_high || 0));
+  const yelLow    = Math.min(...nonZero.map(r => r.yellow_low  || Infinity));
+  const yelHigh   = Math.max(...nonZero.map(r => r.yellow_high || 0));
+  if (weeklyPrice >= greenLow && weeklyPrice <= greenHigh) return "green";
+  if (weeklyPrice >= yelLow && weeklyPrice <= yelHigh) return "yellow";
   return "red";
 }
 
@@ -473,17 +475,8 @@ export default function PricingTool() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
-  const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss" | "wonprojects">("cases");
-  // Won Projects state — for the invoicing audit submenu
-  const [wonProjects, setWonProjects] = useState<any[]>([]);
-  const [wonProjectForm, setWonProjectForm] = useState<any>({
-    client_name: "", client_code: "", project_name: "", project_code: "",
-    total_amount: 0, currency: "EUR", won_date: new Date().toISOString().slice(0, 10),
-    start_date: "", end_date: "", invoicing_schedule_text: "", notes: "", status: "active",
-  });
-  const [editingWonId, setEditingWonId] = useState<number | null>(null);
-  const [showWonForm, setShowWonForm] = useState(false);
-  const [savingWon, setSavingWon] = useState(false);
+  const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
+  // Won Projects moved to the AR / Invoicing page (Task 11) — no state here.
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
   const [showHistoryForm, setShowHistoryForm] = useState(false);
@@ -670,76 +663,10 @@ export default function PricingTool() {
       // IMPORTANT: do not call setProposals here — keep whatever is already in state.
     }
 
-    // Won Projects — non-critical, failures don't block the tool
-    try {
-      const wData = await loadOne<any[]>("/api/won-projects");
-      setWonProjects(Array.isArray(wData) ? wData : []);
-    } catch (err: any) {
-      console.error("[PricingTool] won-projects load failed:", err);
-      // Silent: the tab will just show 0 entries; a retry will fix it.
-    }
+    // Won Projects moved to AR / Invoicing page (Task 11).
 
     setLoadErrors(errors);
     setLoading(false);
-  };
-
-  // Won-project save (create / update) + delete helpers.
-  const saveWonProject = async () => {
-    if (!wonProjectForm.client_name?.trim() || !wonProjectForm.project_name?.trim()) {
-      toast({ title: "Client name and project name are required", variant: "destructive" });
-      return;
-    }
-    if (!wonProjectForm.client_code?.trim() || wonProjectForm.client_code.trim().length < 2) {
-      toast({ title: "Client code is required (e.g. MET)", variant: "destructive" });
-      return;
-    }
-    setSavingWon(true);
-    try {
-      const payload = {
-        ...wonProjectForm,
-        total_amount: Number(wonProjectForm.total_amount) || 0,
-        client_code: wonProjectForm.client_code.trim().toUpperCase(),
-      };
-      const url = editingWonId ? `/api/won-projects/${editingWonId}` : "/api/won-projects";
-      const method = editingWonId ? "PATCH" : "POST";
-      const res = await fetch(url, {
-        method,
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const saved = await res.json();
-      if (editingWonId) {
-        setWonProjects(prev => prev.map(w => w.id === editingWonId ? saved : w));
-      } else {
-        setWonProjects(prev => [saved, ...prev]);
-      }
-      toast({ title: editingWonId ? "Won project updated" : "Won project saved" });
-      setShowWonForm(false);
-      setEditingWonId(null);
-      setWonProjectForm({
-        client_name: "", client_code: "", project_name: "", project_code: "",
-        total_amount: 0, currency: "EUR", won_date: new Date().toISOString().slice(0, 10),
-        start_date: "", end_date: "", invoicing_schedule_text: "", notes: "", status: "active",
-      });
-    } catch (err: any) {
-      toast({ title: "Failed to save", description: err.message, variant: "destructive" });
-    } finally {
-      setSavingWon(false);
-    }
-  };
-
-  const deleteWonProject = async (id: number) => {
-    if (!confirm("Delete this won project?")) return;
-    try {
-      const res = await fetch(`/api/won-projects/${id}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setWonProjects(prev => prev.filter(w => w.id !== id));
-      toast({ title: "Deleted" });
-    } catch (err: any) {
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
-    }
   };
 
   useEffect(() => { loadAll(); }, []);
@@ -2012,7 +1939,6 @@ export default function PricingTool() {
             { id: "cases" as const, label: "Pricing Cases", icon: DollarSign, count: cases.length },
             { id: "history" as const, label: "Past Projects", icon: History, count: proposals.length },
             { id: "winloss" as const, label: "Win-Loss", icon: TrendingUp, count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
-            { id: "wonprojects" as const, label: "Won Projects", icon: CheckCircle, count: wonProjects.length },
           ]).map(tab => (
             <button
               key={tab.id}
@@ -2372,6 +2298,7 @@ export default function PricingTool() {
                         {sortHeader("team_size", "Team")}
                         {sortHeader("currency", "Cur.")}
                         {sortHeader("weekly_price", "Weekly price")}
+                        {sortHeader("total_fee", "Total fee (k€)")}
                         {sortHeader("outcome", "Outcome")}
                         <TableHead className="w-24">Actions</TableHead>
                       </TableRow>
@@ -2406,6 +2333,11 @@ export default function PricingTool() {
                             </TableCell>
                             <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
                             <TableCell className="font-semibold text-sm font-mono">{fmt(p.weekly_price)}</TableCell>
+                            <TableCell className="font-semibold text-sm font-mono text-right">
+                              {p.total_fee && p.total_fee > 0
+                                ? `${Math.round(p.total_fee / 1000).toLocaleString("it-IT")}`
+                                : "—"}
+                            </TableCell>
                             <TableCell>
                               {p.outcome === "won"
                                 ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
@@ -2479,7 +2411,7 @@ export default function PricingTool() {
                           </TableRow>
                           {showEditProposalForm && editingProposalId === p.id && (
                             <TableRow className="bg-primary/5 hover:bg-primary/5">
-                              <TableCell colSpan={13} className="p-4 border-t-2 border-primary/30">
+                              <TableCell colSpan={14} className="p-4 border-t-2 border-primary/30">
                                 {renderProposalEditForm()}
                               </TableCell>
                             </TableRow>
@@ -2740,21 +2672,50 @@ export default function PricingTool() {
                                   // Find the actual benchmark rows for this region so we can update them
                                   const regionCountryNames = benchmarkCountries.filter(c => countryToReg(c) === country);
 
+                                  // Task 12: single source of truth.
+                                  //
+                                  // A region (e.g. DACH = DE+AT+CH) used to have one DB row per
+                                  // country, each with its own corridor. The stepper applied the
+                                  // delta per-row, so over time rows drifted and the merged view
+                                  // (min/max) no longer matched the number the user had just dialled
+                                  // in. The "Win-Loss Distribution" panel below also used `.find()`
+                                  // which returned only the first country row, so DACH showed 31.5/33
+                                  // there and 31/36 in this table — same region, two numbers.
+                                  //
+                                  // Fix: compute the current merged value (what the user actually
+                                  // sees in this row), apply the delta once, then write that
+                                  // identical value to every country row in the region. After any
+                                  // edit the region is guaranteed to be self-consistent and every
+                                  // other view — distribution panel, pricing cases clamp — reads the
+                                  // same number.
                                   const updateCorridorValue = (param: string, field: "green_low" | "green_high" | "yellow_low" | "yellow_high", delta: number) => {
-                                    const updated = benchmarks.map(b => {
+                                    const regionRows = benchmarks.filter(b =>
+                                      regionCountryNames.includes(b.country) && b.parameter === param
+                                    );
+                                    // Merged current value: same rule as the Pricing Corridors
+                                    // display — min for lows, max for highs. If no rows, start at 0.
+                                    const isLow = field === "green_low" || field === "yellow_low";
+                                    const nonZero = regionRows.filter(r => (r[field] || 0) > 0);
+                                    const currentMerged = nonZero.length === 0
+                                      ? 0
+                                      : (isLow
+                                          ? Math.min(...nonZero.map(r => r[field] || 0))
+                                          : Math.max(...nonZero.map(r => r[field] || 0)));
+                                    const newVal = Math.max(0, currentMerged + delta);
+
+                                    let updated = benchmarks.map(b => {
                                       const matches = regionCountryNames.includes(b.country) && b.parameter === param;
-                                      if (!matches) return b;
-                                      const newVal = Math.max(0, (b[field] || 0) + delta);
-                                      return { ...b, [field]: newVal };
+                                      return matches ? { ...b, [field]: newVal } : b;
                                     });
-                                    // If no matching row exists yet, create one
+                                    // If no matching row exists yet, create one for the canonical
+                                    // country so the stepper has something to persist against.
                                     if (!updated.some(b => regionCountryNames.includes(b.country) && b.parameter === param)) {
                                       const cName = regionCountryNames[0] ?? country;
-                                      updated.push({
+                                      updated = [...updated, {
                                         country: cName, parameter: param,
                                         yellow_low: 0, green_low: 0, green_high: 0, yellow_high: 0,
-                                        decisiveness_pct: 25, [field]: Math.max(0, delta),
-                                      });
+                                        decisiveness_pct: 25, [field]: newVal,
+                                      }];
                                     }
                                     setBenchmarks(updated);
                                     setBenchmarksLocal(updated);
@@ -3059,14 +3020,19 @@ export default function PricingTool() {
                         const fmtK2 = (n: number) => `${sym}${Math.round(n / 1000)}k`;
                         const fmtFull = (n: number) => `${sym}${Math.round(n).toLocaleString("it-IT")}`;
 
-                        // Find matching benchmark row for this country/region
+                        // Task 12: use the same merged-region band as the Pricing
+                        // Corridors by Country table above, not `.find()` (which
+                        // returned only the first country row and caused DACH to
+                        // show 31.5/33 here while the corridor table showed 31/36).
                         const countryAliases = REGION_TO_COUNTRY[country] ?? [country];
-                        const benchRow = benchmarks.find(b =>
-                          countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+                        const aliasSet = new Set(countryAliases.map(a => a.toLowerCase()));
+                        const benchRows = benchmarks.filter(b =>
+                          aliasSet.has(b.country.toLowerCase()) &&
                           (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
                         );
-                        const benchGreenLow = benchRow?.green_low ?? 0;
-                        const benchGreenHigh = benchRow?.green_high ?? 0;
+                        const benchNonZero = benchRows.filter(r => r.green_low > 0 && r.green_high > 0);
+                        const benchGreenLow  = benchNonZero.length ? Math.min(...benchNonZero.map(r => r.green_low))  : 0;
+                        const benchGreenHigh = benchNonZero.length ? Math.max(...benchNonZero.map(r => r.green_high)) : 0;
                         const hasBench = benchGreenLow > 0 && benchGreenHigh > 0;
 
                         // Extend scale to include benchmark band
@@ -3084,16 +3050,28 @@ export default function PricingTool() {
                         const plotW = W - padL - padR;
                         const xAt = (v: number) => Math.max(padL, Math.min(W - padR, padL + ((v - sMin) / sRange) * plotW));
 
-                        // Save handler for this country's green band
+                        // Task 12: Save this region's green band as the single
+                        // source of truth. Every country row in the region gets
+                        // the same [newLow, newHigh] so the merged view (used
+                        // everywhere — corridor table, pricing cases clamp,
+                        // this chart) is guaranteed to match what the user just
+                        // typed. Yellow band is preserved (previously this handler
+                        // collapsed yellow = green and destroyed the outer band).
                         const saveBenchBand = (newLow: number, newHigh: number) => {
-                          const updated = benchmarks.map(b => {
-                            const matches = countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+                          let updated = benchmarks.map(b => {
+                            const matches = aliasSet.has(b.country.toLowerCase()) &&
                               (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"));
-                            return matches ? { ...b, green_low: newLow, green_high: newHigh, yellow_low: newLow, yellow_high: newHigh } : b;
+                            return matches ? { ...b, green_low: newLow, green_high: newHigh } : b;
                           });
-                          // If no row found, add one
-                          if (!benchRow) {
-                            updated.push({ country: countryAliases[0] ?? country, parameter: "Weekly Fee", yellow_low: newLow, green_low: newLow, green_high: newHigh, yellow_high: newHigh, decisiveness_pct: 25 });
+                          // If no row exists for this region yet, create one.
+                          if (benchRows.length === 0) {
+                            updated = [...updated, {
+                              country: countryAliases[0] ?? country,
+                              parameter: "Weekly fee",
+                              yellow_low: newLow, green_low: newLow,
+                              green_high: newHigh, yellow_high: newHigh,
+                              decisiveness_pct: 25,
+                            }];
                           }
                           setBenchmarks(updated);
                           setBenchmarksLocal(updated);
@@ -3234,239 +3212,153 @@ export default function PricingTool() {
               );
             })()}
 
+            {/* ── Project Fees Bar Chart (ranked, coloured by region) ── */}
+            {(() => {
+              // Use every proposal with a positive total_fee, won or lost,
+              // except rows explicitly excluded from analysis.
+              const rows = proposals
+                .filter(p => !isExcluded(p) && p.total_fee && p.total_fee > 0)
+                .map(p => ({
+                  id: p.id!,
+                  name: p.project_name || p.client_name || `#${p.id}`,
+                  client: p.client_name || "",
+                  outcome: p.outcome,
+                  region: proposalRegionKey(p),
+                  country: p.country || "",
+                  feeK: Math.round((p.total_fee as number) / 1000),
+                }))
+                .sort((a, b) => b.feeK - a.feeK);
 
-          </div>
-        )}
+              if (rows.length === 0) {
+                return (
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-semibold uppercase tracking-wide">Project Fees by Region</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-xs text-muted-foreground text-center py-6">
+                        No projects with a total fee recorded yet — import or add a few to see the ranking.
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              }
 
-        {/* ── WON PROJECTS TAB (invoicing audit) ─────────────────────── */}
-        {mainTab === "wonprojects" && (
-          <div className="space-y-4">
-            {/* Header + Add button */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-sm font-semibold uppercase tracking-wide">Won Projects — Invoicing Audit</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Track newly won deals with their total amount and invoicing schedule. Used to verify every expected invoice is actually issued.
-                    </p>
-                  </div>
-                  {!showWonForm && (
-                    <Button onClick={() => { setShowWonForm(true); setEditingWonId(null); }}>
-                      <Plus className="w-4 h-4 mr-2" /> Add Won Project
-                    </Button>
-                  )}
-                </div>
-              </CardHeader>
+              // Region palette. Unknown regions fall back to slate.
+              const REGION_COLOR: Record<string, string> = {
+                "IT":          "#ef4444", // red
+                "FR":          "#3b82f6", // blue
+                "DACH":        "#f59e0b", // amber
+                "Nordics":     "#06b6d4", // cyan
+                "UK":          "#8b5cf6", // violet
+                "US":          "#10b981", // emerald
+                "Middle East": "#ec4899", // pink
+                "Asia":        "#eab308", // yellow
+                "Other EU":    "#14b8a6", // teal
+              };
+              const regionColor = (r: string) => REGION_COLOR[r] ?? "#64748b";
 
-              {showWonForm && (
-                <CardContent className="space-y-3 border-t pt-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs">Client Name <span className="text-red-500">*</span></Label>
-                      <Input
-                        value={wonProjectForm.client_name}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, client_name: e.target.value }))}
-                        placeholder="Metra SpA"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Client Code <span className="text-red-500">*</span></Label>
-                      <Input
-                        value={wonProjectForm.client_code}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, client_code: e.target.value.toUpperCase() }))}
-                        placeholder="MET"
-                        maxLength={5}
-                        className="font-mono uppercase"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Project Name <span className="text-red-500">*</span></Label>
-                      <Input
-                        value={wonProjectForm.project_name}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, project_name: e.target.value }))}
-                        placeholder="Commercial Due Diligence"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Project Code (invoice tag)</Label>
-                      <Input
-                        value={wonProjectForm.project_code}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, project_code: e.target.value.toUpperCase() }))}
-                        placeholder="MET04"
-                        className="font-mono uppercase"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Total Expected Amount <span className="text-red-500">*</span></Label>
-                      <Input
-                        type="number"
-                        value={wonProjectForm.total_amount}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, total_amount: e.target.value }))}
-                        placeholder="150000"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Currency</Label>
-                      <select
-                        value={wonProjectForm.currency}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, currency: e.target.value }))}
-                        className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
-                      >
-                        <option value="EUR">EUR</option>
-                        <option value="USD">USD</option>
-                        <option value="GBP">GBP</option>
-                        <option value="CHF">CHF</option>
-                      </select>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Won Date <span className="text-red-500">*</span></Label>
-                      <Input
-                        type="date"
-                        value={wonProjectForm.won_date}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, won_date: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Status</Label>
-                      <select
-                        value={wonProjectForm.status}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, status: e.target.value }))}
-                        className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
-                      >
-                        <option value="active">Active</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Start Date</Label>
-                      <Input
-                        type="date"
-                        value={wonProjectForm.start_date}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, start_date: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">End Date</Label>
-                      <Input
-                        type="date"
-                        value={wonProjectForm.end_date}
-                        onChange={e => setWonProjectForm((f: any) => ({ ...f, end_date: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Invoicing Schedule (paste from SOW contract)</Label>
-                    <Textarea
-                      value={wonProjectForm.invoicing_schedule_text}
-                      onChange={e => setWonProjectForm((f: any) => ({ ...f, invoicing_schedule_text: e.target.value }))}
-                      placeholder={"Paste the full invoicing schedule from the SOW here. Example:\n• 30% on kickoff — EUR 45,000\n• 40% at mid-point (8 weeks) — EUR 60,000\n• 30% on final delivery — EUR 45,000"}
-                      rows={8}
-                      className="font-mono text-xs"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Notes</Label>
-                    <Input
-                      value={wonProjectForm.notes}
-                      onChange={e => setWonProjectForm((f: any) => ({ ...f, notes: e.target.value }))}
-                      placeholder="Any additional info"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button onClick={saveWonProject} disabled={savingWon}>
-                      {savingWon ? "Saving..." : editingWonId ? "Update" : "Save"}
-                    </Button>
-                    <Button variant="outline" onClick={() => { setShowWonForm(false); setEditingWonId(null); }}>
-                      Cancel
-                    </Button>
-                  </div>
-                </CardContent>
-              )}
-            </Card>
+              const maxFee = rows[0].feeK;
+              const avgFee = Math.round(rows.reduce((s, r) => s + r.feeK, 0) / rows.length);
+              const medianFee = (() => {
+                const sorted = [...rows].map(r => r.feeK).sort((a, b) => a - b);
+                const m = Math.floor(sorted.length / 2);
+                return sorted.length % 2 ? sorted[m] : Math.round((sorted[m - 1] + sorted[m]) / 2);
+              })();
 
-            {/* List of won projects */}
-            {wonProjects.length === 0 ? (
-              <Card className="p-8 text-center text-muted-foreground">
-                <CheckCircle className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No won projects yet. Click <strong>Add Won Project</strong> to track a newly won deal.</p>
-              </Card>
-            ) : (
-              <div className="space-y-3">
-                {wonProjects.map(wp => {
-                  // Reconciliation: match invoices from invoice_snapshots via /api is out of scope here,
-                  // but we compute a rough "scheduled vs. tracked" summary using the total_amount only.
-                  // Full reconciliation (sum of issued invoices with matching project_code) is surfaced
-                  // via the invoice list already — here we just show the expected totals.
-                  const amt = wp.total_amount ?? 0;
-                  const sym = wp.currency === "USD" ? "$" : wp.currency === "GBP" ? "\u00A3" : wp.currency === "CHF" ? "CHF " : "\u20AC";
-                  return (
-                    <Card key={wp.id} className="p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="font-semibold text-sm">{wp.project_name}</h3>
-                            <Badge variant="secondary" className="font-mono text-[10px]">{wp.client_code}</Badge>
-                            {wp.project_code && (
-                              <Badge variant="default" className="font-mono text-[10px]">{wp.project_code}</Badge>
-                            )}
-                            <Badge
-                              variant={wp.status === "active" ? "default" : wp.status === "completed" ? "secondary" : "outline"}
-                              className="text-[10px]"
-                            >
-                              {wp.status}
-                            </Badge>
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {wp.client_name} · Won {wp.won_date}
-                            {wp.start_date && <> · Start {wp.start_date}</>}
-                            {wp.end_date && <> · End {wp.end_date}</>}
-                          </div>
-                          <div className="text-sm font-semibold mt-1">
-                            Expected: {sym}{Math.round(amt).toLocaleString("it-IT")}
-                          </div>
-                          {wp.invoicing_schedule_text && (
-                            <details className="mt-2">
-                              <summary className="text-xs text-primary cursor-pointer hover:underline">
-                                View invoicing schedule
-                              </summary>
-                              <pre className="mt-2 text-[11px] bg-muted/40 rounded p-2 whitespace-pre-wrap font-mono max-h-60 overflow-y-auto">
-                                {wp.invoicing_schedule_text}
-                              </pre>
-                            </details>
-                          )}
-                          {wp.notes && (
-                            <div className="text-xs text-muted-foreground italic mt-1">{wp.notes}</div>
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-1 shrink-0">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setWonProjectForm({ ...wp });
-                              setEditingWonId(wp.id);
-                              setShowWonForm(true);
-                            }}
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => deleteWonProject(wp.id)}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
+              // Distinct regions present, sorted by frequency (biggest bucket first)
+              const regionCounts = new Map<string, number>();
+              rows.forEach(r => regionCounts.set(r.region, (regionCounts.get(r.region) ?? 0) + 1));
+              const legendRegions = [...regionCounts.entries()].sort((a, b) => b[1] - a[1]);
+
+              return (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-sm font-semibold uppercase tracking-wide">Project Fees by Region</CardTitle>
+                        <p className="text-[10px] text-muted-foreground italic mt-1">
+                          All past projects ranked by total fee (k€) · colour = region · {rows.length} project{rows.length === 1 ? "" : "s"}
+                        </p>
                       </div>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
+                      {/* Legend */}
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 justify-end max-w-[55%]">
+                        {legendRegions.map(([region, count]) => (
+                          <div key={region} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: regionColor(region) }} />
+                            <span className="font-medium">{region}</span>
+                            <span className="opacity-60">({count})</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {/* Bars */}
+                    <div className="space-y-1 max-h-[520px] overflow-y-auto pr-2">
+                      {rows.map(r => {
+                        const pct = maxFee > 0 ? (r.feeK / maxFee) * 100 : 0;
+                        const color = regionColor(r.region);
+                        const dim = r.outcome === "lost" ? 0.45 : 1;
+                        return (
+                          <div
+                            key={r.id}
+                            className="flex items-center gap-2 text-[11px] group"
+                            title={`${r.name} · ${r.client} · ${r.region} · ${r.feeK.toLocaleString("it-IT")} k€ · ${r.outcome}`}
+                          >
+                            {/* Name */}
+                            <div className="w-36 truncate text-muted-foreground group-hover:text-foreground" title={r.name}>
+                              {r.name}
+                            </div>
+                            {/* Bar */}
+                            <div className="flex-1 h-5 bg-muted/20 rounded-sm relative overflow-hidden">
+                              <div
+                                className="h-full rounded-sm transition-all"
+                                style={{
+                                  width: `${Math.max(pct, 0.5)}%`,
+                                  backgroundColor: color,
+                                  opacity: dim,
+                                }}
+                              />
+                              {/* Outcome pill inside bar */}
+                              <div className="absolute inset-0 flex items-center pl-2 text-[9px] font-semibold text-white/90 mix-blend-difference">
+                                {r.region}
+                                {r.outcome === "lost" && <span className="ml-1 opacity-80">· lost</span>}
+                              </div>
+                            </div>
+                            {/* Value */}
+                            <div className="w-20 text-right font-mono font-semibold tabular-nums">
+                              {r.feeK.toLocaleString("it-IT")}<span className="text-muted-foreground font-normal"> k€</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Summary footer */}
+                    <div className="mt-4 pt-3 border-t flex flex-wrap items-center gap-6 text-xs">
+                      <div>
+                        <span className="text-muted-foreground uppercase tracking-wide text-[10px] font-semibold">Average</span>
+                        <div className="font-bold text-base font-mono">{avgFee.toLocaleString("it-IT")} <span className="text-xs text-muted-foreground font-normal">k€</span></div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground uppercase tracking-wide text-[10px] font-semibold">Median</span>
+                        <div className="font-bold text-base font-mono">{medianFee.toLocaleString("it-IT")} <span className="text-xs text-muted-foreground font-normal">k€</span></div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground uppercase tracking-wide text-[10px] font-semibold">Largest</span>
+                        <div className="font-bold text-base font-mono">{maxFee.toLocaleString("it-IT")} <span className="text-xs text-muted-foreground font-normal">k€</span></div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground uppercase tracking-wide text-[10px] font-semibold">Projects</span>
+                        <div className="font-bold text-base">{rows.length}</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
           </div>
         )}
 
@@ -4380,14 +4272,19 @@ export default function PricingTool() {
             const gm55 = teamCostWk > 0;
             const gm55Pass = gm55 && gmPct >= 55;
 
-            // Check 2: Net price within green band
+            // Check 2: Net price within green band.
+            // Task 12: merged min/max across every country row in the region,
+            // same logic as the Pricing Corridors table and the pricing-cases
+            // clamp — so the commercial check lines up with what the user sees.
             const cAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
-            const wBench = benchmarks.find(b =>
-              cAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+            const cAliasSet = new Set(cAliases.map(a => a.toLowerCase()));
+            const wBenchRows = benchmarks.filter(b =>
+              cAliasSet.has(b.country.toLowerCase()) &&
               (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
             );
-            const gLow = wBench?.green_low ?? 0;
-            const gHigh = wBench?.green_high ?? 0;
+            const wBenchNonZero = wBenchRows.filter(r => r.green_low > 0 && r.green_high > 0);
+            const gLow  = wBenchNonZero.length ? Math.min(...wBenchNonZero.map(r => r.green_low))  : 0;
+            const gHigh = wBenchNonZero.length ? Math.max(...wBenchNonZero.map(r => r.green_high)) : 0;
             const hasGreen = gLow > 0 && gHigh > 0;
             const greenPass = hasGreen && netWk >= gLow && netWk <= gHigh;
 

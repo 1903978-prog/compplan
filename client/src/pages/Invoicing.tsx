@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Receipt, Send, Search, AlertTriangle, CheckCircle, Clock, DollarSign, RefreshCw, EyeOff, Eye, ArrowUpDown, ArrowUp, ArrowDown, X, Bell, Plus, CreditCard } from "lucide-react";
+import { Receipt, Send, Search, AlertTriangle, CheckCircle, Clock, DollarSign, RefreshCw, EyeOff, Eye, ArrowUpDown, ArrowUp, ArrowDown, X, Bell, Plus, CreditCard, Trophy, Pencil, Trash2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface HarvestInvoice {
@@ -33,6 +34,23 @@ interface HarvestInvoice {
   client_default_code?: string | null;
   code_source?: "manual" | "auto" | "client_default" | "none";
   has_manual_override?: boolean;
+}
+
+interface WonProject {
+  id: number;
+  project_code: string;
+  total_amount: number;
+  currency: string;
+  nb_of_invoices: number | null;
+  invoicing_schedule_text: string | null;
+  // These legacy fields still come back from the server but we don't render them.
+  client_name?: string | null;
+  client_code?: string | null;
+  project_name?: string | null;
+  won_date?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  status?: string | null;
 }
 
 interface InvoiceChange {
@@ -205,6 +223,117 @@ export default function Invoicing() {
   const [editingApplyToClient, setEditingApplyToClient] = useState<boolean>(true);
   const [savingCodeFor, setSavingCodeFor] = useState<number | null>(null);
 
+  // ── Won Projects (moved from Pricing → AR). Intentionally minimal: only
+  // project_code, total_amount, nb_of_invoices, and the invoicing schedule
+  // text the user pastes in. Everything else the legacy table requires
+  // (client_name, client_code, project_name, won_date) is auto-derived on the
+  // server from project_code, so the user never has to type it.
+  interface WonProjectForm {
+    project_code: string;
+    total_amount: string; // keep as string so the input can be empty
+    currency: string;
+    nb_of_invoices: string;
+    invoicing_schedule_text: string;
+  }
+  const emptyWonForm: WonProjectForm = {
+    project_code: "",
+    total_amount: "",
+    currency: "EUR",
+    nb_of_invoices: "",
+    invoicing_schedule_text: "",
+  };
+  const [wonProjects, setWonProjects] = useState<WonProject[]>([]);
+  const [wonForm, setWonForm] = useState<WonProjectForm>(emptyWonForm);
+  const [editingWonId, setEditingWonId] = useState<number | null>(null);
+  const [showWonForm, setShowWonForm] = useState(false);
+  const [savingWon, setSavingWon] = useState(false);
+
+  const loadWonProjects = async () => {
+    try {
+      const res = await fetch("/api/won-projects", { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setWonProjects(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error("[Invoicing] won-projects load failed:", err);
+    }
+  };
+
+  const openNewWon = () => {
+    setEditingWonId(null);
+    setWonForm(emptyWonForm);
+    setShowWonForm(true);
+  };
+
+  const openEditWon = (w: WonProject) => {
+    setEditingWonId(w.id);
+    setWonForm({
+      project_code: w.project_code ?? "",
+      total_amount: String(w.total_amount ?? ""),
+      currency: w.currency ?? "EUR",
+      nb_of_invoices: w.nb_of_invoices == null ? "" : String(w.nb_of_invoices),
+      invoicing_schedule_text: w.invoicing_schedule_text ?? "",
+    });
+    setShowWonForm(true);
+  };
+
+  const cancelWonForm = () => {
+    setShowWonForm(false);
+    setEditingWonId(null);
+    setWonForm(emptyWonForm);
+  };
+
+  const saveWonProject = async () => {
+    const code = wonForm.project_code.trim().toUpperCase();
+    if (!code) {
+      toast({ title: "Project code is required", variant: "destructive" });
+      return;
+    }
+    const total = Number(wonForm.total_amount) || 0;
+    const nbInv = wonForm.nb_of_invoices.trim() === "" ? null : Number(wonForm.nb_of_invoices);
+    setSavingWon(true);
+    try {
+      const payload = {
+        project_code: code,
+        total_amount: total,
+        currency: wonForm.currency || "EUR",
+        nb_of_invoices: nbInv,
+        invoicing_schedule_text: wonForm.invoicing_schedule_text.trim() || null,
+      };
+      const url = editingWonId ? `/api/won-projects/${editingWonId}` : "/api/won-projects";
+      const method = editingWonId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const saved = await res.json();
+      setWonProjects(prev => editingWonId
+        ? prev.map(w => w.id === editingWonId ? saved : w)
+        : [saved, ...prev]);
+      toast({ title: editingWonId ? "Won project updated" : "Won project saved" });
+      cancelWonForm();
+    } catch (err: any) {
+      toast({ title: "Failed to save", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingWon(false);
+    }
+  };
+
+  const deleteWonProject = async (id: number) => {
+    if (!window.confirm("Delete this won project?")) return;
+    try {
+      const res = await fetch(`/api/won-projects/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setWonProjects(prev => prev.filter(w => w.id !== id));
+      toast({ title: "Deleted" });
+    } catch (err: any) {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    }
+  };
+
   const saveProjectCodeOverride = async (invoiceId: number, value: string, applyToClient: boolean) => {
     setSavingCodeFor(invoiceId);
     try {
@@ -347,6 +476,7 @@ export default function Invoicing() {
   useEffect(() => {
     loadInvoices();
     loadChanges();
+    loadWonProjects();
   }, []);
 
   // Send reminder
@@ -872,6 +1002,164 @@ export default function Invoicing() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── WON PROJECTS (moved from Pricing tool, Task 11) ─────────────────── */}
+      {/* Minimal model: project code + total + number of invoices + free-form
+          schedule text the user pastes from an email. Everything else is
+          auto-derived server-side. This is the AR side of the cashflow loop. */}
+      <Card className="mt-6">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-5 h-5 text-amber-500" />
+              <h3 className="text-lg font-semibold">Won Projects</h3>
+              <Badge variant="secondary" className="text-[11px]">{wonProjects.length}</Badge>
+            </div>
+            {!showWonForm && (
+              <Button size="sm" onClick={openNewWon} data-testid="button-new-won-project">
+                <Plus className="w-4 h-4 mr-1" /> Add won project
+              </Button>
+            )}
+          </div>
+
+          {showWonForm && (
+            <div className="border border-border rounded-md p-4 mb-4 bg-muted/30">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground block mb-1">
+                    Project code <span className="text-destructive">*</span>
+                  </label>
+                  <Input
+                    value={wonForm.project_code}
+                    onChange={e => setWonForm(f => ({ ...f, project_code: e.target.value.toUpperCase() }))}
+                    placeholder="e.g. MET04"
+                    data-testid="input-won-project-code"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground block mb-1">
+                    Total amount
+                  </label>
+                  <div className="flex gap-1">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={wonForm.total_amount}
+                      onChange={e => setWonForm(f => ({ ...f, total_amount: e.target.value }))}
+                      placeholder="0"
+                      data-testid="input-won-total"
+                    />
+                    <Select
+                      value={wonForm.currency}
+                      onValueChange={v => setWonForm(f => ({ ...f, currency: v }))}
+                    >
+                      <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="EUR">EUR</SelectItem>
+                        <SelectItem value="USD">USD</SelectItem>
+                        <SelectItem value="GBP">GBP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground block mb-1">
+                    Number of invoices
+                  </label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={wonForm.nb_of_invoices}
+                    onChange={e => setWonForm(f => ({ ...f, nb_of_invoices: e.target.value }))}
+                    placeholder="e.g. 3"
+                    data-testid="input-won-nb-invoices"
+                  />
+                </div>
+              </div>
+              <div className="mb-3">
+                <label className="text-xs font-semibold text-muted-foreground block mb-1">
+                  Invoicing schedule (paste window / notes)
+                </label>
+                <Textarea
+                  rows={4}
+                  value={wonForm.invoicing_schedule_text}
+                  onChange={e => setWonForm(f => ({ ...f, invoicing_schedule_text: e.target.value }))}
+                  placeholder={"e.g.\n30% on kickoff (2026-04-20)\n40% on midterm\n30% on final delivery"}
+                  data-testid="textarea-won-schedule"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={cancelWonForm} disabled={savingWon}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={saveWonProject} disabled={savingWon} data-testid="button-save-won">
+                  {savingWon ? "Saving..." : editingWonId ? "Update" : "Save"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {wonProjects.length === 0 && !showWonForm ? (
+            <div className="text-center py-8 text-muted-foreground text-sm">
+              No won projects yet. Click "Add won project" to track one.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {wonProjects.map(w => {
+                const totalFmt = fmtCurrency(w.total_amount, w.currency || "EUR");
+                return (
+                  <div
+                    key={w.id}
+                    className="border border-border rounded-md p-3 hover-elevate"
+                    data-testid={`row-won-${w.id}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <Badge className="font-mono text-xs">{w.project_code || "—"}</Badge>
+                          <span className="text-sm font-semibold">{totalFmt}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {w.nb_of_invoices != null
+                              ? `${w.nb_of_invoices} invoice${w.nb_of_invoices === 1 ? "" : "s"}`
+                              : "— invoices"}
+                          </span>
+                        </div>
+                        {w.invoicing_schedule_text && (
+                          <pre className="mt-2 text-xs whitespace-pre-wrap font-sans text-muted-foreground bg-muted/40 rounded px-2 py-1.5">
+                            {w.invoicing_schedule_text}
+                          </pre>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => openEditWon(w)}
+                          data-testid={`button-edit-won-${w.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive"
+                          onClick={() => deleteWonProject(w.id)}
+                          data-testid={`button-delete-won-${w.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

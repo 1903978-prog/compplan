@@ -439,6 +439,13 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE won_projects ADD COLUMN IF NOT EXISTS project_code TEXT`);
   await db.execute(sql`ALTER TABLE won_projects ADD COLUMN IF NOT EXISTS start_date TEXT`);
   await db.execute(sql`ALTER TABLE won_projects ADD COLUMN IF NOT EXISTS end_date TEXT`);
+  // Task 11: simplified form — project_code + total_amount + nb_of_invoices + schedule.
+  // Everything else (client_name, client_code, project_name, won_date) becomes optional.
+  await db.execute(sql`ALTER TABLE won_projects ADD COLUMN IF NOT EXISTS nb_of_invoices INTEGER`);
+  await db.execute(sql`ALTER TABLE won_projects ALTER COLUMN client_name  DROP NOT NULL`);
+  await db.execute(sql`ALTER TABLE won_projects ALTER COLUMN client_code  DROP NOT NULL`);
+  await db.execute(sql`ALTER TABLE won_projects ALTER COLUMN project_name DROP NOT NULL`);
+  await db.execute(sql`ALTER TABLE won_projects ALTER COLUMN won_date     DROP NOT NULL`);
 
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`

@@ -1574,25 +1574,44 @@ RULES:
     }
   });
 
+  // Simplified schema (Task 11): the form now collects only
+  //   project_code, total_amount, nb_of_invoices, invoicing_schedule_text
+  // Legacy columns (client_name, client_code, project_name, won_date) still
+  // exist and still get populated via auto-derivation from project_code, so
+  // old rows keep rendering in any legacy screen that still reads them.
+  const deriveFromProjectCode = (projectCode: string | null | undefined) => {
+    const code = String(projectCode ?? "").trim().toUpperCase();
+    if (!code) return { client_code: "", project_name: "" };
+    // "MET04" → prefix "MET". Strip trailing digits.
+    const prefix = code.replace(/\d+$/, "").slice(0, 5) || code;
+    return { client_code: prefix, project_name: code };
+  };
+
   app.post("/api/won-projects", requireAuth, async (req, res) => {
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const b = req.body ?? {};
       const now = new Date().toISOString();
-      if (!b.client_name || !b.project_name || !b.client_code || !b.won_date) {
-        return res.status(400).json({ error: "client_name, client_code, project_name and won_date are required" });
+      if (!b.project_code || !String(b.project_code).trim()) {
+        return res.status(400).json({ error: "project_code is required" });
       }
+      const { client_code: derivedClientCode, project_name: derivedProjectName } = deriveFromProjectCode(b.project_code);
+      const clientCode  = (b.client_code  && String(b.client_code).trim())  || derivedClientCode;
+      const clientName  = (b.client_name  && String(b.client_name).trim())  || derivedClientCode;
+      const projectName = (b.project_name && String(b.project_name).trim()) || derivedProjectName;
       const r = await db.execute(sql`
         INSERT INTO won_projects (
           client_name, client_code, project_name, project_code,
           total_amount, currency, won_date, start_date, end_date,
-          invoicing_schedule_text, status, notes, created_at, updated_at
+          invoicing_schedule_text, status, notes, nb_of_invoices,
+          created_at, updated_at
         ) VALUES (
-          ${b.client_name}, ${String(b.client_code).toUpperCase()}, ${b.project_name}, ${b.project_code ?? null},
-          ${Number(b.total_amount) || 0}, ${b.currency ?? "EUR"}, ${b.won_date},
+          ${clientName}, ${clientCode}, ${projectName}, ${String(b.project_code).trim().toUpperCase()},
+          ${Number(b.total_amount) || 0}, ${b.currency ?? "EUR"}, ${b.won_date || null},
           ${b.start_date || null}, ${b.end_date || null},
           ${b.invoicing_schedule_text ?? null}, ${b.status ?? "active"}, ${b.notes ?? null},
+          ${b.nb_of_invoices == null || b.nb_of_invoices === "" ? null : Number(b.nb_of_invoices)},
           ${now}, ${now}
         ) RETURNING *
       `);
@@ -1609,21 +1628,26 @@ RULES:
       const id = safeInt(req.params.id);
       const b = req.body ?? {};
       const now = new Date().toISOString();
+      const { client_code: derivedClientCode, project_name: derivedProjectName } = deriveFromProjectCode(b.project_code);
+      const clientCode  = (b.client_code  && String(b.client_code).trim())  || derivedClientCode;
+      const clientName  = (b.client_name  && String(b.client_name).trim())  || derivedClientCode;
+      const projectName = (b.project_name && String(b.project_name).trim()) || derivedProjectName;
       const r = await db.execute(sql`
         UPDATE won_projects SET
-          client_name = ${b.client_name},
-          client_code = ${String(b.client_code ?? "").toUpperCase()},
-          project_name = ${b.project_name},
-          project_code = ${b.project_code ?? null},
+          client_name  = ${clientName},
+          client_code  = ${clientCode},
+          project_name = ${projectName},
+          project_code = ${b.project_code ? String(b.project_code).trim().toUpperCase() : null},
           total_amount = ${Number(b.total_amount) || 0},
-          currency = ${b.currency ?? "EUR"},
-          won_date = ${b.won_date},
-          start_date = ${b.start_date || null},
-          end_date = ${b.end_date || null},
+          currency     = ${b.currency ?? "EUR"},
+          won_date     = ${b.won_date || null},
+          start_date   = ${b.start_date || null},
+          end_date     = ${b.end_date || null},
           invoicing_schedule_text = ${b.invoicing_schedule_text ?? null},
-          status = ${b.status ?? "active"},
-          notes = ${b.notes ?? null},
-          updated_at = ${now}
+          status       = ${b.status ?? "active"},
+          notes        = ${b.notes ?? null},
+          nb_of_invoices = ${b.nb_of_invoices == null || b.nb_of_invoices === "" ? null : Number(b.nb_of_invoices)},
+          updated_at   = ${now}
         WHERE id = ${id}
         RETURNING *
       `);
