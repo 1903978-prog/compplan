@@ -2626,6 +2626,23 @@ Example:
                   <Button variant="outline" size="sm" onClick={() => setShowFullSlideView(true)}>
                     <Eye className="w-4 h-4 mr-1" /> Preview All Slides
                   </Button>
+                  {/* Pixel-perfect export (Playwright) — lets you ship the
+                      deck from Step 2 without walking through Steps 3–6.
+                      Renders every generated preview_html through headless
+                      Chromium and builds a PPTX that looks identical to
+                      the HTML previews. */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-violet-300 text-violet-700 hover:bg-violet-50"
+                    onClick={downloadDeckImages}
+                    disabled={generatingImages || generating}
+                    title="Export every slide preview via headless Chromium — looks identical to the preview panel"
+                  >
+                    {generatingImages
+                      ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Rendering…</>
+                      : <><Sparkles className="w-4 h-4 mr-1" /> Export Deck (pixel-perfect)</>}
+                  </Button>
                   <Button variant="outline" size="sm" onClick={resetToDefaults} disabled={!projectType}>
                     <RotateCcw className="w-4 h-4 mr-1" /> Reset Defaults
                   </Button>
@@ -3097,6 +3114,20 @@ Example:
                             <Button size="sm" variant="outline" className="h-7 text-[10px]"
                               onClick={() => downloadSlidePptx(previewSlideId)}>
                               <Download className="w-3 h-3 mr-1" /> PPTX
+                            </Button>
+                            {/* Whole-deck pixel-perfect export — renders every
+                                preview_html via Playwright, not just this one. */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50"
+                              onClick={downloadDeckImages}
+                              disabled={generatingImages}
+                              title="Export the FULL deck via headless Chromium — every slide preview as a pixel-perfect PPTX"
+                            >
+                              {generatingImages
+                                ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Rendering…</>
+                                : <><Sparkles className="w-3 h-3 mr-1" /> Deck</>}
                             </Button>
                             <button onClick={() => setPreviewSlideId(null)}
                               className="p-1 rounded hover:bg-muted text-muted-foreground">
