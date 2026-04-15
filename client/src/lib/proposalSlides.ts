@@ -8,21 +8,31 @@ export interface SlideDefinition {
 }
 
 export const MASTER_SLIDES: SlideDefinition[] = [
-  // ── CORE PAGES (always selected by default) ──────────────────────────────
-  { slide_id: "cover",             title: "Cover Page",             description: "Title slide with company name, date, and Eendigo branding",       group: "core" },
-  { slide_id: "confidentiality",   title: "Confidentiality",        description: "Confidentiality notice and intellectual property protection",     group: "core" },
-  { slide_id: "agenda",            title: "Agenda",                 description: "Overview of what the proposal covers",                            group: "core" },
-  { slide_id: "exec_summary",      title: "Executive Summary",      description: "High-level overview of the engagement",                           group: "core" },
-  { slide_id: "context",           title: "Context",                description: "Client situation, market dynamics, and urgency drivers",           group: "core" },
-  { slide_id: "value_at_stake",    title: "Value at Stake",         description: "Quantified opportunity sizing and impact if nothing changes",      group: "core" },
-  { slide_id: "proposed_approach", title: "Proposed Approach",       description: "Recommended approach, logic, and high-level workstreams",          group: "core" },
-  { slide_id: "timeline_options",  title: "Timeline",               description: "Project timeline with milestones",                                group: "core" },
-  { slide_id: "governance_inputs", title: "Governance & Inputs",    description: "Steering committee, escalation, reporting, and client inputs",     group: "core" },
-  { slide_id: "impact_roi",        title: "Impact & ROI",           description: "Expected business impact, ROI projections, and value creation",    group: "core" },
-  { slide_id: "why_eendigo",       title: "Why Eendigo",            description: "Credentials, case studies, proof of impact, and differentiators",  group: "core" },
-  { slide_id: "commercials",       title: "Commercials & Options",  description: "Fee structure, pricing, commercial terms, and option variants",    group: "core" },
-  { slide_id: "next_steps",        title: "Next Steps",             description: "Immediate actions and decision timeline",                          group: "core" },
-  { slide_id: "annex",             title: "Annex",                  description: "Supporting data, detailed tables, and appendix material",          group: "core" },
+  // ── CORE PAGES (always selected by default, 16 slides) ───────────────────
+  // Order matches the Proposals wizard Step 5 Deck view exactly. Updating
+  // this list also drives the Slide Backgrounds admin screen (one row per
+  // slide_id from here) and SlideMethodologyAdmin's left-hand nav.
+  { slide_id: "cover",             title: "Cover Page",             description: "Title slide with company name, date, and Eendigo branding",                                       group: "core" },
+  { slide_id: "confidentiality",   title: "Confidentiality",        description: "Confidentiality notice and intellectual property protection",                                     group: "core" },
+  { slide_id: "agenda",            title: "Agenda",                 description: "Overview of what the proposal covers",                                                            group: "core" },
+  { slide_id: "exec_summary",      title: "Executive Summary",      description: "High-level overview of the engagement",                                                           group: "core" },
+  // Merged slide (was `context` + `value_at_stake`). The id stays `context`
+  // so existing proposals' slide_selection JSONB arrays keep resolving.
+  { slide_id: "context",           title: "Context & Value at stake", description: "Client situation, market dynamics, urgency drivers, and quantified opportunity if nothing changes", group: "core" },
+  { slide_id: "proposed_approach", title: "Proposed Approach",      description: "Recommended approach, logic, and high-level workstreams",                                         group: "core" },
+  { slide_id: "timeline_options",  title: "Timeline",               description: "Project timeline with milestones",                                                                group: "core" },
+  // Promoted from optional → core. Id stays `options`; title shortened to
+  // match the wizard ("Options" instead of "Options (2–3)").
+  { slide_id: "options",           title: "Options",                description: "2\u20133 engagement options with different scope / investment trade-offs",                          group: "core" },
+  { slide_id: "governance_inputs", title: "Governance & Inputs",    description: "Steering committee, escalation, reporting, and client inputs",                                    group: "core" },
+  { slide_id: "why_eendigo",       title: "Why Eendigo",            description: "Credentials, case studies, proof of impact, and differentiators",                                 group: "core" },
+  { slide_id: "commercials",       title: "Commercials",            description: "Fee structure, pricing, commercial terms, and option variants",                                   group: "core" },
+  { slide_id: "impact_roi",        title: "Impact & ROI",           description: "Expected business impact, ROI projections, and value creation",                                   group: "core" },
+  { slide_id: "next_steps",        title: "Next Steps",             description: "Immediate actions and decision timeline",                                                         group: "core" },
+  // New core slides — wrap-up pages that sit between next_steps and annex.
+  { slide_id: "last_page",         title: "Last page",              description: "Closing hand-off page before the annex",                                                          group: "core" },
+  { slide_id: "final_message",     title: "Final Message",          description: "Single-line closing statement / call to action",                                                  group: "core" },
+  { slide_id: "annex",             title: "Annex",                  description: "Supporting data, detailed tables, and appendix material",                                         group: "core" },
 
   // ── OPTIONAL PAGES (not selected by default, suggested per project type) ──
   { slide_id: "scope_activities",       title: "Scope & Activities",               description: "Detailed scope breakdown with activity descriptions",                group: "optional" },
@@ -38,7 +48,10 @@ export const MASTER_SLIDES: SlideDefinition[] = [
   { slide_id: "comex_map",              title: "ComEx System Map",                 description: "Commercial excellence system and interconnections",                  group: "optional" },
   { slide_id: "sample_deliverables",    title: "Sample Deliverables",              description: "Examples of deliverable formats and outputs",                        group: "optional" },
   { slide_id: "detailed_deliverables",  title: "Detailed Deliverables Table",      description: "Comprehensive deliverables with ownership and timing",               group: "optional" },
-  { slide_id: "options",                title: "Options (2\u20133)",               description: "2\u20133 engagement options with different scope/investment",         group: "optional" },
+  // Kept as an optional for backwards compat with existing proposals whose
+  // slide_selection JSONB still references `value_at_stake`. New proposals
+  // use the merged `context` slide above and will not get this one by default.
+  { slide_id: "value_at_stake",         title: "Value at Stake (legacy)",          description: "[LEGACY] Standalone value-at-stake page — merged into Context & Value at stake for new proposals", group: "optional" },
   { slide_id: "governance_steercos",    title: "Governance: Steercos & Weekly",    description: "Detailed steerco and weekly meeting cadence and agenda",             group: "optional" },
   { slide_id: "exec_cadence",           title: "Execution Cadence (War Rooms)",    description: "War room rhythm and execution governance",                           group: "optional" },
   { slide_id: "team_bio",               title: "Team Bio",                         description: "Proposed team members, bios, and roles",                             group: "optional" },
