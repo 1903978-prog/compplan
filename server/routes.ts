@@ -1483,17 +1483,43 @@ RULES:
                updated_at
         FROM invoice_snapshots ORDER BY invoice_created_at DESC NULLS LAST
       `);
+      // Load per-client defaults (third-tier fallback).
+      const defaultRows = await db.execute(sql`SELECT client_id, default_code, default_name FROM client_project_defaults`);
+      const clientDefaults = new Map<number, { code: string | null; name: string | null }>();
+      for (const r of defaultRows.rows) {
+        clientDefaults.set(Number(r.client_id), {
+          code: (r as any).default_code ?? null,
+          name: (r as any).default_name ?? null,
+        });
+      }
       const invoices = rows.rows.map((r: any) => {
-        // Effective project codes = manual override if set, else auto-extracted.
-        const effectiveCodes = (r.project_codes_manual && String(r.project_codes_manual).trim())
-          ? r.project_codes_manual
-          : (r.project_codes ?? null);
-        const effectiveNames = (r.project_names_manual && String(r.project_names_manual).trim())
-          ? r.project_names_manual
-          : (r.project_names ?? null);
+        const cid = r.client_id ?? 0;
+        const def = clientDefaults.get(cid);
+        // Effective: manual override > auto-extracted > client default.
+        const manualSet = !!(r.project_codes_manual && String(r.project_codes_manual).trim());
+        const autoSet = !!(r.project_codes && String(r.project_codes).trim());
+        let effectiveCodes: string | null;
+        let effectiveNames: string | null;
+        let source: "manual" | "auto" | "client_default" | "none" = "none";
+        if (manualSet) {
+          effectiveCodes = r.project_codes_manual;
+          effectiveNames = r.project_names_manual ?? r.project_names ?? null;
+          source = "manual";
+        } else if (autoSet) {
+          effectiveCodes = r.project_codes;
+          effectiveNames = r.project_names ?? null;
+          source = "auto";
+        } else if (def?.code) {
+          effectiveCodes = def.code;
+          effectiveNames = def.name ?? null;
+          source = "client_default";
+        } else {
+          effectiveCodes = null;
+          effectiveNames = null;
+        }
         return {
           id: r.id, number: r.number,
-          client: r.client_name ? { id: r.client_id ?? 0, name: r.client_name } : null,
+          client: r.client_name ? { id: cid, name: r.client_name } : null,
           amount: Number(r.amount), due_amount: Number(r.due_amount),
           due_date: r.due_date, state: r.state ?? "", currency: r.currency ?? "EUR",
           subject: r.subject, sent_at: r.sent_at, paid_at: r.paid_at,
@@ -1503,7 +1529,9 @@ RULES:
           project_names: effectiveNames,
           project_codes_auto: r.project_codes ?? null,
           project_codes_manual: r.project_codes_manual ?? null,
-          has_manual_override: !!(r.project_codes_manual && String(r.project_codes_manual).trim()),
+          client_default_code: def?.code ?? null,
+          code_source: source,
+          has_manual_override: manualSet,
         };
       });
       res.json({ invoices });
@@ -1907,7 +1935,9 @@ RULES:
 
   // PATCH /api/harvest/invoices/:id/project-codes — set MANUAL override that
   // survives every future Harvest sync. Pass { project_codes: "COE01,COE02" }
-  // (and optionally project_names). Pass empty string or null to clear.
+  // (and optionally project_names, and optionally apply_to_client: true to
+  // also set this as the default for every blank invoice of the same client,
+  // current and future).
   app.patch("/api/harvest/invoices/:id/project-codes", requireAuth, async (req, res) => {
     try {
       const { db } = await import("./db");
@@ -1915,6 +1945,7 @@ RULES:
       const invId = safeInt(req.params.id);
       const rawCodes = req.body?.project_codes;
       const rawNames = req.body?.project_names;
+      const applyToClient = !!req.body?.apply_to_client;
       const codes = (rawCodes === null || rawCodes === undefined || String(rawCodes).trim() === "")
         ? null
         : String(rawCodes).trim().toUpperCase().replace(/\s*,\s*/g, ",");
@@ -1927,9 +1958,76 @@ RULES:
           project_names_manual = ${names}
         WHERE invoice_id = ${invId}
       `);
-      res.json({ ok: true, invoice_id: invId, project_codes_manual: codes, project_names_manual: names, rows: result.rowCount ?? 0 });
+      let clientDefaultSet = false;
+      if (applyToClient && codes) {
+        // Look up the client_id for this invoice and upsert the default.
+        const inv = await db.execute(sql`SELECT client_id FROM invoice_snapshots WHERE invoice_id = ${invId}`);
+        const cid = inv.rows[0] ? Number((inv.rows[0] as any).client_id) : null;
+        if (cid) {
+          const now = new Date().toISOString();
+          await db.execute(sql`
+            INSERT INTO client_project_defaults (client_id, default_code, default_name, updated_at)
+            VALUES (${cid}, ${codes}, ${names}, ${now})
+            ON CONFLICT (client_id) DO UPDATE SET
+              default_code = EXCLUDED.default_code,
+              default_name = EXCLUDED.default_name,
+              updated_at = EXCLUDED.updated_at
+          `);
+          clientDefaultSet = true;
+        }
+      }
+      res.json({ ok: true, invoice_id: invId, project_codes_manual: codes, project_names_manual: names, rows: result.rowCount ?? 0, client_default_set: clientDefaultSet });
     } catch (err: any) {
       console.error("[Harvest] PATCH project-codes failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/harvest/clients/:id/default-project-code — set the per-client
+  // default code that fills in for every invoice with no auto code and no
+  // per-invoice manual override. Pass { code: "FAS01", name?: "FAST Logistics" }
+  // or { code: null } to clear.
+  app.patch("/api/harvest/clients/:id/default-project-code", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const cid = safeInt(req.params.id);
+      const rawCode = req.body?.code;
+      const rawName = req.body?.name;
+      const code = (rawCode === null || rawCode === undefined || String(rawCode).trim() === "")
+        ? null
+        : String(rawCode).trim().toUpperCase().replace(/\s*,\s*/g, ",");
+      const name = (rawName === null || rawName === undefined || String(rawName).trim() === "")
+        ? null
+        : String(rawName).trim();
+      const now = new Date().toISOString();
+      if (code === null) {
+        await db.execute(sql`DELETE FROM client_project_defaults WHERE client_id = ${cid}`);
+      } else {
+        await db.execute(sql`
+          INSERT INTO client_project_defaults (client_id, default_code, default_name, updated_at)
+          VALUES (${cid}, ${code}, ${name}, ${now})
+          ON CONFLICT (client_id) DO UPDATE SET
+            default_code = EXCLUDED.default_code,
+            default_name = EXCLUDED.default_name,
+            updated_at = EXCLUDED.updated_at
+        `);
+      }
+      res.json({ ok: true, client_id: cid, default_code: code, default_name: name });
+    } catch (err: any) {
+      console.error("[Harvest] PATCH client default failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/harvest/client-defaults — list all client → default code mappings.
+  app.get("/api/harvest/client-defaults", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const rows = await db.execute(sql`SELECT client_id, default_code, default_name, updated_at FROM client_project_defaults`);
+      res.json({ defaults: rows.rows });
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });

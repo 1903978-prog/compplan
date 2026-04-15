@@ -385,6 +385,18 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_codes_manual TEXT`);
   await db.execute(sql`ALTER TABLE invoice_snapshots ADD COLUMN IF NOT EXISTS project_names_manual TEXT`);
 
+  // Per-client default project code. When an invoice has no auto-extracted
+  // code AND no manual override, the GET endpoint falls back to this.
+  // One row per Harvest client_id.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS client_project_defaults (
+      client_id INTEGER PRIMARY KEY,
+      default_code TEXT,
+      default_name TEXT,
+      updated_at TEXT NOT NULL DEFAULT ''
+    )
+  `);
+
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS invoice_changes (
       id SERIAL PRIMARY KEY,

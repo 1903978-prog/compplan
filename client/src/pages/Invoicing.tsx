@@ -30,6 +30,8 @@ interface HarvestInvoice {
   project_names: string | null;
   project_codes_auto?: string | null;
   project_codes_manual?: string | null;
+  client_default_code?: string | null;
+  code_source?: "manual" | "auto" | "client_default" | "none";
   has_manual_override?: boolean;
 }
 
@@ -108,24 +110,31 @@ export default function Invoicing() {
   const [approvingId, setApprovingId] = useState<number | null>(null);
   const [editingCodeFor, setEditingCodeFor] = useState<number | null>(null);
   const [editingCodeValue, setEditingCodeValue] = useState<string>("");
+  const [editingApplyToClient, setEditingApplyToClient] = useState<boolean>(true);
   const [savingCodeFor, setSavingCodeFor] = useState<number | null>(null);
 
-  const saveProjectCodeOverride = async (invoiceId: number, value: string) => {
+  const saveProjectCodeOverride = async (invoiceId: number, value: string, applyToClient: boolean) => {
     setSavingCodeFor(invoiceId);
     try {
       const res = await fetch(`/api/harvest/invoices/${invoiceId}/project-codes`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_codes: value.trim() || null }),
+        body: JSON.stringify({ project_codes: value.trim() || null, apply_to_client: applyToClient }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setInvoices(prev => prev.map(i => i.id === invoiceId
-        ? { ...i, project_codes: value.trim() || i.project_codes_auto || null,
-            project_codes_manual: value.trim() || null,
-            has_manual_override: !!value.trim() }
-        : i));
+      // After saving, reload from server so the client-default fallback
+      // populates every other blank invoice for the same client.
       setEditingCodeFor(null);
+      if (applyToClient && value.trim()) {
+        loadInvoices();
+      } else {
+        setInvoices(prev => prev.map(i => i.id === invoiceId
+          ? { ...i, project_codes: value.trim() || i.project_codes_auto || null,
+              project_codes_manual: value.trim() || null,
+              has_manual_override: !!value.trim() }
+          : i));
+      }
     } catch (err: any) {
       console.error("Failed to save override:", err);
     } finally {
@@ -603,38 +612,57 @@ export default function Invoicing() {
                       <TableCell className="text-sm">{inv.client?.name ?? "\u2014"}</TableCell>
                       <TableCell className="text-xs font-mono font-semibold text-primary">
                         {editingCodeFor === inv.id ? (
-                          <div className="flex items-center gap-1">
-                            <Input
-                              value={editingCodeValue}
-                              onChange={e => setEditingCodeValue(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === "Enter") saveProjectCodeOverride(inv.id, editingCodeValue);
-                                if (e.key === "Escape") setEditingCodeFor(null);
-                              }}
-                              placeholder="COE01"
-                              className="h-6 text-[11px] font-mono w-24 px-1.5"
-                              autoFocus
-                              disabled={savingCodeFor === inv.id}
-                            />
-                            <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
-                              onClick={() => saveProjectCodeOverride(inv.id, editingCodeValue)}
-                              disabled={savingCodeFor === inv.id}>
-                              {savingCodeFor === inv.id ? "..." : "Save"}
-                            </Button>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              <Input
+                                value={editingCodeValue}
+                                onChange={e => setEditingCodeValue(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient);
+                                  if (e.key === "Escape") setEditingCodeFor(null);
+                                }}
+                                placeholder="FAS01"
+                                className="h-6 text-[11px] font-mono w-24 px-1.5"
+                                autoFocus
+                                disabled={savingCodeFor === inv.id}
+                              />
+                              <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]"
+                                onClick={() => saveProjectCodeOverride(inv.id, editingCodeValue, editingApplyToClient)}
+                                disabled={savingCodeFor === inv.id}>
+                                {savingCodeFor === inv.id ? "..." : "Save"}
+                              </Button>
+                            </div>
+                            <label className="flex items-center gap-1 text-[9px] text-muted-foreground cursor-pointer whitespace-nowrap">
+                              <input type="checkbox" checked={editingApplyToClient}
+                                onChange={e => setEditingApplyToClient(e.target.checked)}
+                                className="h-3 w-3" />
+                              Apply to all {inv.client?.name?.split(" ")[0] ?? "client"} invoices
+                            </label>
                           </div>
                         ) : (
                           <button
                             onClick={() => {
                               setEditingCodeFor(inv.id);
                               setEditingCodeValue(inv.project_codes_manual ?? inv.project_codes ?? "");
+                              setEditingApplyToClient(true);
                             }}
                             className="flex items-center gap-1 hover:bg-muted/50 rounded px-1 -mx-1 group min-h-[24px]"
-                            title={inv.has_manual_override ? "Manual override (click to edit)" : "Click to set manual override"}
+                            title={
+                              inv.code_source === "manual" ? "Manual override (click to edit)" :
+                              inv.code_source === "client_default" ? "From client default (click to edit)" :
+                              inv.code_source === "auto" ? "Auto-extracted from Harvest (click to override)" :
+                              "Click to set"
+                            }
                           >
                             {inv.project_codes ? inv.project_codes.split(",").map((c, i) => (
-                              <Badge key={i} variant={inv.has_manual_override ? "default" : "secondary"} className="text-[9px] mr-0.5 font-mono">{c}</Badge>
+                              <Badge key={i}
+                                variant={inv.code_source === "manual" ? "default" : "secondary"}
+                                className={`text-[9px] mr-0.5 font-mono ${inv.code_source === "client_default" ? "border-dashed" : ""}`}>
+                                {c}
+                              </Badge>
                             )) : <span className="text-muted-foreground italic">—</span>}
-                            {inv.has_manual_override && <span className="text-[8px] text-blue-600">●</span>}
+                            {inv.code_source === "manual" && <span className="text-[8px] text-blue-600">●</span>}
+                            {inv.code_source === "client_default" && <span className="text-[8px] text-amber-600">◇</span>}
                             <span className="text-[9px] text-muted-foreground opacity-0 group-hover:opacity-100 ml-1">edit</span>
                           </button>
                         )}
