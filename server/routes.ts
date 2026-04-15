@@ -66,6 +66,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // ── Diagnostic row counts (unauthenticated, read-only) ────────────────────
+  // Temporary endpoint to diagnose the "Pricing section empty" report.
+  // Returns row counts for the key tables so we can tell whether the data
+  // is actually missing or whether the API is failing upstream.
+  app.get("/api/diag/db-counts", async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const tables = [
+        "pricing_cases",
+        "pricing_proposals",
+        "pricing_settings",
+        "invoice_snapshots",
+        "invoice_changes",
+        "client_project_defaults",
+        "proposals",
+        "employees",
+        "hiring_candidates",
+      ];
+      const out: Record<string, number | string> = {};
+      for (const t of tables) {
+        try {
+          const r = await db.execute(sql.raw(`SELECT COUNT(*)::int AS c FROM ${t}`));
+          out[t] = Number((r.rows[0] as any)?.c ?? 0);
+        } catch (e: any) {
+          out[t] = `ERR: ${e.message}`;
+        }
+      }
+      res.json({ ok: true, counts: out });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/diag/reseed-proposals — unauthenticated one-shot to force a
+  // re-run of the idempotent SEED_PROPOSALS insert. Returns how many rows
+  // were inserted. Safe: the insert uses WHERE NOT EXISTS on project_name
+  // so it never duplicates or touches existing rows.
+  app.post("/api/diag/reseed-proposals", async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const { SEED_PROPOSALS } = await import("./seedProposals");
+      const before = await db.execute(sql`SELECT COUNT(*)::int AS c FROM pricing_proposals`);
+      const beforeCount = Number((before.rows[0] as any)?.c ?? 0);
+      let inserted = 0;
+      for (const p of SEED_PROPOSALS) {
+        const r = await db.execute(sql`
+          INSERT INTO pricing_proposals
+            (proposal_date, project_name, client_name, fund_name, region, country, pe_owned, revenue_band, duration_weeks, weekly_price, total_fee, outcome, notes, created_at)
+          SELECT ${p.proposal_date}, ${p.project_name}, ${p.client_name}, ${p.fund_name}, ${p.region}, ${p.country}, ${p.pe_owned}, ${p.revenue_band}, ${p.duration_weeks}, ${p.weekly_price}, ${p.total_fee}, ${p.outcome}, ${p.notes}, ${new Date().toISOString()}
+          WHERE NOT EXISTS (SELECT 1 FROM pricing_proposals WHERE project_name = ${p.project_name})
+        `);
+        inserted += (r as any).rowCount ?? 0;
+      }
+      const after = await db.execute(sql`SELECT COUNT(*)::int AS c FROM pricing_proposals`);
+      const afterCount = Number((after.rows[0] as any)?.c ?? 0);
+      res.json({ ok: true, before: beforeCount, after: afterCount, inserted, seed_size: SEED_PROPOSALS.length });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // ── API Pause Toggle ──────────────────────────────────────────────────────
   app.get("/api/api-pause", requireAuth, async (_req, res) => {
     const paused = await checkApiPaused();
