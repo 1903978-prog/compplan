@@ -465,6 +465,11 @@ export default function PricingTool() {
   const [proposals, setProposals] = useState<PricingProposal[]>([]);
   const [settings, setSettings] = useState<PricingSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  // Tracks which of the three parallel loads failed (if any). Surfaced as a
+  // red banner with a Retry button so the user never silently sees "0" tabs
+  // when the real cause was a transient fetch failure (e.g. a Render deploy
+  // window where the server briefly returned 502).
+  const [loadErrors, setLoadErrors] = useState<{ settings?: string; cases?: string; proposals?: string }>({});
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
@@ -544,39 +549,82 @@ export default function PricingTool() {
   const [pendingFeesByCountry, setPendingFeesByCountry] = useState<CountryFeeRow[] | null>(null);
   const [selectedCountryUpdates, setSelectedCountryUpdates] = useState<Set<string>>(new Set());
 
+  // Load settings/cases/proposals in parallel BUT treat each as independent.
+  // A failure in one endpoint (e.g. a transient 502 during a Render deploy)
+  // must NOT zero out the other two. Previous versions of this function
+  // used Promise.all + a single try/catch, which meant one failed fetch
+  // would leave the user staring at "Pricing Cases (0), Past Projects (0),
+  // Win-Loss (0)" even though the DB was full of rows. We now:
+  //   1. Run each fetch independently with its own retry.
+  //   2. Preserve previous state on failure (do NOT reset to []).
+  //   3. Record which endpoint failed in loadErrors so the UI can surface
+  //      a red banner with a Retry button.
+  //   4. Auto-retry once on the first failure (handles Render deploy blips).
+  const loadOne = async <T,>(url: string, retries = 1): Promise<T> => {
+    let lastErr: any;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await fetch(url, { credentials: "include" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as T;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < retries) {
+          // Short backoff before retrying. Deploy blips usually clear in <2s.
+          await new Promise(r => setTimeout(r, 800));
+        }
+      }
+    }
+    throw lastErr;
+  };
+
   const loadAll = async () => {
     setLoading(true);
-    try {
-      const [sRes, cRes, pRes] = await Promise.all([
-        fetch("/api/pricing/settings", { credentials: "include" }),
-        fetch("/api/pricing/cases", { credentials: "include" }),
-        fetch("/api/pricing/proposals", { credentials: "include" }),
-      ]);
-      if (!sRes.ok || !cRes.ok || !pRes.ok) throw new Error("Failed to load pricing data");
-      const sData = await sRes.json();
-      const cData = await cRes.json();
-      const pData = await pRes.json();
+    const errors: { settings?: string; cases?: string; proposals?: string } = {};
 
-      // Merge loaded settings with defaults (defaults fill missing fields)
-      const merged: PricingSettings = { ...DEFAULT_PRICING_SETTINGS, ...sData };
+    // Settings
+    let merged: PricingSettings | null = null;
+    try {
+      const sData = await loadOne<any>("/api/pricing/settings");
+      merged = { ...DEFAULT_PRICING_SETTINGS, ...sData };
       if (!merged.roles?.length) merged.roles = DEFAULT_PRICING_SETTINGS.roles;
       if (!merged.regions?.length) merged.regions = DEFAULT_PRICING_SETTINGS.regions;
       if (!merged.ownership_multipliers?.length) merged.ownership_multipliers = DEFAULT_PRICING_SETTINGS.ownership_multipliers;
       if (!merged.revenue_band_multipliers?.length) merged.revenue_band_multipliers = DEFAULT_PRICING_SETTINGS.revenue_band_multipliers;
       if (!merged.sensitivity_multipliers?.length) merged.sensitivity_multipliers = DEFAULT_PRICING_SETTINGS.sensitivity_multipliers;
       setSettings(merged);
+    } catch (err: any) {
+      errors.settings = err.message ?? "Failed to load settings";
+      console.error("[PricingTool] settings load failed:", err);
+      // Only fall back to defaults if we have NO settings yet.
+      // This preserves prior state if the user was already loaded.
+      setSettings(prev => prev ?? DEFAULT_PRICING_SETTINGS);
+    }
+
+    // Cases — preserve previous on failure, do NOT reset to []
+    try {
+      const cData = await loadOne<any[]>("/api/pricing/cases");
       setCases(Array.isArray(cData) ? cData : []);
+    } catch (err: any) {
+      errors.cases = err.message ?? "Failed to load pricing cases";
+      console.error("[PricingTool] cases load failed:", err);
+      // IMPORTANT: do not call setCases here — keep whatever is already in state.
+    }
+
+    // Proposals — preserve previous on failure, do NOT reset to []
+    try {
+      const pData = await loadOne<any[]>("/api/pricing/proposals");
       const rawProposals: PricingProposal[] = Array.isArray(pData)
         ? pData.map((p: any) => ({ ...p, pe_owned: p.pe_owned === 1 || p.pe_owned === true }))
         : [];
 
-      // Auto-normalize fund names against canonical list
-      const canonicalFunds: string[] = merged.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? [];
+      // Auto-normalize fund names against canonical list (non-fatal)
+      const canonicalFunds: string[] = merged?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? [];
       const toNormalize = rawProposals.filter(p => {
         if (!p.fund_name) return false;
         const lName = p.fund_name.toLowerCase().trim();
         const exact = canonicalFunds.find(c => c.toLowerCase() === lName);
-        if (exact) return false; // already canonical
+        if (exact) return false;
         const sub = canonicalFunds.find(c => {
           const lc = c.toLowerCase();
           return lName.includes(lc) || lc.includes(lName);
@@ -589,7 +637,6 @@ export default function PricingTool() {
         return !!token;
       });
 
-      // Patch non-canonical proposals silently
       for (const p of toNormalize) {
         const lName = (p.fund_name ?? "").toLowerCase().trim();
         const normalized =
@@ -607,14 +654,29 @@ export default function PricingTool() {
       }
 
       setProposals(rawProposals);
-    } catch {
-      setSettings(DEFAULT_PRICING_SETTINGS);
-    } finally {
-      setLoading(false);
+    } catch (err: any) {
+      errors.proposals = err.message ?? "Failed to load past projects";
+      console.error("[PricingTool] proposals load failed:", err);
+      // IMPORTANT: do not call setProposals here — keep whatever is already in state.
     }
+
+    setLoadErrors(errors);
+    setLoading(false);
   };
 
   useEffect(() => { loadAll(); }, []);
+
+  // Auto-retry when the tab becomes visible again (user was on another tab
+  // during a deploy and comes back — we transparently refetch).
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && Object.keys(loadErrors).length > 0) {
+        loadAll();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [loadErrors]);
 
   useEffect(() => {
     setBenchmarks(settings?.country_benchmarks ?? DEFAULT_PRICING_SETTINGS.country_benchmarks ?? []);
@@ -1847,6 +1909,24 @@ export default function PricingTool() {
           ) : null}
           </div>
         </div>
+
+        {/* Load-failure banner — surfaces transient fetch errors instead of
+            silently showing 0 rows. Previously a single failed fetch (e.g. a
+            Render deploy 502 blip) would leave Cases/Proposals stuck at the
+            initial [] state with no indication. */}
+        {Object.keys(loadErrors).length > 0 && (
+          <div className="border border-red-300 bg-red-50 dark:bg-red-950/20 dark:border-red-800 rounded-lg p-3 flex items-center gap-3 text-sm">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+            <div className="flex-1 text-red-800 dark:text-red-300">
+              <strong>Some pricing data failed to load:</strong>{" "}
+              {Object.entries(loadErrors).map(([k, v]) => `${k} (${v})`).join(" • ")}.
+              {" "}Previously loaded data is preserved. Click Retry to try again.
+            </div>
+            <Button size="sm" variant="outline" onClick={loadAll}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
+            </Button>
+          </div>
+        )}
 
         {/* Tab navigation */}
         <div className="flex gap-1 border-b">
