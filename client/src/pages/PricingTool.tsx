@@ -674,9 +674,10 @@ export default function PricingTool() {
     }
   };
 
-  const saveBenchmarks = async (data?: CountryBenchmarkRow[]) => {
+  const saveBenchmarks = async (data?: CountryBenchmarkRow[], opts?: { silent?: boolean }) => {
     const toSave = data ?? benchmarksLocal;
-    setSavingBenchmarks(true);
+    const silent = opts?.silent === true;
+    if (!silent) setSavingBenchmarks(true);
     try {
       const updated = { ...(settings ?? DEFAULT_PRICING_SETTINGS), country_benchmarks: toSave };
       await fetch("/api/pricing/settings", {
@@ -685,13 +686,20 @@ export default function PricingTool() {
         body: JSON.stringify(updated),
       });
       setBenchmarks(toSave);
+      // Also update settings so a subsequent re-render driven by the
+      // `settings` effect (line ~620) doesn't revert to stale values.
+      setSettings(prev => prev ? { ...prev, country_benchmarks: toSave } : prev);
       if (data == null) setEditingBenchmarks(false);
-      toast({ title: "Benchmarks saved" });
-      loadAll();
+      if (!silent) {
+        toast({ title: "Benchmarks saved" });
+        loadAll();
+      }
+      // Silent path: skip toast and loadAll so rapid stepper clicks don't
+      // spam the UI or race against each other with stale server reads.
     } catch {
       toast({ title: "Failed to save benchmarks", variant: "destructive" });
     } finally {
-      setSavingBenchmarks(false);
+      if (!silent) setSavingBenchmarks(false);
     }
   };
 
@@ -1758,13 +1766,19 @@ export default function PricingTool() {
     }
     // Clamp to green band BEFORE manual adjustment
     // (manual price adj overrides the green band — user decision takes priority)
+    // Merge corridors across every country in the region (e.g. DACH = DE+AT+CH)
+    // so we match the widest band shown in the "Pricing Corridors by Country"
+    // table. Previously this used .find() which returned only the first matching
+    // country row, causing the clamp to use a narrower corridor than displayed.
     const countryAliases = REGION_TO_COUNTRY[form.region] ?? [form.region];
-    const weeklyBench = benchmarks.find(b =>
-      countryAliases.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+    const aliasSet = new Set(countryAliases.map(a => a.toLowerCase()));
+    const weeklyRows = benchmarks.filter(b =>
+      aliasSet.has(b.country.toLowerCase()) &&
       (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
     );
-    const gLow = weeklyBench?.green_low ?? 0;
-    const gHigh = weeklyBench?.green_high ?? 0;
+    const nonZero = weeklyRows.filter(r => r.green_low > 0 && r.green_high > 0);
+    const gLow  = nonZero.length ? Math.min(...nonZero.map(r => r.green_low))  : 0;
+    const gHigh = nonZero.length ? Math.max(...nonZero.map(r => r.green_high)) : 0;
     if (gLow > 0 && gHigh > 0) {
       running = Math.min(gHigh, Math.max(gLow, running));
     }
@@ -2585,7 +2599,7 @@ export default function PricingTool() {
                                     }
                                     setBenchmarks(updated);
                                     setBenchmarksLocal(updated);
-                                    saveBenchmarks(updated);
+                                    saveBenchmarks(updated, { silent: true });
                                   };
 
                                   const StepperCell = ({ value, onChange, highlight }: { value: number; onChange: (delta: number) => void; highlight?: boolean }) => (
@@ -3694,14 +3708,21 @@ export default function PricingTool() {
             // We'll compute these after recommendedNwf is known (see below).
             const extraBars: { label: string; start: number; end: number; color?: string; deltaPct: number }[] = [];
 
-            // Green band from country benchmarks
+            // Green band from country benchmarks — MERGED across every country
+            // in the region (e.g. DACH = DE + AT + CH). This matches the merge
+            // logic in the "Pricing Corridors by Country" table (benchmarksByRegion):
+            // widest band = min of green_low, max of green_high. Previously this
+            // used .find() which returned only the first matching country row,
+            // causing the waterfall to show a narrower corridor than the table.
             const countryAliasesW = REGION_TO_COUNTRY[form.region] ?? [form.region];
-            const weeklyBenchW = benchmarks.find(b =>
-              countryAliasesW.some(a => a.toLowerCase() === b.country.toLowerCase()) &&
+            const aliasSetW = new Set(countryAliasesW.map(a => a.toLowerCase()));
+            const weeklyRowsW = benchmarks.filter(b =>
+              aliasSetW.has(b.country.toLowerCase()) &&
               (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee"))
             );
-            const greenLow = weeklyBenchW?.green_low ?? 0;
-            const greenHigh = weeklyBenchW?.green_high ?? 0;
+            const nonZeroW = weeklyRowsW.filter(r => r.green_low > 0 && r.green_high > 0);
+            const greenLow  = nonZeroW.length ? Math.min(...nonZeroW.map(r => r.green_low))  : 0;
+            const greenHigh = nonZeroW.length ? Math.max(...nonZeroW.map(r => r.green_high)) : 0;
             const hasGreenBand = greenLow > 0 && greenHigh > 0;
 
             // Net and Gross from canonical single source of truth
