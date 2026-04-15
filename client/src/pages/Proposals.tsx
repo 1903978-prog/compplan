@@ -373,6 +373,36 @@ export default function Proposals() {
   useEffect(() => { latestProjectApproachRef.current = projectApproach; }, [projectApproach]);
   useEffect(() => { latestCurrentRef.current = current; }, [current]);
 
+  // ── Inline "ask the user when a required field is missing" helper ──────
+  //
+  // Used by every action that needs a form field to proceed (save, generate,
+  // export, etc.). Instead of throwing a destructive toast that forces the
+  // user to navigate back to Step 1, we pop a native prompt right where they
+  // are, persist the answer to form state AND the latestFormRef (so callers
+  // in the same callback can read it immediately, without waiting for React
+  // to commit), and return the trimmed value.
+  //
+  // If the user cancels or submits blank, returns null — callers should bail
+  // silently. No error toast. The assumption: if the user explicitly
+  // cancelled the prompt, they know they're declining the action, and
+  // shouting at them is noise.
+  //
+  // Add new required-field checks by calling `ensureField("field_key", "Human label")`
+  // at the top of the action instead of scattering toast errors.
+  function ensureField(key: keyof typeof form, label: string): string | null {
+    const current = (latestFormRef.current as any)[key];
+    if (typeof current === "string" && current.trim()) return current.trim();
+    const answer = window.prompt(`${label} is required to continue.\n\nPlease enter it:`, "");
+    if (answer === null) return null; // user hit Cancel
+    const trimmed = answer.trim();
+    if (!trimmed) return null;
+    // Persist to both React state (so inputs update) and the ref (so the
+    // rest of this callback sees it without a rerender round-trip).
+    setForm(prev => ({ ...prev, [key]: trimmed } as any));
+    (latestFormRef.current as any) = { ...latestFormRef.current, [key]: trimmed };
+    return trimmed;
+  }
+
   // ROOT-CAUSE FIX (2026-04): the previous implementation called
   // `saveProgress()` from inside a memoized `triggerAutoSave`. Because
   // `useCallback([markClean])` returned the first-render function forever,
@@ -786,10 +816,8 @@ export default function Proposals() {
   // ── Step 1 → Step 2: Save draft ────────────────────────────────────────────
 
   async function handleGoToSlides() {
-    if (!form.company_name.trim()) {
-      toast({ title: "Company name is required", variant: "destructive" });
-      return;
-    }
+    // Inline prompt on missing company name — no navigate-back-to-Step-1.
+    if (!ensureField("company_name", "Company name")) return;
     // If no slides initialized yet and project type selected, apply learned/hardcoded defaults
     if (slides.length === 0 && projectType) {
       await applyProjectType(projectType);
@@ -1771,15 +1799,15 @@ export default function Proposals() {
   // matter from what memoized callback it gets called.
   async function saveProgress() {
     setSaving(true);
-    const f = latestFormRef.current;
-    const cur = latestCurrentRef.current;
     // Defensive guard: never try to save a proposal without a company name.
-    // The server will 400 anyway and the toast hides the reason.
-    if (!f.company_name || !f.company_name.trim()) {
+    // The server will 400, and scattering a toast across every step makes
+    // people hunt for the missing field. Inline-prompt instead and carry on.
+    const name = ensureField("company_name", "Company name");
+    if (!name) {
       setSaving(false);
-      toast({ title: "Company name is required", variant: "destructive" });
       return;
     }
+    const cur = latestCurrentRef.current;
     const body = buildLatestBody();
     try {
       if (cur?.id) {
