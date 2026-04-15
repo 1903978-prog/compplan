@@ -817,14 +817,22 @@ Keep the same 960×540 format and Eendigo branding. Output ONLY the updated HTML
       if (req.body.include_quality_score) try {
         const scoreRes = await client.messages.create({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 300,
-          system: `You are a management consulting proposal quality reviewer. Score the slide on 4 criteria (0-25 each, total 0-100):
-- Clarity: Is the message clear, concise, and actionable?
-- Relevance: Is it specific to this client (not generic filler)?
-- Visual Impact: Good layout hierarchy, readable, professional?
-- Persuasion: Does it drive the client toward a decision?
-Return ONLY JSON: {"clarity":N,"relevance":N,"visual":N,"persuasion":N,"total":N,"tip":"one sentence improvement suggestion"}`,
-          messages: [{ role: "user", content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):\n\n${html.substring(0, 2000)}` }],
+          max_tokens: 700,
+          // Same schema as /refine-page's scorer so the UI can always show
+          // per-dimension actionable fixes, not just a single vague tip.
+          system: `You are a management consulting proposal quality reviewer at the level of a McKinsey/BCG slide editor.
+
+Score the slide on 4 criteria (0-25 each, total 0-100):
+- Clarity: Is the message clear, concise, actionable? Does the reader know what to do after 5 seconds?
+- Relevance: Is it specific to this client and their actual problem, or generic filler?
+- Visual: Layout hierarchy, whitespace, typography scale, alignment, readability at 960×540. Is it overflowing, claustrophobic? Does it look like a consulting deck or a Word document with a blue header?
+- Persuasion: Does it drive the decision forward? Is there a clear "so what"?
+
+For EACH dimension also return a specific actionable fix (cite the exact element to change, e.g. "cut the 4 bullets under Approach to one line each and bold the verb", NOT "improve clarity").
+
+Return ONLY JSON:
+{"clarity":N,"relevance":N,"visual":N,"persuasion":N,"total":N,"tip":"one sentence top priority","fix":{"clarity":"…","relevance":"…","visual":"…","persuasion":"…"}}`,
+          messages: [{ role: "user", content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):\n\n${html.substring(0, 3000)}` }],
         });
         logApiUsage("quality-score", scoreRes);
         const scoreText = scoreRes.content.find(b => b.type === "text")?.text ?? "";
@@ -1133,6 +1141,104 @@ ${currentHtml.substring(0, 3500)}`,
     } catch (err: any) {
       console.error("Refine page error:", err.message);
       res.status(500).json({ message: err.message || "Refinement failed" });
+    }
+  });
+
+  // POST /api/proposals/:id/analyze-page — deep quality analysis of an
+  // EXISTING slide preview. Single API call (cheap): returns the same 4D
+  // score + per-dimension fixes as refine-page, PLUS a 2-3 sentence
+  // narrative summary that the UI shows when the user clicks the score
+  // badge. The client calls this lazily so the expensive analysis only
+  // runs when the user actually wants to read it.
+  app.post("/api/proposals/:id/analyze-page", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { slide_id, current_html, visual_prompt, content_prompt } = req.body;
+      if (!slide_id || !current_html) {
+        res.status(400).json({ message: "slide_id and current_html required" });
+        return;
+      }
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) { res.status(503).json({ message: "ANTHROPIC_API_KEY not set" }); return; }
+      const client = new Anthropic({ apiKey });
+
+      const slideSelection = Array.isArray(proposal.slide_selection) ? proposal.slide_selection : [];
+      const slide = slideSelection.find((s: any) => s.slide_id === slide_id);
+      const slideTitle = slide?.title ?? slide_id;
+
+      const analyzerSystemPrompt = `You are a senior management consulting slide editor at McKinsey/BCG/Bain level. You are being asked to give a deep quality analysis of a single proposal slide.
+
+Score the slide on 4 criteria (0-25 each, total 0-100):
+- Clarity: Is the message clear, concise, actionable? Does the reader know what to do after 5 seconds?
+- Relevance: Is it specific to this client and their actual problem, or generic filler?
+- Visual: Layout hierarchy, whitespace, typography scale, alignment, readability at 960×540. Is it overflowing, claustrophobic, cramped? Does it look like a real consulting deck?
+- Persuasion: Does it drive the decision forward? Is there a clear "so what" that pushes the reader toward the next step?
+
+For EACH dimension, return a specific actionable fix — cite the exact element to change with concrete language (e.g. "the 4 bullets under Approach are all 3+ lines, cut to one line each and bold the verb", NOT "improve clarity"). Also return a top_priority_fix which is the single biggest change that would move the score the most.
+
+Return a 2-3 sentence narrative: what the slide does well, what's holding it back, and the single most impactful change.
+
+Return ONLY JSON, no prose outside the JSON:
+{
+  "clarity": N,
+  "relevance": N,
+  "visual": N,
+  "persuasion": N,
+  "total": N,
+  "tip": "one sentence top priority",
+  "fix": {
+    "clarity": "specific actionable fix",
+    "relevance": "specific actionable fix",
+    "visual": "specific actionable fix",
+    "persuasion": "specific actionable fix"
+  },
+  "narrative": "2-3 sentences covering strengths, what's holding it back, and the single highest-impact change",
+  "top_priority_fix": "the single change that would move the score the most"
+}`;
+
+      const userMsg = `Deep analysis of slide "${slideTitle}" for ${proposal.company_name}.
+
+INTENDED VISUAL DIRECTION:
+${visual_prompt || "(not specified)"}
+
+INTENDED CONTENT:
+${content_prompt || "(not specified)"}
+
+CURRENT SLIDE HTML (what we're scoring):
+${String(current_html).substring(0, 6000)}`;
+
+      const scoreRes = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1200,
+        system: analyzerSystemPrompt,
+        messages: [{ role: "user", content: userMsg }],
+      });
+      logApiUsage("analyze-page", scoreRes);
+
+      const scoreText = (scoreRes.content.find(b => b.type === "text") as any)?.text ?? "";
+      const jsonMatch = scoreText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        res.status(500).json({ message: "Analyzer returned no JSON", raw: scoreText.slice(0, 300) });
+        return;
+      }
+      let analysis: any;
+      try {
+        analysis = JSON.parse(jsonMatch[0]);
+      } catch (e: any) {
+        res.status(500).json({ message: "Analyzer returned invalid JSON: " + e.message });
+        return;
+      }
+
+      res.json({ slide_id, analysis });
+    } catch (err: any) {
+      console.error("Analyze page error:", err.message);
+      res.status(500).json({ message: err.message || "Analysis failed" });
     }
   });
 
@@ -1753,6 +1859,8 @@ RULES:
     "app_settings",
     // Pricing (settings JSON holds the country_benchmarks corridors)
     "pricing_settings", "pricing_cases", "pricing_proposals", "won_projects",
+    // Business Development / CRM (HubSpot imports land here)
+    "bd_deals",
     // Proposals / slide methodology
     "proposals", "proposal_templates", "slide_methodology_configs",
     "project_type_slide_defaults", "deck_template_configs",
@@ -2018,6 +2126,310 @@ RULES:
       await db.execute(sql`DELETE FROM won_projects WHERE id = ${id}`);
       res.json({ ok: true });
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Business Development / lightweight CRM ────────────────────────────────
+  //
+  // Minimal CRUD over bd_deals + a HubSpot import endpoint. The import
+  // accepts either:
+  //   - HubSpot CSV exported from "Deals" → "Export" (string body), OR
+  //   - An already-parsed array of objects keyed by HubSpot column names
+  //
+  // De-duplication is by `hubspot_id` (HubSpot's numeric deal ID). Re-
+  // running the import upserts rather than duplicating, so the user can
+  // paste the same file twice without consequence.
+  const BD_STAGES = ["lead", "qualified", "proposal", "negotiation", "won", "lost"] as const;
+
+  function normaliseHubspotStage(raw: string | null | undefined): string {
+    const s = String(raw ?? "").toLowerCase().trim();
+    if (!s) return "lead";
+    if (s.includes("closed won") || s === "won") return "won";
+    if (s.includes("closed lost") || s === "lost") return "lost";
+    if (s.includes("appointment") || s.includes("qualified")) return "qualified";
+    if (s.includes("presentation") || s.includes("proposal")) return "proposal";
+    if (s.includes("decision") || s.includes("negotiat") || s.includes("contract")) return "negotiation";
+    return "lead";
+  }
+
+  // Lightweight CSV parser — handles quoted fields with commas and
+  // escaped double quotes ("") the way Excel / HubSpot / Sheets emit.
+  // Deliberately not a full RFC 4180 parser: we don't need multiline
+  // fields and HubSpot doesn't emit them for the Deal export.
+  function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
+    const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter(l => l.length > 0);
+    if (lines.length === 0) return { headers: [], rows: [] };
+    function split(line: string): string[] {
+      const out: string[] = [];
+      let cur = "";
+      let inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (inQ) {
+          if (c === "\"") {
+            if (line[i + 1] === "\"") { cur += "\""; i++; }
+            else inQ = false;
+          } else cur += c;
+        } else {
+          if (c === "\"") inQ = true;
+          else if (c === ",") { out.push(cur); cur = ""; }
+          else cur += c;
+        }
+      }
+      out.push(cur);
+      return out;
+    }
+    const headers = split(lines[0]).map(h => h.trim());
+    const rows = lines.slice(1).map(line => {
+      const parts = split(line);
+      const row: Record<string, string> = {};
+      headers.forEach((h, i) => { row[h] = (parts[i] ?? "").trim(); });
+      return row;
+    });
+    return { headers, rows };
+  }
+
+  // Fuzzy column lookup: HubSpot field names drift ("Deal Name" vs "dealname"
+  // vs "deal name"). We match case-insensitive on normalised keys.
+  function pick(row: Record<string, string>, candidates: string[]): string | null {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    for (const c of candidates) {
+      const nc = norm(c);
+      for (const k of Object.keys(row)) {
+        if (norm(k) === nc && row[k] !== undefined && row[k] !== "") return row[k];
+      }
+    }
+    return null;
+  }
+
+  app.get("/api/bd/deals", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`SELECT * FROM bd_deals ORDER BY updated_at DESC`);
+      res.json(r.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/bd/deals", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const now = new Date().toISOString();
+      const b = req.body ?? {};
+      if (!b.name) { res.status(400).json({ error: "name required" }); return; }
+      const stage = (BD_STAGES as readonly string[]).includes(b.stage) ? b.stage : "lead";
+      const r = await db.execute(sql`
+        INSERT INTO bd_deals (
+          hubspot_id, name, client_name, contact_name, contact_email,
+          stage, amount, currency, probability, close_date, source, owner,
+          notes, industry, region, last_activity_at, imported_at, created_at, updated_at
+        ) VALUES (
+          ${b.hubspot_id ?? null}, ${b.name}, ${b.client_name ?? null}, ${b.contact_name ?? null}, ${b.contact_email ?? null},
+          ${stage}, ${b.amount ?? null}, ${b.currency ?? "EUR"}, ${b.probability ?? null}, ${b.close_date ?? null}, ${b.source ?? null}, ${b.owner ?? null},
+          ${b.notes ?? null}, ${b.industry ?? null}, ${b.region ?? null}, ${b.last_activity_at ?? null}, ${b.imported_at ?? null}, ${now}, ${now}
+        ) RETURNING *
+      `);
+      res.json(r.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/bd/deals/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      const now = new Date().toISOString();
+      const b = req.body ?? {};
+
+      // Merge-style update: fetch the existing row, overlay any fields the
+      // client sent, then write the merged result back. Simpler and safer
+      // than building a dynamic SET clause, and partial updates are cheap
+      // because bd_deals is small.
+      const existing: any = await db.execute(sql`SELECT * FROM bd_deals WHERE id = ${id}`);
+      if (existing.rows.length === 0) { res.status(404).json({ error: "not found" }); return; }
+      const cur = existing.rows[0] as any;
+
+      const merged = {
+        name:             "name" in b ? b.name : cur.name,
+        client_name:      "client_name" in b ? b.client_name : cur.client_name,
+        contact_name:     "contact_name" in b ? b.contact_name : cur.contact_name,
+        contact_email:    "contact_email" in b ? b.contact_email : cur.contact_email,
+        stage:            "stage" in b && (BD_STAGES as readonly string[]).includes(b.stage) ? b.stage : cur.stage,
+        amount:           "amount" in b ? b.amount : cur.amount,
+        currency:         "currency" in b ? b.currency : cur.currency,
+        probability:      "probability" in b ? b.probability : cur.probability,
+        close_date:       "close_date" in b ? b.close_date : cur.close_date,
+        source:           "source" in b ? b.source : cur.source,
+        owner:            "owner" in b ? b.owner : cur.owner,
+        notes:            "notes" in b ? b.notes : cur.notes,
+        industry:         "industry" in b ? b.industry : cur.industry,
+        region:           "region" in b ? b.region : cur.region,
+        last_activity_at: "last_activity_at" in b ? b.last_activity_at : cur.last_activity_at,
+      };
+
+      const r = await db.execute(sql`
+        UPDATE bd_deals SET
+          name = ${merged.name},
+          client_name = ${merged.client_name},
+          contact_name = ${merged.contact_name},
+          contact_email = ${merged.contact_email},
+          stage = ${merged.stage},
+          amount = ${merged.amount},
+          currency = ${merged.currency},
+          probability = ${merged.probability},
+          close_date = ${merged.close_date},
+          source = ${merged.source},
+          owner = ${merged.owner},
+          notes = ${merged.notes},
+          industry = ${merged.industry},
+          region = ${merged.region},
+          last_activity_at = ${merged.last_activity_at},
+          updated_at = ${now}
+        WHERE id = ${id} RETURNING *
+      `);
+      res.json(r.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/bd/deals/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      await db.execute(sql`DELETE FROM bd_deals WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/bd/import/hubspot — accepts a HubSpot Deal CSV (as a string
+  // in body.csv) OR an already-parsed array in body.rows. Dry-run by
+  // default — pass { commit: true } to actually upsert.
+  app.post("/api/bd/import/hubspot", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const { csv, rows: bodyRows, commit } = req.body ?? {};
+      let rows: Record<string, string>[] = [];
+
+      if (Array.isArray(bodyRows)) {
+        rows = bodyRows as any[];
+      } else if (typeof csv === "string" && csv.trim().length > 0) {
+        const parsed = parseCsv(csv);
+        rows = parsed.rows;
+      } else {
+        res.status(400).json({ error: "Provide either `csv` (string) or `rows` (array)" });
+        return;
+      }
+
+      // Normalise every row into our bd_deals shape.
+      const now = new Date().toISOString();
+      const normalised = rows.map(row => {
+        const rawStage = pick(row, ["Deal Stage", "dealstage", "stage"]);
+        const amountStr = pick(row, ["Amount", "amount", "Deal Value", "deal_value"]);
+        const amount = amountStr ? Number(String(amountStr).replace(/[^0-9.-]/g, "")) : null;
+        return {
+          hubspot_id:     pick(row, ["Record ID", "Deal ID", "hubspot_id", "dealId", "id"]),
+          name:           pick(row, ["Deal Name", "dealname", "name"]) || "Untitled deal",
+          client_name:    pick(row, ["Associated Company", "Company name", "company"]),
+          contact_name:   pick(row, ["Associated Contact", "Contact name", "contact"]),
+          contact_email:  pick(row, ["Associated Contact Email", "Email", "contact_email"]),
+          stage:          normaliseHubspotStage(rawStage),
+          amount:         amount !== null && !isNaN(amount) ? amount : null,
+          currency:       pick(row, ["Currency", "Deal Currency Code", "currency"]) || "EUR",
+          probability:    (() => {
+            const p = pick(row, ["Deal probability", "Probability", "probability"]);
+            if (!p) return null;
+            const n = Number(String(p).replace(/[^0-9.-]/g, ""));
+            return isNaN(n) ? null : n;
+          })(),
+          close_date:     pick(row, ["Close Date", "closedate", "close_date"]),
+          source:         pick(row, ["Original Source", "Deal Source", "source"]) || "hubspot_import",
+          owner:          pick(row, ["Deal Owner", "Owner", "dealowner"]),
+          notes:          pick(row, ["Description", "Notes", "description"]),
+          industry:       pick(row, ["Industry", "industry"]),
+          region:         pick(row, ["Region", "Country", "region"]),
+          last_activity_at: pick(row, ["Last Activity Date", "last_activity_date"]),
+          imported_at:    now,
+        };
+      }).filter(d => (d.name && d.name !== "Untitled deal") || d.hubspot_id);
+      // ^ Require at minimum a real name or a hubspot_id so blank rows
+      // from trailing CSV newlines don't land as junk.
+
+      if (!commit) {
+        // Dry-run: report how many rows we'd upsert + a preview slice.
+        res.json({
+          ok: true,
+          mode: "preview",
+          total: normalised.length,
+          preview: normalised.slice(0, 10),
+        });
+        return;
+      }
+
+      // Commit: upsert by hubspot_id when present, else plain insert.
+      let inserted = 0;
+      let updated = 0;
+      let skipped = 0;
+      for (const d of normalised) {
+        try {
+          if (d.hubspot_id) {
+            // Check if the row already exists
+            const existing: any = await db.execute(sql`SELECT id FROM bd_deals WHERE hubspot_id = ${d.hubspot_id}`);
+            if (existing.rows.length > 0) {
+              await db.execute(sql`
+                UPDATE bd_deals SET
+                  name = ${d.name},
+                  client_name = ${d.client_name},
+                  contact_name = ${d.contact_name},
+                  contact_email = ${d.contact_email},
+                  stage = ${d.stage},
+                  amount = ${d.amount},
+                  currency = ${d.currency},
+                  probability = ${d.probability},
+                  close_date = ${d.close_date},
+                  source = ${d.source},
+                  owner = ${d.owner},
+                  notes = ${d.notes},
+                  industry = ${d.industry},
+                  region = ${d.region},
+                  last_activity_at = ${d.last_activity_at},
+                  updated_at = ${now}
+                WHERE hubspot_id = ${d.hubspot_id}
+              `);
+              updated++;
+              continue;
+            }
+          }
+          await db.execute(sql`
+            INSERT INTO bd_deals (
+              hubspot_id, name, client_name, contact_name, contact_email,
+              stage, amount, currency, probability, close_date, source, owner,
+              notes, industry, region, last_activity_at, imported_at, created_at, updated_at
+            ) VALUES (
+              ${d.hubspot_id}, ${d.name}, ${d.client_name}, ${d.contact_name}, ${d.contact_email},
+              ${d.stage}, ${d.amount}, ${d.currency}, ${d.probability}, ${d.close_date}, ${d.source}, ${d.owner},
+              ${d.notes}, ${d.industry}, ${d.region}, ${d.last_activity_at}, ${d.imported_at}, ${now}, ${now}
+            )
+          `);
+          inserted++;
+        } catch (e: any) {
+          skipped++;
+          console.warn("[bd/import/hubspot] row skipped:", e.message);
+        }
+      }
+      res.json({ ok: true, mode: "commit", total: normalised.length, inserted, updated, skipped });
+    } catch (err: any) {
+      console.error("[bd/import/hubspot] failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });

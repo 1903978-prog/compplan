@@ -650,6 +650,39 @@ export const wonProjects = pgTable("won_projects", {
   updated_at: text("updated_at").notNull(),
 });
 
+// ── Business Development / CRM ──────────────────────────────────────────────
+// Lightweight CRM table seeded by HubSpot imports (or manual entry). Sits
+// UPSTREAM of `pricingProposals`: the pricing workflow kicks in once a
+// deal is far enough along to actually quote. Stages map 1:1 to HubSpot
+// default pipeline so imports don't need translation.
+//
+// Dedup key: `hubspot_id` when imported from HubSpot, else `id`. Re-running
+// an import upserts by `hubspot_id` so nothing duplicates on re-paste.
+export const bdDeals = pgTable("bd_deals", {
+  id: serial("id").primaryKey(),
+  hubspot_id: text("hubspot_id"),                          // HubSpot deal ID, unique across imports; null for manual
+  name: text("name").notNull(),                            // Deal name
+  client_name: text("client_name"),                        // Company / account
+  contact_name: text("contact_name"),                      // Primary contact
+  contact_email: text("contact_email"),
+  stage: text("stage").notNull().default("lead"),          // lead | qualified | proposal | negotiation | won | lost
+  amount: real("amount"),                                  // Expected deal value
+  currency: text("currency").default("EUR"),
+  probability: real("probability"),                        // 0-100 win %
+  close_date: text("close_date"),                          // Expected close (ISO date)
+  source: text("source"),                                  // inbound | outbound | referral | hubspot_import | …
+  owner: text("owner"),                                    // Who owns the deal internally
+  notes: text("notes"),
+  industry: text("industry"),
+  region: text("region"),
+  last_activity_at: text("last_activity_at"),              // Last touchpoint from HubSpot
+  imported_at: text("imported_at"),                        // When row first came in from HubSpot
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type BdDeal = typeof bdDeals.$inferSelect;
+export type InsertBdDeal = typeof bdDeals.$inferInsert;
+
 // ── Harvest Invoice Tracking ────────────────────────────────────────────────
 // Snapshot of last-seen state per invoice (for change detection)
 export const invoiceSnapshots = pgTable("invoice_snapshots", {

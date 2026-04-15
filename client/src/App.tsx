@@ -23,7 +23,9 @@ import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
 import AdminBackup from "@/pages/AdminBackup";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff } from "lucide-react";
+import ExecDashboard from "@/pages/ExecDashboard";
+import BusinessDevelopment from "@/pages/BusinessDevelopment";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -280,6 +282,18 @@ function Navigation() {
               EENDIGO OP MODEL <span className="text-[10px] font-normal text-muted-foreground ml-1">v24Mar</span>
             </h1>
             <div className="flex items-center gap-1">
+              {/* Executive Dashboard — single-screen rollup across every
+                  core stream. Lives at the top of the nav so it's one
+                  click from anywhere, and has its own dropdown so it's
+                  visually separate from HR's operational dashboard. */}
+              <NavDropdown
+                label="Exec"
+                icon={Activity}
+                basePaths={["/exec"]}
+                items={[
+                  { href: "/exec", label: "Dashboard", icon: LayoutDashboard },
+                ]}
+              />
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
@@ -327,6 +341,15 @@ function Navigation() {
                 items={[
                   { href: "/invoicing", label: "Invoicing", icon: Receipt },
                   { href: "/clients", label: "Client Ledger", icon: Users },
+                ]}
+              />
+              <NavDropdown
+                label="BD"
+                icon={Target}
+                basePaths={["/bd"]}
+                items={[
+                  { href: "/bd", label: "Pipeline", icon: Target },
+                  { href: "/bd/import", label: "Import HubSpot", icon: Database },
                 ]}
               />
               <NavDropdown
@@ -399,6 +422,9 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/exec" component={ExecDashboard} />
+      <Route path="/bd" component={BusinessDevelopment} />
+      <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />
       <Route path="/roles" component={RoleGridPage} />
       <Route path="/days-off" component={DaysOff} />

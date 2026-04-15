@@ -339,6 +339,37 @@ export async function seedDatabase() {
   // individual survey fields later without a migration.
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS client_feedback JSONB`);
 
+  // Business Development / lightweight CRM — seeded by HubSpot imports
+  // or manual entry on the /bd page. Idempotent so every boot can re-run
+  // it safely. See shared/schema.ts ▸ bdDeals for the Drizzle model.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS bd_deals (
+      id SERIAL PRIMARY KEY,
+      hubspot_id TEXT,
+      name TEXT NOT NULL,
+      client_name TEXT,
+      contact_name TEXT,
+      contact_email TEXT,
+      stage TEXT NOT NULL DEFAULT 'lead',
+      amount REAL,
+      currency TEXT DEFAULT 'EUR',
+      probability REAL,
+      close_date TEXT,
+      source TEXT,
+      owner TEXT,
+      notes TEXT,
+      industry TEXT,
+      region TEXT,
+      last_activity_at TEXT,
+      imported_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  // Partial unique index on hubspot_id: lets re-imports upsert cleanly
+  // without blocking manual rows (which leave hubspot_id NULL).
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS bd_deals_hubspot_id_unique ON bd_deals (hubspot_id) WHERE hubspot_id IS NOT NULL`);
+
   // Raw free-text the user pastes into the "Slide Template Instructions"
   // bulk-parse dialog. Persisted so it survives reloads.
   await db.execute(sql`ALTER TABLE deck_template_configs ADD COLUMN IF NOT EXISTS slide_instructions_text TEXT NOT NULL DEFAULT ''`);

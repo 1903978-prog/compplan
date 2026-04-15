@@ -215,6 +215,16 @@ export default function Proposals() {
   });
   const [showRefineHistory, setShowRefineHistory] = useState<Record<string, boolean>>({});
 
+  // ── Quality-score click-through analysis ──────────────────────────────
+  // Clicking the small score badge expands a panel with per-dimension
+  // actionable fixes + a narrative summary. If the current score object
+  // already includes `fix` (produced by refine-page or the upgraded
+  // generate-page scorer), we just expand. Otherwise we call
+  // /api/proposals/:id/analyze-page to fetch a fresh deep analysis.
+  const [slideAnalyses, setSlideAnalyses]       = useState<Record<string, any>>({});
+  const [analyzingSlide, setAnalyzingSlide]     = useState<string | null>(null);
+  const [showScoreDetails, setShowScoreDetails] = useState<Record<string, boolean>>({});
+
   // COST GUARD: check API status and require explicit confirmation before any AI call
   async function confirmApiUsage(action: string): Promise<boolean> {
     try {
@@ -1211,6 +1221,93 @@ export default function Proposals() {
       console.error("[refineSlide] error for", slideId, err);
     }
     setRefiningSlide(null); apiCallDone();
+  }
+
+  // Click-through quality analysis: expand the score panel and, if we
+  // don't already have per-dimension fixes, fetch a deep analysis from
+  // /api/proposals/:id/analyze-page. Safe no-op if there's no slide HTML
+  // to analyse yet — the button itself is disabled in that case.
+  async function analyzeSlideQuality(slideId: string) {
+    // Toggle off if already open
+    if (showScoreDetails[slideId]) {
+      setShowScoreDetails(prev => ({ ...prev, [slideId]: false }));
+      return;
+    }
+
+    const existingScore = slideScores[slideId];
+    const existingAnalysis = slideAnalyses[slideId];
+    const hasFixes = !!(existingScore?.fix || existingAnalysis?.fix);
+
+    // Always open the panel first — even if we need to fetch, the user
+    // gets immediate feedback that something is happening.
+    setShowScoreDetails(prev => ({ ...prev, [slideId]: true }));
+
+    // If we already have per-dimension fixes, no API call needed.
+    if (hasFixes) return;
+
+    // Need to fetch. Require a rendered HTML preview to analyse.
+    const slide = slides.find(s => s.slide_id === slideId);
+    const html = previewHtml[slideId] ?? slide?.preview_html ?? "";
+    if (!html) {
+      toast({
+        title: "Generate the slide first",
+        description: "There's no preview to analyse yet — generate or refine the slide, then click the score.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!current?.id) {
+      await saveProgress();
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (!current?.id) return;
+
+    if (!await confirmApiUsage("Deep quality analysis of this slide (1 API call)")) {
+      setShowScoreDetails(prev => ({ ...prev, [slideId]: false }));
+      return;
+    }
+
+    setAnalyzingSlide(slideId);
+    try {
+      const res = await fetch(`/api/proposals/${current.id}/analyze-page`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: slideId,
+          current_html: html,
+          visual_prompt: slide?.visual_prompt ?? "",
+          content_prompt: slide?.content_prompt ?? "",
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ message: `Server returned ${res.status}` }));
+        throw new Error(errData.message ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      if (!data.analysis) throw new Error("Server returned an empty analysis");
+
+      // Cache the full analysis (with narrative) AND merge the fresh
+      // score into slideScores so the badge reflects the new number.
+      setSlideAnalyses(prev => ({ ...prev, [slideId]: data.analysis }));
+      setSlideScores(prev => ({ ...prev, [slideId]: { ...(prev[slideId] ?? {}), ...data.analysis } }));
+      updateSlideField(slideId, "quality_score", data.analysis);
+
+      toast({
+        title: `Analysis complete — ${data.analysis.total ?? "?"}/100`,
+        description: data.analysis.top_priority_fix || data.analysis.tip || "See breakdown below the score.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Analysis failed",
+        description: err?.message || "Unknown error — check the browser console.",
+        variant: "destructive",
+      });
+      console.error("[analyzeSlideQuality] error for", slideId, err);
+      setShowScoreDetails(prev => ({ ...prev, [slideId]: false }));
+    }
+    setAnalyzingSlide(null); apiCallDone();
   }
 
   // Chat modification for slide preview
@@ -2926,15 +3023,48 @@ Example:
                               <span className="text-[8px] text-violet-500">(AI)</span>
                             </label>
                             {slideScores[previewSlideId] && (
-                              <span className={`text-sm font-bold ${
-                                (slideScores[previewSlideId].total ?? 0) >= 80 ? "text-emerald-600" :
-                                (slideScores[previewSlideId].total ?? 0) >= 60 ? "text-amber-600" : "text-red-500"
-                              }`}>{slideScores[previewSlideId].total ?? 0}%</span>
+                              <button
+                                type="button"
+                                onClick={() => analyzeSlideQuality(previewSlideId!)}
+                                disabled={analyzingSlide === previewSlideId}
+                                className={`text-sm font-bold flex items-center gap-1 hover:underline focus:outline-none focus:ring-1 focus:ring-violet-500 rounded px-1 ${
+                                  (slideScores[previewSlideId].total ?? 0) >= 80 ? "text-emerald-600" :
+                                  (slideScores[previewSlideId].total ?? 0) >= 60 ? "text-amber-600" : "text-red-500"
+                                }`}
+                                title="Click to see per-dimension analysis and improvement suggestions"
+                              >
+                                {analyzingSlide === previewSlideId
+                                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                                  : showScoreDetails[previewSlideId]
+                                    ? <ChevronUp className="w-3 h-3" />
+                                    : <ChevronDown className="w-3 h-3" />}
+                                {slideScores[previewSlideId].total ?? 0}%
+                              </button>
                             )}
                           </div>
                           {slideScores[previewSlideId] && (() => {
                             const sc = slideScores[previewSlideId];
+                            const an = slideAnalyses[previewSlideId];
+                            // Prefer the analysis response (fresher + has narrative) but fall back to sc.
+                            const fix = an?.fix ?? sc.fix ?? null;
+                            const narrative = an?.narrative ?? null;
+                            const topFix = an?.top_priority_fix ?? null;
                             const barColor = (sc.total ?? 0) >= 80 ? "bg-emerald-500" : (sc.total ?? 0) >= 60 ? "bg-amber-500" : "bg-red-500";
+                            const dimRow = (label: string, key: "clarity" | "relevance" | "visual" | "persuasion") => {
+                              const v = sc[key] ?? 0;
+                              const dimColor = v >= 20 ? "text-emerald-600" : v >= 15 ? "text-amber-600" : "text-red-500";
+                              return (
+                                <div className="flex items-start gap-2 text-[10px] py-1 border-b last:border-0 border-muted/40">
+                                  <div className="w-16 shrink-0">
+                                    <div className="font-semibold text-muted-foreground uppercase text-[9px]">{label}</div>
+                                    <div className={`font-mono font-bold text-xs ${dimColor}`}>{v}/25</div>
+                                  </div>
+                                  <div className="flex-1 text-[10px] text-foreground/80 leading-snug">
+                                    {fix?.[key] || <span className="italic text-muted-foreground">click score to analyse</span>}
+                                  </div>
+                                </div>
+                              );
+                            };
                             return (
                               <>
                                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -2946,7 +3076,60 @@ Example:
                                   <div className="text-center"><div className="font-bold">{sc.visual ?? 0}</div><div className="text-muted-foreground">Visual</div></div>
                                   <div className="text-center"><div className="font-bold">{sc.persuasion ?? 0}</div><div className="text-muted-foreground">Persuasion</div></div>
                                 </div>
-                                {sc.tip && <p className="text-[9px] text-muted-foreground italic">{sc.tip}</p>}
+                                {sc.tip && !showScoreDetails[previewSlideId] && (
+                                  <p className="text-[9px] text-muted-foreground italic">{sc.tip}</p>
+                                )}
+
+                                {/* Expandable click-through analysis: 4 per-dimension
+                                    fixes + narrative + single top-priority action. */}
+                                {showScoreDetails[previewSlideId] && (
+                                  <div className="mt-2 p-2 bg-violet-50 border border-violet-200 rounded space-y-2">
+                                    <div className="flex items-center gap-1">
+                                      <Wand2 className="w-3 h-3 text-violet-600" />
+                                      <span className="text-[9px] font-semibold text-violet-700 uppercase tracking-wide">
+                                        {fix ? "Slide analysis" : "Analysing…"}
+                                      </span>
+                                    </div>
+
+                                    {narrative && (
+                                      <p className="text-[10px] text-foreground/80 leading-snug italic">
+                                        {narrative}
+                                      </p>
+                                    )}
+
+                                    <div className="bg-white rounded border border-violet-100 px-1.5">
+                                      {dimRow("Clarity",    "clarity")}
+                                      {dimRow("Relevance",  "relevance")}
+                                      {dimRow("Visual",     "visual")}
+                                      {dimRow("Persuasion", "persuasion")}
+                                    </div>
+
+                                    {topFix && (
+                                      <div className="flex items-start gap-1.5 text-[10px] bg-violet-100 border border-violet-300 rounded px-2 py-1.5">
+                                        <TrendingUp className="w-3 h-3 text-violet-700 mt-[1px] shrink-0" />
+                                        <div>
+                                          <div className="font-semibold text-violet-800 uppercase text-[8px] tracking-wide">Biggest lever</div>
+                                          <div className="text-foreground/90 leading-snug">{topFix}</div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {fix && !analyzingSlide && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          // Force refresh: clear cached analysis and re-run.
+                                          setSlideAnalyses(prev => { const n = { ...prev }; delete n[previewSlideId!]; return n; });
+                                          setShowScoreDetails(prev => ({ ...prev, [previewSlideId!]: false }));
+                                          setTimeout(() => analyzeSlideQuality(previewSlideId!), 50);
+                                        }}
+                                        className="text-[9px] text-violet-600 hover:text-violet-800 hover:underline"
+                                      >
+                                        Re-analyse
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
                               </>
                             );
                           })()}
