@@ -88,8 +88,71 @@
   .glass-panel {
     @apply bg-white/70 backdrop-blur-lg border border-white/20 shadow-xl dark:bg-black/70 dark:border-white/10;
   }
-  
+
   .table-row-hover {
     @apply transition-colors duration-200 hover:bg-muted/50;
   }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   PRIVACY MODE — global "hide confidential numbers" toggle.
+
+   Activated by adding `privacy-mode` class to <body> (see App.tsx privacy
+   toggle next to Logout). When active, any element the app considers
+   sensitive is blurred in place so a screen-share audience can still see
+   layout / structure / labels / buttons but cannot read the actual figures.
+
+   What gets blurred:
+     - Every <td> and its descendants (all table data — numbers, codes,
+       client names)
+     - Anything with .font-mono, .tabular-nums, .font-tabular — in this
+       app these classes are used almost exclusively for numeric values
+     - Elements the app explicitly flags with [data-privacy="hide"]
+     - Shadcn <Badge> components (used for counts, amounts, totals)
+     - Form inputs of type number
+
+   What is intentionally NOT blurred:
+     - <th> headers and section titles (so the structure is still
+       obvious during a demo)
+     - Buttons, labels, nav, tooltips (no financial payload)
+     - Hover shows the raw value only if the mouse never leaves the
+       element — we use a CSS filter, not text replacement, so the real
+       value never leaves the DOM (important so existing logic, exports,
+       and calculations continue to work exactly the same).
+
+   To explicitly protect a new element, add `data-privacy="hide"`.
+   To explicitly keep an element visible even in privacy mode, add
+   `data-privacy="show"`.
+   ────────────────────────────────────────────────────────────────────── */
+
+body.privacy-mode td,
+body.privacy-mode td *,
+body.privacy-mode .font-mono,
+body.privacy-mode .tabular-nums,
+body.privacy-mode .font-tabular,
+body.privacy-mode [data-privacy="hide"],
+body.privacy-mode [data-privacy="hide"] *,
+body.privacy-mode input[type="number"],
+body.privacy-mode .badge-value,
+body.privacy-mode [class*="badge"]:not(button):not(a) {
+  filter: blur(6px) !important;
+  transition: filter 0.15s ease-out;
+  user-select: none !important;
+}
+
+/* Escape hatch: explicit data-privacy="show" wins over everything above,
+   including children of blurred parents. Useful for things like headings
+   that happen to sit inside a blurred <td>. */
+body.privacy-mode [data-privacy="show"],
+body.privacy-mode [data-privacy="show"] * {
+  filter: none !important;
+  user-select: auto !important;
+}
+
+/* Subtle visual cue on the trigger button so you can tell at a glance
+   from across the room whether privacy mode is on. */
+.privacy-toggle-on {
+  background-color: hsl(221 83% 53% / 0.12) !important;
+  color: hsl(221 83% 53%) !important;
+  border-color: hsl(221 83% 53% / 0.5) !important;
 }

@@ -22,7 +22,7 @@ import Invoicing from "@/pages/Invoicing";
 import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Download, Upload } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Download, Upload, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 
@@ -89,6 +89,42 @@ function Navigation() {
   const [apiActive, setApiActive] = useState(false);
   const [apiCost, setApiCost] = useState<{ month: string; today: string } | null>(null);
   const [location] = useLocation();
+
+  // Privacy Mode — hides all confidential numbers across the entire app by
+  // adding a `privacy-mode` class to <body>. CSS in index.css then blurs
+  // every sensitive selector (table cells, font-mono text, number inputs,
+  // badges, anything marked data-privacy="hide"). Persisted to localStorage
+  // so the setting survives reloads and full screen-share sessions.
+  //
+  // The raw DOM text is NEVER mutated — we only apply a CSS filter. That
+  // means exports, copy/paste, and every downstream calculation keep
+  // working exactly as before; the only thing that changes is what a
+  // third party can actually read off the screen.
+  const [privacyMode, setPrivacyMode] = useState<boolean>(() => {
+    try { return localStorage.getItem("compplan.privacy_mode") === "1"; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    if (privacyMode) {
+      document.body.classList.add("privacy-mode");
+    } else {
+      document.body.classList.remove("privacy-mode");
+    }
+    try { localStorage.setItem("compplan.privacy_mode", privacyMode ? "1" : "0"); } catch {}
+  }, [privacyMode]);
+  // Keyboard shortcut: Ctrl/Cmd + Shift + H = toggle privacy.
+  // Lets you hide the screen instantly when someone walks up without
+  // having to aim for the button.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "H" || e.key === "h")) {
+        e.preventDefault();
+        setPrivacyMode(v => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Listen for API activity events
   useEffect(() => {
@@ -354,7 +390,25 @@ function Navigation() {
                 if (f) importDB(f);
               }}
             />
-            <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground">
+            {/* Privacy Mode — hides every confidential number across the app
+                so screen-sharing is safe. Click or Ctrl/Cmd+Shift+H. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPrivacyMode(v => !v)}
+              className={privacyMode ? "privacy-toggle-on" : ""}
+              title={privacyMode
+                ? "Privacy mode ON — numbers are hidden (Ctrl/Cmd+Shift+H)"
+                : "Privacy mode OFF — click to hide all numbers (Ctrl/Cmd+Shift+H)"}
+              data-testid="button-privacy-mode"
+              data-privacy="show"
+            >
+              {privacyMode
+                ? <EyeOff className="w-3.5 h-3.5 mr-1.5" />
+                : <Eye className="w-3.5 h-3.5 mr-1.5" />}
+              {privacyMode ? "Hidden" : "Hide $"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground" data-privacy="show">
               <LogOut className="w-4 h-4 mr-2" />
               Logout
             </Button>
