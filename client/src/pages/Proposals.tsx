@@ -10,7 +10,7 @@ import {
   FileText, Upload, Check, X, Sparkles, GripVertical, ChevronUp, ChevronDown,
   RotateCcw, AlertTriangle, Info, ChevronRight, BookOpen, MessageSquare,
   Settings2, Image as ImageIcon, ClipboardPaste, Cpu, HelpCircle, Save,
-  Wand2, TrendingUp,
+  Wand2, TrendingUp, Maximize2, Minimize2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -222,6 +222,44 @@ export default function Proposals() {
   // capture the updated innerHTML, persist it via updateSlideField, and
   // the next refine/score/export run picks up the edited version.
   const [editingPreview, setEditingPreview] = useState<Record<string, boolean>>({});
+
+  // ── Fullscreen preview overlay ────────────────────────────────────────
+  // Opens the currently-previewing slide in a fullscreen modal rendered at
+  // native 960×540 (the size the slide HTML was designed for), scaled by
+  // a JS-computed factor so it fills ~90% of the viewport. Edit mode works
+  // identically to the inline preview — same contentEditable, same save-
+  // on-blur, same quality-score invalidation.
+  const [fullscreenPreview, setFullscreenPreview] = useState(false);
+  const [fullscreenScale, setFullscreenScale]     = useState(1);
+
+  // Compute the scale factor whenever we enter fullscreen or the window
+  // resizes. The slide HTML uses px values tuned for 960×540 so the
+  // right move is a uniform CSS transform, NOT reflowing the content.
+  useEffect(() => {
+    if (!fullscreenPreview) return;
+    const updateScale = () => {
+      const horizontalPad = 80;   // side padding around the slide
+      const verticalPad   = 140;  // top bar + caption
+      const availW = Math.max(320, window.innerWidth  - horizontalPad);
+      const availH = Math.max(200, window.innerHeight - verticalPad);
+      const s = Math.min(availW / 960, availH / 540, 2.0); // cap at 2× so we don't pixelate
+      setFullscreenScale(s);
+    };
+    updateScale();
+    window.addEventListener("resize", updateScale);
+    return () => window.removeEventListener("resize", updateScale);
+  }, [fullscreenPreview]);
+
+  // ESC exits fullscreen (only when not actively typing — if edit mode is
+  // on we let ESC bubble so the browser can do its native thing).
+  useEffect(() => {
+    if (!fullscreenPreview) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreenPreview(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [fullscreenPreview]);
 
   // ── Quality-score click-through analysis ──────────────────────────────
   // Clicking the small score badge expands a panel with per-dimension
@@ -2034,6 +2072,131 @@ export default function Proposals() {
 
     return (
       <div>
+        {/* ── Fullscreen slide preview overlay ───────────────────────────
+            Pops the currently-previewing slide into a fixed full-viewport
+            modal rendered at native 960×540 and scaled to fit. Shares state
+            with the inline preview — `editingPreview` toggles contentEditable
+            in both places, and onBlur saves back to state + the DB, so
+            whichever view you edit in, the other stays in sync. */}
+        {fullscreenPreview && previewSlideId && previewHtml[previewSlideId] && (
+          <div
+            className="fixed inset-0 z-[100] bg-slate-900/95 flex flex-col"
+            onClick={(e) => {
+              // Click on the dark backdrop (not on the slide or the top bar)
+              // closes the overlay. We detect this by checking the target is
+              // the backdrop itself, not any descendant.
+              if (e.target === e.currentTarget) setFullscreenPreview(false);
+            }}
+          >
+            {/* Top bar */}
+            <div
+              className="flex items-center justify-between px-4 py-3 bg-slate-800/80 border-b border-slate-700 text-white"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <h3 className="text-sm font-semibold truncate">
+                  {slides.find(s => s.slide_id === previewSlideId)?.title ?? "Slide preview"}
+                </h3>
+                <span className="text-[10px] text-slate-400 hidden md:inline">
+                  960 × 540 · scale {Math.round(fullscreenScale * 100)}%
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={editingPreview[previewSlideId] ? "default" : "outline"}
+                  className={`h-8 text-xs ${
+                    editingPreview[previewSlideId]
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                      : "bg-transparent border-slate-500 text-white hover:bg-slate-700 hover:text-white"
+                  }`}
+                  onClick={() => setEditingPreview(prev => ({ ...prev, [previewSlideId!]: !prev[previewSlideId!] }))}
+                  title={editingPreview[previewSlideId]
+                    ? "Click to finish editing"
+                    : "Click to edit the slide directly — type over text, delete sections, fix numbers"}
+                >
+                  {editingPreview[previewSlideId]
+                    ? <><Check className="w-3.5 h-3.5 mr-1" /> Done</>
+                    : <><Pencil className="w-3.5 h-3.5 mr-1" /> Edit</>}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs bg-transparent border-slate-500 text-white hover:bg-slate-700 hover:text-white"
+                  onClick={() => setFullscreenPreview(false)}
+                  title="Exit fullscreen (or press Esc)"
+                >
+                  <Minimize2 className="w-3.5 h-3.5 mr-1" /> Exit
+                </Button>
+              </div>
+            </div>
+
+            {/* Stage: the slide itself, rendered at native 960×540 and
+                uniformly scaled via CSS transform. We wrap it in a
+                fixed-size container matching the scaled footprint so the
+                flexbox centering works correctly. */}
+            <div
+              className="flex-1 flex items-center justify-center overflow-hidden"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setFullscreenPreview(false);
+              }}
+            >
+              <div
+                className={`bg-white shadow-2xl ${
+                  editingPreview[previewSlideId] ? "ring-2 ring-emerald-500 ring-offset-2 ring-offset-slate-900" : ""
+                }`}
+                style={{
+                  width:  960 * fullscreenScale,
+                  height: 540 * fullscreenScale,
+                  position: "relative",
+                  overflow: "hidden",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div
+                  // Same remount trick as the inline preview — flipping edit
+                  // mode re-seeds the contentEditable DOM from state so we
+                  // don't keep a stale draft.
+                  key={`fs-${previewSlideId}-${editingPreview[previewSlideId] ? "edit" : "view"}`}
+                  contentEditable={!!editingPreview[previewSlideId]}
+                  suppressContentEditableWarning
+                  spellCheck={!!editingPreview[previewSlideId]}
+                  onBlur={(e) => {
+                    if (!editingPreview[previewSlideId!]) return;
+                    const newHtml = (e.currentTarget as HTMLElement).innerHTML;
+                    if (!newHtml || newHtml === previewHtml[previewSlideId!]) return;
+                    setPreviewHtml(prev => ({ ...prev, [previewSlideId!]: newHtml }));
+                    updateSlideField(previewSlideId!, "preview_html", newHtml);
+                    setSlideScores(prev => {
+                      const n = { ...prev }; delete n[previewSlideId!]; return n;
+                    });
+                  }}
+                  dangerouslySetInnerHTML={{ __html: previewHtml[previewSlideId] }}
+                  style={{
+                    width:  960,
+                    height: 540,
+                    transform: `scale(${fullscreenScale})`,
+                    transformOrigin: "top left",
+                    fontFamily: "Arial, sans-serif",
+                    outline: "none",
+                    cursor: editingPreview[previewSlideId] ? "text" : "default",
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Caption */}
+            <div
+              className="px-4 py-2 bg-slate-800/60 border-t border-slate-700 text-[11px] text-slate-300 text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {editingPreview[previewSlideId]
+                ? "Click any text to edit — changes save when you click Done, click outside the slide, or press Esc"
+                : "Press Esc or click outside the slide to exit — click Edit to modify directly"}
+            </div>
+          </div>
+        )}
+
         {/* Floating AI activity indicator — top-right, always visible */}
         {aiStatus && (
           <div className="fixed top-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg bg-violet-600 text-white text-xs font-medium animate-in fade-in slide-in-from-top-2">
@@ -2869,6 +3032,18 @@ Example:
                               {editingPreview[previewSlideId]
                                 ? <><Check className="w-3 h-3 mr-1" /> Done</>
                                 : <><Pencil className="w-3 h-3 mr-1" /> Edit</>}
+                            </Button>
+                            {/* Fullscreen — opens the slide in a much larger
+                                overlay for comfortable editing at native
+                                960×540 scale. */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[10px]"
+                              onClick={() => setFullscreenPreview(true)}
+                              title="Open the slide fullscreen for comfortable editing"
+                            >
+                              <Maximize2 className="w-3 h-3 mr-1" /> Fullscreen
                             </Button>
                             <Button size="sm" variant="outline" className="h-7 text-[10px]"
                               onClick={() => downloadSlidePptx(previewSlideId)}>
