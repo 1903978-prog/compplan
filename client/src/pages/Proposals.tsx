@@ -215,6 +215,14 @@ export default function Proposals() {
   });
   const [showRefineHistory, setShowRefineHistory] = useState<Record<string, boolean>>({});
 
+  // ── Direct HTML editing of slide previews ─────────────────────────────
+  // Toggle a slide's preview into contentEditable mode so the user can
+  // click and edit the rendered HTML directly — no AI round-trip for
+  // small typo fixes, wording tweaks, or number corrections. On blur we
+  // capture the updated innerHTML, persist it via updateSlideField, and
+  // the next refine/score/export run picks up the edited version.
+  const [editingPreview, setEditingPreview] = useState<Record<string, boolean>>({});
+
   // ── Quality-score click-through analysis ──────────────────────────────
   // Clicking the small score badge expands a panel with per-dimension
   // actionable fixes + a narrative summary. If the current score object
@@ -2846,6 +2854,22 @@ Example:
                             <p className="text-[10px] text-muted-foreground">Slide preview</p>
                           </div>
                           <div className="flex items-center gap-1">
+                            {/* Edit HTML directly — toggles contentEditable on
+                                the preview div. Small tweaks (typos, numbers,
+                                wording) no longer need an AI round-trip. */}
+                            <Button
+                              size="sm"
+                              variant={editingPreview[previewSlideId] ? "default" : "outline"}
+                              className={`h-7 text-[10px] ${editingPreview[previewSlideId] ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                              onClick={() => setEditingPreview(prev => ({ ...prev, [previewSlideId!]: !prev[previewSlideId!] }))}
+                              title={editingPreview[previewSlideId]
+                                ? "Click to finish editing"
+                                : "Click to edit the slide directly — type over text, delete sections, fix numbers"}
+                            >
+                              {editingPreview[previewSlideId]
+                                ? <><Check className="w-3 h-3 mr-1" /> Done</>
+                                : <><Pencil className="w-3 h-3 mr-1" /> Edit</>}
+                            </Button>
                             <Button size="sm" variant="outline" className="h-7 text-[10px]"
                               onClick={() => downloadSlidePptx(previewSlideId)}>
                               <Download className="w-3 h-3 mr-1" /> PPTX
@@ -2856,12 +2880,47 @@ Example:
                             </button>
                           </div>
                         </div>
-                        {/* Preview with font inspector */}
+                        {/* Preview with font inspector (view mode) / direct HTML editor (edit mode) */}
                         <div className="bg-gray-100 p-2 relative group">
-                          <div className="bg-white shadow-lg mx-auto" style={{ width: "100%", aspectRatio: "16/9", overflow: "hidden", position: "relative" }}>
+                          <div
+                            className={`bg-white shadow-lg mx-auto transition-all ${
+                              editingPreview[previewSlideId] ? "ring-2 ring-emerald-500 ring-offset-2" : ""
+                            }`}
+                            style={{ width: "100%", aspectRatio: "16/9", overflow: "hidden", position: "relative" }}
+                          >
                             <div
+                              // `key` forces React to remount the node when we
+                              // flip edit mode, so dangerouslySetInnerHTML re-
+                              // seeds from state (instead of leaving the last
+                              // edit session's DOM in place).
+                              key={`${previewSlideId}-${editingPreview[previewSlideId] ? "edit" : "view"}`}
+                              contentEditable={!!editingPreview[previewSlideId]}
+                              suppressContentEditableWarning
+                              spellCheck={!!editingPreview[previewSlideId]}
+                              onBlur={(e) => {
+                                // Persist the edited HTML back to state + the
+                                // slide record. Fires once per edit session
+                                // (when the user clicks outside the slide or
+                                // toggles Done).
+                                if (!editingPreview[previewSlideId!]) return;
+                                const newHtml = (e.currentTarget as HTMLElement).innerHTML;
+                                if (!newHtml || newHtml === previewHtml[previewSlideId!]) return;
+                                setPreviewHtml(prev => ({ ...prev, [previewSlideId!]: newHtml }));
+                                updateSlideField(previewSlideId!, "preview_html", newHtml);
+                                // Clear any stale quality score — the slide
+                                // has changed, so the number no longer
+                                // reflects the current content.
+                                setSlideScores(prev => {
+                                  const n = { ...prev }; delete n[previewSlideId!]; return n;
+                                });
+                              }}
                               ref={el => {
                                 if (!el) return;
+                                // Font-inspector hover is purely a view-mode
+                                // affordance — in edit mode it would fight
+                                // with text selection, so we skip it entirely.
+                                if (editingPreview[previewSlideId!]) return;
+
                                 // Remove ALL existing popups first
                                 const clearPopups = () => document.querySelectorAll(".font-inspector-popup").forEach(p => p.remove());
 
@@ -2884,11 +2943,21 @@ Example:
                                 el.addEventListener("mouseleave", clearPopups);
                               }}
                               dangerouslySetInnerHTML={{ __html: previewHtml[previewSlideId] }}
-                              style={{ transform: "scale(0.7)", transformOrigin: "top left", width: "143%", height: "143%", fontFamily: "Arial, sans-serif" }}
+                              style={{
+                                transform: "scale(0.7)",
+                                transformOrigin: "top left",
+                                width: "143%",
+                                height: "143%",
+                                fontFamily: "Arial, sans-serif",
+                                outline: "none",       // contentEditable gives an ugly default blue focus ring
+                                cursor: editingPreview[previewSlideId] ? "text" : "default",
+                              }}
                             />
                           </div>
                           <div className="absolute bottom-3 left-3 text-[9px] text-muted-foreground/50 bg-white/80 px-1.5 py-0.5 rounded">
-                            Hover text to inspect font — use ±  to resize
+                            {editingPreview[previewSlideId]
+                              ? "Click any text to edit — changes save when you click Done or outside the slide"
+                              : "Hover text to inspect font — click Edit to modify directly"}
                           </div>
                         </div>
                         {/* Chat for modifications */}
