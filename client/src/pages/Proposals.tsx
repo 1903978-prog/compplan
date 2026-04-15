@@ -111,12 +111,18 @@ const DEFAULT_CALL_QUESTIONS: string[] = [
   "When should we start?",
 ];
 
+// Wizard order is: Input → Briefing → Analysis → Architecture → Deck → Generate.
+// Deck used to sit at step 2 (right after Input) but it's been moved to slot 5
+// so the flow becomes: enter info → write briefs → AI analyses → refine the
+// architecture → lock the deck structure & preview slides → generate. Putting
+// Deck last lets you finalise the slide selection AFTER you know what the AI
+// actually produced, instead of guessing up front.
 const WIZARD_STEPS = [
   { n: 1, label: "Input" },
-  { n: 2, label: "Deck" },
-  { n: 3, label: "Briefing" },
-  { n: 4, label: "Analysis" },
-  { n: 5, label: "Architecture" },
+  { n: 2, label: "Briefing" },
+  { n: 3, label: "Analysis" },
+  { n: 4, label: "Architecture" },
+  { n: 5, label: "Deck" },
   { n: 6, label: "Generate" },
 ];
 
@@ -736,9 +742,12 @@ export default function Proposals() {
       });
       setStep(1);
     } else if (p.status === "briefed") {
-      setStep(3);
+      // "briefed" = briefs written, not yet analysed → land in Briefing,
+      // which is now step 2 in the new flow.
+      setStep(2);
     } else {
-      setStep(5);
+      // Anything post-analysis → land in Architecture (new step 4).
+      setStep(4);
     }
     setView("wizard");
   }
@@ -1500,7 +1509,9 @@ export default function Proposals() {
     setUpdatingPrompts(false); apiCallDone();
   }
 
-  // ── Step 2 → Step 3: Save slide selection & generate briefs ─────────────────
+  // ── Step 5 → Step 6: Save slide selection & proceed to generate ─────────────
+  // (Used to be Step 2 → 3, but Deck has moved to slot 5 so after locking the
+  // deck structure we head straight to Generate.)
 
   async function handleSubmitSlides() {
     if (!projectType) {
@@ -1566,17 +1577,9 @@ export default function Proposals() {
       setCurrent(saved);
       setSaving(false);
 
-      // If briefs already exist (re-entering step 3), go straight to editing
-      if (Array.isArray(saved.slide_briefs) && saved.slide_briefs.length > 0) {
-        setBriefs(saved.slide_briefs);
-        setBriefMode("editing");
-        if (saved.slide_briefs.length > 0) setExpandedBrief(saved.slide_briefs[0].slide_id);
-      } else {
-        setBriefMode("choose");
-      }
-      setStep(3);
-      // Load guidance images for selected slides
-      loadGuidanceImages();
+      // Deck is now the last stop before Generate — proceed straight there.
+      // (The old flow jumped to Briefing here, because Deck used to be step 2.)
+      setStep(6);
       loadProposals();
     } catch (err: any) {
       setSaving(false);
@@ -1859,12 +1862,12 @@ export default function Proposals() {
     setGeneratingApproach(false); apiCallDone();
   }
 
-  // ── Step 3 → Step 4: Submit briefs & trigger AI analysis ──────────────────
+  // ── Step 2 → Step 3 → Step 4: Submit briefs & trigger AI analysis ──────────
 
   async function handleSubmitBriefs() {
     await saveBriefs();
-    // Move to step 4: analyzing
-    setStep(4);
+    // Move to Analysis (new step 3) — the spinner screen that waits for Claude.
+    setStep(3);
     setAnalyzing(true);
 
     try {
@@ -1877,7 +1880,8 @@ export default function Proposals() {
       const analyzed = await analyzeRes.json();
       setCurrent(analyzed);
       setAnalyzing(false);
-      setStep(5);
+      // Analysis done → jump to Architecture (new step 4).
+      setStep(4);
       loadProposals();
     } catch (err: any) {
       setAnalyzing(false);
@@ -2094,10 +2098,10 @@ export default function Proposals() {
   if (view === "wizard") {
     const stepDescriptions: Record<number, string> = {
       1: "Enter client information",
-      2: "Select project type and proposal slides",
-      3: "Review and edit slide briefs",
-      4: "AI is analyzing...",
-      5: "Review and edit proposal architecture",
+      2: "Review and edit slide briefs",
+      3: "AI is analyzing...",
+      4: "Review and edit proposal architecture",
+      5: "Select project type and proposal slides",
       6: "Generate and download deck",
     };
 
@@ -2267,7 +2271,12 @@ export default function Proposals() {
           </div>
         )}
         <PageHeader
-          title={step === 1 ? "New Proposal" : step === 2 ? "Proposal Structure" : step === 3 ? "Slide Briefing" : current?.proposal_title || `Proposal: ${current?.company_name || ""}`}
+          title={
+            step === 1 ? "New Proposal" :
+            step === 2 ? "Slide Briefing" :
+            step === 5 ? "Proposal Structure" :
+            current?.proposal_title || `Proposal: ${current?.company_name || ""}`
+          }
           description={stepDescriptions[step]}
           actions={
             <div className="flex items-center gap-2">
@@ -2393,7 +2402,7 @@ export default function Proposals() {
 
               <div className="flex justify-end mt-3">
                 <Button size="sm" onClick={handleGoToSlides}>
-                  Choose Slides <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                  Continue to Briefing <ArrowRight className="w-3.5 h-3.5 ml-1" />
                 </Button>
               </div>
             </Card>
@@ -2492,16 +2501,18 @@ export default function Proposals() {
                 {saving ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
                 Save Progress
               </Button>
-              <Button size="sm" onClick={() => setStep(2)} disabled={!form.company_name}>
-                Select Slides
+              <Button size="sm" onClick={handleGoToSlides} disabled={!form.company_name}>
+                Continue to Briefing
                 <ArrowRight className="w-3.5 h-3.5 ml-1" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* ── Step 2: Project Type & Slide Selection ─────────────────────── */}
-        {step === 2 && (
+        {/* ── Step 5: Project Type & Slide Selection (a.k.a. Deck) ──────────
+            Moved from slot 2 to slot 5 so the user locks the deck structure
+            AFTER the AI has produced the architecture, not before. */}
+        {step === 5 && (
           <div className="space-y-4">
             {/* Slide template instructions popup */}
             {showSlideInstructions && (
@@ -3515,8 +3526,8 @@ Example:
 
             {/* Action buttons */}
             <div className="flex justify-between">
-              <Button variant="outline" onClick={() => setStep(1)}>
-                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Inputs
+              <Button variant="outline" onClick={() => setStep(4)}>
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Architecture
               </Button>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setShowSlideInstructions(true)}>
@@ -3527,8 +3538,8 @@ Example:
                   Save Progress
                 </Button>
                 <Button onClick={handleSubmitSlides} disabled={saving || !projectType}>
-                  {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BookOpen className="w-4 h-4 mr-1" />}
-                  Continue to Briefing
+                  {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Download className="w-4 h-4 mr-1" />}
+                  Continue to Generate
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </Button>
               </div>
@@ -3582,8 +3593,9 @@ Example:
           </div>
         )}
 
-        {/* ── Step 3: Slide Briefing & Content Definition ────────────────── */}
-        {step === 3 && (
+        {/* ── Step 2: Slide Briefing & Content Definition ──────────────────
+            Used to be step 3 — now runs immediately after Input. */}
+        {step === 2 && (
           <div className="space-y-4">
             {/* Manual paste modal */}
             {showManualPaste && (
@@ -3736,8 +3748,8 @@ Root cause: Territory allocation..."
                   </div>
                 </Card>
                 <div className="flex justify-start">
-                  <Button variant="outline" onClick={() => setStep(2)}>
-                    <ArrowLeft className="w-4 h-4 mr-1" /> Back to Slides
+                  <Button variant="outline" onClick={() => setStep(1)}>
+                    <ArrowLeft className="w-4 h-4 mr-1" /> Back to Inputs
                   </Button>
                 </div>
               </div>
@@ -3933,8 +3945,8 @@ Root cause: Territory allocation..."
 
                 {/* Action buttons */}
                 <div className="flex justify-between">
-                  <Button variant="outline" onClick={() => setStep(2)}>
-                    <ArrowLeft className="w-4 h-4 mr-1" /> Back to Slides
+                  <Button variant="outline" onClick={() => setStep(1)}>
+                    <ArrowLeft className="w-4 h-4 mr-1" /> Back to Inputs
                   </Button>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" onClick={saveBriefs} disabled={saving}>
@@ -3953,8 +3965,8 @@ Root cause: Territory allocation..."
           </div>
         )}
 
-        {/* ── Step 4: Analyzing ─────────────────────────────────────────── */}
-        {step === 4 && (
+        {/* ── Step 3: Analyzing (Claude is running) ────────────────────── */}
+        {step === 3 && (
           <Card className="p-12 flex flex-col items-center justify-center gap-4">
             <Loader2 className="w-12 h-12 animate-spin text-primary" />
             <p className="text-lg font-medium">Claude is analyzing your inputs...</p>
@@ -3962,8 +3974,8 @@ Root cause: Territory allocation..."
           </Card>
         )}
 
-        {/* ── Step 5: Editable Architecture ──────────────────────────────── */}
-        {step === 5 && current && (
+        {/* ── Step 4: Editable Architecture ──────────────────────────────── */}
+        {step === 4 && current && (
           <div className="space-y-6">
             <Card className="p-6 space-y-4">
               <h3 className="text-lg font-semibold">Proposal Overview</h3>
@@ -4026,7 +4038,7 @@ Root cause: Territory allocation..."
             </div>
 
             <div className="flex justify-between">
-              <Button variant="outline" onClick={() => setStep(3)}>
+              <Button variant="outline" onClick={() => setStep(2)}>
                 <ArrowLeft className="w-4 h-4 mr-1" /> Back to Briefing
               </Button>
               <div className="flex gap-2">
@@ -4034,8 +4046,8 @@ Root cause: Territory allocation..."
                   {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
                   Save Changes
                 </Button>
-                <Button onClick={async () => { await saveEdits(); setStep(6); }}>
-                  Generate Deck <ArrowRight className="w-4 h-4 ml-1" />
+                <Button onClick={async () => { await saveEdits(); setStep(5); }}>
+                  Continue to Deck <ArrowRight className="w-4 h-4 ml-1" />
                 </Button>
               </div>
             </div>
@@ -4073,7 +4085,7 @@ Root cause: Territory allocation..."
 
             <div className="flex flex-wrap gap-3">
               <Button variant="outline" onClick={() => setStep(5)}>
-                <ArrowLeft className="w-4 h-4 mr-1" /> Edit Architecture
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Deck
               </Button>
               <Button size="lg" onClick={generateDeck} disabled={generating || generatingImages}>
                 {generating ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Download className="w-5 h-5 mr-2" />}
