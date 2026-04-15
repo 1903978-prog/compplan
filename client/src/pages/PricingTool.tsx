@@ -3758,10 +3758,11 @@ export default function PricingTool() {
             const maxV = Math.max(...allVals) * 1.08;
             const range = maxV - minV || 1;
 
-            // Layout: base + layers + target + rec + markup bars + (gross bar if has markups)
-            // base + layers + (adj?) + NET1 + markups + (GROSS1?) + (VarFee + GROSSV if variable>0 & markups)
+            // Layout: base + layers + NET1 + markups + (GROSS1?) + (VarFee + GROSSV if variable>0 & markups)
+            // Manual price adjustment (manualDelta) is folded directly INTO NET1 and overrides the band clamp.
+            // It is NOT rendered as a separate bar — it becomes the new NET1 value.
             const hasGrossV = hasMarkups && variableFeePct > 0;
-            const totalBarCount = 1 + bars.length + (manualDelta !== 0 ? 1 : 0) + 1 + markupBars.length + (hasMarkups ? 1 : 0) + (hasGrossV ? 2 : 0);
+            const totalBarCount = 1 + bars.length + 1 + markupBars.length + (hasMarkups ? 1 : 0) + (hasGrossV ? 2 : 0);
             const W = 900; const H = 260;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
@@ -3855,38 +3856,24 @@ export default function PricingTool() {
                         );
                       })}
 
-                      {/* Model Adjustment bar (if non-zero) — shows the ±500 delta */}
-                      {manualDelta !== 0 && (() => {
-                        const bi = bars.length + 1;
-                        const x = xOf(bi);
-                        const prevEnd = bars[bars.length - 1]?.end ?? base;
-                        const adjEnd = prevEnd + manualDelta;
-                        const up = manualDelta > 0;
-                        const y = up ? yOf(adjEnd) : yOf(prevEnd);
-                        const h = Math.max(2, hOf(prevEnd, adjEnd));
-                        return (
-                          <g>
-                            <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(prevEnd)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                            <rect x={x} y={y} width={barW} height={h} fill="#166534" rx="2" opacity="0.7" />
-                            <text x={x + barW/2} y={up ? y - 3 : y + h + 8} textAnchor="middle" fontSize="7" fill="#166534" fontWeight="bold">
-                              {manualDelta > 0 ? "+" : ""}{fmt(manualDelta)}
-                            </text>
-                            <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="6.5" fill="#64748b">Price adj.</text>
-                          </g>
-                        );
-                      })()}
-
-                      {/* NET1 bar (light green) — THE final net price */}
+                      {/* NET1 bar (light green) — THE final net price.
+                          Manual price adjustment (manualDelta) is folded IN here and
+                          overrides the green-band clamp — NET1 can sit above or below
+                          the corridor when the user has applied a manual delta. */}
                       {(() => {
-                        const bi = bars.length + 1 + (manualDelta !== 0 ? 1 : 0);
+                        const bi = bars.length + 1;
                         const x = xOf(bi); const y = yOf(recommendedNwf); const h = hOf(minV, recommendedNwf);
-                        const prevEnd = manualDelta !== 0
-                          ? (bars[bars.length - 1]?.end ?? base) + manualDelta
-                          : (bars[bars.length - 1]?.end ?? base);
+                        const prevEnd = bars[bars.length - 1]?.end ?? base;
                         const totalNet1 = recommendedNwf * effectiveDuration;
+                        const adjLabelY = y - 13;
                         return <>
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(recommendedNwf)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
+                          {manualDelta !== 0 && (
+                            <text x={x + barW/2} y={adjLabelY} textAnchor="middle" fontSize="7" fill="#0ea5e9" fontWeight="bold">
+                              {manualDelta > 0 ? "+" : ""}{fmt(manualDelta)} adj
+                            </text>
+                          )}
                           <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="9" fill="#166534" fontWeight="bold">{fmt(recommendedNwf)}</text>
                           <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8.5" fill="#166534" fontWeight="700">NET1</text>
                           <text x={x + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalNet1)}</text>
@@ -3895,7 +3882,7 @@ export default function PricingTool() {
 
                       {/* Markup bars: admin + discounts/rebates/one-off build UP to Gross */}
                       {markupBars.map((mb, i) => {
-                        const bi = bars.length + 2 + (manualDelta !== 0 ? 1 : 0) + i;
+                        const bi = bars.length + 2 + i;
                         const x = xOf(bi);
                         const y = yOf(mb.end);
                         const h = Math.max(2, hOf(mb.start, mb.end));
@@ -3913,7 +3900,7 @@ export default function PricingTool() {
 
                       {/* GROSS1 bar (light green, only if markups exist) */}
                       {hasMarkups && (() => {
-                        const bi = bars.length + 2 + (manualDelta !== 0 ? 1 : 0) + markupBars.length;
+                        const bi = bars.length + 2 + markupBars.length;
                         const x = xOf(bi);
                         const y = yOf(grossWeeklyWaterfall);
                         const h = hOf(minV, grossWeeklyWaterfall);
@@ -3935,7 +3922,7 @@ export default function PricingTool() {
                         const totalGrossV = grossVVal * effectiveDuration;
 
                         // Bar 1: Variable fee delta (dark green, shows +€X)
-                        const bi1 = bars.length + 3 + (manualDelta !== 0 ? 1 : 0) + markupBars.length;
+                        const bi1 = bars.length + 3 + markupBars.length;
                         const x1 = xOf(bi1);
                         const y1 = yOf(grossWeeklyWaterfall + varDelta);
                         const h1 = Math.max(2, hOf(grossWeeklyWaterfall, grossWeeklyWaterfall + varDelta));
