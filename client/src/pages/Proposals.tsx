@@ -10,6 +10,7 @@ import {
   FileText, Upload, Check, X, Sparkles, GripVertical, ChevronUp, ChevronDown,
   RotateCcw, AlertTriangle, Info, ChevronRight, BookOpen, MessageSquare,
   Settings2, Image as ImageIcon, ClipboardPaste, Cpu, HelpCircle, Save,
+  Wand2, TrendingUp,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -199,6 +200,20 @@ export default function Proposals() {
   const [showFullSlideView, setShowFullSlideView] = useState(false);
   const [enableQualityScore, setEnableQualityScore] = useState(false);
   const [analyzingRef, setAnalyzingRef] = useState<string | null>(null);
+
+  // ── "Refine until perfect" iterative workflow ──────────────────────────
+  // Mirrors how Claude builds an eendigo-template slide: draft → score →
+  // critique → fix → repeat until total score hits the target or the
+  // budget runs out. The server drives the whole loop so we only see one
+  // HTTP call per refine; the history array is returned at the end and
+  // drives the "refinement trail" strip under the preview.
+  const [refiningSlide, setRefiningSlide]   = useState<string | null>(null);
+  const [refineHistory, setRefineHistory]   = useState<Record<string, any[]>>({});
+  const [refineTarget,  setRefineTarget]    = useState<number>(() => {
+    try { return Number(localStorage.getItem("compplan.refine_target") || "85"); }
+    catch { return 85; }
+  });
+  const [showRefineHistory, setShowRefineHistory] = useState<Record<string, boolean>>({});
 
   // COST GUARD: check API status and require explicit confirmation before any AI call
   async function confirmApiUsage(action: string): Promise<boolean> {
@@ -1112,6 +1127,90 @@ export default function Proposals() {
     } catch (err: any) {
       toast({ title: "Download failed", description: err.message, variant: "destructive" });
     }
+  }
+
+  // ── "Refine until perfect" — run the iterative loop ─────────────────
+  // Drives /api/proposals/:id/refine-page, which internally generates,
+  // scores, critiques, and re-generates the slide until the score hits
+  // `refineTarget` or the round budget (4) is exhausted. All rounds run
+  // server-side in a single HTTP request to keep the client simple and
+  // avoid partial-state bugs on reload.
+  async function refineSlide(slideId: string) {
+    if (!current?.id) {
+      await saveProgress();
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (!current?.id) return;
+    if (!await confirmApiUsage(`Refine slide until quality ≥ ${refineTarget}/100 (up to 4 rounds = up to 8 API calls)`)) return;
+
+    const slide = slides.find(s => s.slide_id === slideId);
+
+    // Persist the chosen target across reloads.
+    try { localStorage.setItem("compplan.refine_target", String(refineTarget)); } catch {}
+
+    setRefiningSlide(slideId);
+    setPreviewSlideId(slideId);
+    setRefineHistory(prev => ({ ...prev, [slideId]: [] }));
+    try {
+      // For agenda: inject the actual selected-slide list so the content
+      // is grounded in the current structure, same as generatePage() does.
+      let pageContentPrompt = slide?.content_prompt ?? "";
+      let pageGenContent = slide?.generated_content ?? "";
+      if (slideId === "agenda") {
+        const SKIP_IDS = new Set(["cover", "confidentiality", "agenda"]);
+        const agendaItems = slides
+          .filter(s => s.is_selected && !SKIP_IDS.has(s.slide_id))
+          .sort((a, b) => a.order - b.order)
+          .map((s, i) => `${i + 1}. ${s.title}`)
+          .join("\n");
+        pageContentPrompt += `\n\n=== CURRENT SELECTED SLIDES (use this exact list) ===\n${agendaItems}`;
+        if (!pageGenContent) pageGenContent = agendaItems;
+      }
+
+      const res = await fetch(`/api/proposals/${current.id}/refine-page`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: slideId,
+          visual_prompt: slide?.visual_prompt ?? "",
+          content_prompt: pageContentPrompt,
+          generated_content: pageGenContent,
+          target_score: refineTarget,
+          max_rounds: 4,
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ message: `Server returned ${res.status}` }));
+        throw new Error(errData.message ?? `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      if (!data.html) throw new Error("Server returned an empty slide");
+      setPreviewHtml(prev => ({ ...prev, [slideId]: data.html }));
+      updateSlideField(slideId, "preview_html", data.html);
+      if (data.quality_score) {
+        setSlideScores(prev => ({ ...prev, [slideId]: data.quality_score }));
+        updateSlideField(slideId, "quality_score", data.quality_score);
+      }
+      if (Array.isArray(data.history)) {
+        setRefineHistory(prev => ({ ...prev, [slideId]: data.history }));
+        setShowRefineHistory(prev => ({ ...prev, [slideId]: true }));
+      }
+      const final = data.quality_score?.total ?? 0;
+      const rounds = data.rounds_used ?? data.history?.length ?? 0;
+      toast({
+        title: `Slide refined — score ${final}/100`,
+        description: `${rounds} round${rounds === 1 ? "" : "s"} · target was ${refineTarget}/100`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Refinement failed",
+        description: err?.message || "Unknown error — check the browser console.",
+        variant: "destructive",
+      });
+      console.error("[refineSlide] error for", slideId, err);
+    }
+    setRefiningSlide(null); apiCallDone();
   }
 
   // Chat modification for slide preview
@@ -2727,6 +2826,95 @@ Example:
                             </Button>
                           )}
                         </div>
+                        {/* ── Refine Until Perfect ───────────────────────
+                            Kicks off the server-side loop: generate →
+                            score → critique → refine → re-score, up to 4
+                            rounds or until we hit `refineTarget`. While a
+                            refine is running we show the live round-by-
+                            round progress strip; when it finishes the
+                            strip becomes the permanent "refinement trail"
+                            that you can collapse. */}
+                        <div className="border-t px-3 py-2 space-y-1.5 bg-violet-50/40">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1">
+                              <Wand2 className="w-3 h-3 text-violet-600" />
+                              <span className="text-[10px] font-semibold text-violet-700 uppercase">Refine until perfect</span>
+                              <span className="text-[8px] text-violet-500">(AI loop)</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <label className="text-[9px] text-muted-foreground">target</label>
+                              <input
+                                type="number"
+                                min={50}
+                                max={100}
+                                value={refineTarget}
+                                onChange={e => setRefineTarget(Math.max(50, Math.min(100, Number(e.target.value) || 85)))}
+                                className="w-10 h-5 text-[10px] text-center border rounded font-mono"
+                                disabled={refiningSlide === previewSlideId}
+                                title="Stop refining once the total quality score reaches this number (0–100)"
+                              />
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            className="w-full h-7 text-[10px] bg-violet-600 hover:bg-violet-700 text-white"
+                            onClick={() => refineSlide(previewSlideId!)}
+                            disabled={refiningSlide !== null}
+                            title="Iterates up to 4 rounds: draft → self-critique → fix → re-score, until the slide hits your target quality"
+                          >
+                            {refiningSlide === previewSlideId
+                              ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Refining (up to 4 rounds)…</>
+                              : <><Wand2 className="w-3 h-3 mr-1" />Refine this slide until ≥ {refineTarget}/100</>}
+                          </Button>
+                          {/* Refinement trail: one row per round with the score
+                              and which dimension was being fixed. Makes the
+                              improvement visible so you can tell whether the
+                              loop is actually helping or just spinning. */}
+                          {(refineHistory[previewSlideId] ?? []).length > 0 && (
+                            <div className="space-y-1">
+                              <button
+                                type="button"
+                                onClick={() => setShowRefineHistory(prev => ({ ...prev, [previewSlideId]: !prev[previewSlideId] }))}
+                                className="flex items-center gap-1 text-[9px] text-violet-600 hover:text-violet-800 w-full"
+                              >
+                                <TrendingUp className="w-3 h-3" />
+                                Refinement trail ({refineHistory[previewSlideId]!.length} round{refineHistory[previewSlideId]!.length === 1 ? "" : "s"})
+                                {showRefineHistory[previewSlideId]
+                                  ? <ChevronUp className="w-3 h-3 ml-auto" />
+                                  : <ChevronDown className="w-3 h-3 ml-auto" />}
+                              </button>
+                              {showRefineHistory[previewSlideId] && (
+                                <div className="space-y-0.5 pl-1">
+                                  {refineHistory[previewSlideId]!.map((h: any, i: number) => {
+                                    const prev = i > 0 ? refineHistory[previewSlideId]![i - 1] : null;
+                                    const delta = prev ? (h.total ?? 0) - (prev.total ?? 0) : 0;
+                                    const totalColor =
+                                      (h.total ?? 0) >= 85 ? "text-emerald-600" :
+                                      (h.total ?? 0) >= 70 ? "text-amber-600" :
+                                                              "text-red-500";
+                                    return (
+                                      <div key={i} className="flex items-center gap-1.5 text-[9px]">
+                                        <span className="text-muted-foreground w-10">R{h.round}</span>
+                                        <span className={`font-mono font-bold w-7 ${totalColor}`}>{h.total ?? "—"}</span>
+                                        {prev && (
+                                          <span className={`text-[8px] font-mono ${delta > 0 ? "text-emerald-600" : delta < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                                            {delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : "="}
+                                          </span>
+                                        )}
+                                        <span className="text-muted-foreground truncate flex-1" title={h.tip || h.focus}>
+                                          {h.error ? <span className="text-red-500">{h.error}</span>
+                                            : i === 0 ? <>draft · {h.tip || "scored"}</>
+                                            : <>fix {h.focus} · {h.tip || "scored"}</>}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
                         {/* Quality Score toggle + display */}
                         <div className="border-t px-3 py-2 space-y-1.5">
                           <div className="flex items-center justify-between">

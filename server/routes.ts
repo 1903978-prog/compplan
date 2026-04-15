@@ -839,6 +839,303 @@ Return ONLY JSON: {"clarity":N,"relevance":N,"visual":N,"persuasion":N,"total":N
     }
   });
 
+  // POST /api/proposals/:id/refine-page — "Refine until perfect" loop.
+  //
+  // Mimics the way a human (or Claude itself, using eendigo-template) iterates
+  // on a slide: draft → critique → fix → re-score → repeat until the output
+  // hits a quality target, or a hard budget is exhausted.
+  //
+  // Per round we run TWO Anthropic calls:
+  //   (1) generate/modify the slide HTML
+  //   (2) score it on the same 4 dimensions as /generate-page's scorer, but
+  //       with an extended schema — every dimension also returns a SPECIFIC
+  //       actionable `fix` string. That grounding is what makes the next
+  //       round's prompt useful instead of vague ("make it more visual").
+  //
+  // Stopping conditions (any one):
+  //   - total_score >= target   (default 85)
+  //   - rounds >= max_rounds    (default 4)
+  //   - API error
+  //
+  // The loop is driven entirely server-side so the client sees one HTTP
+  // request and gets back: { html, quality_score, history }.
+  // `history` is an array of per-round summaries the client uses to render
+  // the "refinement trail" strip under the preview.
+  app.post("/api/proposals/:id/refine-page", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const {
+        slide_id,
+        visual_prompt,
+        content_prompt,
+        generated_content,
+        target_score = 85,     // stop once total >= this
+        max_rounds  = 4,       // hard iteration cap (×2 API calls per round)
+      } = req.body;
+      if (!slide_id) { res.status(400).json({ message: "slide_id required" }); return; }
+
+      // Clamp target + rounds so a malicious/absent-minded client can't run
+      // the API for 50 rounds. target 0-100, rounds 1-6.
+      const TARGET = Math.max(0, Math.min(100, Number(target_score) || 85));
+      const ROUNDS = Math.max(1, Math.min(6, Number(max_rounds) || 4));
+
+      const slideSelection = Array.isArray(proposal.slide_selection) ? proposal.slide_selection : [];
+      const slide = slideSelection.find((s: any) => s.slide_id === slide_id);
+      const slideTitle = slide?.title ?? slide_id;
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) { res.status(503).json({ message: "ANTHROPIC_API_KEY not set" }); return; }
+      const client = new Anthropic({ apiKey });
+
+      // Reuses the same prompt hierarchy as /generate-page: user-pasted
+      // template instructions > deck system prompt > per-slide methodology
+      // > house-style defaults. Kept as a block comment + code for clarity
+      // (factoring this into a shared helper is a future cleanup).
+      const deckCfg = await storage.getDeckTemplateConfig().catch(() => null);
+      const methodCfg = await storage.getSlideMethodologyConfig(slide_id).catch(() => undefined);
+
+      const templateSystemPrompt = (deckCfg?.system_prompt || "").trim();
+      const rawInstructionsText = ((deckCfg as any)?.slide_instructions_text || "").trim();
+      const templateInstructions = [
+        rawInstructionsText && `USER-PROVIDED SLIDE TEMPLATE INSTRUCTIONS (verbatim, highest authority):\n${rawInstructionsText}`,
+        templateSystemPrompt && `DECK-LEVEL SYSTEM PROMPT:\n${templateSystemPrompt}`,
+      ].filter(Boolean).join("\n\n");
+
+      let slideMethodology = "";
+      if (methodCfg) {
+        const parts: string[] = [];
+        if (methodCfg.purpose) parts.push(`PURPOSE: ${methodCfg.purpose}`);
+        const sections = (methodCfg.structure as any)?.sections;
+        if (Array.isArray(sections) && sections.length) {
+          parts.push(`REQUIRED SECTIONS:\n- ${sections.join("\n- ")}`);
+        }
+        if (methodCfg.rules) parts.push(`RULES:\n${methodCfg.rules}`);
+        const cols = methodCfg.columns as any;
+        if (cols && (cols.column_1 || cols.column_2 || cols.column_3)) {
+          const labels = [cols.column_1, cols.column_2, cols.column_3].filter(Boolean);
+          if (labels.length) parts.push(`COLUMN LAYOUT: ${labels.join(" | ")}`);
+        }
+        if (methodCfg.format) {
+          parts.push(`FORMAT: ${methodCfg.format === "B" ? "3-column layout" : "stacked sections"}`);
+        }
+        if (methodCfg.insight_bar) parts.push(`INSIGHT BAR: include a bottom insight/callout bar`);
+        const examples = methodCfg.examples as string[] | undefined;
+        if (Array.isArray(examples) && examples.length) {
+          parts.push(`EXAMPLE PHRASING:\n- ${examples.join("\n- ")}`);
+        }
+        slideMethodology = parts.join("\n\n");
+      }
+
+      const hasOverrides = templateInstructions.length > 0 || slideMethodology.length > 0;
+      const overridesBlock = hasOverrides
+        ? `==========================================================================
+SLIDE TEMPLATE INSTRUCTIONS — HIGHEST PRIORITY (AUTHORITATIVE)
+==========================================================================
+The rules in this block are the highest-hierarchy instructions for this
+slide. They OVERRIDE any conflicting formatting, layout, structure, or
+styling guidance that appears anywhere else — in the house-style rules
+below, in the user message, in visual_prompt, in content_prompt, or in
+any chat instruction. If any later guidance conflicts with these rules,
+these rules win. Follow them exactly.
+
+${templateInstructions || "(no deck-level template instructions configured)"}
+${slideMethodology ? `\n--- Per-slide methodology for "${slideTitle}" ---\n${slideMethodology}\n` : ""}
+==========================================================================
+END HIGHEST-PRIORITY INSTRUCTIONS
+==========================================================================
+
+`
+        : "";
+
+      const systemPrompt = `You are a senior slide designer at Eendigo, a management consulting firm.
+
+${overridesBlock}HOUSE STYLE (apply only where it does NOT conflict with the Slide Template Instructions above):
+Generate a single HTML page that looks like a PowerPoint slide preview.
+Use inline CSS. The slide should be 960px wide × 540px tall (16:9 ratio).
+Brand colors: primary teal #1A6571, text dark #1e293b, accent light teal #e0f2f1.
+Use ONLY Arial font (font-family: Arial, sans-serif) for ALL text. Never use other fonts.
+Include "eendigo" text in small font (10px) at the bottom-right corner. Do NOT add any colored bars, lines, or horizontal rules anywhere on the slide.
+The HTML must be a complete self-contained div (no external resources).
+Output ONLY the HTML div, no explanation.${hasOverrides ? `
+
+REMINDER: if any house-style rule above (dimensions, colors, font, footer, etc.) contradicts the SLIDE TEMPLATE INSTRUCTIONS block, the SLIDE TEMPLATE INSTRUCTIONS win.` : ""}
+
+QUALITY BAR: this slide is being iterated on until it hits a quality
+target. Every round you produce MUST be meaningfully better than the
+previous one along the dimensions the critique flags. Do not regress on
+dimensions that are already strong.`;
+
+      const baseUserPrompt = `Create a slide for: "${slideTitle}"
+
+VISUAL INSTRUCTIONS:
+${visual_prompt || "Standard single-column layout with header and body content."}
+
+CONTENT:
+${generated_content || content_prompt || "Generate appropriate content for this slide type."}
+
+Company: ${proposal.company_name}`;
+
+      // ── Scoring prompt: asks for per-dimension actionable fixes so the
+      // next iteration has concrete guidance instead of a vague tip.
+      const scorerSystemPrompt = `You are a management consulting proposal quality reviewer at the level of a McKinsey/BCG slide editor.
+
+Score the slide on 4 criteria (0-25 each, total 0-100):
+- Clarity: Is the message clear, concise, actionable? Does the reader know what to do after 5 seconds?
+- Relevance: Is it specific to this client and their actual problem, or generic filler that could apply to anyone?
+- Visual: Layout hierarchy, whitespace, typography scale, alignment, readability at 960×540. Is it overflowing or claustrophobic? Does it look like a real consulting deck or a Word document with a blue header?
+- Persuasion: Does it drive the decision forward? Is there a clear "so what" that pushes the reader toward the next step?
+
+Also return, for EACH dimension, a specific actionable fix (not vague — cite the exact element to change, e.g. "the 4 bullets under 'Approach' are all 3+ lines, cut to one line each and bold the verb", NOT "improve clarity").
+
+Return ONLY JSON, no prose:
+{
+  "clarity": N,
+  "relevance": N,
+  "visual": N,
+  "persuasion": N,
+  "total": N,
+  "tip": "one sentence top priority",
+  "fix": {
+    "clarity": "specific actionable fix",
+    "relevance": "specific actionable fix",
+    "visual": "specific actionable fix",
+    "persuasion": "specific actionable fix"
+  }
+}`;
+
+      // ── The iteration loop ─────────────────────────────────────────────
+      let currentHtml = "";
+      let currentScore: any = null;
+      const history: any[] = [];
+
+      for (let round = 1; round <= ROUNDS; round++) {
+        // ── 1. Generate (or refine) ─────────────────────────────────────
+        let userPrompt: string;
+        if (round === 1) {
+          userPrompt = baseUserPrompt;
+        } else {
+          // Build a grounded refinement prompt from the previous round's
+          // per-dimension fixes. Rank the dimensions lowest → highest so
+          // the model focuses on the biggest gap first.
+          const dims = [
+            { name: "Clarity",    score: currentScore?.clarity    ?? 0, fix: currentScore?.fix?.clarity    ?? currentScore?.tip ?? "" },
+            { name: "Relevance",  score: currentScore?.relevance  ?? 0, fix: currentScore?.fix?.relevance  ?? "" },
+            { name: "Visual",     score: currentScore?.visual     ?? 0, fix: currentScore?.fix?.visual     ?? "" },
+            { name: "Persuasion", score: currentScore?.persuasion ?? 0, fix: currentScore?.fix?.persuasion ?? "" },
+          ].sort((a, b) => a.score - b.score);
+
+          const critiqueBlock = dims
+            .map(d => `- ${d.name} (${d.score}/25): ${d.fix || "no specific feedback"}`)
+            .join("\n");
+
+          userPrompt = `REFINEMENT ROUND ${round} of up to ${ROUNDS}.
+
+Previous slide scored ${currentScore?.total ?? "?"}/100 — target is ${TARGET}/100.
+
+CRITIQUE (apply these specific fixes, lowest-scoring dimensions first):
+${critiqueBlock}
+
+Rewrite the slide to address the fixes. Do NOT regress on dimensions that are already strong (${dims.filter(d => d.score >= 20).map(d => d.name).join(", ") || "none yet"}).
+
+Keep the same 960×540 format, brand colors, and Arial font. Keep the eendigo footer. Output ONLY the revised HTML div, no explanation.
+
+PREVIOUS HTML:
+${currentHtml}
+
+SLIDE CONTEXT:
+${baseUserPrompt}`;
+        }
+
+        const genRes = await client.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 3000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+        });
+        logApiUsage(`refine-page-round-${round}`, genRes);
+
+        const genText = (genRes.content.find(b => b.type === "text") as any)?.text ?? "";
+        let roundHtml = genText;
+        const codeMatch = roundHtml.match(/```html?\s*([\s\S]*?)```/);
+        if (codeMatch) roundHtml = codeMatch[1].trim();
+        if (!roundHtml || !roundHtml.includes("<")) {
+          // generation failed at this round — break but return what we have
+          history.push({ round, total: currentScore?.total ?? 0, error: "Empty or invalid generation" });
+          break;
+        }
+        currentHtml = roundHtml;
+
+        // ── 2. Score the round ──────────────────────────────────────────
+        const scoreRes = await client.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 700,
+          system: scorerSystemPrompt,
+          messages: [{
+            role: "user",
+            content: `Score this slide for "${slideTitle}" (company: ${proposal.company_name}):
+
+${currentHtml.substring(0, 3500)}`,
+          }],
+        });
+        logApiUsage(`refine-page-score-${round}`, scoreRes);
+
+        const scoreText = (scoreRes.content.find(b => b.type === "text") as any)?.text ?? "";
+        const jsonMatch = scoreText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            currentScore = JSON.parse(jsonMatch[0]);
+          } catch {
+            currentScore = null;
+          }
+        } else {
+          currentScore = null;
+        }
+
+        history.push({
+          round,
+          total:      currentScore?.total      ?? 0,
+          clarity:    currentScore?.clarity    ?? 0,
+          relevance:  currentScore?.relevance  ?? 0,
+          visual:     currentScore?.visual     ?? 0,
+          persuasion: currentScore?.persuasion ?? 0,
+          tip:        currentScore?.tip        ?? "",
+          // focus = the lowest dimension we were trying to fix this round
+          focus: round === 1 ? "initial draft" : (() => {
+            const last = history[history.length - 2] ?? null;
+            if (!last) return "unknown";
+            const lastDims = [
+              { name: "clarity",    v: last.clarity },
+              { name: "relevance",  v: last.relevance },
+              { name: "visual",     v: last.visual },
+              { name: "persuasion", v: last.persuasion },
+            ].sort((a, b) => a.v - b.v);
+            return lastDims[0].name;
+          })(),
+        });
+
+        // ── 3. Stop if we hit the target ────────────────────────────────
+        if ((currentScore?.total ?? 0) >= TARGET) break;
+      }
+
+      res.json({
+        slide_id,
+        html: currentHtml,
+        quality_score: currentScore,
+        history,
+        target_score: TARGET,
+        rounds_used: history.length,
+      });
+    } catch (err: any) {
+      console.error("Refine page error:", err.message);
+      res.status(500).json({ message: err.message || "Refinement failed" });
+    }
+  });
+
   // POST /api/proposals/:id/update-prompts — AI learns from chat corrections
   app.post("/api/proposals/:id/update-prompts", requireAuth, async (req, res) => {
     try {
