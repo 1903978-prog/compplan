@@ -165,7 +165,9 @@ export default function Invoicing() {
     return sortDir === "asc" ? <ArrowUp className="w-3 h-3 ml-1" /> : <ArrowDown className="w-3 h-3 ml-1" />;
   };
 
-  // Load invoices from LOCAL DB (instant, no Harvest call)
+  // Load invoices from LOCAL DB (instant, no Harvest call).
+  // This endpoint reads /api/harvest/invoices which is a pure SELECT from
+  // the invoice_snapshots table — it does NOT contact Harvest.
   const loadInvoices = async () => {
     setLoading(true);
     setError(null);
@@ -233,34 +235,12 @@ export default function Invoicing() {
     await fetch(`/api/harvest/changes/${changeId}/dismiss`, { method: "POST", credentials: "include" }).catch(() => {});
   };
 
-  // Auto-backfill project codes if any invoices are missing them
-  const backfillIfNeeded = async (invs: HarvestInvoice[]) => {
-    const missingCount = invs.filter(i => !i.project_codes).length;
-    if (missingCount > 0 && invs.length > 0) {
-      try {
-        const res = await fetch("/api/harvest/backfill-projects", { method: "POST", credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.backfilled > 0) {
-            toast({ title: `Backfilled project codes for ${data.backfilled} invoices` });
-            await loadInvoices(); // reload with updated data
-          }
-        }
-      } catch { /* silent — backfill is best-effort */ }
-    }
-  };
-
+  // On mount: read the local DB only — NEVER auto-hit Harvest.
+  // The only path that fetches from Harvest is the explicit "Update from
+  // Harvest" button (syncFromHarvest), which stages changes as pending
+  // notifications for the user to approve/reject.
   useEffect(() => {
-    loadInvoices().then(() => {
-      // Check after invoices load
-      setTimeout(async () => {
-        const res = await fetch("/api/harvest/invoices", { credentials: "include" }).catch(() => null);
-        if (res?.ok) {
-          const data = await res.json();
-          backfillIfNeeded(data.invoices ?? []);
-        }
-      }, 500);
-    });
+    loadInvoices();
     loadChanges();
   }, []);
 
@@ -557,7 +537,7 @@ export default function Invoicing() {
       {/* Loading state */}
       {loading && (
         <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
-          <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Loading invoices from Harvest...
+          <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Loading invoices from local database...
         </div>
       )}
 

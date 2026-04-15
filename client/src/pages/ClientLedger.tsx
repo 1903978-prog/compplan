@@ -323,7 +323,7 @@ export default function ClientLedger() {
       )}
       {loading && (
         <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
-          <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Loading from Harvest...
+          <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Loading from local database...
         </div>
       )}
 
