@@ -130,19 +130,44 @@ function FunnelRow({ label, count, max, tone }: {
   );
 }
 
+// LocalStorage cache key — stores the last successful dashboard payload
+// so the page renders instantly on revisit, then silently refreshes.
+const DASH_CACHE_KEY = "exec_dashboard_cache";
+
+function readCache(): { candidates: Candidate[]; invoices: Invoice[]; proposals: PricingProposal[]; wonProjects: WonProject[]; ts: string } | null {
+  try {
+    const raw = localStorage.getItem(DASH_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+function writeCache(candidates: Candidate[], invoices: Invoice[], proposals: PricingProposal[], wonProjects: WonProject[]) {
+  try {
+    localStorage.setItem(DASH_CACHE_KEY, JSON.stringify({ candidates, invoices, proposals, wonProjects, ts: new Date().toISOString() }));
+  } catch { /* quota exceeded — ignore */ }
+}
+
 export default function ExecDashboard() {
   const { employees } = useStore();
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [proposals, setProposals] = useState<PricingProposal[]>([]);
-  const [wonProjects, setWonProjects] = useState<WonProject[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastFetch, setLastFetch] = useState<Date | null>(null);
+
+  // ── Instant render from localStorage cache, then refresh in background ──
+  // On first mount, read the last successful payload from localStorage
+  // so the page paints in <50ms instead of waiting 1-3s for 4 API calls.
+  const cached = readCache();
+  const [candidates, setCandidates] = useState<Candidate[]>(cached?.candidates ?? []);
+  const [invoices, setInvoices] = useState<Invoice[]>(cached?.invoices ?? []);
+  const [proposals, setProposals] = useState<PricingProposal[]>(cached?.proposals ?? []);
+  const [wonProjects, setWonProjects] = useState<WonProject[]>(cached?.wonProjects ?? []);
+  const [loading, setLoading] = useState(!cached); // skip spinner if cache is warm
+  const [lastFetch, setLastFetch] = useState<Date | null>(cached?.ts ? new Date(cached.ts) : null);
 
   useEffect(() => {
     let cancelled = false;
     async function fetchAll() {
-      setLoading(true);
+      // Only show spinner if there's no cached data — otherwise the page
+      // already has content and we're just silently refreshing.
+      if (!cached) setLoading(true);
       try {
         const [cRes, iRes, pRes, wRes] = await Promise.all([
           fetch("/api/hiring/candidates",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
@@ -151,11 +176,16 @@ export default function ExecDashboard() {
           fetch("/api/won-projects",       { credentials: "include" }).then(r => r.ok ? r.json() : []),
         ]);
         if (cancelled) return;
-        setCandidates(Array.isArray(cRes) ? cRes : []);
-        setInvoices(Array.isArray(iRes) ? iRes : []);
-        setProposals(Array.isArray(pRes) ? pRes : []);
-        setWonProjects(Array.isArray(wRes) ? wRes : []);
+        const c = Array.isArray(cRes) ? cRes : [];
+        const i = Array.isArray(iRes) ? iRes : [];
+        const p = Array.isArray(pRes) ? pRes : [];
+        const w = Array.isArray(wRes) ? wRes : [];
+        setCandidates(c);
+        setInvoices(i);
+        setProposals(p);
+        setWonProjects(w);
         setLastFetch(new Date());
+        writeCache(c, i, p, w);
       } catch (e) {
         console.error("[ExecDashboard] fetch failed", e);
       }
