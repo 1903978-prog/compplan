@@ -5,7 +5,7 @@ import {
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   performanceIssues, timeTrackingTopics, timeTrackingEntries,
   proposals, proposalTemplates, slideMethodologyConfigs, deckTemplateConfigs, projectTypeSlideDefaults,
-  slideBackgrounds,
+  slideBackgrounds, slideTemplates,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
@@ -14,6 +14,7 @@ import {
   type SlideMethodologyConfig,
   type DeckTemplateConfig,
   type SlideBackground,
+  type SlideTemplate,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -508,6 +509,37 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteSlideBackground(slideId: string): Promise<void> {
     await db.delete(slideBackgrounds).where(eq(slideBackgrounds.slide_id, slideId));
+  }
+
+  // ── Slide Templates (deterministic JSON specs) ────────────────────────────
+  // One row per slide_id. `spec` is a JSONB blob — see slideTemplateSpecSchema
+  // in shared/schema.ts for the exact shape. The background PNG (if any) is
+  // embedded inside `spec.background` as a data URL, not stored separately,
+  // so the whole template is self-contained and a single SELECT gets you
+  // everything needed to render the slide.
+  async getSlideTemplates(): Promise<SlideTemplate[]> {
+    return db.select().from(slideTemplates) as unknown as Promise<SlideTemplate[]>;
+  }
+  async getSlideTemplate(slideId: string): Promise<SlideTemplate | undefined> {
+    const [row] = await db.select().from(slideTemplates).where(eq(slideTemplates.slide_id, slideId));
+    return row as SlideTemplate | undefined;
+  }
+  async upsertSlideTemplate(data: SlideTemplate): Promise<SlideTemplate> {
+    const existing = await this.getSlideTemplate(data.slide_id);
+    const now = new Date().toISOString();
+    const payload = { ...data, updated_at: now };
+    if (existing) {
+      const [updated] = await db.update(slideTemplates)
+        .set(payload)
+        .where(eq(slideTemplates.slide_id, data.slide_id))
+        .returning();
+      return updated as SlideTemplate;
+    }
+    const [created] = await db.insert(slideTemplates).values(payload).returning();
+    return created as SlideTemplate;
+  }
+  async deleteSlideTemplate(slideId: string): Promise<void> {
+    await db.delete(slideTemplates).where(eq(slideTemplates.slide_id, slideId));
   }
 
   // ── Deck Template Config ──────────────────────────────────────────────────

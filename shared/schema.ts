@@ -572,6 +572,80 @@ export const slideBackgrounds = pgTable("slide_backgrounds", {
   updated_at: text("updated_at").notNull(),
 });
 
+// ─── Slide Templates (JSON-spec deterministic rendering) ─────────────────────
+//
+// A slide template is a stable JSON spec describing a frozen layout: a canvas
+// size, an optional background image (data URL), and a list of positioned
+// regions (text / image slots) with fonts, colors, alignment. The template is
+// authored once in the visual editor and reused for every proposal — the only
+// thing that varies between proposals is the per-region `values` map that
+// fills the named slots.
+//
+// Contrast with slide_backgrounds, which stores a raw PNG and still lets
+// Claude free-generate the HTML on top. Templates are fully deterministic:
+// given the same spec + values, the renderer emits byte-identical HTML.
+//
+// `spec` JSON shape:
+//   {
+//     canvas: { width: 1920, height: 1080 },
+//     background: "data:image/png;base64,..." | null,
+//     regions: [
+//       { id, key, type: "text",
+//         x, y, w, h,              // canvas units (1920x1080)
+//         font, size, weight, color,
+//         align: "left"|"center"|"right",
+//         valign: "top"|"middle"|"bottom",
+//         placeholder, default_text,
+//         line_height?, letter_spacing?, italic?
+//       },
+//       ...
+//     ]
+//   }
+export const slideTemplateRegionSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  type: z.literal("text"),
+  x: z.number(),
+  y: z.number(),
+  w: z.number(),
+  h: z.number(),
+  font: z.string().default("Inter"),
+  size: z.number().default(32),
+  weight: z.number().default(400),
+  color: z.string().default("#111111"),
+  align: z.enum(["left", "center", "right"]).default("left"),
+  valign: z.enum(["top", "middle", "bottom"]).default("top"),
+  line_height: z.number().default(1.2),
+  letter_spacing: z.number().default(0),
+  italic: z.boolean().default(false),
+  placeholder: z.string().default(""),
+  default_text: z.string().default(""),
+});
+export type SlideTemplateRegion = z.infer<typeof slideTemplateRegionSchema>;
+
+export const slideTemplateSpecSchema = z.object({
+  canvas: z.object({
+    width: z.number().default(1920),
+    height: z.number().default(1080),
+  }).default({ width: 1920, height: 1080 }),
+  background: z.string().nullable().optional(),
+  regions: z.array(slideTemplateRegionSchema).default([]),
+});
+export type SlideTemplateSpec = z.infer<typeof slideTemplateSpecSchema>;
+
+export const slideTemplateSchema = z.object({
+  slide_id: z.string(),
+  spec: slideTemplateSpecSchema,
+  updated_at: z.string(),
+});
+export type SlideTemplate = z.infer<typeof slideTemplateSchema>;
+
+export const slideTemplates = pgTable("slide_templates", {
+  slide_id: text("slide_id").primaryKey(),
+  spec: jsonb("spec").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
 // ─── Slide Methodology Config ────────────────────────────────────────────────
 
 export const slideMethodologyConfigSchema = z.object({

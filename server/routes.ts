@@ -1762,6 +1762,75 @@ Extract visual and content patterns from the image. Only suggest additions that 
     }
   });
 
+  // ── Slide Templates (JSON-spec deterministic rendering) ───────────────────
+  // Each row is a full template spec for one slide_id. Unlike slide_backgrounds
+  // (which stores a raw PNG and still lets Claude free-generate HTML on top),
+  // templates are fully deterministic — given the same spec + values map, the
+  // renderer always emits byte-identical HTML. See shared/schema.ts
+  // slideTemplateSpecSchema for the JSON shape.
+  //
+  // GET list returns metadata only (no full spec with embedded background PNG)
+  // so the admin screen stays snappy; GET :slideId returns the full spec.
+  app.get("/api/slide-templates", requireAuth, async (_req, res) => {
+    try {
+      const rows = await storage.getSlideTemplates();
+      const lite = rows.map(r => ({
+        slide_id: r.slide_id,
+        region_count: Array.isArray((r.spec as any)?.regions) ? (r.spec as any).regions.length : 0,
+        has_background: !!((r.spec as any)?.background),
+        updated_at: r.updated_at,
+      }));
+      res.json(lite);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to load templates" });
+    }
+  });
+
+  app.get("/api/slide-templates/:slideId", requireAuth, async (req, res) => {
+    try {
+      const row = await storage.getSlideTemplate(req.params.slideId);
+      if (!row) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to load template" });
+    }
+  });
+
+  // Upsert. Body: { spec: { canvas, background, regions } }
+  // Server trusts the client to send a valid spec — validation happens via
+  // the zod schema below. We don't attempt to deep-merge; the client always
+  // sends the full spec.
+  app.put("/api/slide-templates/:slideId", requireAuth, async (req, res) => {
+    try {
+      const { spec } = req.body || {};
+      if (!spec || typeof spec !== "object") {
+        res.status(400).json({ message: "spec is required" }); return;
+      }
+      // Minimal shape check — reject obviously malformed specs so we don't
+      // persist garbage that crashes the renderer later.
+      if (!Array.isArray(spec.regions)) {
+        res.status(400).json({ message: "spec.regions must be an array" }); return;
+      }
+      const row = await storage.upsertSlideTemplate({
+        slide_id: req.params.slideId,
+        spec,
+        updated_at: new Date().toISOString(),
+      });
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to save template" });
+    }
+  });
+
+  app.delete("/api/slide-templates/:slideId", requireAuth, async (req, res) => {
+    try {
+      await storage.deleteSlideTemplate(req.params.slideId);
+      res.status(204).end();
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete template" });
+    }
+  });
+
   // ── Parse Manual Briefs (ChatGPT paste) ───────────────────────────────────
   app.post("/api/proposals/:id/parse-manual-briefs", requireAuth, async (req, res) => {
     try {

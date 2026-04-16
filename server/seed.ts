@@ -591,6 +591,17 @@ export async function seedDatabase() {
     )
   `);
 
+  // Per-slide JSON template specs (visual editor → deterministic renderer).
+  // `spec` is a JSONB blob — see shared/schema.ts slideTemplateSpecSchema
+  // for the full shape (canvas, background data URL, regions array).
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS slide_templates (
+      slide_id TEXT PRIMARY KEY,
+      spec JSONB NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // Seed default configs for Executive Summary + Deep Dive (idempotent)
   await db.execute(sql`
     INSERT INTO slide_methodology_configs (slide_id, purpose, structure, rules, columns, variations, examples, format, insight_bar, updated_at)
