@@ -151,3 +151,92 @@ export async function exportDeckAsImagePptx(proposal: ProposalLike): Promise<Buf
     }
   }
 }
+
+/**
+ * Render every selected slide with a populated `preview_html` to a
+ * multi-page PDF via Playwright. Each slide is one landscape page
+ * sized to the same 13.333 × 7.5 in (16:9) as the PPTX export, so
+ * the two outputs are visually identical — the PDF is just easier to
+ * QA before committing to the final PowerPoint.
+ *
+ * Strategy: build one big HTML document where each slide is a CSS
+ * `page-break-after: always` section. Then `page.pdf()` in one call —
+ * faster than N separate PDF generations + merge.
+ */
+export async function exportDeckAsPdf(proposal: ProposalLike): Promise<Buffer> {
+  const all: SlideEntry[] = Array.isArray(proposal.slide_selection) ? proposal.slide_selection : [];
+  const renderable = all.filter(
+    s => s.is_selected !== false && typeof s.preview_html === "string" && s.preview_html.trim().length > 0,
+  );
+
+  if (renderable.length === 0) {
+    throw new Error("No slides with preview HTML to export. Generate previews first.");
+  }
+
+  const { chromium } = await import("playwright");
+
+  // Build a single HTML document with one div per slide, each forcing a
+  // page break so Chromium's print-to-PDF path emits one page per slide.
+  const slidesDivs = renderable
+    .map(
+      (slide, i) =>
+        `<div class="slide-page" style="width:${SLIDE_W_PX}px;height:${SLIDE_H_PX}px;overflow:hidden;${
+          i < renderable.length - 1 ? "page-break-after:always;" : ""
+        }">${slide.preview_html!}</div>`,
+    )
+    .join("\n");
+
+  const fullHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  @page {
+    size: ${SLIDE_W_PX}px ${SLIDE_H_PX}px;
+    margin: 0;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: white;
+  }
+  * { box-sizing: border-box; }
+  .slide-page {
+    position: relative;
+    background: white;
+  }
+</style>
+</head>
+<body>${slidesDivs}</body>
+</html>`;
+
+  let browser: Browser | null = null;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    });
+
+    const context = await browser.newContext({
+      viewport: { width: SLIDE_W_PX, height: SLIDE_H_PX },
+    });
+    const page = await context.newPage();
+
+    await page.setContent(fullHtml, { waitUntil: "networkidle", timeout: 30_000 });
+
+    const pdfBuffer = await page.pdf({
+      width: `${SLIDE_W_PX}px`,
+      height: `${SLIDE_H_PX}px`,
+      printBackground: true,
+      margin: { top: "0", right: "0", bottom: "0", left: "0" },
+    });
+
+    return Buffer.from(pdfBuffer);
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch { /* ignore */ }
+    }
+  }
+}

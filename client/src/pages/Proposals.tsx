@@ -2021,6 +2021,49 @@ export default function Proposals() {
     setGeneratingImages(false);
   }
 
+  // PDF export — same Playwright rendering as the pixel-perfect PPTX but
+  // outputs a multi-page PDF. The user sees the exact same visuals as the
+  // HTML preview and can QA the deck before committing to the final PPTX.
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  async function downloadDeckPdf() {
+    if (!current?.id) return;
+    const selected = slides.filter(s => s.is_selected !== false);
+    const withPreview = selected.filter(s => !!previewHtml[s.slide_id] || !!(s as any).preview_html);
+    if (withPreview.length === 0) {
+      toast({ title: "No previews generated yet", description: "Generate at least one slide preview before exporting.", variant: "destructive" });
+      return;
+    }
+    if (withPreview.length < selected.length) {
+      const missing = selected.length - withPreview.length;
+      const ok = window.confirm(
+        `${missing} slide${missing === 1 ? " has" : "s have"} no preview yet and will be skipped.\n\nExport the ${withPreview.length} slide${withPreview.length === 1 ? "" : "s"} that do have previews?`
+      );
+      if (!ok) return;
+    }
+    setGeneratingPdf(true);
+    try {
+      await saveProgress();
+      const res = await fetch(`/api/proposals/${current.id}/export-deck-pdf`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Export failed" }));
+        throw new Error(err.message || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Eendigo_Proposal_${current.company_name.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "PDF deck downloaded" });
+    } catch (err: any) {
+      toast({ title: "PDF export failed", description: err.message, variant: "destructive" });
+    }
+    setGeneratingPdf(false);
+  }
+
   async function generateDeck() {
     if (!current?.id) return;
     setGenerating(true);
@@ -3239,8 +3282,19 @@ Example:
                               onClick={() => downloadSlidePptx(previewSlideId)}>
                               <Download className="w-3 h-3 mr-1" /> PPTX
                             </Button>
-                            {/* Whole-deck pixel-perfect export — renders every
-                                preview_html via Playwright, not just this one. */}
+                            {/* Whole-deck pixel-perfect exports — Playwright renders every preview_html. */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50"
+                              onClick={downloadDeckPdf}
+                              disabled={generatingPdf}
+                              title="Export the FULL deck as PDF — same Playwright rendering, one page per slide"
+                            >
+                              {generatingPdf
+                                ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> PDF…</>
+                                : <><FileText className="w-3 h-3 mr-1" /> PDF</>}
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -4204,7 +4258,21 @@ Root cause: Territory allocation..."
                 {generating ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Download className="w-5 h-5 mr-2" />}
                 Download PowerPoint (editable)
               </Button>
-              {/* Pixel-perfect export — Chromium renders each preview_html
+              {/* PDF export — Playwright renders each preview into a multi-page PDF.
+                  Same visual fidelity as the pixel-perfect PPTX; lets you QA the
+                  output before committing to the final PowerPoint. */}
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={downloadDeckPdf}
+                disabled={generating || generatingPdf}
+                title="Export every slide preview as a multi-page PDF — same Playwright rendering, easy to QA"
+              >
+                {generatingPdf
+                  ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Rendering PDF…</>
+                  : <><FileText className="w-5 h-5 mr-2" /> Download PDF (pixel-perfect)</>}
+              </Button>
+              {/* Pixel-perfect PPTX export — Chromium renders each preview_html
                   and drops the screenshots into a PPTX. Looks identical to
                   the preview, but slides are raster images (not editable
                   text in PowerPoint). */}

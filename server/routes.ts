@@ -1666,6 +1666,33 @@ Extract visual and content patterns from the image. Only suggest additions that 
     }
   });
 
+  // POST /api/proposals/:id/export-deck-pdf — pixel-perfect PDF via Playwright.
+  // Same visual fidelity as the PPTX image export but outputs a PDF — useful
+  // for QA'ing the deck before committing to the final PowerPoint.
+  app.post("/api/proposals/:id/export-deck-pdf", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const proposal = await storage.getProposal(id);
+      if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
+
+      const { exportDeckAsPdf } = await import("./slideImageExporter");
+      const buffer = await exportDeckAsPdf({
+        company_name: proposal.company_name,
+        slide_selection: (proposal.slide_selection as any[]) || [],
+      });
+
+      const safeName = (proposal.company_name || "Proposal").replace(/[^a-zA-Z0-9]/g, "_");
+      const fileName = `Eendigo_Proposal_${safeName}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("PDF deck export error:", err);
+      const isUserError = /No slides with preview HTML/i.test(err?.message || "");
+      res.status(isUserError ? 422 : 500).json({ message: err.message || "PDF export failed" });
+    }
+  });
+
   // ── Proposal Templates ────────────────────────────────────────────────────
   app.get("/api/proposal-templates", requireAuth, async (_req, res) => {
     res.json(await storage.getProposalTemplates());
