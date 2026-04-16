@@ -10,7 +10,7 @@ import {
   FileText, Upload, Check, X, Sparkles, GripVertical, ChevronUp, ChevronDown,
   RotateCcw, AlertTriangle, Info, ChevronRight, BookOpen, MessageSquare,
   Settings2, Image as ImageIcon, ClipboardPaste, Cpu, HelpCircle, Save,
-  Wand2, TrendingUp, Maximize2, Minimize2,
+  Wand2, TrendingUp, Maximize2, Minimize2, LayoutTemplate,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -202,6 +202,9 @@ export default function Proposals() {
   const [slideChatHistory, setSlideChatHistory] = useState<Record<string, { role: "user" | "ai"; text: string }[]>>({});
   const [slideChatLoading, setSlideChatLoading] = useState(false);
   const [updatingPrompts, setUpdatingPrompts] = useState(false);
+
+  // Slide template metadata — which slides have a saved template with region keys
+  const [slideTemplateInfo, setSlideTemplateInfo] = useState<Record<string, { key: string; placeholder: string }[]>>({});
   const [slideScores, setSlideScores] = useState<Record<string, any>>({});
   const [showFullSlideView, setShowFullSlideView] = useState(false);
   const [enableQualityScore, setEnableQualityScore] = useState(false);
@@ -576,6 +579,7 @@ export default function Proposals() {
     loadProposals();
     loadTemplates();
     loadSlideInstructions();
+    loadSlideTemplateInfo();
   }, []);
 
   // Persistence for the Slide Template Instructions free-text.
@@ -684,6 +688,22 @@ export default function Proposals() {
   async function loadTemplates() {
     const res = await fetch("/api/proposal-templates", { credentials: "include" });
     if (res.ok) setTemplates(await res.json());
+  }
+
+  // Fetch slide template metadata (region keys per slide_id). Used to show
+  // per-region labeled inputs instead of a single textarea when a slide
+  // has a saved deterministic template from the visual editor.
+  async function loadSlideTemplateInfo() {
+    try {
+      const res = await fetch("/api/slide-templates", { credentials: "include" });
+      if (!res.ok) return;
+      const rows: { slide_id: string; region_keys: { key: string; placeholder: string }[] }[] = await res.json();
+      const map: Record<string, { key: string; placeholder: string }[]> = {};
+      for (const r of rows) {
+        if (r.region_keys?.length) map[r.slide_id] = r.region_keys;
+      }
+      setSlideTemplateInfo(map);
+    } catch { /* non-blocking */ }
   }
 
   function startNew() {
@@ -1142,6 +1162,17 @@ export default function Proposals() {
         if (!pageGenContent) pageGenContent = agendaItems;
       }
 
+      // If this slide has a template, pass the per-region values
+      const templateRegions = slideTemplateInfo[slideId];
+      let templateValues: Record<string, string> | undefined;
+      if (templateRegions?.length) {
+        templateValues = {};
+        const answers = slide?.generation_answers ?? {};
+        for (const r of templateRegions) {
+          templateValues[r.key] = (answers as any)[r.key] ?? "";
+        }
+      }
+
       const res = await fetch(`/api/proposals/${current.id}/generate-page`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -1151,6 +1182,7 @@ export default function Proposals() {
           content_prompt: pageContentPrompt,
           generated_content: pageGenContent,
           include_quality_score: enableQualityScore,
+          ...(templateValues && { template_values: templateValues }),
         }),
       });
       if (!res.ok) {
@@ -2903,60 +2935,113 @@ Example:
 
                         {activePanel === "generate" && (
                           <>
-                            <div className="flex items-center justify-between">
-                              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                                <Sparkles className="w-3 h-3" /> Content for "{slide.title}"
-                              </div>
-                              <div className="flex items-center gap-1.5">
+                            {/* ── Template mode: per-region labeled inputs ── */}
+                            {slideTemplateInfo[slide.slide_id]?.length ? (
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                                    <LayoutTemplate className="w-3 h-3" /> Content for "{slide.title}"
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium ml-1">TEMPLATE</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <Button size="sm" variant="default" className="h-7 text-[11px]"
+                                      onClick={() => generatePage(slide.slide_id)}
+                                      disabled={generatingPage === slide.slide_id}>
+                                      {generatingPage === slide.slide_id
+                                        ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                        : <Eye className="w-3 h-3 mr-1" />}
+                                      Render preview
+                                    </Button>
+                                    <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={saveProgress} disabled={saving}>
+                                      {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Each field maps to a positioned region on the template. Edit the text, then click <strong>Render preview</strong> — same layout every time.
+                                </p>
+                                <div className="space-y-2">
+                                  {slideTemplateInfo[slide.slide_id].map(region => (
+                                    <div key={region.key}>
+                                      <label className="text-[11px] font-mono font-semibold text-muted-foreground">{region.key}</label>
+                                      <Textarea
+                                        rows={1}
+                                        value={(slide.generation_answers as any)?.[region.key] ?? ""}
+                                        onChange={e => {
+                                          const prev = (slide.generation_answers ?? {}) as Record<string, string>;
+                                          updateSlideField(slide.slide_id, "generation_answers", {
+                                            ...prev,
+                                            [region.key]: e.target.value,
+                                          });
+                                        }}
+                                        onBlur={() => { flushSave(); }}
+                                        placeholder={region.placeholder}
+                                        className="text-xs min-h-[32px]"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            ) : (
+                              /* ── Free-gen mode: single textarea (no template) ── */
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                                    <Sparkles className="w-3 h-3" /> Content for "{slide.title}"
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    {!slide.generated_content && !isGen && (
+                                      <Button size="sm" variant="outline" className="h-6 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50" onClick={() => generateSlideContent(slide.slide_id)}>
+                                        <Sparkles className="w-3 h-3 mr-1" /> Auto-generate (AI)
+                                      </Button>
+                                    )}
+                                    {slide.generated_content && (
+                                      <Button size="sm" variant="outline" className="h-6 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50" onClick={() => generateSlideContent(slide.slide_id)} disabled={isGen}>
+                                        {isGen ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                                        Regenerate (AI)
+                                      </Button>
+                                    )}
+                                    <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={saveProgress} disabled={saving}>
+                                      {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {isGen && (
+                                  <div className="flex items-center gap-2 py-4 justify-center text-xs text-muted-foreground border rounded bg-violet-50">
+                                    <Loader2 className="w-4 h-4 animate-spin text-violet-600" /> Generating content — this may take 5-10 seconds...
+                                  </div>
+                                )}
+
+                                {/* Editable generated content */}
+                                {slide.generated_content && !isGen && (
+                                  <Textarea
+                                    value={slide.generated_content}
+                                    onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
+                                    onBlur={() => { flushSave(); }}
+                                    rows={10}
+                                    className="text-xs font-mono"
+                                    placeholder="Generated content will appear here. You can edit it before previewing."
+                                  />
+                                )}
+
                                 {!slide.generated_content && !isGen && (
-                                  <Button size="sm" variant="outline" className="h-6 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50" onClick={() => generateSlideContent(slide.slide_id)}>
-                                    <Sparkles className="w-3 h-3 mr-1" /> Auto-generate (AI)
-                                  </Button>
+                                  <div className="text-[11px] text-muted-foreground py-2">
+                                    Click "Auto-generate" to create content using your visual instructions, content prompt, and proposal context.
+                                    Or type content directly below:
+                                    <Textarea
+                                      value=""
+                                      onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
+                                      onBlur={() => { flushSave(); }}
+                                      rows={6}
+                                      className="text-xs font-mono mt-1"
+                                      placeholder="Type or paste slide content here..."
+                                    />
+                                  </div>
                                 )}
-                                {slide.generated_content && (
-                                  <Button size="sm" variant="outline" className="h-6 text-[10px] border-violet-300 text-violet-700 hover:bg-violet-50" onClick={() => generateSlideContent(slide.slide_id)} disabled={isGen}>
-                                    {isGen ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
-                                    Regenerate (AI)
-                                  </Button>
-                                )}
-                                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={saveProgress} disabled={saving}>
-                                  {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
-                                  Save
-                                </Button>
-                              </div>
-                            </div>
-
-                            {isGen && (
-                              <div className="flex items-center gap-2 py-4 justify-center text-xs text-muted-foreground border rounded bg-violet-50">
-                                <Loader2 className="w-4 h-4 animate-spin text-violet-600" /> Generating content — this may take 5-10 seconds...
-                              </div>
-                            )}
-
-                            {/* Editable generated content */}
-                            {slide.generated_content && !isGen && (
-                              <Textarea
-                                value={slide.generated_content}
-                                onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
-                                onBlur={() => { flushSave(); }}
-                                rows={10}
-                                className="text-xs font-mono"
-                                placeholder="Generated content will appear here. You can edit it before previewing."
-                              />
-                            )}
-
-                            {!slide.generated_content && !isGen && (
-                              <div className="text-[11px] text-muted-foreground py-2">
-                                Click "Auto-generate" to create content using your visual instructions, content prompt, and proposal context.
-                                Or type content directly below:
-                                <Textarea
-                                  value=""
-                                  onChange={e => updateSlideField(slide.slide_id, "generated_content", e.target.value)}
-                                  onBlur={() => { flushSave(); }}
-                                  rows={6}
-                                  className="text-xs font-mono mt-1"
-                                  placeholder="Type or paste slide content here..."
-                                />
-                              </div>
+                              </>
                             )}
                           </>
                         )}

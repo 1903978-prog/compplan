@@ -754,22 +754,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (slideTemplate?.spec && (slideTemplate.spec as any).regions?.length > 0) {
         const spec = slideTemplate.spec as any;
 
-        // Build values map from proposal fields. Each region in the spec has
-        // a `key` (e.g. "company_name", "proposal_title", "proposal_date").
-        // We map known keys to proposal fields; unknown keys fall through to
-        // the region's default_text / placeholder.
-        const createdAt = proposal.created_at ? new Date(proposal.created_at) : new Date();
-        const monthYear = createdAt.toLocaleDateString("en-US", { month: "long", year: "numeric" });
-        const values: Record<string, string> = {
-          company_name: proposal.company_name ?? "",
-          proposal_title: (proposal as any).proposal_title ?? (proposal as any).objective_statement ?? "",
-          proposal_date: monthYear,
-          project_type: (proposal as any).project_type ?? "",
-          // Generic fallbacks — users can create any key, map them to useful data
-          company: proposal.company_name ?? "",
-          date: monthYear,
-          title: (proposal as any).proposal_title ?? slideTitle,
-        };
+        // Values come from the client-side per-region fields (template_values).
+        // If not provided (legacy / first load), fall back to auto-deriving from
+        // the proposal fields for common keys.
+        let values: Record<string, string> = {};
+        if (req.body.template_values && typeof req.body.template_values === "object") {
+          values = req.body.template_values;
+        } else {
+          const createdAt = proposal.created_at ? new Date(proposal.created_at) : new Date();
+          const monthYear = createdAt.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+          values = {
+            company_name: proposal.company_name ?? "",
+            proposal_title: (proposal as any).proposal_title ?? (proposal as any).objective_statement ?? "",
+            proposal_date: monthYear,
+            project_type: (proposal as any).project_type ?? "",
+            company: proposal.company_name ?? "",
+            date: monthYear,
+            title: (proposal as any).proposal_title ?? slideTitle,
+          };
+        }
 
         const html = renderSlideFromSpec(spec, values);
         res.json({ slide_id, html, quality_score: null, template_rendered: true });
@@ -1805,12 +1808,19 @@ Extract visual and content patterns from the image. Only suggest additions that 
   app.get("/api/slide-templates", requireAuth, async (_req, res) => {
     try {
       const rows = await storage.getSlideTemplates();
-      const lite = rows.map(r => ({
-        slide_id: r.slide_id,
-        region_count: Array.isArray((r.spec as any)?.regions) ? (r.spec as any).regions.length : 0,
-        has_background: !!((r.spec as any)?.background),
-        updated_at: r.updated_at,
-      }));
+      const lite = rows.map(r => {
+        const regions = Array.isArray((r.spec as any)?.regions) ? (r.spec as any).regions : [];
+        return {
+          slide_id: r.slide_id,
+          region_count: regions.length,
+          region_keys: regions.map((reg: any) => ({
+            key: reg.key,
+            placeholder: reg.placeholder ?? reg.key,
+          })),
+          has_background: !!((r.spec as any)?.background),
+          updated_at: r.updated_at,
+        };
+      });
       res.json(lite);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to load templates" });
