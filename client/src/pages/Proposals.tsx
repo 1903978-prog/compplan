@@ -4144,6 +4144,14 @@ Root cause: Territory allocation..."
         {/* ── Step 4: Editable Architecture ──────────────────────────────── */}
         {step === 4 && current && (
           <div className="space-y-6">
+            <div className="flex justify-between">
+              <Button variant="outline" onClick={() => setStep(2)}>
+                <ArrowLeft className="w-4 h-4 mr-1" /> Back to Briefing
+              </Button>
+              <Button onClick={async () => { await saveEdits(); setStep(5); }}>
+                Continue to Deck <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
             <Card className="p-6 space-y-4">
               <h3 className="text-lg font-semibold">Proposal Overview</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
