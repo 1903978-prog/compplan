@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage } from "./storage";
 import { insertEmployeeSchema, type BenchmarkRow } from "@shared/schema";
+import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
 import { spawn } from "child_process";
 import fs from "fs";
@@ -744,6 +745,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const slideSelection = Array.isArray(proposal.slide_selection) ? proposal.slide_selection : [];
       const slide = slideSelection.find((s: any) => s.slide_id === slide_id);
       const slideTitle = slide?.title ?? slide_id;
+
+      // ── DETERMINISTIC TEMPLATE PATH ────────────────────────────────────────
+      // If a saved slide template exists for this slide_id, use the deterministic
+      // renderer instead of Claude. Same spec + same values = byte-identical HTML
+      // every call, no model variance.
+      const slideTemplate = await storage.getSlideTemplate(slide_id).catch(() => undefined);
+      if (slideTemplate?.spec && (slideTemplate.spec as any).regions?.length > 0) {
+        const spec = slideTemplate.spec as any;
+
+        // Build values map from proposal fields. Each region in the spec has
+        // a `key` (e.g. "company_name", "proposal_title", "proposal_date").
+        // We map known keys to proposal fields; unknown keys fall through to
+        // the region's default_text / placeholder.
+        const createdAt = proposal.created_at ? new Date(proposal.created_at) : new Date();
+        const monthYear = createdAt.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+        const values: Record<string, string> = {
+          company_name: proposal.company_name ?? "",
+          proposal_title: (proposal as any).proposal_title ?? (proposal as any).objective_statement ?? "",
+          proposal_date: monthYear,
+          project_type: (proposal as any).project_type ?? "",
+          // Generic fallbacks — users can create any key, map them to useful data
+          company: proposal.company_name ?? "",
+          date: monthYear,
+          title: (proposal as any).proposal_title ?? slideTitle,
+        };
+
+        const html = renderSlideFromSpec(spec, values);
+        res.json({ slide_id, html, quality_score: null, template_rendered: true });
+        return;
+      }
 
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       const apiKey = process.env.ANTHROPIC_API_KEY;

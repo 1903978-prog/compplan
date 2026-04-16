@@ -41,6 +41,22 @@ const STAGES = [
     badge: "bg-emerald-100 text-emerald-800",
     dot: "bg-emerald-400",
   },
+  {
+    id: "hired",
+    label: "Hired",
+    color: "bg-green-50 border-green-300",
+    header: "bg-green-700",
+    badge: "bg-green-100 text-green-800",
+    dot: "bg-green-500",
+  },
+  {
+    id: "out",
+    label: "Out",
+    color: "bg-red-50 border-red-200",
+    header: "bg-red-600",
+    badge: "bg-red-100 text-red-800",
+    dot: "bg-red-400",
+  },
 ] as const;
 
 type StageId = typeof STAGES[number]["id"];

@@ -146,7 +146,7 @@ export default function ExecDashboard() {
       try {
         const [cRes, iRes, pRes, wRes] = await Promise.all([
           fetch("/api/hiring/candidates",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-          fetch("/api/harvest/invoices",   { credentials: "include" }).then(r => r.ok ? r.json() : []),
+          fetch("/api/harvest/invoices",   { credentials: "include" }).then(r => r.ok ? r.json().then(d => d.invoices ?? []) : []),
           fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/won-projects",       { credentials: "include" }).then(r => r.ok ? r.json() : []),
         ]);
@@ -195,9 +195,12 @@ export default function ExecDashboard() {
   // ─── Hiring funnel ────────────────────────────────────────────────────
   const hiring = useMemo(() => {
     const byStage: Record<string, number> = {};
+    const namesByStage: Record<string, string[]> = {};
     for (const c of candidates) {
       const s = c.stage ?? "unassigned";
       byStage[s] = (byStage[s] ?? 0) + 1;
+      if (!namesByStage[s]) namesByStage[s] = [];
+      namesByStage[s].push(c.name || "—");
     }
     return {
       total: candidates.length,
@@ -205,6 +208,13 @@ export default function ExecDashboard() {
       after_intro:   byStage["after_intro"] ?? 0,
       after_csi_asc: byStage["after_csi_asc"] ?? 0,
       after_csi_lm:  byStage["after_csi_lm"] ?? 0,
+      hired:         byStage["hired"] ?? 0,
+      out:           byStage["out"] ?? 0,
+      // Names of candidates past CSI ASC (for interview tracking)
+      namesAfterCsi: [
+        ...(namesByStage["after_csi_asc"] ?? []),
+        ...(namesByStage["after_csi_lm"] ?? []),
+      ],
     };
   }, [candidates]);
 
@@ -277,7 +287,7 @@ export default function ExecDashboard() {
       .slice(0, 8);
   }, [proposals]);
 
-  const maxFunnel = Math.max(1, hiring.potential, hiring.after_intro, hiring.after_csi_asc, hiring.after_csi_lm);
+  const maxFunnel = Math.max(1, hiring.potential, hiring.after_intro, hiring.after_csi_asc, hiring.after_csi_lm, hiring.hired, hiring.out);
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
@@ -326,6 +336,20 @@ export default function ExecDashboard() {
               <FunnelRow label="After Intro"    count={hiring.after_intro}   max={maxFunnel} tone="bg-violet-400" />
               <FunnelRow label="After CSI ASC"  count={hiring.after_csi_asc} max={maxFunnel} tone="bg-amber-400" />
               <FunnelRow label="After CSI LM"   count={hiring.after_csi_lm}  max={maxFunnel} tone="bg-emerald-500" />
+              <FunnelRow label="Hired"           count={hiring.hired}         max={maxFunnel} tone="bg-green-500" />
+              <FunnelRow label="Out"             count={hiring.out}           max={maxFunnel} tone="bg-red-400" />
+              {hiring.namesAfterCsi.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-muted/40">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">To interview (after CSI)</p>
+                  <div className="flex flex-wrap gap-1">
+                    {hiring.namesAfterCsi.map((name, i) => (
+                      <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </Card>
