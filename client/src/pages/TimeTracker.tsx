@@ -90,6 +90,11 @@ export default function TimeTracker() {
   const [manualStart, setManualStart] = useState("");
   const [manualEnd, setManualEnd] = useState("");
 
+  // Quick-log: one-click "I spent 30m / 1h / 1h30 on topic X" without having
+  // to pick start/end times. The entry is synthesized with end_time = now
+  // and start_time = now - duration, so it always lands in "today".
+  const [quickLogTopicId, setQuickLogTopicId] = useState<string>("");
+
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [editEntryTopicId, setEditEntryTopicId] = useState<string>("");
   const [editEntryStart, setEditEntryStart] = useState("");
@@ -224,6 +229,39 @@ export default function TimeTracker() {
     setAdjustStartDraft("");
   };
 
+  // Quick-log duration: "I worked N minutes on topic X". Creates an entry
+  // ending now and starting (now - duration). Fast path for the common case
+  // of remembering a 30-minute task after the fact without wanting to pick
+  // exact start/end times.
+  const quickLog = async (minutes: number) => {
+    if (!quickLogTopicId) {
+      toast({ title: "Pick a topic first", variant: "destructive" });
+      return;
+    }
+    const topic = topics.find(t => t.id === Number(quickLogTopicId));
+    if (!topic) return;
+    const end = new Date();
+    const start = new Date(end.getTime() - minutes * 60 * 1000);
+    const res = await fetch("/api/time-tracking/entries", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic_id: topic.id, topic_name: topic.name,
+        start_time: start.toISOString(), end_time: end.toISOString(),
+      }),
+    });
+    if (res.ok) {
+      const entry = await res.json();
+      setEntries(prev => [...prev, entry]);
+      const label = minutes >= 60
+        ? `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ""}`
+        : `${minutes}m`;
+      toast({ title: `Logged ${label} on ${topic.name}` });
+    } else {
+      toast({ title: "Failed to log time", variant: "destructive" });
+    }
+  };
+
   // Create a past entry with both start and end populated. Intended for work
   // done before you opened the tracker or on another device.
   const saveManualEntry = async () => {
@@ -304,21 +342,71 @@ export default function TimeTracker() {
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(currentWeekStart, i));
   const weekLabel = `${dateStr(weekDays[0]).slice(5)} — ${dateStr(weekDays[6]).slice(5)}`;
 
-  // Calculate minutes per topic per day
+  // Orphan detection — entries with end_time=null that are NOT the currently
+  // active timer. These are the "I started a timer but never clicked Stop"
+  // cases. Previously we silently dropped them from the daily aggregate,
+  // which made the whole day appear to be "0 time tracked" even after real
+  // work. We now count them (implicit end = now, capped at 12h to avoid
+  // a single forgotten entry inflating totals to days) AND surface them in
+  // a warning banner so the user can fix the end times explicitly.
+  const MAX_ORPHAN_HOURS = 12;
+  const orphanEntries = useMemo(
+    () => entries.filter(e => !e.end_time && e.id !== activeEntryId),
+    [entries, activeEntryId],
+  );
+
+  // Calculate minutes per topic per day.
+  // Filter rule: include every entry that has a start_time. For entries
+  // without an end_time, treat the effective end as "now" (capped at
+  // MAX_ORPHAN_HOURS after start for non-active orphans). This keeps
+  // forgotten-Stop work visible instead of invisibly evaporating it.
   const dailyData = useMemo(() => {
     const result: Record<string, Record<string, number>> = {}; // topicName -> dateStr -> minutes
+    const nowMs = Date.now();
     for (const entry of entries) {
-      if (!entry.end_time && entry.id !== activeEntryId) continue;
-      const start = new Date(entry.start_time);
-      const end = entry.end_time ? new Date(entry.end_time) : new Date();
-      const mins = (end.getTime() - start.getTime()) / 60000;
+      const startMs = new Date(entry.start_time).getTime();
+      if (isNaN(startMs)) continue;
+      let endMs: number;
+      if (entry.end_time) {
+        endMs = new Date(entry.end_time).getTime();
+        if (isNaN(endMs) || endMs <= startMs) continue;
+      } else if (entry.id === activeEntryId) {
+        endMs = nowMs; // live-running timer
+      } else {
+        // Orphan — cap the implicit end to avoid runaway totals.
+        endMs = Math.min(nowMs, startMs + MAX_ORPHAN_HOURS * 3600 * 1000);
+        if (endMs <= startMs) continue;
+      }
+      const mins = (endMs - startMs) / 60000;
       if (mins <= 0) continue;
-      const day = dateStr(start);
+      const day = dateStr(new Date(startMs));
       if (!result[entry.topic_name]) result[entry.topic_name] = {};
       result[entry.topic_name][day] = (result[entry.topic_name][day] || 0) + mins;
     }
     return result;
   }, [entries, activeEntryId, elapsed]); // elapsed to trigger re-render
+
+  // One-click fixer: close every orphan entry right now (end_time = now).
+  // Useful when the user realises they left 3 timers running yesterday —
+  // one click and the daily totals instantly reflect "up to this moment".
+  const closeAllOrphans = async () => {
+    const nowIso = new Date().toISOString();
+    const updates: Entry[] = [];
+    for (const o of orphanEntries) {
+      try {
+        const res = await fetch(`/api/time-tracking/entries/${o.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ end_time: nowIso }),
+        });
+        if (res.ok) updates.push(await res.json());
+      } catch { /* best-effort */ }
+    }
+    if (updates.length > 0) {
+      setEntries(prev => prev.map(e => updates.find(u => u.id === e.id) ?? e));
+      toast({ title: `Closed ${updates.length} open entr${updates.length === 1 ? "y" : "ies"}` });
+    }
+  };
 
   // Today's data
   const todayByTopic = useMemo(() => {
@@ -566,11 +654,82 @@ export default function TimeTracker() {
         </div>
       </Card>
 
+      {/* Orphan-entries warning — unstopped timers the user forgot about.
+          They're being counted at "now" already, but they keep ticking
+          until the user closes them. One-click fixer puts an end_time on
+          all of them at once. */}
+      {orphanEntries.length > 0 && (
+        <Card className="p-3 border-amber-300 bg-amber-50/60">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-sm">
+              <span className="font-bold text-amber-900">
+                {orphanEntries.length} open entr{orphanEntries.length === 1 ? "y" : "ies"} with no end time
+              </span>
+              <span className="text-amber-800/80 ml-2 text-xs">
+                (counted up to now, capped at 12 h — close them to freeze the duration)
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setShowAllEntries(true)} className="h-8 text-xs">
+                Show & fix individually
+              </Button>
+              <Button size="sm" onClick={closeAllOrphans} className="h-8 text-xs bg-amber-600 hover:bg-amber-700">
+                <Check className="w-3.5 h-3.5 mr-1" /> Close all now
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Quick log — one-click "I spent N minutes on X" without picking
+          start/end times. Creates an entry ending now and starting
+          (now - duration), so the work lands in today's totals instantly.
+          Increments are 30-min up to 4h, matching the user's spec. */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <h3 className="font-bold text-sm">Quick log — no start/end needed</h3>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground">Topic:</label>
+            <Select value={quickLogTopicId} onValueChange={setQuickLogTopicId}>
+              <SelectTrigger className="h-8 text-sm w-48">
+                <SelectValue placeholder="Choose topic" />
+              </SelectTrigger>
+              <SelectContent>
+                {topics.map(t => (
+                  <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {[30, 60, 90, 120, 150, 180, 210, 240].map(mins => {
+            const label = mins >= 60
+              ? `${Math.floor(mins / 60)}h${mins % 60 ? "30" : ""}`
+              : `${mins}m`;
+            return (
+              <Button
+                key={mins} size="sm" variant="outline"
+                disabled={!quickLogTopicId}
+                onClick={() => quickLog(mins)}
+                className="h-8 text-xs font-mono"
+                title={`Log ${label} on the selected topic ending now`}
+              >
+                +{label}
+              </Button>
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-muted-foreground italic mt-2">
+          Clicks create a past entry ending now. The duration shows up in today's totals immediately.
+        </div>
+      </Card>
+
       {/* Today's Summary */}
       <Card className="p-4">
         <h3 className="font-bold text-sm mb-3">Today — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })}</h3>
         {todayTotal === 0 ? (
-          <div className="text-sm text-muted-foreground italic">No time tracked today. Click play on a topic to start.</div>
+          <div className="text-sm text-muted-foreground italic">No time tracked today. Click play on a topic, use Quick log above, or Add past entry.</div>
         ) : (
           <Table>
             <TableHeader>
