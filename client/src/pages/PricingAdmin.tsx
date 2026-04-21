@@ -22,6 +22,8 @@ import {
   Check,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { useBenchmarkNotes, cellKey, tierKey } from "@/lib/benchmarkNotes";
+import { BenchmarkNotesEditor } from "@/components/BenchmarkNotesEditor";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1850,35 +1852,17 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
   const benchmarks: CompetitorBenchmark[] = settings.competitor_benchmarks ?? DEFAULT_SETTINGS.competitor_benchmarks;
   const { toast } = useToast();
 
-  // ── Per-cell market intel notes ──────────────────────────────────────────
-  // Free-text annotations keyed by `${region}::${tier.label}` — the same key
-  // format used in PricingTool's Market Benchmarks chart, so a note saved here
-  // (e.g. "Italy :: Tier 1 (MBB)") also appears as an amber pill in every
-  // Pricing Case that pulls the matching tier row. Persisted in localStorage
-  // under `pricing_benchmark_notes_v1` for the same reason: this is personal
-  // market intel ("heard from ex-partner that 2025 rates are closer to X"),
-  // not authoritative data that should live in the shared pricing settings.
-  const BENCH_NOTES_KEY = "pricing_benchmark_notes_v1";
-  const [benchmarkNotes, setBenchmarkNotes] = useState<Record<string, string>>(() => {
-    try {
-      const raw = localStorage.getItem(BENCH_NOTES_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
-  });
-  const [editingNoteKey, setEditingNoteKey] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
-  const saveNote = (key: string, value: string) => {
-    setBenchmarkNotes(prev => {
-      const next = { ...prev };
-      if (value.trim()) next[key] = value.trim();
-      else delete next[key];
-      try { localStorage.setItem(BENCH_NOTES_KEY, JSON.stringify(next)); } catch { /* quota */ }
-      return next;
-    });
-    setEditingNoteKey(null);
-    setNoteDraft("");
-    toast({ title: value.trim() ? "Note saved" : "Note cleared" });
-  };
+  // ── Per-cell + per-tier market intel notes ──────────────────────────────
+  // Shared hook (`useBenchmarkNotes`) persists to localStorage under the same
+  // key used by the live Pricing Case chart, so notes written here show up
+  // there automatically (and vice versa — cross-tab sync via a window event).
+  // Notes are collapsed by default: clicking the sticky-note button
+  // expands a panel that lists every saved note with per-note edit/delete,
+  // plus a single "add new" textarea at the bottom.
+  const { notes: benchmarkNotes, addNote, updateNote, deleteNote, countFor } = useBenchmarkNotes();
+  const [expandedNoteKey, setExpandedNoteKey] = useState<string | null>(null);
+  const toggleNotePanel = (key: string) =>
+    setExpandedNoteKey(k => (k === key ? null : key));
 
   const updateRate = (tierIdx: number, region: BenchmarkRegion, field: "min_weekly" | "max_weekly", val: number) => {
     const updated = benchmarks.map((b, i) =>
@@ -1918,7 +1902,14 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
       </div>
 
       {/* Rate table per tier */}
-      {benchmarks.map((bench, tidx) => (
+      {benchmarks.map((bench, tidx) => {
+        // Tier-level note key — general observations about the whole tier
+        // that aren't tied to a single country (e.g. "BCG is the most
+        // aggressive on price across all geos this year").
+        const tKey = tierKey(bench.label);
+        const tierNoteCount = countFor(tKey);
+        const tierExpanded = expandedNoteKey === tKey;
+        return (
         <div key={bench.tier} className="border rounded-lg overflow-hidden">
           <div
             className="px-4 py-2.5 flex items-center gap-3"
@@ -1929,7 +1920,41 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
               onChange={e => updateLabel(tidx, e.target.value)}
               className="flex-1 bg-transparent text-white font-bold text-sm border-0 outline-none placeholder:text-white/50"
             />
+            {/* Tier-level general note button — cross-country observations */}
+            <button
+              type="button"
+              onClick={() => toggleNotePanel(tKey)}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold transition-colors ${
+                tierNoteCount > 0
+                  ? "bg-white text-amber-800 hover:bg-amber-50"
+                  : "bg-white/20 text-white hover:bg-white/30"
+              }`}
+              title={tierNoteCount > 0
+                ? `${tierNoteCount} general note${tierNoteCount !== 1 ? "s" : ""} for this tier`
+                : `Add a general note for ${bench.label} (not tied to a country)`}
+            >
+              <StickyNote className="w-3 h-3" />
+              Tier note
+              {tierNoteCount > 0 && (
+                <span className="px-1 rounded bg-amber-200 text-amber-900">{tierNoteCount}</span>
+              )}
+            </button>
           </div>
+
+          {/* Tier-level note editor (expanded only when toggled) */}
+          {tierExpanded && (
+            <div className="px-4 py-2 border-b bg-amber-50/40">
+              <BenchmarkNotesEditor
+                title={`General notes · ${bench.label} (all regions)`}
+                placeholder={`Paste cross-country intel for ${bench.label}…\n(e.g. "BCG most aggressive on price across EU this year — win rate dropping vs. McK.")`}
+                notes={benchmarkNotes[tKey] ?? []}
+                onAdd={text => addNote(tKey, text)}
+                onUpdate={(id, text) => updateNote(tKey, id, text)}
+                onDelete={id => deleteNote(tKey, id)}
+                onClose={() => setExpandedNoteKey(null)}
+              />
+            </div>
+          )}
 
           {/* Sources */}
           <div className="px-4 py-2 bg-muted/30 border-b flex flex-wrap gap-1 items-center">
@@ -1970,12 +1995,9 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
             <tbody>
               {BENCHMARK_REGIONS.map(region => {
                 const cell = bench.rates[region];
-                // Key shape matches PricingTool's chart so the note written
-                // here shows up as a pill under the same tier-region bar in
-                // every Pricing Case.
-                const noteKey = `${region}::${bench.label}`;
-                const existingNote = benchmarkNotes[noteKey];
-                const isEditing = editingNoteKey === noteKey;
+                const key = cellKey(region, bench.label);
+                const count = countFor(key);
+                const isExpanded = expandedNoteKey === key;
                 return (
                   <React.Fragment key={region}>
                     <tr className="border-t hover:bg-muted/20">
@@ -2004,95 +2026,40 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
                       <td className="px-3 py-1.5 text-center">
                         <button
                           type="button"
-                          onClick={() => {
-                            if (isEditing) {
-                              setEditingNoteKey(null);
-                              setNoteDraft("");
-                            } else {
-                              setEditingNoteKey(noteKey);
-                              setNoteDraft(existingNote || "");
-                            }
-                          }}
+                          onClick={() => toggleNotePanel(key)}
                           className={`p-1 rounded transition-colors inline-flex items-center gap-1 ${
-                            existingNote
-                              ? "text-amber-600 hover:bg-amber-50 bg-amber-50/60"
-                              : "text-muted-foreground/40 hover:text-foreground hover:bg-muted"
+                            count > 0
+                              ? "text-amber-700 hover:bg-amber-100 bg-amber-50 border border-amber-300"
+                              : "text-muted-foreground/60 hover:text-foreground hover:bg-muted border border-dashed border-border/50"
                           }`}
-                          title={existingNote
-                            ? `Edit note · ${existingNote.slice(0, 100)}${existingNote.length > 100 ? "…" : ""}`
-                            : `Add market intel note for ${region} · ${bench.label}`}
+                          title={count > 0
+                            ? `${count} note${count !== 1 ? "s" : ""} · click to view/edit`
+                            : `Add note for ${region} · ${bench.label}`}
                         >
                           <StickyNote className="w-3.5 h-3.5" />
-                          {existingNote && <span className="text-[9px] font-bold">✓</span>}
+                          {count > 0 && (
+                            <span className="text-[9px] font-bold px-1 rounded bg-amber-200 text-amber-900">
+                              {count}
+                            </span>
+                          )}
                         </button>
                       </td>
                     </tr>
-                    {/* Expanded editor / display row */}
-                    {isEditing && (
-                      <tr className="bg-amber-50/40">
-                        <td colSpan={5} className="px-3 py-2">
-                          <div className="space-y-1.5">
-                            <div className="text-[10px] font-semibold text-amber-900 uppercase tracking-wide">
-                              Market intel · {region} · {bench.label}
-                            </div>
-                            <Textarea
-                              value={noteDraft}
-                              onChange={e => setNoteDraft(e.target.value)}
-                              placeholder={`Paste market intel for ${bench.label} in ${region}…\n(e.g. "Heard from ex-McK partner: 2025 ${region} MBB rates closer to €95k/wk for PE >€1B. Daily rate for Senior Associate trending €2,800.")`}
-                              className="text-[11px] min-h-[80px] bg-background"
-                              autoFocus
-                              onKeyDown={e => {
-                                if (e.key === "Escape") { setEditingNoteKey(null); setNoteDraft(""); }
-                                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveNote(noteKey, noteDraft);
-                              }}
-                            />
-                            <div className="flex justify-between items-center">
-                              <span className="text-[9px] text-muted-foreground italic">
-                                Ctrl+Enter to save · Esc to cancel · saved locally (visible in every Pricing Case)
-                              </span>
-                              <div className="flex gap-1.5">
-                                {existingNote && (
-                                  <Button
-                                    type="button" size="sm" variant="ghost"
-                                    className="h-6 text-[10px] px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                    onClick={() => saveNote(noteKey, "")}
-                                  >
-                                    <Trash2 className="w-3 h-3 mr-1" /> Clear
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button" size="sm" variant="outline"
-                                  className="h-6 text-[10px] px-2"
-                                  onClick={() => { setEditingNoteKey(null); setNoteDraft(""); }}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  type="button" size="sm"
-                                  className="h-6 text-[10px] px-2"
-                                  onClick={() => saveNote(noteKey, noteDraft)}
-                                >
-                                  <Check className="w-3 h-3 mr-1" /> Save
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    {/* Compact existing-note preview when not editing */}
-                    {!isEditing && existingNote && (
-                      <tr className="bg-amber-50/30">
-                        <td colSpan={5} className="px-3 pb-2 pt-0">
-                          <button
-                            type="button"
-                            onClick={() => { setEditingNoteKey(noteKey); setNoteDraft(existingNote); }}
-                            className="block w-full text-left px-2 py-1 rounded border border-amber-200 bg-amber-50/60 text-[10px] text-amber-900 hover:bg-amber-50 transition-colors"
-                            title="Click to edit"
-                          >
-                            <span className="font-semibold mr-1">Note:</span>
-                            <span className="whitespace-pre-wrap">{existingNote}</span>
-                          </button>
+                    {/* Expanded editor — visible only while this cell is toggled.
+                        Notes are hidden once saved; the amber count badge on the
+                        button is the only cue the user sees by default. */}
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-2 bg-amber-50/30">
+                          <BenchmarkNotesEditor
+                            title={`Market intel · ${region} · ${bench.label}`}
+                            placeholder={`Paste market intel for ${bench.label} in ${region}…\n(e.g. "Ex-McK partner: 2025 ${region} MBB closer to €95k/wk. Blended daily trending €2,800.")`}
+                            notes={benchmarkNotes[key] ?? []}
+                            onAdd={text => addNote(key, text)}
+                            onUpdate={(id, text) => updateNote(key, id, text)}
+                            onDelete={id => deleteNote(key, id)}
+                            onClose={() => setExpandedNoteKey(null)}
+                          />
                         </td>
                       </tr>
                     )}
@@ -2102,7 +2069,8 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
             </tbody>
           </table>
         </div>
-      ))}
+        );
+      })}
 
       {/* Visual preview bar */}
       <div className="border rounded-lg p-4 bg-background space-y-3">

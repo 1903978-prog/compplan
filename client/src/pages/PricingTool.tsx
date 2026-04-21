@@ -21,6 +21,8 @@ import {
   type OwnershipType, type StrategicIntent, type ProcurementInvolvement, type LayerTrace,
   type CountryBenchmarkRow, type PricingRegion, type PricingAdjustment,
 } from "@/lib/pricingEngine";
+import { useBenchmarkNotes, cellKey as benchCellKey, tierKey as benchTierKey } from "@/lib/benchmarkNotes";
+import { BenchmarkNotesEditor } from "@/components/BenchmarkNotesEditor";
 
 interface PricingCase {
   id?: number;
@@ -526,34 +528,14 @@ export default function PricingTool() {
   const [templateLocal, setTemplateLocal] = useState("");
 
   // ── Market benchmark notes ──────────────────────────────────────────────
-  // Free-text annotations the user pastes next to each (region × tier) cell in
-  // the Market Benchmarks chart. Typical use: "Heard from ex-McKinsey partner
-  // that 2025 Italy MBB rates are closer to €95k/wk for PE >€1B" — a local
-  // data point that doesn't belong in the global rate matrix but is valuable
-  // context when pricing a new deal. Persisted in localStorage (not server)
-  // because these are personal observations, not a shared benchmark.
-  // Key format: `${matrixRegion}::${tier.label}` — tier labels are stable
-  // strings from the competitor_benchmarks settings (e.g. "Tier 1 (MBB)").
-  const BENCH_NOTES_KEY = "pricing_benchmark_notes_v1";
-  const [benchmarkNotes, setBenchmarkNotes] = useState<Record<string, string>>(() => {
-    try {
-      const raw = localStorage.getItem(BENCH_NOTES_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
-  });
-  const [editingNoteKey, setEditingNoteKey] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
-  const saveBenchmarkNote = (key: string, value: string) => {
-    setBenchmarkNotes(prev => {
-      const next = { ...prev };
-      if (value.trim()) next[key] = value.trim();
-      else delete next[key];
-      try { localStorage.setItem(BENCH_NOTES_KEY, JSON.stringify(next)); } catch { /* quota */ }
-      return next;
-    });
-    setEditingNoteKey(null);
-    setNoteDraft("");
-  };
+  // Shared hook — same localStorage pool as the Pricing Admin rate grid, so
+  // anything written here shows up there (and vice versa, via a window event
+  // bus that syncs all consumers without a reload). Notes are collapsed by
+  // default: clicking the sticky-note button expands a panel with the full
+  // list (multiple notes per cell supported) plus an "add new" textarea.
+  const { notes: benchmarkNotes, addNote: addBenchNote, updateNote: updateBenchNote,
+          deleteNote: deleteBenchNote, countFor: benchNoteCount } = useBenchmarkNotes();
+  const [expandedBenchNoteKey, setExpandedBenchNoteKey] = useState<string | null>(null);
 
   // Proposals included in all analysis (filters out excluded_from_analysis)
   const isExcluded = (p: PricingProposal): boolean => !!(p.excluded_from_analysis);
@@ -5297,37 +5279,53 @@ export default function PricingTool() {
                 </div>
                 {tiers.map((tier, i) => {
                   const mid = (tier.min + tier.max) / 2;
-                  // Note key pairs the benchmark tier with the current region
-                  // (e.g. "Italy::Tier 1 (MBB)") so annotations move with the
-                  // region selector and don't bleed across geographies.
-                  const noteKey = `${matrixRegion}::${tier.label}`;
-                  const existingNote = benchmarkNotes[noteKey];
-                  const isEditingThis = editingNoteKey === noteKey;
+                  // Cell note (region × tier) key, matches PricingAdmin's shape
+                  // so notes authored in admin show up here and vice-versa.
+                  const cKey = benchCellKey(matrixRegion, tier.label);
+                  // Tier-level general note — cross-country observations
+                  // about this tier that aren't tied to the current region.
+                  const tKey = benchTierKey(tier.label);
+                  const cCount = benchNoteCount(cKey);
+                  const tCount = benchNoteCount(tKey);
+                  const cellExpanded = expandedBenchNoteKey === cKey;
+                  const tierExpanded = expandedBenchNoteKey === tKey;
                   return (
                     <div key={i} className="space-y-1">
                       <div className="flex justify-between items-center text-xs text-muted-foreground gap-2">
                         <span className={tier.isOurs ? "font-bold text-amber-700" : ""}>{tier.label}</span>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           <span className="font-mono text-[11px]">{fmtK(tier.min)} – <span className="opacity-60">avg {fmtK(mid)}</span> – {fmtK(tier.max)}</span>
+                          {/* Cell note (region-specific) */}
                           <button
                             type="button"
-                            onClick={() => {
-                              if (isEditingThis) {
-                                setEditingNoteKey(null);
-                                setNoteDraft("");
-                              } else {
-                                setEditingNoteKey(noteKey);
-                                setNoteDraft(existingNote || "");
-                              }
-                            }}
-                            className={`p-1 rounded transition-colors ${
-                              existingNote
-                                ? "text-amber-600 hover:bg-amber-50"
-                                : "text-muted-foreground/40 hover:text-foreground hover:bg-muted"
+                            onClick={() => setExpandedBenchNoteKey(k => k === cKey ? null : cKey)}
+                            className={`p-1 rounded transition-colors inline-flex items-center gap-0.5 ${
+                              cCount > 0
+                                ? "text-amber-700 hover:bg-amber-100 bg-amber-50 border border-amber-300"
+                                : "text-muted-foreground/50 hover:text-foreground hover:bg-muted"
                             }`}
-                            title={existingNote ? `Edit note · ${existingNote.slice(0, 80)}${existingNote.length > 80 ? "…" : ""}` : "Add note / paste market intel"}
+                            title={cCount > 0
+                              ? `${cCount} note${cCount !== 1 ? "s" : ""} · ${matrixRegion} · ${tier.label}`
+                              : `Add note for ${matrixRegion} · ${tier.label}`}
                           >
-                            <StickyNote className="w-3.5 h-3.5" />
+                            <StickyNote className="w-3 h-3" />
+                            {cCount > 0 && <span className="text-[9px] font-bold">{cCount}</span>}
+                          </button>
+                          {/* Tier-wide general note */}
+                          <button
+                            type="button"
+                            onClick={() => setExpandedBenchNoteKey(k => k === tKey ? null : tKey)}
+                            className={`p-1 rounded transition-colors inline-flex items-center gap-0.5 text-[9px] font-semibold ${
+                              tCount > 0
+                                ? "text-amber-700 hover:bg-amber-100 bg-amber-50 border border-amber-300"
+                                : "text-muted-foreground/50 hover:text-foreground hover:bg-muted border border-dashed border-border"
+                            }`}
+                            title={tCount > 0
+                              ? `${tCount} general note${tCount !== 1 ? "s" : ""} for ${tier.label} (all regions)`
+                              : `Add general tier-wide note for ${tier.label}`}
+                          >
+                            Tier
+                            {tCount > 0 && <span>({tCount})</span>}
                           </button>
                         </div>
                       </div>
@@ -5341,60 +5339,31 @@ export default function PricingTool() {
                         <div className="absolute top-0 bottom-0 opacity-50"
                           style={{ left: pct(mid), width: "1px", backgroundColor: tier.color }} />
                       </div>
-                      {/* Note editor / display */}
-                      {isEditingThis ? (
-                        <div className="mt-1.5 p-2 rounded border border-amber-300 bg-amber-50/60 space-y-1.5">
-                          <Textarea
-                            value={noteDraft}
-                            onChange={e => setNoteDraft(e.target.value)}
-                            placeholder={`Paste market intel for ${tier.label} · ${matrixRegion}…\n(e.g. "Ex-McK partner: 2025 Italy MBB rates closer to €95k/wk for PE >€1B")`}
-                            className="text-[11px] min-h-[70px] bg-background"
-                            autoFocus
-                            onKeyDown={e => {
-                              if (e.key === "Escape") { setEditingNoteKey(null); setNoteDraft(""); }
-                              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveBenchmarkNote(noteKey, noteDraft);
-                            }}
-                          />
-                          <div className="flex justify-between items-center">
-                            <span className="text-[9px] text-muted-foreground italic">Ctrl+Enter to save · Esc to cancel · saved locally</span>
-                            <div className="flex gap-1.5">
-                              {existingNote && (
-                                <Button
-                                  type="button" size="sm" variant="ghost"
-                                  className="h-6 text-[10px] px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                  onClick={() => saveBenchmarkNote(noteKey, "")}
-                                >
-                                  <Trash2 className="w-3 h-3 mr-1" /> Clear
-                                </Button>
-                              )}
-                              <Button
-                                type="button" size="sm" variant="outline"
-                                className="h-6 text-[10px] px-2"
-                                onClick={() => { setEditingNoteKey(null); setNoteDraft(""); }}
-                              >
-                                Cancel
-                              </Button>
-                              <Button
-                                type="button" size="sm"
-                                className="h-6 text-[10px] px-2"
-                                onClick={() => saveBenchmarkNote(noteKey, noteDraft)}
-                              >
-                                <Save className="w-3 h-3 mr-1" /> Save
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : existingNote ? (
-                        <button
-                          type="button"
-                          onClick={() => { setEditingNoteKey(noteKey); setNoteDraft(existingNote); }}
-                          className="block w-full text-left mt-1 px-2 py-1 rounded border border-amber-200 bg-amber-50/40 text-[10px] text-amber-900 hover:bg-amber-50 transition-colors"
-                          title="Click to edit"
-                        >
-                          <span className="font-semibold mr-1">Note:</span>
-                          <span className="whitespace-pre-wrap">{existingNote}</span>
-                        </button>
-                      ) : null}
+                      {/* Expanded editor — only the one the user clicked.
+                          Saved notes are hidden beneath the count badge; the
+                          panel re-opens on click. */}
+                      {cellExpanded && (
+                        <BenchmarkNotesEditor
+                          title={`Market intel · ${matrixRegion} · ${tier.label}`}
+                          placeholder={`Paste market intel for ${tier.label} in ${matrixRegion}…`}
+                          notes={benchmarkNotes[cKey] ?? []}
+                          onAdd={text => addBenchNote(cKey, text)}
+                          onUpdate={(id, text) => updateBenchNote(cKey, id, text)}
+                          onDelete={id => deleteBenchNote(cKey, id)}
+                          onClose={() => setExpandedBenchNoteKey(null)}
+                        />
+                      )}
+                      {tierExpanded && (
+                        <BenchmarkNotesEditor
+                          title={`General notes · ${tier.label} (all regions)`}
+                          placeholder={`Cross-country observations about ${tier.label}…`}
+                          notes={benchmarkNotes[tKey] ?? []}
+                          onAdd={text => addBenchNote(tKey, text)}
+                          onUpdate={(id, text) => updateBenchNote(tKey, id, text)}
+                          onDelete={id => deleteBenchNote(tKey, id)}
+                          onClose={() => setExpandedBenchNoteKey(null)}
+                        />
+                      )}
                     </div>
                   );
                 })}
