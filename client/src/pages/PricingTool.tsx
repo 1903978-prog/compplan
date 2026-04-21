@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
   Users, AlertTriangle, Eye, EyeOff, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X, FileText, ChevronDown,
+  MessageSquare, ClipboardPaste, StickyNote, Save,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
@@ -523,6 +524,36 @@ export default function PricingTool() {
   const [showBenchmarks, setShowBenchmarks] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState(false);
   const [templateLocal, setTemplateLocal] = useState("");
+
+  // ── Market benchmark notes ──────────────────────────────────────────────
+  // Free-text annotations the user pastes next to each (region × tier) cell in
+  // the Market Benchmarks chart. Typical use: "Heard from ex-McKinsey partner
+  // that 2025 Italy MBB rates are closer to €95k/wk for PE >€1B" — a local
+  // data point that doesn't belong in the global rate matrix but is valuable
+  // context when pricing a new deal. Persisted in localStorage (not server)
+  // because these are personal observations, not a shared benchmark.
+  // Key format: `${matrixRegion}::${tier.label}` — tier labels are stable
+  // strings from the competitor_benchmarks settings (e.g. "Tier 1 (MBB)").
+  const BENCH_NOTES_KEY = "pricing_benchmark_notes_v1";
+  const [benchmarkNotes, setBenchmarkNotes] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(BENCH_NOTES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  const [editingNoteKey, setEditingNoteKey] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const saveBenchmarkNote = (key: string, value: string) => {
+    setBenchmarkNotes(prev => {
+      const next = { ...prev };
+      if (value.trim()) next[key] = value.trim();
+      else delete next[key];
+      try { localStorage.setItem(BENCH_NOTES_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+    setEditingNoteKey(null);
+    setNoteDraft("");
+  };
 
   // Proposals included in all analysis (filters out excluded_from_analysis)
   const isExcluded = (p: PricingProposal): boolean => !!(p.excluded_from_analysis);
@@ -4538,6 +4569,59 @@ export default function PricingTool() {
             const feesOverAsp = hasAsp ? grossVTotal / aspEBITDA : null;
             const aspPass = feesOverAsp !== null && feesOverAsp <= 0.20;
 
+            // Check 5a: Blended daily rate per consultant (full team).
+            // Per user spec: "take Net1 and divide by the number of people in
+            // the team" — e.g. a team of 4 (1 Partner + 1 Manager + 2 Associates)
+            // divides Net1 by 4 to get the average per-consultant fee, then
+            // by 5 days/wk to get a daily blended rate. This is intentionally
+            // simpler than the person-day-weighted blended rate — we want a
+            // headline number that matches how proposals are pitched to
+            // clients ("average daily rate per consultant"), not an internal
+            // margin metric.
+            const isPartnerRole = (s: StaffingLine) =>
+              (s.role_name || "").toLowerCase().includes("partner");
+            const activeStaff = form.staffing.filter(s => s.days_per_week > 0 && s.count > 0);
+            const teamHeadcount = activeStaff.reduce((s, l) => s + l.count, 0);
+            const hasTeam = teamHeadcount > 0 && netWk > 0;
+            const blendedDaily = hasTeam ? netWk / teamHeadcount / 5 : null;
+            // "Healthy" target: €1,900–€2,500 per consultant per day.
+            // Above the band = too thin / overpriced; below = team too heavy vs. fees.
+            const blendedHealthy = blendedDaily !== null && blendedDaily >= 1900 && blendedDaily <= 2500;
+            const blendedPass = blendedHealthy;
+
+            // Check 5b: Blended daily rate EXCLUDING the Partner.
+            // Partners are typically staffed at 1 day/wk and command higher rates,
+            // so excluding them shows the "delivery-team" effective daily rate —
+            // the number an Associate/Manager is actually billing out at. This
+            // is what matters for benchmarking vs. MBB/Big4 team rates (where
+            // Partners are usually excluded from published rate cards too).
+            const staffNoPartner = activeStaff.filter(s => !isPartnerRole(s));
+            const teamHeadcountNoPartner = staffNoPartner.reduce((s, l) => s + l.count, 0);
+            // Partner cost share (weekly) = partner days × daily rate × count.
+            // Subtract from Net1 weekly to get the non-partner share of fees.
+            const partnerWeeklyCost = activeStaff
+              .filter(isPartnerRole)
+              .reduce((s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0);
+            // Fallback proportional split when no cost data: assume partner weight
+            // = partner_days / total_team_days (person-days per week).
+            const totalPersonDaysPerWk = activeStaff.reduce((s, l) => s + l.days_per_week * l.count, 0);
+            const partnerPersonDaysPerWk = activeStaff
+              .filter(isPartnerRole)
+              .reduce((s, l) => s + l.days_per_week * l.count, 0);
+            const partnerFeeShare = partnerWeeklyCost > 0
+              ? Math.min(partnerWeeklyCost, netWk * 0.5) // cap at 50% of fee to avoid negatives on low-net deals
+              : totalPersonDaysPerWk > 0
+                ? netWk * (partnerPersonDaysPerWk / totalPersonDaysPerWk)
+                : 0;
+            const netWkNoPartner = netWk - partnerFeeShare;
+            const hasTeamNoPartner = teamHeadcountNoPartner > 0 && netWkNoPartner > 0;
+            const blendedDailyNoPartner = hasTeamNoPartner
+              ? netWkNoPartner / teamHeadcountNoPartner / 5
+              : null;
+            const blendedHealthyNoPartner = blendedDailyNoPartner !== null
+              && blendedDailyNoPartner >= 1900 && blendedDailyNoPartner <= 2500;
+            const blendedPassNoPartner = blendedHealthyNoPartner;
+
             // Overall score
             const checks = [
               { available: gm55, pass: gm55Pass },
@@ -4545,6 +4629,8 @@ export default function PricingTool() {
               { available: maxWonWk !== null, pass: wonPass },
               { available: hasEBITDA, pass: ebitdaPass },
               { available: hasAsp, pass: aspPass },
+              { available: hasTeam, pass: blendedPass },
+              { available: hasTeamNoPartner, pass: blendedPassNoPartner },
             ];
             const availableCount = checks.filter(c => c.available).length;
             const passCount = checks.filter(c => c.available && c.pass).length;
@@ -4600,6 +4686,20 @@ export default function PricingTool() {
                     status={!hasAsp ? "na" : aspPass ? "pass" : "fail"}
                     label="Fees / Aspiration EBITDA ≤ 20%"
                     detail={hasAsp ? `${(feesOverAsp! * 100).toFixed(0)}% of €${(aspEBITDA / 1_000_000).toFixed(1)}M aspiration increase` : "enter aspiration EBITDA %"}
+                  />
+                  <Row
+                    status={!hasTeam ? "na" : blendedPass ? "pass" : "fail"}
+                    label="Blended daily rate per consultant"
+                    detail={hasTeam
+                      ? `${fmtH(blendedDaily!)}/day · ${fmtH(netWk)}/wk ÷ ${teamHeadcount} ppl ÷ 5d (healthy ${fmtH(1900)}–${fmtH(2500)})`
+                      : "add staffing to compute"}
+                  />
+                  <Row
+                    status={!hasTeamNoPartner ? "na" : blendedPassNoPartner ? "pass" : "fail"}
+                    label="Blended daily rate — excl. Partner"
+                    detail={hasTeamNoPartner
+                      ? `${fmtH(blendedDailyNoPartner!)}/day · ${fmtH(netWkNoPartner)}/wk ÷ ${teamHeadcountNoPartner} ppl ÷ 5d (healthy ${fmtH(1900)}–${fmtH(2500)})`
+                      : "no non-partner staff"}
                   />
                 </div>
               </div>
@@ -5197,11 +5297,39 @@ export default function PricingTool() {
                 </div>
                 {tiers.map((tier, i) => {
                   const mid = (tier.min + tier.max) / 2;
+                  // Note key pairs the benchmark tier with the current region
+                  // (e.g. "Italy::Tier 1 (MBB)") so annotations move with the
+                  // region selector and don't bleed across geographies.
+                  const noteKey = `${matrixRegion}::${tier.label}`;
+                  const existingNote = benchmarkNotes[noteKey];
+                  const isEditingThis = editingNoteKey === noteKey;
                   return (
                     <div key={i} className="space-y-1">
-                      <div className="flex justify-between text-xs text-muted-foreground">
+                      <div className="flex justify-between items-center text-xs text-muted-foreground gap-2">
                         <span className={tier.isOurs ? "font-bold text-amber-700" : ""}>{tier.label}</span>
-                        <span className="font-mono text-[11px]">{fmtK(tier.min)} – <span className="opacity-60">avg {fmtK(mid)}</span> – {fmtK(tier.max)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[11px]">{fmtK(tier.min)} – <span className="opacity-60">avg {fmtK(mid)}</span> – {fmtK(tier.max)}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isEditingThis) {
+                                setEditingNoteKey(null);
+                                setNoteDraft("");
+                              } else {
+                                setEditingNoteKey(noteKey);
+                                setNoteDraft(existingNote || "");
+                              }
+                            }}
+                            className={`p-1 rounded transition-colors ${
+                              existingNote
+                                ? "text-amber-600 hover:bg-amber-50"
+                                : "text-muted-foreground/40 hover:text-foreground hover:bg-muted"
+                            }`}
+                            title={existingNote ? `Edit note · ${existingNote.slice(0, 80)}${existingNote.length > 80 ? "…" : ""}` : "Add note / paste market intel"}
+                          >
+                            <StickyNote className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                       <div className="relative h-5 bg-muted rounded-full overflow-hidden">
                         <div className="absolute top-0 bottom-0 rounded-full opacity-35"
@@ -5213,6 +5341,60 @@ export default function PricingTool() {
                         <div className="absolute top-0 bottom-0 opacity-50"
                           style={{ left: pct(mid), width: "1px", backgroundColor: tier.color }} />
                       </div>
+                      {/* Note editor / display */}
+                      {isEditingThis ? (
+                        <div className="mt-1.5 p-2 rounded border border-amber-300 bg-amber-50/60 space-y-1.5">
+                          <Textarea
+                            value={noteDraft}
+                            onChange={e => setNoteDraft(e.target.value)}
+                            placeholder={`Paste market intel for ${tier.label} · ${matrixRegion}…\n(e.g. "Ex-McK partner: 2025 Italy MBB rates closer to €95k/wk for PE >€1B")`}
+                            className="text-[11px] min-h-[70px] bg-background"
+                            autoFocus
+                            onKeyDown={e => {
+                              if (e.key === "Escape") { setEditingNoteKey(null); setNoteDraft(""); }
+                              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveBenchmarkNote(noteKey, noteDraft);
+                            }}
+                          />
+                          <div className="flex justify-between items-center">
+                            <span className="text-[9px] text-muted-foreground italic">Ctrl+Enter to save · Esc to cancel · saved locally</span>
+                            <div className="flex gap-1.5">
+                              {existingNote && (
+                                <Button
+                                  type="button" size="sm" variant="ghost"
+                                  className="h-6 text-[10px] px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  onClick={() => saveBenchmarkNote(noteKey, "")}
+                                >
+                                  <Trash2 className="w-3 h-3 mr-1" /> Clear
+                                </Button>
+                              )}
+                              <Button
+                                type="button" size="sm" variant="outline"
+                                className="h-6 text-[10px] px-2"
+                                onClick={() => { setEditingNoteKey(null); setNoteDraft(""); }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                type="button" size="sm"
+                                className="h-6 text-[10px] px-2"
+                                onClick={() => saveBenchmarkNote(noteKey, noteDraft)}
+                              >
+                                <Save className="w-3 h-3 mr-1" /> Save
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : existingNote ? (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingNoteKey(noteKey); setNoteDraft(existingNote); }}
+                          className="block w-full text-left mt-1 px-2 py-1 rounded border border-amber-200 bg-amber-50/40 text-[10px] text-amber-900 hover:bg-amber-50 transition-colors"
+                          title="Click to edit"
+                        >
+                          <span className="font-semibold mr-1">Note:</span>
+                          <span className="whitespace-pre-wrap">{existingNote}</span>
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })}

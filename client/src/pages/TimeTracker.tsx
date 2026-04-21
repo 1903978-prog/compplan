@@ -2,10 +2,32 @@ import { useState, useEffect, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Plus, Trash2, Play, Square, Pencil, Check, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Trash2, Play, Square, Pencil, Check, X, ChevronLeft, ChevronRight, Clock, CalendarPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+// Convert an ISO UTC timestamp (what the DB stores) into the "YYYY-MM-DDTHH:mm"
+// string that <input type="datetime-local"> expects — always in the user's
+// local time zone. The input refuses to show a value with a trailing "Z" or
+// a timezone offset, so we strip both and round to minutes.
+function isoToLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Reverse: the datetime-local value is a local wall-clock string with no TZ.
+// `new Date("YYYY-MM-DDTHH:mm")` interprets it as local time, so `.toISOString()`
+// correctly produces the equivalent UTC timestamp we send back to the server.
+function localInputToIso(val: string): string | null {
+  if (!val) return null;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
 
 interface Topic { id: number; name: string; sort_order: number }
 interface Entry { id: number; topic_id: number; topic_name: string; start_time: string; end_time: string | null }
@@ -45,6 +67,34 @@ export default function TimeTracker() {
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
   const [elapsed, setElapsed] = useState(0); // seconds
   const [weekOffset, setWeekOffset] = useState(0); // 0 = current week, -1 = last week
+
+  // ── Manual time editing ───────────────────────────────────────────────────
+  // The user often forgets to click Start at the right moment — e.g. they
+  // start a meeting at 14:00 but only remember to click Start at 14:20, or
+  // they finish a task without clicking Stop and come back an hour later.
+  // These three pieces of state back three flows:
+  //
+  //  1. Adjusting the start_time of the currently-running timer (backdate it
+  //     to when the work actually began).
+  //  2. Adding a manual past entry with both start and end times (useful for
+  //     work done offline / across sessions).
+  //  3. Editing an existing (already-stopped) entry's start/end/topic.
+  //
+  // All three PUT/POST against the same endpoints — the server already
+  // accepts arbitrary start_time/end_time in the body.
+  const [adjustingStartFor, setAdjustingStartFor] = useState<number | null>(null);
+  const [adjustStartDraft, setAdjustStartDraft] = useState("");
+
+  const [showAddManual, setShowAddManual] = useState(false);
+  const [manualTopicId, setManualTopicId] = useState<string>("");
+  const [manualStart, setManualStart] = useState("");
+  const [manualEnd, setManualEnd] = useState("");
+
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
+  const [editEntryTopicId, setEditEntryTopicId] = useState<string>("");
+  const [editEntryStart, setEditEntryStart] = useState("");
+  const [editEntryEnd, setEditEntryEnd] = useState("");
+  const [showAllEntries, setShowAllEntries] = useState(false);
 
   // Load data
   useEffect(() => {
@@ -146,6 +196,107 @@ export default function TimeTracker() {
     }
   };
 
+  // ── Manual time editing handlers ──────────────────────────────────────────
+
+  // Backdate the running timer: change only start_time (end_time stays null).
+  // Refuses a future time — backdating forward would make elapsed go negative.
+  const saveAdjustStart = async () => {
+    if (!adjustingStartFor || !adjustStartDraft) return;
+    const iso = localInputToIso(adjustStartDraft);
+    if (!iso) { toast({ title: "Invalid time", variant: "destructive" }); return; }
+    if (new Date(iso).getTime() > Date.now()) {
+      toast({ title: "Can't set start in the future", variant: "destructive" });
+      return;
+    }
+    const res = await fetch(`/api/time-tracking/entries/${adjustingStartFor}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start_time: iso }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setEntries(prev => prev.map(e => e.id === updated.id ? updated : e));
+      toast({ title: "Start time adjusted" });
+    } else {
+      toast({ title: "Failed to adjust start", variant: "destructive" });
+    }
+    setAdjustingStartFor(null);
+    setAdjustStartDraft("");
+  };
+
+  // Create a past entry with both start and end populated. Intended for work
+  // done before you opened the tracker or on another device.
+  const saveManualEntry = async () => {
+    if (!manualTopicId || !manualStart || !manualEnd) {
+      toast({ title: "Topic, start and end are required", variant: "destructive" });
+      return;
+    }
+    const topic = topics.find(t => t.id === Number(manualTopicId));
+    if (!topic) return;
+    const startIso = localInputToIso(manualStart);
+    const endIso = localInputToIso(manualEnd);
+    if (!startIso || !endIso) { toast({ title: "Invalid time", variant: "destructive" }); return; }
+    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      toast({ title: "End must be after start", variant: "destructive" });
+      return;
+    }
+    const res = await fetch("/api/time-tracking/entries", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic_id: topic.id, topic_name: topic.name,
+        start_time: startIso, end_time: endIso,
+      }),
+    });
+    if (res.ok) {
+      const entry = await res.json();
+      setEntries(prev => [...prev, entry]);
+      toast({ title: "Entry added" });
+      setShowAddManual(false);
+      setManualTopicId(""); setManualStart(""); setManualEnd("");
+    } else {
+      toast({ title: "Failed to add entry", variant: "destructive" });
+    }
+  };
+
+  // Open inline editor for an existing entry; pre-fill from current values.
+  const openEditEntry = (entry: Entry) => {
+    setEditingEntryId(entry.id);
+    setEditEntryTopicId(String(entry.topic_id));
+    setEditEntryStart(isoToLocalInput(entry.start_time));
+    setEditEntryEnd(isoToLocalInput(entry.end_time));
+  };
+
+  // Save edits to an existing entry. Allows changing topic, start, end, or
+  // any subset. An empty end becomes null (re-opens the entry as running —
+  // only useful if no other timer is active).
+  const saveEditEntry = async () => {
+    if (!editingEntryId) return;
+    const startIso = localInputToIso(editEntryStart);
+    if (!startIso) { toast({ title: "Start time required", variant: "destructive" }); return; }
+    const endIso = editEntryEnd ? localInputToIso(editEntryEnd) : null;
+    if (endIso && new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      toast({ title: "End must be after start", variant: "destructive" });
+      return;
+    }
+    const topic = editEntryTopicId ? topics.find(t => t.id === Number(editEntryTopicId)) : null;
+    const patch: any = { start_time: startIso, end_time: endIso };
+    if (topic) { patch.topic_id = topic.id; patch.topic_name = topic.name; }
+    const res = await fetch(`/api/time-tracking/entries/${editingEntryId}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setEntries(prev => prev.map(e => e.id === updated.id ? updated : e));
+      toast({ title: "Entry updated" });
+      setEditingEntryId(null);
+    } else {
+      toast({ title: "Failed to update", variant: "destructive" });
+    }
+  };
+
   // Compute daily/weekly data
   const today = new Date();
   const todayStr = dateStr(today);
@@ -225,21 +376,65 @@ export default function TimeTracker() {
       <PageHeader title="Time Tracker" description="Track time spent on different activities." />
 
       {/* Active timer banner */}
-      {activeTopic && (
-        <Card className="p-4 border-primary/50 bg-primary/5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-              <span className="font-bold text-lg">{activeTopic.name}</span>
-              <span className="font-mono text-2xl font-bold text-primary">{fmtElapsed(elapsed)}</span>
+      {activeTopic && (() => {
+        const activeEntry = entries.find(e => e.id === activeEntryId);
+        const startStr = activeEntry
+          ? new Date(activeEntry.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+          : "";
+        const isAdjusting = adjustingStartFor === activeEntryId;
+        return (
+          <Card className="p-4 border-primary/50 bg-primary/5">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+                <span className="font-bold text-lg">{activeTopic.name}</span>
+                <span className="font-mono text-2xl font-bold text-primary">{fmtElapsed(elapsed)}</span>
+                {activeEntry && !isAdjusting && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdjustingStartFor(activeEntryId);
+                      setAdjustStartDraft(isoToLocalInput(activeEntry.start_time));
+                    }}
+                    className="text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-primary/10"
+                    title="Click to backdate the start time if you forgot to click Start earlier"
+                  >
+                    <Clock className="w-3 h-3" />
+                    Started at {startStr}
+                    <Pencil className="w-3 h-3 opacity-60" />
+                  </button>
+                )}
+              </div>
+              <Button variant="destructive" size="sm" onClick={stopTimer}>
+                <Square className="w-4 h-4 mr-2" />
+                Stop
+              </Button>
             </div>
-            <Button variant="destructive" size="sm" onClick={stopTimer}>
-              <Square className="w-4 h-4 mr-2" />
-              Stop
-            </Button>
-          </div>
-        </Card>
-      )}
+            {isAdjusting && (
+              <div className="mt-3 p-3 rounded border border-primary/30 bg-background flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Backdate start to:</span>
+                <Input
+                  type="datetime-local"
+                  value={adjustStartDraft}
+                  onChange={e => setAdjustStartDraft(e.target.value)}
+                  className="h-8 text-sm w-auto"
+                  max={isoToLocalInput(new Date().toISOString())}
+                  autoFocus
+                />
+                <Button size="sm" variant="default" className="h-8" onClick={saveAdjustStart}>
+                  <Check className="w-3.5 h-3.5 mr-1" /> Save
+                </Button>
+                <Button size="sm" variant="ghost" className="h-8" onClick={() => { setAdjustingStartFor(null); setAdjustStartDraft(""); }}>
+                  <X className="w-3.5 h-3.5 mr-1" /> Cancel
+                </Button>
+                <span className="text-[10px] text-muted-foreground italic ml-auto">
+                  Use this when you forgot to click Start at the actual beginning of the task
+                </span>
+              </div>
+            )}
+          </Card>
+        );
+      })()}
 
       {/* Topics + Start buttons */}
       <Card className="p-4">
@@ -297,6 +492,77 @@ export default function TimeTracker() {
               <Plus className="w-4 h-4" />
             </Button>
           </div>
+        </div>
+
+        {/* Manual past-entry form — for when you forgot to click Start. */}
+        <div className="border-t pt-3">
+          {!showAddManual ? (
+            <Button
+              size="sm" variant="outline"
+              onClick={() => {
+                // Pre-fill with "last hour" window — most common case is "I just
+                // finished a call that started an hour ago and forgot to track it."
+                const now = new Date();
+                const hourAgo = new Date(now.getTime() - 3600 * 1000);
+                setManualStart(isoToLocalInput(hourAgo.toISOString()));
+                setManualEnd(isoToLocalInput(now.toISOString()));
+                setManualTopicId(topics[0] ? String(topics[0].id) : "");
+                setShowAddManual(true);
+              }}
+              className="text-xs"
+            >
+              <CalendarPlus className="w-3.5 h-3.5 mr-1.5" />
+              Add past entry (manual start/end)
+            </Button>
+          ) : (
+            <div className="space-y-2 p-3 rounded border border-dashed bg-muted/20">
+              <div className="text-xs font-semibold text-muted-foreground">
+                Add entry with manual start and end times
+              </div>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="space-y-0.5">
+                  <label className="text-[10px] font-semibold text-muted-foreground block">Topic</label>
+                  <Select value={manualTopicId} onValueChange={setManualTopicId}>
+                    <SelectTrigger className="h-8 text-sm w-48"><SelectValue placeholder="Choose topic" /></SelectTrigger>
+                    <SelectContent>
+                      {topics.map(t => (
+                        <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-0.5">
+                  <label className="text-[10px] font-semibold text-muted-foreground block">Start</label>
+                  <Input type="datetime-local" value={manualStart}
+                    onChange={e => setManualStart(e.target.value)}
+                    className="h-8 text-sm w-auto" />
+                </div>
+                <div className="space-y-0.5">
+                  <label className="text-[10px] font-semibold text-muted-foreground block">End</label>
+                  <Input type="datetime-local" value={manualEnd}
+                    onChange={e => setManualEnd(e.target.value)}
+                    className="h-8 text-sm w-auto" />
+                </div>
+                <div className="flex gap-1.5">
+                  <Button size="sm" onClick={saveManualEntry} className="h-8">
+                    <Check className="w-3.5 h-3.5 mr-1" /> Add
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setShowAddManual(false)} className="h-8">
+                    <X className="w-3.5 h-3.5 mr-1" /> Cancel
+                  </Button>
+                </div>
+              </div>
+              {manualStart && manualEnd && (() => {
+                const diff = new Date(manualEnd).getTime() - new Date(manualStart).getTime();
+                if (isNaN(diff) || diff <= 0) return null;
+                return (
+                  <div className="text-[10px] text-muted-foreground">
+                    Duration: <span className="font-mono font-semibold">{fmtHM(diff / 60000)}</span>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
         </div>
       </Card>
 
@@ -403,6 +669,129 @@ export default function TimeTracker() {
               </TableBody>
             </Table>
           </div>
+        )}
+      </Card>
+
+      {/* Editable entries list — lets the user fix start/end times on any
+          previously-recorded entry. Collapsed by default because most users
+          don't need this; it's the escape hatch for "I realize yesterday's
+          Design Review entry is wrong — let me fix the end time." */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-bold text-sm">Entries — edit start / end / topic</h3>
+          <Button size="sm" variant="ghost" onClick={() => setShowAllEntries(v => !v)} className="text-xs">
+            {showAllEntries ? "Hide" : `Show (${entries.length})`}
+          </Button>
+        </div>
+        {showAllEntries && (
+          entries.length === 0 ? (
+            <div className="text-sm text-muted-foreground italic">No entries yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Topic</TableHead>
+                    <TableHead>Start</TableHead>
+                    <TableHead>End</TableHead>
+                    <TableHead className="text-right">Duration</TableHead>
+                    <TableHead className="w-24"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...entries]
+                    .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
+                    .slice(0, 50)
+                    .map(entry => {
+                      const isEditing = editingEntryId === entry.id;
+                      const start = new Date(entry.start_time);
+                      const end = entry.end_time ? new Date(entry.end_time) : null;
+                      const mins = end ? (end.getTime() - start.getTime()) / 60000 : 0;
+                      const isActive = entry.id === activeEntryId;
+                      const fmtDateTime = (d: Date) =>
+                        d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+                      if (isEditing) {
+                        return (
+                          <TableRow key={entry.id} className="bg-primary/5">
+                            <TableCell>
+                              <Select value={editEntryTopicId} onValueChange={setEditEntryTopicId}>
+                                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  {topics.map(t => (
+                                    <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Input type="datetime-local" value={editEntryStart}
+                                onChange={e => setEditEntryStart(e.target.value)}
+                                className="h-8 text-sm w-auto" />
+                            </TableCell>
+                            <TableCell>
+                              <Input type="datetime-local" value={editEntryEnd}
+                                onChange={e => setEditEntryEnd(e.target.value)}
+                                className="h-8 text-sm w-auto"
+                                placeholder="(still running)" />
+                            </TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground">
+                              {editEntryStart && editEntryEnd ? (() => {
+                                const d = new Date(editEntryEnd).getTime() - new Date(editEntryStart).getTime();
+                                return d > 0 ? fmtHM(d / 60000) : "—";
+                              })() : "—"}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-0.5 justify-end">
+                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-emerald-600"
+                                  onClick={saveEditEntry}>
+                                  <Check className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                                  onClick={() => setEditingEntryId(null)}>
+                                  <X className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+                      return (
+                        <TableRow key={entry.id} className={isActive ? "bg-red-50/40" : ""}>
+                          <TableCell className="font-medium text-sm">
+                            {entry.topic_name}
+                            {isActive && <span className="ml-2 text-[10px] text-red-600 font-bold uppercase">● running</span>}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{fmtDateTime(start)}</TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {end ? fmtDateTime(end) : <span className="text-muted-foreground italic">(running)</span>}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs">
+                            {end ? fmtHM(mins) : "—"}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-0.5 justify-end">
+                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                                onClick={() => openEditEntry(entry)} title="Edit times">
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => deleteEntry(entry.id)} title="Delete">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                </TableBody>
+              </Table>
+              {entries.length > 50 && (
+                <div className="text-[10px] text-muted-foreground italic mt-2">
+                  Showing the 50 most recent entries.
+                </div>
+              )}
+            </div>
+          )
         )}
       </Card>
     </div>

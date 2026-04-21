@@ -233,6 +233,30 @@ export async function seedDatabase() {
   // Add columns if upgrading from older schema
   await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS external_id TEXT`);
   await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS sync_locked INTEGER NOT NULL DEFAULT 0`);
+
+  // Seed the "Back Up" manual candidate list — people who live outside the
+  // Eendigo sync (personal referrals, cold replies). sync_locked=1 so the
+  // nightly Eendigo import never overwrites or moves them. Idempotent via
+  // a WHERE NOT EXISTS guard on (name, info) — re-running seed() keeps one
+  // copy even if the user later moves the card to a different stage.
+  try {
+    const BACKUP_CANDIDATES: { name: string; info: string; stage: string }[] = [
+      { name: "Ahmed Elkassas", info: "Email: ahmed_2assas@hotmail.com", stage: "potential" },
+    ];
+    const nowIso = new Date().toISOString();
+    for (const c of BACKUP_CANDIDATES) {
+      await db.execute(sql`
+        INSERT INTO hiring_candidates (name, info, stage, sort_order, sync_locked, created_at)
+        SELECT ${c.name}, ${c.info}, ${c.stage}, 9999, 1, ${nowIso}
+        WHERE NOT EXISTS (
+          SELECT 1 FROM hiring_candidates
+          WHERE name = ${c.name} AND info = ${c.info}
+        )
+      `);
+    }
+  } catch (e) {
+    console.error("Failed to seed Back Up candidates:", e);
+  }
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS extended_inputs JSONB`);
 
   // New employee columns

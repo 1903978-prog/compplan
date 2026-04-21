@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, GripVertical, UserCheck, ChevronLeft, ChevronRight, RefreshCw, Lock } from "lucide-react";
+import { Plus, Trash2, GripVertical, UserCheck, ChevronLeft, ChevronRight, RefreshCw, Lock, UserPlus } from "lucide-react";
 
 // ─── Stage config ────────────────────────────────────────────────────────────
 
@@ -315,6 +315,10 @@ export default function Hiring() {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [manualName, setManualName] = useState("");
+  const [manualEmail, setManualEmail] = useState("");
+  const [manualStage, setManualStage] = useState<StageId>("potential");
+  const [addingManual, setAddingManual] = useState(false);
   const { toast } = useToast();
 
   const load = async () => {
@@ -345,6 +349,40 @@ export default function Hiring() {
       name: "", info: "", stage, sort_order: maxOrder + 1,
     });
     if (c) setCandidates(prev => [...prev, c]);
+  };
+
+  const addManualCandidate = async (name: string, email: string, stage: StageId) => {
+    if (!name.trim()) return;
+    const info = email.trim() ? `Email: ${email.trim()}` : "";
+    const maxOrder = Math.max(0, ...candidates.filter(c => c.stage === stage).map(c => c.sort_order));
+    const c = await api("POST", "/api/hiring/candidates", {
+      name: name.trim(), info, stage, sort_order: maxOrder + 1, sync_locked: 1,
+    });
+    if (c) {
+      setCandidates(prev => [...prev, c]);
+      toast({ title: `Added ${name.trim()} to ${STAGES.find(s => s.id === stage)?.label}` });
+    }
+  };
+
+  const parseManualInput = (text: string): { name: string; email: string }[] => {
+    // Parse formats like "Name <email>" or "Name email@domain.com" or just "Name"
+    const results: { name: string; email: string }[] = [];
+    for (const line of text.split("\n").map(l => l.trim()).filter(Boolean)) {
+      const angleMatch = line.match(/^(.+?)\s*<([^>]+)>/);
+      if (angleMatch) {
+        results.push({ name: angleMatch[1].trim(), email: angleMatch[2].trim() });
+      } else {
+        const emailMatch = line.match(/\S+@\S+\.\S+/);
+        if (emailMatch) {
+          const email = emailMatch[0];
+          const name = line.replace(email, "").trim() || email.split("@")[0];
+          results.push({ name, email });
+        } else {
+          results.push({ name: line, email: "" });
+        }
+      }
+    }
+    return results;
   };
 
   const updateCandidate = async (id: number, patch: Partial<Candidate>) => {
@@ -498,6 +536,127 @@ export default function Hiring() {
           ))}
         </div>
       )}
+
+      {/* ── Back up — manual candidate input ────────────────────────────────
+          Lets you add a candidate whose CV/email lives outside the Eendigo
+          sync (e.g. a personal referral, LinkedIn cold-outreach reply,
+          coffee-chat intro). Drops the new card into the chosen stage with
+          `sync_locked = 1` so the Eendigo import won't wipe or move it.
+          Supports single-line entry ("Name <email>") and bulk paste
+          (one candidate per line — each parsed with parseManualInput).
+      */}
+      <div className="border-2 border-dashed border-amber-300 rounded-xl p-4 bg-amber-50/30 space-y-3">
+        <div className="flex items-center gap-2">
+          <UserPlus className="w-5 h-5 text-amber-700" />
+          <h3 className="font-bold text-amber-900">Back Up — Manual entry</h3>
+          <span className="text-xs text-amber-700/70">
+            For candidates outside the Eendigo sync (referrals, cold replies, offline intros)
+          </span>
+        </div>
+
+        {/* Single-entry row */}
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-0.5">
+            <label className="text-[10px] font-semibold text-amber-900/80 uppercase">Name</label>
+            <Input
+              value={manualName}
+              onChange={e => setManualName(e.target.value)}
+              placeholder="e.g. Ahmed Elkassas"
+              className="h-8 text-sm w-48 bg-background"
+              onKeyDown={e => {
+                if (e.key === "Enter" && manualName.trim()) {
+                  addManualCandidate(manualName, manualEmail, manualStage);
+                  setManualName(""); setManualEmail("");
+                }
+              }}
+            />
+          </div>
+          <div className="space-y-0.5">
+            <label className="text-[10px] font-semibold text-amber-900/80 uppercase">Email</label>
+            <Input
+              value={manualEmail}
+              onChange={e => setManualEmail(e.target.value)}
+              placeholder="ahmed_2assas@hotmail.com"
+              className="h-8 text-sm w-64 bg-background"
+              onKeyDown={e => {
+                if (e.key === "Enter" && manualName.trim()) {
+                  addManualCandidate(manualName, manualEmail, manualStage);
+                  setManualName(""); setManualEmail("");
+                }
+              }}
+            />
+          </div>
+          <div className="space-y-0.5">
+            <label className="text-[10px] font-semibold text-amber-900/80 uppercase">Stage</label>
+            <select
+              value={manualStage}
+              onChange={e => setManualStage(e.target.value as StageId)}
+              className="h-8 text-sm rounded border px-2 bg-background"
+            >
+              {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+          <Button
+            size="sm"
+            disabled={!manualName.trim() || addingManual}
+            onClick={async () => {
+              setAddingManual(true);
+              await addManualCandidate(manualName, manualEmail, manualStage);
+              setManualName(""); setManualEmail("");
+              setAddingManual(false);
+            }}
+            className="h-8 bg-amber-600 hover:bg-amber-700"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" /> Add candidate
+          </Button>
+        </div>
+
+        {/* Bulk-paste helper */}
+        <details className="text-xs">
+          <summary className="cursor-pointer text-amber-800 hover:text-amber-900 select-none font-semibold">
+            Bulk paste — one candidate per line
+          </summary>
+          <div className="mt-2 space-y-2">
+            <Textarea
+              placeholder={`Ahmed Elkassas <ahmed_2assas@hotmail.com>\nJane Doe jane@example.com\nJohn Smith`}
+              className="text-xs min-h-[80px] bg-background font-mono"
+              onKeyDown={e => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  const ta = e.currentTarget;
+                  const parsed = parseManualInput(ta.value);
+                  (async () => {
+                    for (const row of parsed) {
+                      await addManualCandidate(row.name, row.email, manualStage);
+                    }
+                    ta.value = "";
+                  })();
+                }
+              }}
+              id="bulk-candidate-paste"
+            />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-amber-800/70 italic">
+                Formats supported: "Name &lt;email&gt;", "Name email", or just "Name". Ctrl+Enter to submit.
+              </span>
+              <Button
+                size="sm" variant="outline"
+                onClick={async () => {
+                  const ta = document.getElementById("bulk-candidate-paste") as HTMLTextAreaElement | null;
+                  if (!ta) return;
+                  const parsed = parseManualInput(ta.value);
+                  for (const row of parsed) {
+                    await addManualCandidate(row.name, row.email, manualStage);
+                  }
+                  ta.value = "";
+                }}
+                className="h-7 text-xs"
+              >
+                Add all
+              </Button>
+            </div>
+          </div>
+        </details>
+      </div>
     </div>
   );
 }

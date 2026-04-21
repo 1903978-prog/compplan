@@ -18,7 +18,10 @@ import {
   Trash2,
   Download,
   Database,
+  StickyNote,
+  Check,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1847,6 +1850,36 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
   const benchmarks: CompetitorBenchmark[] = settings.competitor_benchmarks ?? DEFAULT_SETTINGS.competitor_benchmarks;
   const { toast } = useToast();
 
+  // ── Per-cell market intel notes ──────────────────────────────────────────
+  // Free-text annotations keyed by `${region}::${tier.label}` — the same key
+  // format used in PricingTool's Market Benchmarks chart, so a note saved here
+  // (e.g. "Italy :: Tier 1 (MBB)") also appears as an amber pill in every
+  // Pricing Case that pulls the matching tier row. Persisted in localStorage
+  // under `pricing_benchmark_notes_v1` for the same reason: this is personal
+  // market intel ("heard from ex-partner that 2025 rates are closer to X"),
+  // not authoritative data that should live in the shared pricing settings.
+  const BENCH_NOTES_KEY = "pricing_benchmark_notes_v1";
+  const [benchmarkNotes, setBenchmarkNotes] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(BENCH_NOTES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  const [editingNoteKey, setEditingNoteKey] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const saveNote = (key: string, value: string) => {
+    setBenchmarkNotes(prev => {
+      const next = { ...prev };
+      if (value.trim()) next[key] = value.trim();
+      else delete next[key];
+      try { localStorage.setItem(BENCH_NOTES_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+    setEditingNoteKey(null);
+    setNoteDraft("");
+    toast({ title: value.trim() ? "Note saved" : "Note cleared" });
+  };
+
   const updateRate = (tierIdx: number, region: BenchmarkRegion, field: "min_weekly" | "max_weekly", val: number) => {
     const updated = benchmarks.map((b, i) =>
       i !== tierIdx ? b : {
@@ -1931,36 +1964,139 @@ function MarketBenchmarksTab({ settings, onChange, onSave, saving }: MarketBench
                 <th className="text-right px-3 py-2 text-muted-foreground font-semibold">Min /week</th>
                 <th className="text-right px-3 py-2 text-muted-foreground font-semibold">Max /week</th>
                 <th className="text-right px-3 py-2 text-muted-foreground font-semibold">Range</th>
+                <th className="text-center px-3 py-2 text-muted-foreground font-semibold w-16">Note</th>
               </tr>
             </thead>
             <tbody>
               {BENCHMARK_REGIONS.map(region => {
                 const cell = bench.rates[region];
+                // Key shape matches PricingTool's chart so the note written
+                // here shows up as a pill under the same tier-region bar in
+                // every Pricing Case.
+                const noteKey = `${region}::${bench.label}`;
+                const existingNote = benchmarkNotes[noteKey];
+                const isEditing = editingNoteKey === noteKey;
                 return (
-                  <tr key={region} className="border-t hover:bg-muted/20">
-                    <td className="px-3 py-1.5 font-medium">{region}</td>
-                    <td className="px-3 py-1.5 text-right">
-                      <input
-                        type="number"
-                        step={1000}
-                        value={cell.min_weekly}
-                        onChange={e => updateRate(tidx, region, "min_weekly", parseInt(e.target.value) || 0)}
-                        className="w-24 text-right border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      <input
-                        type="number"
-                        step={1000}
-                        value={cell.max_weekly}
-                        onChange={e => updateRate(tidx, region, "max_weekly", parseInt(e.target.value) || 0)}
-                        className="w-24 text-right border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">
-                      {fmt(cell.min_weekly)} – {fmt(cell.max_weekly)}
-                    </td>
-                  </tr>
+                  <React.Fragment key={region}>
+                    <tr className="border-t hover:bg-muted/20">
+                      <td className="px-3 py-1.5 font-medium">{region}</td>
+                      <td className="px-3 py-1.5 text-right">
+                        <input
+                          type="number"
+                          step={1000}
+                          value={cell.min_weekly}
+                          onChange={e => updateRate(tidx, region, "min_weekly", parseInt(e.target.value) || 0)}
+                          className="w-24 text-right border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 text-right">
+                        <input
+                          type="number"
+                          step={1000}
+                          value={cell.max_weekly}
+                          onChange={e => updateRate(tidx, region, "max_weekly", parseInt(e.target.value) || 0)}
+                          className="w-24 text-right border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">
+                        {fmt(cell.min_weekly)} – {fmt(cell.max_weekly)}
+                      </td>
+                      <td className="px-3 py-1.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isEditing) {
+                              setEditingNoteKey(null);
+                              setNoteDraft("");
+                            } else {
+                              setEditingNoteKey(noteKey);
+                              setNoteDraft(existingNote || "");
+                            }
+                          }}
+                          className={`p-1 rounded transition-colors inline-flex items-center gap-1 ${
+                            existingNote
+                              ? "text-amber-600 hover:bg-amber-50 bg-amber-50/60"
+                              : "text-muted-foreground/40 hover:text-foreground hover:bg-muted"
+                          }`}
+                          title={existingNote
+                            ? `Edit note · ${existingNote.slice(0, 100)}${existingNote.length > 100 ? "…" : ""}`
+                            : `Add market intel note for ${region} · ${bench.label}`}
+                        >
+                          <StickyNote className="w-3.5 h-3.5" />
+                          {existingNote && <span className="text-[9px] font-bold">✓</span>}
+                        </button>
+                      </td>
+                    </tr>
+                    {/* Expanded editor / display row */}
+                    {isEditing && (
+                      <tr className="bg-amber-50/40">
+                        <td colSpan={5} className="px-3 py-2">
+                          <div className="space-y-1.5">
+                            <div className="text-[10px] font-semibold text-amber-900 uppercase tracking-wide">
+                              Market intel · {region} · {bench.label}
+                            </div>
+                            <Textarea
+                              value={noteDraft}
+                              onChange={e => setNoteDraft(e.target.value)}
+                              placeholder={`Paste market intel for ${bench.label} in ${region}…\n(e.g. "Heard from ex-McK partner: 2025 ${region} MBB rates closer to €95k/wk for PE >€1B. Daily rate for Senior Associate trending €2,800.")`}
+                              className="text-[11px] min-h-[80px] bg-background"
+                              autoFocus
+                              onKeyDown={e => {
+                                if (e.key === "Escape") { setEditingNoteKey(null); setNoteDraft(""); }
+                                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveNote(noteKey, noteDraft);
+                              }}
+                            />
+                            <div className="flex justify-between items-center">
+                              <span className="text-[9px] text-muted-foreground italic">
+                                Ctrl+Enter to save · Esc to cancel · saved locally (visible in every Pricing Case)
+                              </span>
+                              <div className="flex gap-1.5">
+                                {existingNote && (
+                                  <Button
+                                    type="button" size="sm" variant="ghost"
+                                    className="h-6 text-[10px] px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                    onClick={() => saveNote(noteKey, "")}
+                                  >
+                                    <Trash2 className="w-3 h-3 mr-1" /> Clear
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button" size="sm" variant="outline"
+                                  className="h-6 text-[10px] px-2"
+                                  onClick={() => { setEditingNoteKey(null); setNoteDraft(""); }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  type="button" size="sm"
+                                  className="h-6 text-[10px] px-2"
+                                  onClick={() => saveNote(noteKey, noteDraft)}
+                                >
+                                  <Check className="w-3 h-3 mr-1" /> Save
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {/* Compact existing-note preview when not editing */}
+                    {!isEditing && existingNote && (
+                      <tr className="bg-amber-50/30">
+                        <td colSpan={5} className="px-3 pb-2 pt-0">
+                          <button
+                            type="button"
+                            onClick={() => { setEditingNoteKey(noteKey); setNoteDraft(existingNote); }}
+                            className="block w-full text-left px-2 py-1 rounded border border-amber-200 bg-amber-50/60 text-[10px] text-amber-900 hover:bg-amber-50 transition-colors"
+                            title="Click to edit"
+                          >
+                            <span className="font-semibold mr-1">Note:</span>
+                            <span className="whitespace-pre-wrap">{existingNote}</span>
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
