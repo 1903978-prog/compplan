@@ -84,6 +84,13 @@ interface ParsedInfo {
   tgOverall: number | null;
   introRating: string | null;        // e.g. "DIS → 90%"
   introScore: number | null;         // 0-100 if parseable
+  csRate: string | null;             // case-study assessor rating (number or grade)
+  csRateScore: number | null;        // 0-100 when parseable
+  /** CS LM — partner's rating after the Learning-Manager review of the
+   *  case study. The authoritative go/no-go signal, surfaced prominently
+   *  on the candidate card (not just in the popup). */
+  csLM: string | null;
+  csLMScore: number | null;
   statuses: string[];                // ["Intro Failed", "✓ Complete"]
   keyValues: { key: string; value: string }[]; // any other "Key: value" pair
   freeText: string[];                // fallback lines
@@ -92,7 +99,9 @@ interface ParsedInfo {
 function parseCandidateInfo(info: string): ParsedInfo {
   const result: ParsedInfo = {
     email: null, applied: null, tgScores: [], tgOverall: null,
-    introRating: null, introScore: null, statuses: [], keyValues: [], freeText: [],
+    introRating: null, introScore: null,
+    csRate: null, csRateScore: null, csLM: null, csLMScore: null,
+    statuses: [], keyValues: [], freeText: [],
   };
   if (!info) return result;
 
@@ -104,6 +113,11 @@ function parseCandidateInfo(info: string): ParsedInfo {
   const statusRe = /^Status\s*:\s*(.+)$/i;
   const appliedRe = /^Applied\s*:\s*(.+)$/i;
   const tgScoreRe = /^(?:TG|TestGorilla)\s*Score\s*:\s*([\d.]+)\s*%?$/i;
+  // CS LM must be tested BEFORE the generic keyValRe, because keyValRe
+  // would otherwise eat it as a plain key:value line and bury it under
+  // the generic "Other fields" block.
+  const csLMRe = /^CS\s*LM\s*:\s*(.+)$/i;
+  const csRateRe = /^CS\s*Rate\s*:\s*(.+)$/i;
   const keyValRe = /^([A-Za-z][A-Za-z0-9 _/()+-]*?)\s*[:=]\s*(.+)$/;
 
   for (const line of lines) {
@@ -130,6 +144,28 @@ function parseCandidateInfo(info: string): ParsedInfo {
     // Status: Intro Failed / ✓ Complete
     const statusM = line.match(statusRe);
     if (statusM) { result.statuses.push(statusM[1].trim()); matched = true; continue; }
+
+    // CS LM: 85% / Strong / 🟢 — partner's case-study review rating.
+    const csLMM = line.match(csLMRe);
+    if (csLMM) {
+      const raw = csLMM[1].trim();
+      result.csLM = raw;
+      const n = raw.match(/([\d.]+)\s*%?/);
+      if (n) result.csLMScore = Number(n[1]);
+      matched = true;
+      continue;
+    }
+
+    // CS Rate: 72% / Pass — assessor case-study rating.
+    const csRateM = line.match(csRateRe);
+    if (csRateM) {
+      const raw = csRateM[1].trim();
+      result.csRate = raw;
+      const n = raw.match(/([\d.]+)\s*%?/);
+      if (n) result.csRateScore = Number(n[1]);
+      matched = true;
+      continue;
+    }
 
     // A score line like "Logic 68.2% | Verbal 83.3% | Excel 35.0% | Pres1 0.0% | Pres2 25.0%"
     // — detect by looking for multiple "LABEL NUM%" patterns on one line.
@@ -300,6 +336,31 @@ function CandidateCard({
             </button>
           </div>
         </div>
+
+        {/* CS LM — partner's case-study rating, if the scraper got it.
+            Rendered as a prominent colour-coded badge so the user can
+            see the partner's verdict without opening the popup. */}
+        {(() => {
+          const parsed = parseCandidateInfo(candidate.info ?? "");
+          if (!parsed.csLM) return null;
+          const score = parsed.csLMScore;
+          const toneCls =
+            score != null
+              ? scoreBadgeClass(score)
+              : /fail|no|reject|weak|drop/i.test(parsed.csLM)
+                ? "bg-red-200 text-red-900"
+                : /pass|strong|hire|go|✓|🟢|good|excellent/i.test(parsed.csLM)
+                  ? "bg-emerald-200 text-emerald-900"
+                  : "bg-muted text-muted-foreground";
+          return (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-semibold uppercase text-muted-foreground tracking-wide">CS LM:</span>
+              <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded ${toneCls}`}>
+                {parsed.csLM}
+              </span>
+            </div>
+          );
+        })()}
 
         {/* Compact info preview — first 2 lines. Full structured rendering
             lives in the detail popup. */}
@@ -936,6 +997,52 @@ export default function Hiring() {
                                   {parsed.introScore.toFixed(0)}%
                                 </span>
                               )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Case-study ratings — assessor (CS Rate) and
+                            partner LM review (CS LM). CS LM is the
+                            authoritative go/no-go signal so we render it
+                            first with a larger badge. */}
+                        {(parsed.csLM || parsed.csRate) && (
+                          <div className="space-y-1.5">
+                            <div className="text-[10px] font-bold uppercase text-muted-foreground">Case study</div>
+                            <div className="flex flex-wrap gap-3">
+                              {parsed.csLM && (() => {
+                                const score = parsed.csLMScore;
+                                const toneCls =
+                                  score != null
+                                    ? scoreBadgeClass(score)
+                                    : /fail|no|reject|weak|drop/i.test(parsed.csLM!)
+                                      ? "bg-red-200 text-red-900"
+                                      : /pass|strong|hire|go|✓|🟢|good|excellent/i.test(parsed.csLM!)
+                                        ? "bg-emerald-200 text-emerald-900"
+                                        : "bg-muted text-muted-foreground";
+                                return (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-semibold text-muted-foreground">Partner (LM):</span>
+                                    <span className={`text-sm font-bold font-mono px-2 py-0.5 rounded ${toneCls}`}>
+                                      {parsed.csLM}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
+                              {parsed.csRate && (() => {
+                                const score = parsed.csRateScore;
+                                const toneCls =
+                                  score != null
+                                    ? scoreBadgeClass(score)
+                                    : "bg-muted text-muted-foreground";
+                                return (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-semibold text-muted-foreground">Assessor:</span>
+                                    <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${toneCls}`}>
+                                      {parsed.csRate}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         )}

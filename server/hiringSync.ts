@@ -200,6 +200,12 @@ interface RawCandidate {
   introOwner: string;
   introRating: string;
   csRating: string;
+  /** CS LM rating — case-study rating given by the partner in the
+   *  LM (Learning Manager) review round. Column 17 in the Stride
+   *  dashboard table. Shown prominently on each candidate tile so the
+   *  user can see the partner's verdict at a glance without opening
+   *  the detail popup. */
+  csLM: string;
   rowStatus: string;
   stage: string;
 }
@@ -311,6 +317,16 @@ function parseCandidates(html: string): RawCandidate[] {
     const tgScore  = numCell(10);
     const introRating = numCell(13);
     const csRating = numCell(16);
+    // CS LM — column 17 in the Stride table, the partner's rating
+    // after the Learning Manager review of the case study. Can be a
+    // numeric percentage ("85%") or a textual grade ("Strong",
+    // "Pass", "Fail", "🟢"); we capture whichever the cell carries.
+    const csLMRaw = cellAt(17);
+    const csLM = csLMRaw
+      ? (csLMRaw.match(/(\d+\.?\d*)/)?.[0]
+          ? `${csLMRaw.match(/(\d+\.?\d*)/)?.[1]}%`
+          : csLMRaw.slice(0, 32))
+      : "";
 
     const introOwner = cellAt(11);
     const rowStatus  = cellAt(0) || pipeline;
@@ -328,6 +344,7 @@ function parseCandidates(html: string): RawCandidate[] {
       introOwner,
       introRating,
       csRating,
+      csLM,
       rowStatus,
       stage,
     });
@@ -354,6 +371,12 @@ function buildInfo(c: RawCandidate): string {
     const intro = [c.introOwner, c.introRating ? `${c.introRating}` : ""].filter(Boolean).join(" → ");
     lines.push(`Intro: ${intro}`);
   }
+  // Case-study ratings — CS Rate is the assessor's score, CS LM is the
+  // partner's review. The latter is the more authoritative signal for
+  // the go/no-go decision so we label it clearly and surface it on the
+  // card.
+  if (c.csRating) lines.push(`CS Rate: ${c.csRating}`);
+  if (c.csLM)     lines.push(`CS LM: ${c.csLM}`);
   if (c.rowStatus) lines.push(`Status: ${c.rowStatus}`);
 
   return lines.join("\n");
