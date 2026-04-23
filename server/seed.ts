@@ -233,6 +233,11 @@ export async function seedDatabase() {
   // Add columns if upgrading from older schema
   await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS external_id TEXT`);
   await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS sync_locked INTEGER NOT NULL DEFAULT 0`);
+  // Candidate scores — per-test 0-100 numbers captured by the hiring team
+  // across the funnel (HSA, TestGorilla, intro call, case study, PPT etc.)
+  // used to rank performers on the new Candidate Scoring dashboard. Null
+  // = "not yet tested" (distinct from 0 = "failed").
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS scores JSONB`);
 
   // Seed the "Back Up" manual candidate list — people who live outside the
   // Eendigo sync (personal referrals, cold replies). sync_locked=1 so the

@@ -1,0 +1,220 @@
+import { useState } from "react";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Cpu, Check, Sparkles, Zap } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { useActiveAIModel } from "@/hooks/use-active-ai-model";
+import {
+  AI_MODELS, PROVIDER_LABEL, modelsForProvider,
+  type AIProvider, type AIModel,
+} from "@/lib/aiModels";
+
+// ── AI Model selector ───────────────────────────────────────────────────────
+// Admin submenu that lets the user pick which provider + model the app
+// should default to. The selection is persisted in localStorage (via the
+// useActiveAIModel hook) and reflected in a badge in the top navigation
+// bar. Price-per-token table at the bottom so the user can trade off
+// quality vs. cost before committing to a change.
+//
+// Note: this page records the PREFERENCE. Wiring every server-side AI
+// call to read this preference is a separate effort (each call site —
+// proposalAI, proposalBriefs, AI summaries — currently hardcodes its
+// model). Today this page is the single place to change that default
+// going forward; existing code paths keep their current hardcoded models
+// until each is migrated to accept the selected model id.
+
+export default function AdminAIModels() {
+  const { toast } = useToast();
+  const { modelId, model, setModelId } = useActiveAIModel();
+
+  // Provider defaults to whatever provider the current model belongs to
+  // so the select is immediately consistent on first mount.
+  const [provider, setProvider] = useState<AIProvider>(model?.provider ?? "anthropic");
+  const [pendingId, setPendingId] = useState<string>(modelId);
+
+  // When the user changes provider, auto-select that provider's first
+  // model unless the current pendingId already belongs to the new one.
+  const handleProviderChange = (p: AIProvider) => {
+    setProvider(p);
+    const firstOfProvider = modelsForProvider(p)[0];
+    if (firstOfProvider && !modelsForProvider(p).some(m => m.id === pendingId)) {
+      setPendingId(firstOfProvider.id);
+    }
+  };
+
+  const saveSelection = () => {
+    setModelId(pendingId);
+    const chosen = AI_MODELS.find(m => m.id === pendingId);
+    toast({
+      title: "Default model saved",
+      description: chosen ? `${chosen.label} (${chosen.abbrev}) is now the active model.` : "Selection updated.",
+    });
+  };
+
+  const fmtUSD = (n: number) => `$${n.toFixed(n < 1 ? 2 : 2).replace(/\.?0+$/, "")}`;
+  const isActive = (m: AIModel) => m.id === modelId;
+  const isPending = (m: AIModel) => m.id === pendingId;
+  const pending = AI_MODELS.find(m => m.id === pendingId);
+  const providerModels = modelsForProvider(provider);
+
+  return (
+    <div>
+      <PageHeader
+        title="AI Models"
+        description="Choose which provider + model the app uses by default for its AI jobs, and compare per-token pricing."
+      />
+
+      <div className="space-y-6">
+        {/* Selector card ------------------------------------------------ */}
+        <Card className="p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-primary" />
+            <h3 className="font-bold text-sm">Active model selection</h3>
+            {model && (
+              <span className="text-[10px] font-semibold bg-primary/10 text-primary rounded px-2 py-0.5 ml-auto">
+                Currently active: <span className="font-mono">{model.abbrev}</span>
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-muted-foreground uppercase">Provider</label>
+              <Select value={provider} onValueChange={v => handleProviderChange(v as AIProvider)}>
+                <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(PROVIDER_LABEL) as AIProvider[]).map(p => (
+                    <SelectItem key={p} value={p}>{PROVIDER_LABEL[p]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-muted-foreground uppercase">Model</label>
+              <Select value={pendingId} onValueChange={setPendingId}>
+                <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {providerModels.map(m => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.label}
+                      {m.recommendedFor?.[0] && (
+                        <span className="text-[10px] text-muted-foreground ml-2">· {m.recommendedFor[0]}</span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {pending && (
+            <div className="rounded border bg-muted/20 p-3 space-y-1">
+              <div className="flex items-center gap-2 text-sm">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <span className="font-semibold">{pending.label}</span>
+                <span className="text-[10px] font-mono bg-foreground text-background px-1.5 py-0.5 rounded">{pending.abbrev}</span>
+                <span className="text-[10px] text-muted-foreground ml-auto">{(pending.contextTokens / 1000).toLocaleString()}k context</span>
+              </div>
+              <div className="flex gap-4 text-xs text-muted-foreground font-mono">
+                <span>Input: <span className="text-foreground font-semibold">{fmtUSD(pending.inputPerM)}</span> / 1M</span>
+                <span>Output: <span className="text-foreground font-semibold">{fmtUSD(pending.outputPerM)}</span> / 1M</span>
+                {pending.cachedReadPerM != null && (
+                  <span>Cache read: <span className="text-foreground font-semibold">{fmtUSD(pending.cachedReadPerM)}</span> / 1M</span>
+                )}
+              </div>
+              {pending.notes && (
+                <div className="text-[10px] italic text-amber-700/80">⚠ {pending.notes}</div>
+              )}
+              {pending.recommendedFor && pending.recommendedFor.length > 0 && (
+                <div className="flex gap-1 flex-wrap pt-1">
+                  {pending.recommendedFor.map(tag => (
+                    <span key={tag} className="text-[9px] bg-primary/10 text-primary rounded px-1.5 py-0.5">{tag}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            {pendingId !== modelId && (
+              <Button variant="ghost" onClick={() => setPendingId(modelId)}>Reset</Button>
+            )}
+            <Button onClick={saveSelection} disabled={pendingId === modelId}>
+              <Check className="w-4 h-4 mr-1" /> Save selection
+            </Button>
+          </div>
+        </Card>
+
+        {/* Price-per-token comparison table -------------------------------- */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-primary" />
+            <h3 className="font-bold text-sm">All models — price per million tokens</h3>
+            <span className="text-[10px] text-muted-foreground ml-auto italic">Prices in USD · last updated April 2026</span>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>Model</TableHead>
+                  <TableHead className="text-center">Abbrev</TableHead>
+                  <TableHead className="text-right">Input /1M</TableHead>
+                  <TableHead className="text-right">Output /1M</TableHead>
+                  <TableHead className="text-right">Cache read /1M</TableHead>
+                  <TableHead className="text-right">Context</TableHead>
+                  <TableHead>Best for</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {AI_MODELS.map(m => {
+                  const active = isActive(m);
+                  const pend = isPending(m) && !active;
+                  return (
+                    <TableRow key={m.id}
+                      className={`cursor-pointer ${active ? "bg-emerald-50" : pend ? "bg-amber-50" : ""}`}
+                      onClick={() => {
+                        setProvider(m.provider);
+                        setPendingId(m.id);
+                      }}
+                    >
+                      <TableCell className="text-xs text-muted-foreground">{PROVIDER_LABEL[m.provider]}</TableCell>
+                      <TableCell className="font-medium text-sm">
+                        {m.label}
+                        {active && <span className="ml-2 text-[9px] font-bold uppercase bg-emerald-600 text-white px-1.5 py-0.5 rounded">active</span>}
+                        {pend && <span className="ml-2 text-[9px] font-bold uppercase bg-amber-500 text-white px-1.5 py-0.5 rounded">pending</span>}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <span className="font-mono text-[10px] bg-foreground text-background px-1.5 py-0.5 rounded">{m.abbrev}</span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">{fmtUSD(m.inputPerM)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{fmtUSD(m.outputPerM)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                        {m.cachedReadPerM != null ? fmtUSD(m.cachedReadPerM) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-[10px] text-muted-foreground">
+                        {m.contextTokens.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-[10px] text-muted-foreground">
+                        {m.recommendedFor?.join(" · ") ?? m.notes ?? "—"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="text-[10px] text-muted-foreground italic border-t pt-2">
+            Click a row to pre-select it. Prices are list rates from the official provider docs; volume discounts and
+            batch APIs (when applicable) can reduce them further. Cache-read column applies only when the prompt-caching
+            feature is enabled on a request.
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}

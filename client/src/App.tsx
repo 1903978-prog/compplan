@@ -23,11 +23,14 @@ import SlideTemplateEditor from "@/pages/SlideTemplateEditor";
 import Invoicing from "@/pages/Invoicing";
 import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
+import AdminAIModels from "@/pages/AdminAIModels";
+import CandidateScores from "@/pages/CandidateScores";
+import { useActiveAIModel } from "@/hooks/use-active-ai-model";
 import AdminBackup from "@/pages/AdminBackup";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -93,6 +96,9 @@ function Navigation() {
   const [apiActive, setApiActive] = useState(false);
   const [apiCost, setApiCost] = useState<{ month: string; today: string } | null>(null);
   const [location] = useLocation();
+  // Active AI model — rendered as a small abbreviation next to the cost
+  // badge so the user always sees which provider/model this session will use.
+  const { model: activeAIModel } = useActiveAIModel();
 
   // Privacy Mode — hides every confidential number across the entire app.
   //
@@ -336,6 +342,7 @@ function Navigation() {
                 basePaths={["/hiring"]}
                 items={[
                   { href: "/hiring", label: "Pipeline", icon: UserCheck },
+                  { href: "/hiring/scores", label: "Candidate Scoring", icon: Activity },
                 ]}
               />
               <NavDropdown
@@ -363,6 +370,7 @@ function Navigation() {
                 items={[
                   { href: "/admin", label: "Cybersecurity", icon: Shield },
                   { href: "/admin/backup", label: "Backup & Restore", icon: Database },
+                  { href: "/admin/ai-models", label: "AI Models", icon: Cpu },
                 ]}
               />
             </div>
@@ -379,6 +387,17 @@ function Navigation() {
                 <span className="text-[10px] font-mono text-muted-foreground" title={`Today: $${apiCost.today} | Month: $${apiCost.month}`}>
                   ${apiCost.month}
                 </span>
+              )}
+              {/* Active AI model abbreviation — click to jump straight to
+                  the selector page without hunting through the Admin menu. */}
+              {activeAIModel && (
+                <Link
+                  href="/admin/ai-models"
+                  className="text-[10px] font-mono font-bold bg-primary/10 text-primary hover:bg-primary/20 rounded px-1.5 py-0.5 transition-colors"
+                  title={`Active model: ${activeAIModel.label} — click to change`}
+                >
+                  {activeAIModel.abbrev}
+                </Link>
               )}
             </div>
             {(
@@ -446,6 +465,7 @@ function Router() {
       <Route path="/clients" component={ClientLedger} />
       <Route path="/admin" component={AppAdmin} />
       <Route path="/admin/backup" component={AdminBackup} />
+      <Route path="/admin/ai-models" component={AdminAIModels} />
       <Route component={NotFound} />
     </Switch>
   );

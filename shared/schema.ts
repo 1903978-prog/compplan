@@ -732,6 +732,10 @@ export const hiringCandidates = pgTable("hiring_candidates", {
   sort_order: integer("sort_order").notNull().default(0),
   external_id: text("external_id"),       // email from Eendigo — dedup key
   sync_locked: integer("sync_locked").notNull().default(0), // 1 = user manually moved, don't overwrite
+  // Per-test scores captured across the funnel. Keys are arbitrary (hsa,
+  // testgorilla, intro_call, case_study, ppt, final) so the hiring team
+  // can add a new test without a schema change. Values are 0-100 or null.
+  scores: jsonb("scores").$type<Record<string, number | null>>(),
   created_at: text("created_at").notNull(),
 });
 

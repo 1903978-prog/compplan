@@ -776,35 +776,43 @@ Thanks,`;
                 }
                 return visibleTasks.map(task => {
                 const isOverdue = task.deadline && task.deadline < new Date().toISOString().slice(0, 10) && task.status === "pending";
+                // Compact single-line row so the user can see many more
+                // tasks per screen. Title gets the most space (flex-1);
+                // assignee, body-preview (if any), deadline, delete-button
+                // all sit on the same baseline on the right.
                 return (
-                  <div key={task.id} className={`flex items-center gap-3 p-3 group hover:bg-muted/30 transition-colors ${task.status === "done" ? "opacity-60" : ""}`}>
+                  <div key={task.id} className={`flex items-center gap-3 py-1.5 px-3 group hover:bg-muted/30 transition-colors ${task.status === "done" ? "opacity-60" : ""}`}>
                     <button onClick={() => toggleTask(task)} className="shrink-0">
                       {task.status === "done"
-                        ? <Check className="w-5 h-5 text-emerald-500" />
-                        : <div className="w-5 h-5 rounded border-2 border-muted-foreground/40 hover:border-primary transition-colors" />
+                        ? <Check className="w-4 h-4 text-emerald-500" />
+                        : <div className="w-4 h-4 rounded border-2 border-muted-foreground/40 hover:border-primary transition-colors" />
                       }
                     </button>
-                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openTaskPopup(task)}>
-                      <div className={`text-sm ${task.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>{task.title}</div>
+                    <div className="flex-1 min-w-0 flex items-center gap-3 cursor-pointer" onClick={() => openTaskPopup(task)}>
+                      <span className={`text-sm truncate ${task.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                        {task.title}
+                      </span>
                       {task.body && (
-                        <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-xl">{task.body}</div>
+                        <span className="text-[10px] text-muted-foreground truncate max-w-xs hidden md:inline">
+                          — {task.body}
+                        </span>
                       )}
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs text-muted-foreground">→ <span className="font-medium">{task.delegated_to}</span></span>
-                        {task.deadline && (
-                          <span className={`text-xs flex items-center gap-1 ${isOverdue ? "text-destructive font-bold" : "text-muted-foreground"}`}>
-                            <Clock className="w-3 h-3" />
-                            {format(parseISO(task.deadline), "dd/MM/yy")}
-                            {isOverdue && " — OVERDUE"}
-                          </span>
-                        )}
-                      </div>
                     </div>
+                    <span className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
+                      → <span className="font-medium">{task.delegated_to}</span>
+                    </span>
+                    {task.deadline && (
+                      <span className={`text-xs flex items-center gap-1 shrink-0 whitespace-nowrap ${isOverdue ? "text-destructive font-bold" : "text-muted-foreground"}`}>
+                        <Clock className="w-3 h-3" />
+                        {format(parseISO(task.deadline), "dd/MM/yy")}
+                        {isOverdue && " — OVERDUE"}
+                      </span>
+                    )}
                     <button
                       onClick={() => deleteTask(task.id)}
                       className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                     >
-                      <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                      <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
                     </button>
                   </div>
                 );
