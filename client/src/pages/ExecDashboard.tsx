@@ -6,7 +6,7 @@ import { useStore } from "@/hooks/use-store";
 import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
-  ArrowUpRight, Target,
+  ArrowUpRight, Target, Layers,
 } from "lucide-react";
 
 // ─── Executive Dashboard ─────────────────────────────────────────────────
@@ -159,6 +159,9 @@ export default function ExecDashboard() {
   const [invoices, setInvoices] = useState<Invoice[]>(cached?.invoices ?? []);
   const [proposals, setProposals] = useState<PricingProposal[]>(cached?.proposals ?? []);
   const [wonProjects, setWonProjects] = useState<WonProject[]>(cached?.wonProjects ?? []);
+  // Active pricing cases — used by the "Commercial Options (3 timelines)"
+  // card to preview each deal's Net fee across its configured timelines.
+  const [pricingCases, setPricingCases] = useState<any[]>([]);
   const [loading, setLoading] = useState(!cached); // skip spinner if cache is warm
   const [lastFetch, setLastFetch] = useState<Date | null>(cached?.ts ? new Date(cached.ts) : null);
 
@@ -169,11 +172,12 @@ export default function ExecDashboard() {
       // already has content and we're just silently refreshing.
       if (!cached) setLoading(true);
       try {
-        const [cRes, iRes, pRes, wRes] = await Promise.all([
+        const [cRes, iRes, pRes, wRes, casesRes] = await Promise.all([
           fetch("/api/hiring/candidates",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/harvest/invoices",   { credentials: "include" }).then(r => r.ok ? r.json().then(d => d.invoices ?? []) : []),
           fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/won-projects",       { credentials: "include" }).then(r => r.ok ? r.json() : []),
+          fetch("/api/pricing/cases",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
         ]);
         if (cancelled) return;
         const c = Array.isArray(cRes) ? cRes : [];
@@ -184,6 +188,7 @@ export default function ExecDashboard() {
         setInvoices(i);
         setProposals(p);
         setWonProjects(w);
+        setPricingCases(Array.isArray(casesRes) ? casesRes : []);
         setLastFetch(new Date());
         writeCache(c, i, p, w);
       } catch (e) {
@@ -538,6 +543,80 @@ export default function ExecDashboard() {
           })()}
         </Card>
       </div>
+
+      {/* Commercial Options — three-timeline preview per active pricing case.
+          Mirrors the block rendered inside each case so leadership sees the
+          current Gross/Net alternatives at a glance without opening the
+          deal. Only shows cases that have case_timelines populated (i.e.
+          the user actively configured the three options). */}
+      {(() => {
+        const activeCases = pricingCases.filter(c =>
+          Array.isArray(c.case_timelines) && c.case_timelines.length > 0
+          && (c.status === "active" || c.status === "draft" || c.status === "pending"),
+        );
+        if (activeCases.length === 0) return null;
+        const eur = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
+        // Compute each column's net total using the same compound discount
+        // arithmetic as the Pricing Case card (gross × ∏(1 − discPct)).
+        const computeCols = (c: any) => {
+          const wk = (c.recommendation?.target_weekly ?? 0);
+          const adminPct = 8; // match PricingTool default; recommendation has no admin-fee field
+          const grossWk = Math.round(wk * (1 + adminPct / 100));
+          const baseDiscounts = (c.case_discounts ?? []).filter((d: any) => d.enabled && d.pct > 0 && d.id !== "commitment");
+          return c.case_timelines.map((t: any) => {
+            const gross = grossWk * t.weeks;
+            let net = gross;
+            for (const d of baseDiscounts) net *= (1 - d.pct / 100);
+            if (t.commitPct > 0) net *= (1 - t.commitPct / 100);
+            return { weeks: t.weeks, commitPct: t.commitPct, gross: Math.round(gross), net: Math.round(net) };
+          });
+        };
+        return (
+          <div className="mt-6">
+            <Card className="p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Layers className="w-4 h-4 text-primary" />
+                <h3 className="font-bold text-sm">Commercial Options · Active deals (three timelines each)</h3>
+                <span className="text-[10px] text-muted-foreground ml-auto">{activeCases.length} case{activeCases.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div className="space-y-3">
+                {activeCases.map(c => {
+                  const cols = computeCols(c);
+                  return (
+                    <div key={c.id} className="border rounded-lg p-3 bg-background">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <Link to="/pricing" className="font-bold text-sm hover:text-primary transition-colors">
+                            {c.project_name} — {c.client_name}
+                          </Link>
+                          <span className="text-[10px] text-muted-foreground ml-2">
+                            {c.region} · {c.revenue_band} · {c.pe_owned ? "PE" : "Corp"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {cols.map((col, i) => (
+                          <div key={i} className="rounded border bg-muted/10 p-2 text-center">
+                            <div className="text-[10px] text-muted-foreground uppercase font-semibold">
+                              {col.weeks} weeks{col.commitPct > 0 ? ` · −${col.commitPct}% commit` : ""}
+                            </div>
+                            <div className="text-[9px] text-muted-foreground font-mono" data-privacy="blur">
+                              Gross {eur(col.gross)}
+                            </div>
+                            <div className="text-sm font-bold text-emerald-700 font-mono" data-privacy="blur">
+                              Net {eur(col.net)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          </div>
+        );
+      })()}
 
       {loading && (
         <p className="text-[11px] text-muted-foreground italic text-center">Loading live data…</p>

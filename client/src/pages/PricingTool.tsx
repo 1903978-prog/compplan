@@ -220,7 +220,19 @@ A4. Success Fee: {{SUCCESS_FEE_PERCENT}}% of the Base Fees (equal to {{SUCCESS_F
 
 Accordingly, assuming all applicable incentives are achieved and excluding any success fee, the Net Professional Fees amount to {{NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE}}.
 
-The fees shall be invoiced in {{NUMBER_OF_INVOICES}} instalments, each in the amount of {{INVOICE_AMOUNT}}, inclusive of the {{ADMINISTRATION_FEE_PERCENT}}% administration fee.`;
+The fees shall be invoiced in {{NUMBER_OF_INVOICES}} instalments, each in the amount of {{INVOICE_AMOUNT}}, inclusive of the {{ADMINISTRATION_FEE_PERCENT}}% administration fee.
+
+{{#if COMMITMENT_OPTIONS_BLOCK}}
+**Commercial options — three timeline alternatives**
+
+To reward a longer-term partnership, Eendigo is pleased to propose three alternative timeline options for this engagement. The weekly rate and team composition remain identical across all three; the client may choose the option that best fits their objectives and speed of execution:
+
+- **Option 1 — {{OPTION_1_WEEKS}} weeks** (base timeline): Net Professional Fees {{OPTION_1_NET_TOTAL}}.{{#if OPTION_1_COMMIT_PCT}} An additional commitment discount of {{OPTION_1_COMMIT_PCT}}% is applied.{{/if}}
+- **Option 2 — {{OPTION_2_WEEKS}} weeks** (medium horizon): Net Professional Fees {{OPTION_2_NET_TOTAL}}, reflecting an additional commitment discount of {{OPTION_2_COMMIT_PCT}}% in recognition of the extended engagement.
+- **Option 3 — {{OPTION_3_WEEKS}} weeks** (long-term partnership): Net Professional Fees {{OPTION_3_NET_TOTAL}}, reflecting an additional commitment discount of {{OPTION_3_COMMIT_PCT}}% to mark the deeper collaboration.
+
+The commitment discount is contingent upon the client confirming the selected timeline at contract signing. All other commercial terms (team, methodology, governance, deliverables) remain unchanged across the three options.
+{{/if}}`;
 
 // Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
 // Default full Eendigo team = 2 ASC INT + 3 EM EXT (5 people)

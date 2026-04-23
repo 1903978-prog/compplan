@@ -315,6 +315,10 @@ export const pricingCases = pgTable("pricing_cases", {
   strategic_intent: text("strategic_intent"),
   procurement_involvement: text("procurement_involvement"),
   case_discounts: jsonb("case_discounts"),
+  // Three-timeline commercial-proposal comparison. Array of
+  // {weeks: number, commitPct: number} — e.g. the 12/16/20-week + 0/5/7%
+  // default curve rendered on every case. Null = use engine default.
+  case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number }[] | null>(),
   // Value-based fields
   company_revenue_m: real("company_revenue_m"),
   aspiration_ebitda_eur: real("aspiration_ebitda_eur"),

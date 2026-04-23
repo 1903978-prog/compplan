@@ -575,6 +575,52 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS risk_flags JSONB`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS problem_statement TEXT`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS expected_impact_eur REAL`);
+  // Three-timeline commercial-proposal comparison — JSONB array of
+  // {weeks, commitPct} rows. Optional; engine falls back to the default
+  // short/medium/long curve when null.
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS case_timelines JSONB`);
+
+  // ── Seed EMV01 — live reference case for the three-timeline proposal ───
+  // The numbers reproduce the commercial-proposal slide exactly (12 / 16 /
+  // 20 weeks with 0 / 5 / 7 % commitment discount, €458k / €611k / €764k
+  // Gross and €414k / €521k / €598k Net). Weekly Gross ≈ €38,203.
+  // Idempotent: INSERT ... WHERE NOT EXISTS by project_name.
+  try {
+    const emv01Staffing = JSON.stringify([
+      { role_id: "partner",     role_name: "Partner",     resource_label: "Partner",           days_per_week: 1, daily_rate_used: 3500, count: 1 },
+      { role_id: "manager_ext", role_name: "Manager EXT", resource_label: "Engagement Manager", days_per_week: 5, daily_rate_used: 1500, count: 1 },
+      { role_id: "asc_in",      role_name: "ASC IN",      resource_label: "Associate INT",     days_per_week: 5, daily_rate_used: 250,  count: 2 },
+    ]);
+    const emv01Discounts = JSON.stringify([
+      { id: "carlyle_frame", name: "Carlyle frame agr. discount", pct: 5, enabled: true },
+      { id: "prompt_payment", name: "Prompt payment discount", pct: 3, enabled: true },
+      { id: "rebate", name: "Rebate", pct: 2, enabled: true },
+      { id: "commitment", name: "Commitment discount", pct: 0, enabled: false },
+    ]);
+    const emv01Timelines = JSON.stringify([
+      { weeks: 12, commitPct: 0 },
+      { weeks: 16, commitPct: 5 },
+      { weeks: 20, commitPct: 7 },
+    ]);
+    const nowIso = new Date().toISOString();
+    await db.execute(sql`
+      INSERT INTO pricing_cases (
+        project_name, client_name, fund_name, region, country,
+        pe_owned, revenue_band, price_sensitivity, duration_weeks,
+        notes, status, staffing, case_discounts, case_timelines,
+        created_at, updated_at
+      )
+      SELECT 'EMV01', 'EMV', 'Carlyle',
+             'Italy', 'Italy',
+             1, 'above_1b', 'medium', 12,
+             'Commercial proposal reference — three timeline options.',
+             'active', ${emv01Staffing}::jsonb, ${emv01Discounts}::jsonb, ${emv01Timelines}::jsonb,
+             ${nowIso}, ${nowIso}
+      WHERE NOT EXISTS (SELECT 1 FROM pricing_cases WHERE project_name = 'EMV01')
+    `);
+  } catch (e) {
+    console.error("Failed to seed EMV01 pricing case:", e);
+  }
 
   // Add project_type and slide_selection columns to proposals (idempotent)
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS project_type TEXT`);
