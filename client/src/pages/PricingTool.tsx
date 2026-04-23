@@ -74,6 +74,39 @@ interface PricingCase {
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
 const fmtK = (n: number) => Math.round(n).toLocaleString("it-IT");
 
+// ── Case discount helpers ──────────────────────────────────────────────────
+// Both handled in one place so new discount types (like the commitment
+// discount P7) only need to be added to DEFAULT_PRICING_SETTINGS + these
+// two helpers to flow through every code path (new case, loaded case,
+// migrated legacy case).
+
+type CaseDiscountRow = { id: string; name: string; pct: number; enabled: boolean };
+
+/** Default-enable rule: only the "one-off" discount starts enabled, matching
+ *  previous behavior. All others (prompt payment, rebate, commitment) start
+ *  off and are opted in per deal. */
+function buildInitialDiscounts(
+  defs: { id: string; name: string; default_pct: number; active?: boolean }[],
+): CaseDiscountRow[] {
+  return defs.map(d => ({
+    id: d.id,
+    name: d.name,
+    pct: d.default_pct,
+    enabled: /one.?off/i.test(d.name) && d.default_pct > 0,
+  }));
+}
+
+/** Migrate a loaded case that predates the commitment-discount row: append
+ *  the row (disabled, 0%) so the UI surfaces it without changing the saved
+ *  numbers on the deal. */
+function ensureCommitmentRow(saved: CaseDiscountRow[]): CaseDiscountRow[] {
+  if (saved.some(d => d.id === "commitment")) return saved;
+  return [
+    ...saved,
+    { id: "commitment", name: "Commitment discount", pct: 0, enabled: false },
+  ];
+}
+
 function emptyProposal(): PricingProposal {
   return {
     proposal_date: new Date().toISOString().slice(0, 10),
@@ -735,7 +768,7 @@ export default function PricingTool() {
     setTeamPreset("1+2");
     setForm(base);
     setView("form");
-    setCaseDiscounts((settings?.discounts ?? []).map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: /one.?off/i.test(d.name) && d.default_pct > 0 })));
+    setCaseDiscounts(buildInitialDiscounts(settings?.discounts ?? []));
   };
 
   const openCase = (c: any) => {
@@ -749,9 +782,11 @@ export default function PricingTool() {
     setManualDelta(0);
     setView("form");
     if (c.case_discounts?.length) {
-      setCaseDiscounts(c.case_discounts);
+      // Ensure saved cases that pre-date the commitment discount get the new
+      // row injected so the UI doesn't silently drop it.
+      setCaseDiscounts(ensureCommitmentRow(c.case_discounts));
     } else if (settings) {
-      setCaseDiscounts(settings.discounts.map(d => ({ id: d.id, name: d.name, pct: d.default_pct, enabled: /one.?off/i.test(d.name) && d.default_pct > 0 })));
+      setCaseDiscounts(buildInitialDiscounts(settings.discounts));
     }
   };
 
@@ -4151,21 +4186,51 @@ export default function PricingTool() {
                 </div>
                 {/* Discounts inline */}
                 {caseDiscounts.length > 0 && (
-                  <div className="flex items-center gap-2 border-l pl-4 ml-2">
+                  <div className="flex items-center gap-2 border-l pl-4 ml-2 flex-wrap">
                     <span className="text-[10px] font-bold uppercase text-muted-foreground shrink-0">Disc:</span>
-                    {caseDiscounts.map(d => (
-                      <label key={d.id} className="flex items-center gap-1 text-[11px] shrink-0">
-                        <input type="checkbox" checked={d.enabled}
-                          onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, enabled: e.target.checked } : x))}
-                          className="h-3 w-3 rounded" />
-                        <span className={d.enabled ? "text-foreground" : "text-muted-foreground"}>{d.name}</span>
-                        <input type="number" step="0.5" min="0" max="100" value={d.pct}
-                          onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, pct: parseFloat(e.target.value) || 0 } : x))}
-                          disabled={!d.enabled}
-                          className="h-5 w-10 text-[10px] text-center font-mono border rounded disabled:opacity-40 bg-background" />
-                        <span className="text-[9px] text-muted-foreground">%</span>
-                      </label>
-                    ))}
+                    {caseDiscounts.map(d => {
+                      // Commitment discount (P7) uses a constrained 1-10%
+                      // dropdown per spec — all other discounts keep the
+                      // free-form number input they've always had.
+                      const isCommitment = d.id === "commitment";
+                      return (
+                        <label key={d.id} className="flex items-center gap-1 text-[11px] shrink-0">
+                          <input type="checkbox" checked={d.enabled}
+                            onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, enabled: e.target.checked } : x))}
+                            className="h-3 w-3 rounded" />
+                          <span className={d.enabled ? "text-foreground" : "text-muted-foreground"}>
+                            {d.name}
+                            {isCommitment && <span className="text-[9px] text-muted-foreground ml-0.5">(P7)</span>}
+                          </span>
+                          {isCommitment ? (
+                            <Select
+                              value={String(d.pct)}
+                              onValueChange={v => setCaseDiscounts(prev => prev.map(x =>
+                                x.id === d.id ? { ...x, pct: Number(v), enabled: Number(v) > 0 || x.enabled } : x
+                              ))}
+                              disabled={!d.enabled}
+                            >
+                              <SelectTrigger className="h-5 w-14 text-[10px] px-1.5 font-mono">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
+                                  <SelectItem key={p} value={String(p)} className="text-[11px]">
+                                    {p}%
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <input type="number" step="0.5" min="0" max="100" value={d.pct}
+                              onChange={e => setCaseDiscounts(prev => prev.map(x => x.id === d.id ? { ...x, pct: parseFloat(e.target.value) || 0 } : x))}
+                              disabled={!d.enabled}
+                              className="h-5 w-10 text-[10px] text-center font-mono border rounded disabled:opacity-40 bg-background" />
+                          )}
+                          {!isCommitment && <span className="text-[9px] text-muted-foreground">%</span>}
+                        </label>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -4804,6 +4869,70 @@ export default function PricingTool() {
                           </div>
                         </div>
                       )}
+
+                      {/* ── Option without Partner ──────────────────────
+                          Fallback pricing for when the client balks at the
+                          quoted fee: remove the Partner's contribution from
+                          the team and quote a reduced Gross / Net. Uses a
+                          proportional reduction (partner's share of team
+                          cost) rather than re-running the whole pricing
+                          engine — transparent, easy to explain in a pitch.
+                          "You keep the same execution team; I just step
+                          out of the day-to-day, so here's X% off." */}
+                      {(() => {
+                        const partnerLines = form.staffing.filter(
+                          l => l.days_per_week > 0 && l.count > 0
+                            && (l.role_name || "").toLowerCase().includes("partner"),
+                        );
+                        if (partnerLines.length === 0 || teamCostWk <= 0) return null;
+                        const partnerWeeklyCost = partnerLines.reduce(
+                          (s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0,
+                        );
+                        const partnerShare = partnerWeeklyCost / teamCostWk; // 0..1
+                        // Reduce gross and net by the partner's share of total
+                        // team cost. Partner is typically ~15-25% of a team
+                        // cost line, so the client sees a real, credible cut.
+                        const grossWkNoP = Math.round(grossWk * (1 - partnerShare));
+                        const netWkNoP = Math.round(netWk * (1 - partnerShare));
+                        const grossTotalNoP = grossWkNoP * effectiveDur;
+                        const netTotalNoP = netWkNoP * effectiveDur;
+                        return (
+                          <div className="rounded-lg border-2 border-dashed border-amber-300 overflow-hidden">
+                            <div className="bg-amber-50 text-amber-900 text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 flex items-center justify-between">
+                              <span>Option without Partner — fallback quote</span>
+                              <span className="font-normal normal-case text-amber-800/80">
+                                Partner cost = {(partnerShare * 100).toFixed(0)}% of team
+                              </span>
+                            </div>
+                            <Table>
+                              <TableHeader>
+                                <TableRow className="bg-amber-50/50">
+                                  <TableHead className="text-[9px] py-1.5">Gross /wk (no partner)</TableHead>
+                                  <TableHead className="text-[9px] py-1.5">Net /wk (no partner)</TableHead>
+                                  <TableHead className="text-[9px] py-1.5">Gross Total</TableHead>
+                                  <TableHead className="text-[9px] py-1.5">Net Total</TableHead>
+                                  <TableHead className="text-[9px] py-1.5">Client saves</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                <TableRow>
+                                  <TableCell className="font-mono text-sm font-bold text-amber-600">{fmtC(grossWkNoP)}</TableCell>
+                                  <TableCell className="font-mono text-sm font-bold text-emerald-600">{fmtC(netWkNoP)}</TableCell>
+                                  <TableCell className="font-mono text-sm font-semibold text-amber-700">{fmtC(grossTotalNoP)}</TableCell>
+                                  <TableCell className="font-mono text-sm font-semibold text-emerald-700">{fmtC(netTotalNoP)}</TableCell>
+                                  <TableCell className="font-mono text-sm font-bold text-red-600">
+                                    −{fmtC(netTotal - netTotalNoP)}
+                                  </TableCell>
+                                </TableRow>
+                              </TableBody>
+                            </Table>
+                            <div className="px-3 py-1.5 text-[9px] text-muted-foreground border-t bg-muted/10">
+                              Use this when the client pushes back on price. Keeps the execution team intact;
+                              the Partner steps out of day-to-day delivery. Reduction = Partner's {(partnerShare * 100).toFixed(0)}% share of team cost, applied proportionally to Gross & Net.
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })()}

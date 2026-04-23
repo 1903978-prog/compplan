@@ -42,6 +42,19 @@ const STAGES = [
     dot: "bg-emerald-400",
   },
   {
+    // Offer out — the intermediate stage for candidates who performed well
+    // during CSI and have a written offer in their inbox but haven't
+    // accepted yet. Distinct from "Hired" (signed) and "After CSI LM"
+    // (still in deliberation). Teal stands out between emerald (After CSI)
+    // and green (Hired).
+    id: "offer",
+    label: "Offer out",
+    color: "bg-teal-50 border-teal-200",
+    header: "bg-teal-600",
+    badge: "bg-teal-100 text-teal-800",
+    dot: "bg-teal-400",
+  },
+  {
     id: "hired",
     label: "Hired",
     color: "bg-green-50 border-green-300",

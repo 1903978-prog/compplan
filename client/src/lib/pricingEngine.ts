@@ -587,6 +587,11 @@ export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
     { id: "oneoff",          name: "One-off discount",        default_pct: 3.5, active: true  },
     { id: "prompt_payment",  name: "Prompt payment discount", default_pct: 3, active: true  },
     { id: "rebate",          name: "Rebate",                  default_pct: 2, active: false },
+    // Commitment discount (P7) — applied when a client commits to a longer
+    // engagement. Sits between the P6 rebate and N1 net fee in the waterfall.
+    // Default 0% (user picks 1-10% from a dropdown per deal); typical pattern:
+    // no commitment on base timeline, 5% on medium, 7% on long.
+    { id: "commitment",      name: "Commitment discount",     default_pct: 0, active: false },
   ],
   staff_costs: [
     { role_id: "partner",     role_name: "Partner",     daily_cost: 0    },
