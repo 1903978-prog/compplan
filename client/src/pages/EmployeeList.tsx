@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw, Printer, Mail, User } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -243,6 +243,29 @@ export default function EmployeeList() {
   const [popupAssignee, setPopupAssignee] = useState("");
   const [popupDeadline, setPopupDeadline] = useState("");
 
+  // ── TDL focus-on-person ──────────────────────────────────────────────────
+  // Lets the manager pick a single person and see only their open tasks, with
+  // quick actions to (a) print/save-as-PDF via the browser's native print
+  // dialog and (b) send a pre-filled email with the task list. Emails live
+  // in localStorage (one-time prompt per person) because the employees table
+  // doesn't have an email column — adding a migration for a client-only
+  // convenience feature felt heavy.
+  const EMAIL_STORAGE_KEY = "tdl_person_emails_v1";
+  const [focusedPerson, setFocusedPerson] = useState<string>(""); // "" = show all
+  const [personEmails, setPersonEmails] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(EMAIL_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  const saveEmailFor = (name: string, email: string) => {
+    setPersonEmails(prev => {
+      const next = { ...prev, [name]: email.trim() };
+      try { localStorage.setItem(EMAIL_STORAGE_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+  };
+
   // ── Performance Issues state ──────────────────────────────────────────────
   const [perfIssues, setPerfIssues] = useState<any[]>([]);
   const [newPerfEmployee, setNewPerfEmployee] = useState("");
@@ -305,6 +328,126 @@ export default function EmployeeList() {
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
     setTaskPopup(null);
   };
+
+  // ── Print / Email handlers for the focused-person TDL view ───────────────
+
+  /** Build a plain-text, bullet-list rendering of a person's open tasks.
+   *  Used by both the email body and the print view — keeping the source
+   *  single-pass guarantees the two deliverables stay in sync. */
+  const buildTaskTextList = (person: string, taskList: EmployeeTask[]): string => {
+    const lines: string[] = [];
+    for (const t of taskList) {
+      const dl = t.deadline ? ` (due ${format(parseISO(t.deadline), "dd/MM/yyyy")})` : "";
+      lines.push(`• ${t.title}${dl}`);
+      if (t.body) {
+        // Indent body for readability in plain text
+        for (const bl of t.body.split("\n").filter(Boolean)) {
+          lines.push(`    ${bl}`);
+        }
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : "(No open tasks.)";
+  };
+
+  /** Open a small pop-up window containing a print-friendly HTML table
+   *  of the focused person's open tasks and immediately trigger the native
+   *  print dialog. The OS dialog includes "Save as PDF" as a destination on
+   *  every platform we target (Windows, macOS, Linux), which covers the
+   *  user's "make a PDF" request without adding a PDF library. */
+  const printFocusedTasks = (person: string, taskList: EmployeeTask[]) => {
+    const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+    const rows = taskList.map(t => {
+      const dl = t.deadline ? format(parseISO(t.deadline), "dd/MM/yyyy") : "—";
+      const overdue = t.deadline && t.deadline < new Date().toISOString().slice(0, 10);
+      return `<tr>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top;width:60%;">
+          <div style="font-weight:600;">${escapeHtml(t.title)}</div>
+          ${t.body ? `<div style="color:#6b7280;font-size:11px;margin-top:3px;white-space:pre-wrap;">${escapeHtml(t.body)}</div>` : ""}
+        </td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top;font-family:monospace;color:${overdue ? "#dc2626" : "#111"};font-weight:${overdue ? "700" : "400"};">
+          ${dl}${overdue ? " (OVERDUE)" : ""}
+        </td>
+      </tr>`;
+    }).join("");
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" />
+<title>TDL — ${escapeHtml(person)}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; padding: 24px; color: #111; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: #6b7280; font-size: 11px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 8px; background: #f3f4f6; border-bottom: 2px solid #d1d5db; font-weight: 600; font-size: 10px; text-transform: uppercase; color: #374151; }
+  @media print { body { padding: 12px; } }
+</style></head><body>
+  <h1>Task list — ${escapeHtml(person)}</h1>
+  <div class="sub">${taskList.length} open task${taskList.length === 1 ? "" : "s"} · Generated ${today}</div>
+  <table>
+    <thead><tr><th>Task</th><th style="width:140px;">Deadline</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="2" style="padding:16px;text-align:center;color:#9ca3af;">No open tasks.</td></tr>`}</tbody>
+  </table>
+</body></html>`;
+
+    const w = window.open("", "_blank", "width=800,height=900");
+    if (!w) {
+      toast({ title: "Pop-up blocked", description: "Allow pop-ups for this site to print.", variant: "destructive" });
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    // Give the browser a tick to render before triggering print
+    w.addEventListener("load", () => { w.focus(); w.print(); });
+    // Fallback if load event doesn't fire (some browsers cache an empty doc)
+    setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 400);
+  };
+
+  /** Build and open a `mailto:` URL with a pre-filled subject and body
+   *  containing the task list and the standard message the user asked for.
+   *  If no email is saved for this person, prompt for one first and
+   *  remember it for next time. */
+  const emailFocusedTasks = (person: string, taskList: EmployeeTask[]) => {
+    let to = personEmails[person] ?? "";
+    if (!to) {
+      const entered = window.prompt(`Email address for ${person}?`, "");
+      if (!entered || !entered.trim()) return;
+      to = entered.trim();
+      saveEmailFor(person, to);
+    }
+    const subject = `Updated task list — ${person}`;
+    const body =
+`Hi ${person.split(" ")[0] || person},
+
+Here is the updated task list that we have discussed. For your information.
+
+${buildTaskTextList(person, taskList)}
+
+Let's have a quick catch up in the next days to see where we stand and to answer questions.
+
+Thanks,`;
+    // mailto: size is limited (~2000 chars on Windows). If we overshoot,
+    // truncate the task list and note it so the user can paste the rest.
+    const MAILTO_CAP = 1900;
+    const full = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (full.length > MAILTO_CAP) {
+      toast({
+        title: "Task list too long for one email",
+        description: "Opening your mail client with the first batch — paste the rest from the printable view.",
+      });
+    }
+    window.location.href = full.slice(0, MAILTO_CAP);
+  };
+
+  // Minimal HTML escaper for the print pop-up so pasted notes with < or &
+  // don't break the rendered page.
+  function escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
 
   // ── Performance Issues CRUD ───────────────────────────────────────────────
   useEffect(() => {
@@ -541,12 +684,97 @@ export default function EmployeeList() {
                 </Button>
               </div>
             </div>
-            {/* Task list */}
+
+            {/* Focus-on-person bar — view one person's tasks, print/email them */}
+            {(() => {
+              const personsWithTasks = Array.from(new Set(tasks.map(t => t.delegated_to))).sort();
+              const focusedTasks = focusedPerson
+                ? tasks.filter(t => t.delegated_to === focusedPerson && t.status === "pending")
+                : tasks;
+              return (
+                <div className="p-3 border-b bg-primary/5 flex flex-wrap items-center gap-2">
+                  <User className="w-4 h-4 text-primary shrink-0" />
+                  <Label className="text-xs font-semibold mb-0 shrink-0">View tasks for:</Label>
+                  <Select
+                    value={focusedPerson || "__all__"}
+                    onValueChange={v => setFocusedPerson(v === "__all__" ? "" : v)}
+                  >
+                    <SelectTrigger className="h-8 w-56 text-sm bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All people (default)</SelectItem>
+                      {personsWithTasks.map(name => {
+                        const pending = tasks.filter(t => t.delegated_to === name && t.status === "pending").length;
+                        return (
+                          <SelectItem key={name} value={name}>
+                            {name} ({pending} open)
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+
+                  {focusedPerson && (
+                    <>
+                      <span className="text-xs text-muted-foreground ml-1">
+                        {focusedTasks.length} open task{focusedTasks.length === 1 ? "" : "s"}
+                        {personEmails[focusedPerson] && (
+                          <span className="ml-2 text-primary">· {personEmails[focusedPerson]}</span>
+                        )}
+                      </span>
+                      <div className="flex gap-1.5 ml-auto">
+                        <Button
+                          size="sm" variant="outline" className="h-8 text-xs"
+                          onClick={() => printFocusedTasks(focusedPerson, focusedTasks)}
+                          disabled={focusedTasks.length === 0}
+                          title="Open a printable view — use your browser's 'Save as PDF' to export"
+                        >
+                          <Printer className="w-3.5 h-3.5 mr-1" /> Print / PDF
+                        </Button>
+                        <Button
+                          size="sm" className="h-8 text-xs"
+                          onClick={() => emailFocusedTasks(focusedPerson, focusedTasks)}
+                          disabled={focusedTasks.length === 0}
+                          title="Open your mail client with a pre-filled message and the task list"
+                        >
+                          <Mail className="w-3.5 h-3.5 mr-1" /> Email
+                        </Button>
+                        {personEmails[focusedPerson] && (
+                          <Button
+                            size="sm" variant="ghost" className="h-8 text-xs px-2"
+                            onClick={() => {
+                              const entered = window.prompt(
+                                `Update email for ${focusedPerson}:`,
+                                personEmails[focusedPerson] ?? "",
+                              );
+                              if (entered != null) saveEmailFor(focusedPerson, entered);
+                            }}
+                            title="Change saved email address"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Task list — filtered to focused person if one is selected */}
             <div className="divide-y">
-              {tasks.length === 0 && (
-                <div className="p-10 text-center text-muted-foreground text-sm">No tasks yet. Add one above.</div>
-              )}
-              {tasks.map(task => {
+              {(() => {
+                const visibleTasks = focusedPerson
+                  ? tasks.filter(t => t.delegated_to === focusedPerson)
+                  : tasks;
+                if (tasks.length === 0) {
+                  return <div className="p-10 text-center text-muted-foreground text-sm">No tasks yet. Add one above.</div>;
+                }
+                if (visibleTasks.length === 0) {
+                  return <div className="p-10 text-center text-muted-foreground text-sm">No tasks for {focusedPerson}.</div>;
+                }
+                return visibleTasks.map(task => {
                 const isOverdue = task.deadline && task.deadline < new Date().toISOString().slice(0, 10) && task.status === "pending";
                 return (
                   <div key={task.id} className={`flex items-center gap-3 p-3 group hover:bg-muted/30 transition-colors ${task.status === "done" ? "opacity-60" : ""}`}>
@@ -580,7 +808,8 @@ export default function EmployeeList() {
                     </button>
                   </div>
                 );
-              })}
+                });
+              })()}
             </div>
           </div>
         )}
