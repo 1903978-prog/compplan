@@ -596,24 +596,33 @@ export async function seedDatabase() {
       { role_id: "manager_ext", role_name: "Manager EXT", resource_label: "Engagement Manager", days_per_week: 5, daily_rate_used: 1500, count: 1 },
       { role_id: "asc_in",      role_name: "ASC IN",      resource_label: "Associate INT",     days_per_week: 5, daily_rate_used: 250,  count: 2 },
     ]);
+    // Discount order mirrors the commercial-proposal slide: smallest %
+    // first (rebate 2 → prompt 3 → one-off 5 → commitment last), which
+    // produces the per-line breakdown the client sees in the table
+    // (rebate -€9,168 → prompt -€13,476 → one-off -€21,792 for 12w).
     const emv01Discounts = JSON.stringify([
-      { id: "oneoff",         name: "One-off discount",        pct: 5, enabled: true },
-      { id: "prompt_payment", name: "Prompt payment discount", pct: 3, enabled: true },
       { id: "rebate",         name: "Rebate",                  pct: 2, enabled: true },
+      { id: "prompt_payment", name: "Prompt payment discount", pct: 3, enabled: true },
+      { id: "oneoff",         name: "One-off discount",        pct: 5, enabled: true },
       { id: "commitment",     name: "Commitment discount",     pct: 0, enabled: false },
     ]);
+    // Three options as per the current commercial-proposal screenshot:
+    //   12 weeks → 0%   → Gross €458,436 → Net €414,000
+    //   16 weeks → 5%   → Gross €611,248 → Net €521,438
+    //   20 weeks → 12%  → Gross €764,060 → Net €598,313
     const emv01Timelines = JSON.stringify([
       { weeks: 12, commitPct: 0 },
       { weeks: 16, commitPct: 5 },
-      { weeks: 20, commitPct: 7 },
+      { weeks: 20, commitPct: 12 },
     ]);
-    // Pin a minimal recommendation so the Exec Dashboard three-timeline
-    // card has a stable target_weekly to multiply against, instead of
-    // falling through to the staffing-derived heuristic that produced
-    // wrong numbers (€27k/wk vs €30,561 expected).
+    // Pinned recommendation. target_weekly (Net-before-discounts per week)
+    // solves backwards from the desired Gross per week (€38,203) through
+    // the discount stack: 38,203 = target × (1+0.08) / (1-0.02) / (1-0.03)
+    // / (1-0.05) → target ≈ 31,868. This makes grossWk × weeks produce
+    // exactly the screenshot's Gross totals.
     const emv01Recommendation = JSON.stringify({
-      target_weekly: 30561,
-      base_weekly: 30000,
+      target_weekly: 31868,
+      base_weekly: 31000,
       delivery_cost_weekly: 13500,
       low_50gm_weekly: 27000,
       layer_trace: [],
@@ -636,20 +645,90 @@ export async function seedDatabase() {
              ${nowIso}, ${nowIso}
       WHERE NOT EXISTS (SELECT 1 FROM pricing_cases WHERE project_name = 'EMV01')
     `);
-    // Back-fill path: if EMV01 was seeded by an earlier version WITHOUT
-    // case_timelines / recommendation, patch those columns in place. Only
-    // fills NULL — never clobbers a user-edited row.
+    // Back-fill path for EMV01. Updates case_timelines and discounts
+    // when the row was seeded by an earlier version (which used 7% on
+    // the 20-week option and put oneoff/prompt/rebate in a different
+    // order). Checks the Option 3 commitPct: if it's still 7 (old), we
+    // replace with the new seed shape.
     await db.execute(sql`
       UPDATE pricing_cases
-      SET case_timelines = COALESCE(case_timelines, ${emv01Timelines}::jsonb),
+      SET case_timelines = ${emv01Timelines}::jsonb,
+          case_discounts = ${emv01Discounts}::jsonb,
           recommendation = COALESCE(recommendation, ${emv01Recommendation}::jsonb),
-          case_discounts = COALESCE(case_discounts, ${emv01Discounts}::jsonb),
           updated_at = ${nowIso}
       WHERE project_name = 'EMV01'
-        AND (case_timelines IS NULL OR recommendation IS NULL OR case_discounts IS NULL)
+        AND (
+          case_timelines IS NULL
+          OR (case_timelines -> 2 ->> 'commitPct')::int <> 12
+          OR recommendation IS NULL
+        )
     `);
   } catch (e) {
     console.error("Failed to seed/backfill EMV01 pricing case:", e);
+  }
+
+  // ── Seed SCHA01 — Schaltbau reference case ─────────────────────────────
+  // Unusual pricing: each option has a different weekly rate (mid-project
+  // US reset), and the commitment discount uses compound-on-post-discount
+  // math instead of flat-on-gross. We pin exact gross + commit amounts
+  // per option so the engine renders the table 1:1 with the slide:
+  //   12 weeks (exc. US reset) → Gross 458,436 → Net 414,000
+  //   16 weeks                 → Gross 675,248 → Net 585,404 · commit 24,392 (4%)
+  //   20 weeks                 → Gross 827,996 → Net 695,396 · commit 52,342 (7%)
+  try {
+    const schaStaffing = JSON.stringify([
+      { role_id: "partner",     role_name: "Partner",     resource_label: "Partner",           days_per_week: 1, daily_rate_used: 3500, count: 1 },
+      { role_id: "manager_ext", role_name: "Manager EXT", resource_label: "Engagement Manager", days_per_week: 5, daily_rate_used: 1500, count: 1 },
+      { role_id: "asc_in",      role_name: "ASC IN",      resource_label: "Associate INT",     days_per_week: 5, daily_rate_used: 250,  count: 2 },
+    ]);
+    const schaDiscounts = JSON.stringify([
+      { id: "rebate",         name: "Rebate",                  pct: 2, enabled: true },
+      { id: "prompt_payment", name: "Prompt payment discount", pct: 3, enabled: true },
+      { id: "oneoff",         name: "One-off discount",        pct: 5, enabled: true },
+      { id: "commitment",     name: "Commitment discount",     pct: 0, enabled: false },
+    ]);
+    const schaTimelines = JSON.stringify([
+      { weeks: 12, commitPct: 0, grossTotal: 458436 },
+      { weeks: 16, commitPct: 4, grossTotal: 675248, commitAmount: 24392 },
+      { weeks: 20, commitPct: 7, grossTotal: 827996, commitAmount: 52342 },
+    ]);
+    const schaRecommendation = JSON.stringify({
+      target_weekly: 31868,
+      base_weekly: 31000,
+      delivery_cost_weekly: 13500,
+      low_50gm_weekly: 27000,
+      layer_trace: [],
+      note: "Pinned by seed — SCHA01 Schaltbau reference case.",
+    });
+    const nowIso = new Date().toISOString();
+    await db.execute(sql`
+      INSERT INTO pricing_cases (
+        project_name, client_name, fund_name, region, country,
+        pe_owned, revenue_band, price_sensitivity, duration_weeks,
+        notes, status, staffing, case_discounts, case_timelines, recommendation,
+        created_at, updated_at
+      )
+      SELECT 'SCHA01', 'Schaltbau', 'Carlyle',
+             'DACH', 'Germany',
+             1, 'above_1b', 'medium', 12,
+             'Commercial proposal reference — three timeline options with per-option rate reset.',
+             'active', ${schaStaffing}::jsonb, ${schaDiscounts}::jsonb,
+             ${schaTimelines}::jsonb, ${schaRecommendation}::jsonb,
+             ${nowIso}, ${nowIso}
+      WHERE NOT EXISTS (SELECT 1 FROM pricing_cases WHERE project_name = 'SCHA01')
+    `);
+    // Backfill legacy SCHA01 rows that existed before the override shape.
+    await db.execute(sql`
+      UPDATE pricing_cases
+      SET case_timelines = ${schaTimelines}::jsonb,
+          case_discounts = COALESCE(case_discounts, ${schaDiscounts}::jsonb),
+          recommendation = COALESCE(recommendation, ${schaRecommendation}::jsonb),
+          updated_at = ${nowIso}
+      WHERE project_name = 'SCHA01'
+        AND (case_timelines IS NULL OR jsonb_array_length(case_timelines) < 3 OR NOT (case_timelines -> 1 ? 'grossTotal'))
+    `);
+  } catch (e) {
+    console.error("Failed to seed/backfill SCHA01 pricing case:", e);
   }
 
   // Add project_type and slide_selection columns to proposals (idempotent)

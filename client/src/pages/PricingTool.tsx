@@ -204,7 +204,7 @@ function emptyProposal(): PricingProposal {
 // (removed per user request — table has no such row). Three timeline
 // options are the headline structure, each showing the full discount
 // stack so the proposal text reads 1:1 with the table.
-const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees for this Statement of Work, covering a {{ENGAGEMENT_DURATION_WEEKS}}-week engagement and a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}), amount to {{STANDARD_PROFESSIONAL_FEES}}.
+const DEFAULT_PROPOSAL_TEMPLATE = `{{#if COMMITMENT_OPTIONS_BLOCK}}This Statement of Work covers an engagement delivered by a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}). The professional fees depend on the timeline selected by the client. Three alternative options are proposed below, with Net Professional Fees ranging from {{OPTION_1_NET_TOTAL}} ({{OPTION_1_WEEKS}} weeks) to {{OPTION_3_NET_TOTAL}} ({{OPTION_3_WEEKS}} weeks).{{/if}}{{#if NO_COMMITMENT_BLOCK}}The standard professional fees for this Statement of Work, covering a {{ENGAGEMENT_DURATION_WEEKS}}-week engagement and a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}), amount to {{STANDARD_PROFESSIONAL_FEES}}.{{/if}}
 
 {{#if COMMITMENT_OPTIONS_BLOCK}}
 In consideration of the parties' intention to establish a long-term partnership, Eendigo is pleased to propose three alternative timeline options for this engagement. The weekly rate and team composition remain identical across all three; the client may choose the option that best fits their objectives and speed of execution.
@@ -606,7 +606,20 @@ export default function PricingTool() {
   // Default: base duration + 4w + 8w, with 0 / 5 / 7% commitment discount
   // matching Eendigo's standard pitch (longer engagement → bigger discount).
   // Each row is fully editable inline on the pricing case.
-  const [caseTimelines, setCaseTimelines] = useState<{ weeks: number; commitPct: number }[]>([
+  // Timeline options for the 3-option commercial-proposal table. The
+  // optional grossTotal / commitAmount fields pin exact values per
+  // option — useful when the weekly rate or commit amount differs
+  // between options (e.g. mid-project rate reset, or a case where the
+  // commit math is compound-on-post-discount instead of flat-on-gross).
+  // When absent, the engine derives:
+  //   grossTotal  = grossWk × weeks
+  //   commitAmt   = commitPct × gross (flat)
+  const [caseTimelines, setCaseTimelines] = useState<{
+    weeks: number;
+    commitPct: number;
+    grossTotal?: number;
+    commitAmount?: number;
+  }[]>([
     { weeks: 12, commitPct: 0 },
     { weeks: 16, commitPct: 5 },
     { weeks: 20, commitPct: 7 },
@@ -4344,7 +4357,7 @@ export default function PricingTool() {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
+                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map(p => (
                                   <SelectItem key={p} value={String(p)} className="text-[11px]">
                                     {p}%
                                   </SelectItem>
@@ -5112,33 +5125,39 @@ export default function PricingTool() {
                           destination for PDF output). */}
                       {(() => {
                         const timelines = caseTimelines;
-                        // Apply the same enabled discounts (Carlyle / Prompt /
-                        // Rebate / Oneoff) PLUS a per-column commitment %.
-                        // Compound discounting matches the existing engine's
-                        // net=gross×prod(1-d) arithmetic used elsewhere.
-                        const discountsWithCommit = (commitPct: number) => {
-                          const base = enabledDiscounts.filter(d => d.id !== "commitment");
-                          return commitPct > 0
-                            ? [...base, { id: "commitment", name: "Additional commitment discount", pct: commitPct, enabled: true }]
-                            : [...base, { id: "commitment", name: "Additional commitment discount", pct: 0, enabled: false }];
-                        };
-                        const computeColumn = (weeks: number, commitPct: number) => {
-                          const weeklyGross = grossWk;
-                          const grossTotalCol = Math.round(weeklyGross * weeks);
+                        const baseEnabled = enabledDiscounts.filter(d => d.id !== "commitment");
+                        // Math:
+                        //   gross = override if set, else grossWk × weeks
+                        //   non-commit discounts applied COMPOUND in caseDiscounts order
+                        //   commit = override if set, else pct × gross (flat)
+                        //   net = (running after compound) − commitAmt
+                        // This matches the user's commercial-proposal table where
+                        // commitment is a flat % of Gross (not compound) and the
+                        // per-discount breakdown shows Carlyle → Prompt → Rebate
+                        // as compound deductions from Gross.
+                        const computeColumn = (t: { weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number }) => {
+                          const weeks = t.weeks;
+                          const commitPct = t.commitPct;
+                          const grossTotalCol = typeof t.grossTotal === "number" && t.grossTotal > 0
+                            ? Math.round(t.grossTotal)
+                            : Math.round(grossWk * weeks);
                           let running = grossTotalCol;
                           const breakdown: { id: string; name: string; pct: number; amount: number }[] = [];
-                          for (const d of discountsWithCommit(commitPct)) {
-                            if (!d.enabled || d.pct <= 0) {
-                              breakdown.push({ id: d.id, name: d.name, pct: d.pct, amount: 0 });
-                              continue;
-                            }
+                          for (const d of baseEnabled) {
+                            if (d.pct <= 0) { breakdown.push({ id: d.id, name: d.name, pct: d.pct, amount: 0 }); continue; }
                             const before = running;
                             running = running * (1 - d.pct / 100);
                             breakdown.push({ id: d.id, name: d.name, pct: d.pct, amount: Math.round(before - running) });
                           }
-                          return { weeks, commitPct, grossTotal: grossTotalCol, breakdown, netTotal: Math.round(running) };
+                          // Commitment — flat % × gross (or explicit override)
+                          const commitAmt = typeof t.commitAmount === "number" && t.commitAmount > 0
+                            ? Math.round(t.commitAmount)
+                            : (commitPct > 0 ? Math.round(grossTotalCol * commitPct / 100) : 0);
+                          breakdown.push({ id: "commitment", name: "Additional commitment discount", pct: commitPct, amount: commitAmt });
+                          const netTotal = Math.round(running - commitAmt);
+                          return { weeks, commitPct, grossTotal: grossTotalCol, breakdown, netTotal, hasGrossOverride: typeof t.grossTotal === "number" && t.grossTotal > 0 };
                         };
-                        const cols = timelines.map(t => computeColumn(t.weeks, t.commitPct));
+                        const cols = timelines.map(computeColumn);
                         // Discount rows shown = union of rows across columns
                         // (same structure since all cols use same discounts).
                         const rowDefs = cols[0].breakdown;
@@ -5202,7 +5221,7 @@ export default function PricingTool() {
                                             <SelectValue />
                                           </SelectTrigger>
                                           <SelectContent>
-                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
+                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map(p => (
                                               <SelectItem key={p} value={String(p)} className="text-[11px]">{p}%</SelectItem>
                                             ))}
                                           </SelectContent>
@@ -5216,12 +5235,53 @@ export default function PricingTool() {
                                 Option 1 is your base quote (same as the case's duration, no commitment discount).
                                 Options 2 and 3 let you offer longer timelines with a commitment discount to reward the extended engagement.
                               </div>
-                              {/* Gross row */}
+                              {/* Gross row — editable. Each cell accepts a
+                                  manual override that replaces the derived
+                                  "grossWk × weeks" value. Leave it empty
+                                  to restore the derived value. Overrides
+                                  persist on the case via caseTimelines. */}
                               <div className="grid gap-2 items-center" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
                                 <div className="text-xs font-bold text-white bg-[#5B7E7E] rounded px-2 py-1.5 text-right">Gross total price</div>
-                                {cols.map((c, i) => (
-                                  <div key={i} className="text-sm text-center font-mono border rounded px-2 py-1.5 bg-background">{fmtC(c.grossTotal)}</div>
-                                ))}
+                                {cols.map((c, i) => {
+                                  const isOverride = c.hasGrossOverride;
+                                  return (
+                                    <div key={i} className="flex items-center gap-1">
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        step="100"
+                                        value={c.grossTotal}
+                                        onChange={e => {
+                                          const raw = e.target.value;
+                                          const n = parseFloat(raw);
+                                          setCaseTimelines(prev => prev.map((x, j) =>
+                                            j === i
+                                              ? (raw === "" || !isFinite(n) || n <= 0
+                                                  ? { ...x, grossTotal: undefined }
+                                                  : { ...x, grossTotal: Math.round(n) })
+                                              : x,
+                                          ));
+                                        }}
+                                        title={isOverride
+                                          ? "Manual override — click the ✕ to restore the derived value"
+                                          : "Derived from weekly rate × weeks. Type a new number to override."}
+                                        className={`text-sm text-center font-mono h-9 ${
+                                          isOverride ? "border-amber-400 bg-amber-50" : "bg-background"
+                                        }`}
+                                      />
+                                      {isOverride && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCaseTimelines(prev => prev.map((x, j) =>
+                                            j === i ? { ...x, grossTotal: undefined } : x,
+                                          ))}
+                                          className="text-[10px] text-muted-foreground hover:text-destructive px-1"
+                                          title="Restore derived value"
+                                        >✕</button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                               {/* Discount rows */}
                               {rowDefs.map((row, idx) => (
@@ -5391,20 +5451,34 @@ export default function PricingTool() {
                     // what populates OPTION_1/2/3_* vars in the template
                     // so the proposal text reads 1:1 with the table.
                     const baseEnabledDiscs = enabledDisc.filter(d => d.id !== "commitment");
-                    const computeOption = (weeks: number, commitPct: number) => {
-                      const gross = Math.round(grossWk * weeks);
+                    // Compute one option column.
+                    // Inputs: weeks + commitPct, plus OPTIONAL overrides
+                    // that pin gross_total and/or commit_amount for cases
+                    // that don't fit the engine's default math (e.g.
+                    // SCHA01 where the 16w weekly rate differs from the
+                    // 12w rate; EMV01 where commit is flat % × gross).
+                    // Math:
+                    //   gross = override if set, else grossWk × weeks
+                    //   non-commit discounts applied COMPOUND in order
+                    //   commit = override if set, else pct × gross (flat)
+                    //   net = running - commit_amount
+                    const computeOption = (t: { weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number }) => {
+                      const weeks = t.weeks;
+                      const commitPct = t.commitPct;
+                      const gross = typeof t.grossTotal === "number" && t.grossTotal > 0
+                        ? Math.round(t.grossTotal)
+                        : Math.round(grossWk * weeks);
                       let running = gross;
-                      // Track each discount's absolute contribution for the
-                      // per-option line items in the template.
                       const perDisc: Record<string, number> = {};
                       for (const d of baseEnabledDiscs) {
                         const before = running;
                         running = running * (1 - d.pct / 100);
                         perDisc[d.id] = Math.round(before - running);
                       }
-                      const beforeCommit = running;
-                      running = commitPct > 0 ? running * (1 - commitPct / 100) : running;
-                      const commitAmt = Math.round(beforeCommit - running);
+                      const commitAmt = typeof t.commitAmount === "number" && t.commitAmount > 0
+                        ? Math.round(t.commitAmount)
+                        : (commitPct > 0 ? Math.round(gross * commitPct / 100) : 0);
+                      running = running - commitAmt;
                       return {
                         weeks,
                         commitPct,
@@ -5420,9 +5494,9 @@ export default function PricingTool() {
                     const tl = caseTimelines && caseTimelines.length > 0
                       ? caseTimelines
                       : [{ weeks: dur, commitPct: 0 }, { weeks: dur + 4, commitPct: 5 }, { weeks: dur + 8, commitPct: 7 }];
-                    const opt1 = computeOption(tl[0]?.weeks ?? dur,     tl[0]?.commitPct ?? 0);
-                    const opt2 = computeOption(tl[1]?.weeks ?? dur + 4, tl[1]?.commitPct ?? 5);
-                    const opt3 = computeOption(tl[2]?.weeks ?? dur + 8, tl[2]?.commitPct ?? 7);
+                    const opt1 = computeOption(tl[0] ?? { weeks: dur,     commitPct: 0 });
+                    const opt2 = computeOption(tl[1] ?? { weeks: dur + 4, commitPct: 5 });
+                    const opt3 = computeOption(tl[2] ?? { weeks: dur + 8, commitPct: 7 });
 
                     // A deal gets the 3-option narrative when the user has
                     // actually configured non-default / non-zero commitment
@@ -5491,13 +5565,27 @@ export default function PricingTool() {
 
                     let text = template;
 
-                    // Process {{#if VAR}}...{{/if}} conditionals (run twice for nested)
-                    for (let pass = 0; pass < 2; pass++) {
-                      text = text.replace(/\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g, (_match, varName, content) => {
+                    // Process {{#if VAR}}...{{/if}} conditionals.
+                    // Handles ARBITRARY NESTING by matching the INNERMOST
+                    // block first (body contains no further {{#if or
+                    // {{/if}}), then looping until no more matches. The
+                    // previous non-greedy approach broke on nested blocks
+                    // because the regex matched the first inner {{/if}}
+                    // as the closing of an outer {{#if}}, leaving orphan
+                    // {{/if}} literals and rendering stripped content.
+                    const IF_RE = /\{\{#if (\w+)\}\}((?:(?!\{\{#if |\{\{\/if\}\})[\s\S])*?)\{\{\/if\}\}/g;
+                    for (let pass = 0; pass < 6; pass++) {
+                      const before = text;
+                      text = text.replace(IF_RE, (_match, varName, content) => {
                         const val = vars[varName] ?? "";
                         return val ? content : "";
                       });
+                      if (text === before) break; // no more matches — done
                     }
+                    // Any leftover {{#if}}/{{/if}} tokens mean we hit a
+                    // malformed template. Strip them rather than leaking
+                    // to the clipboard.
+                    text = text.replace(/\{\{#if \w+\}\}/g, "").replace(/\{\{\/if\}\}/g, "");
 
                     // Process {{IF_DISCOUNTS}}...{{END_IF_DISCOUNTS}} (legacy)
                     if (hasDiscounts) {
