@@ -581,9 +581,12 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS problem_statement TEXT`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS expected_impact_eur REAL`);
   // Three-timeline commercial-proposal comparison — JSONB array of
-  // {weeks, commitPct} rows. Optional; engine falls back to the default
-  // short/medium/long curve when null.
+  // {weeks, commitPct, grossTotal?, commitAmount?} rows. Optional; engine
+  // falls back to the default short/medium/long curve when null.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS case_timelines JSONB`);
+  // Revision letter appended to project_name in the UI (A / B / C / D).
+  // Lets a case track its proposal revision count without renaming.
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS revision_letter TEXT DEFAULT 'A'`);
 
   // ── Seed EMV01 — live reference case for the three-timeline proposal ───
   // The numbers reproduce the commercial-proposal slide exactly (12 / 16 /
@@ -631,12 +634,12 @@ export async function seedDatabase() {
     const nowIso = new Date().toISOString();
     await db.execute(sql`
       INSERT INTO pricing_cases (
-        project_name, client_name, fund_name, region, country,
+        project_name, revision_letter, client_name, fund_name, region, country,
         pe_owned, revenue_band, price_sensitivity, duration_weeks,
         notes, status, staffing, case_discounts, case_timelines, recommendation,
         created_at, updated_at
       )
-      SELECT 'EMV01', 'EMV', 'Carlyle',
+      SELECT 'EMV01', 'A', 'EMV', 'Carlyle',
              'Italy', 'Italy',
              1, 'above_1b', 'medium', 12,
              'Commercial proposal reference — three timeline options.',
@@ -703,12 +706,12 @@ export async function seedDatabase() {
     const nowIso = new Date().toISOString();
     await db.execute(sql`
       INSERT INTO pricing_cases (
-        project_name, client_name, fund_name, region, country,
+        project_name, revision_letter, client_name, fund_name, region, country,
         pe_owned, revenue_band, price_sensitivity, duration_weeks,
         notes, status, staffing, case_discounts, case_timelines, recommendation,
         created_at, updated_at
       )
-      SELECT 'SCHA01', 'Schaltbau', 'Carlyle',
+      SELECT 'SCHA01', 'A', 'Schaltbau', 'Carlyle',
              'DACH', 'Germany',
              1, 'above_1b', 'medium', 12,
              'Commercial proposal reference — three timeline options with per-option rate reset.',

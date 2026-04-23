@@ -27,6 +27,8 @@ import { BenchmarkNotesEditor } from "@/components/BenchmarkNotesEditor";
 interface PricingCase {
   id?: number;
   project_name: string;
+  /** A / B / C / D — appended to project_name in display. Default "A". */
+  revision_letter?: string;
   client_name: string;
   fund_name: string;
   region: string;
@@ -73,6 +75,18 @@ interface PricingCase {
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
 const fmtK = (n: number) => Math.round(n).toLocaleString("it-IT");
+
+/** Display form of a case's project name — base code + revision letter.
+ *  "EMV01" + "B" → "EMV01B". Defaults to "A" when the field is null or
+ *  empty so legacy cases render with a suffix instead of bare code. */
+export function displayProjectName(projectName: string | null | undefined, revisionLetter: string | null | undefined): string {
+  const base = (projectName ?? "").trim();
+  const rev = (revisionLetter ?? "").trim().toUpperCase() || "A";
+  if (!base) return "";
+  // If the code already ends in a letter (legacy rows), don't double-append.
+  if (/[A-Z]$/.test(base)) return base;
+  return base + rev;
+}
 
 // ── Case discount helpers ──────────────────────────────────────────────────
 // Both handled in one place so new discount types (like the commitment
@@ -125,7 +139,7 @@ function deriveTimelines(baseWeeks: number): { weeks: number; commitPct: number 
  *  destination to export — no pdf library required. Same layout as the
  *  on-screen card so pasting the resulting PDF into a deck looks identical. */
 function printThreeTimelines(
-  form: { project_name?: string; client_name?: string },
+  form: { project_name?: string; client_name?: string; revision_letter?: string },
   cols: { weeks: number; commitPct: number; grossTotal: number; breakdown: { id: string; name: string; pct: number; amount: number }[]; netTotal: number }[],
   rowDefs: { id: string; name: string; pct: number }[],
   fmtC: (n: number) => string,
@@ -133,7 +147,7 @@ function printThreeTimelines(
   adminFeePct: number,
 ): void {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const clientLabel = [form.client_name, form.project_name].filter(Boolean).join(" · ") || "Commercial proposal";
+  const clientLabel = [form.client_name, displayProjectName(form.project_name, form.revision_letter)].filter(Boolean).join(" · ") || "Commercial proposal";
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
   const colHeaders = cols.map(c => `<th style="padding:10px;border-bottom:2px solid #1A6571;color:#1A6571;text-align:center;font-weight:600;font-size:12px;">${c.weeks} weeks${c.commitPct > 0 ? `<div style="font-size:9px;font-weight:400;color:#6b7280;">Commitment discount ${c.commitPct}%</div>` : ""}</th>`).join("");
@@ -487,7 +501,7 @@ function parsePricePaste(text: string): CountryBenchmarkRow[] {
 
 function emptyCase(): PricingCase {
   return {
-    project_name: "CLI01", client_name: "", fund_name: "CARLYLE",
+    project_name: "CLI01", revision_letter: "A", client_name: "", fund_name: "CARLYLE",
     region: "IT", currency: "EUR", pe_owned: true, revenue_band: "200m_1b",
     price_sensitivity: "medium", duration_weeks: 12, notes: "", status: "draft", staffing: [],
     project_type: "sfe", sector: "Industrial / Manufacturing", ebitda_margin_pct: 20,
@@ -2399,7 +2413,7 @@ export default function PricingTool() {
                   <TableBody>
                     {cases.map(c => (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
-                        <TableCell className="font-semibold">{c.project_name}</TableCell>
+                        <TableCell className="font-semibold font-mono">{displayProjectName(c.project_name, c.revision_letter)}</TableCell>
                         <TableCell>{c.client_name || "—"}</TableCell>
                         <TableCell className="text-muted-foreground text-sm">{c.fund_name || "—"}</TableCell>
                         <TableCell><Badge variant="secondary" className="text-xs">{c.region}</Badge></TableCell>
@@ -3828,20 +3842,33 @@ export default function PricingTool() {
                     }}
                     placeholder="e.g. Apple" />
                 </div>
-                {/* Project sequence */}
+                {/* Project sequence + revision letter.
+                    Revision letter lets the team track multiple proposal
+                    iterations with the same client (EMV01A is the first
+                    proposal, EMV01B the second revision, etc). Defaults
+                    to A on new cases. */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Project Sequence <span className="text-destructive">*</span></Label>
+                  <Label className="text-xs">Project Sequence + Revision <span className="text-destructive">*</span></Label>
                   {(() => {
                     const pfx = clientPrefix(form.client_name);
                     const seqOptions = Array.from({ length: 9 }, (_, i) => `${pfx}${String(i + 1).padStart(2, "0")}`);
                     const currentSeq = seqOptions.includes(form.project_name) ? form.project_name : seqOptions[0];
+                    const currentRev = (form.revision_letter || "A").toUpperCase();
                     return (
-                      <Select value={currentSeq} onValueChange={v => setForm(f => ({ ...f, project_name: v }))}>
-                        <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {seqOptions.map(s => <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                      <div className="flex gap-1">
+                        <Select value={currentSeq} onValueChange={v => setForm(f => ({ ...f, project_name: v }))}>
+                          <SelectTrigger className="h-8 text-xs font-mono flex-1"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {seqOptions.map(s => <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Select value={currentRev} onValueChange={v => setForm(f => ({ ...f, revision_letter: v }))}>
+                          <SelectTrigger className="h-8 text-xs font-mono w-16" title="Proposal revision (A = first, B = second, etc.)"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {["A", "B", "C", "D"].map(r => <SelectItem key={r} value={r} className="font-mono">{r}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     );
                   })()}
                 </div>
@@ -5511,7 +5538,10 @@ export default function PricingTool() {
                       DURATION_WEEKS: String(dur), TEAM_COUNT: String(teamCount), TEAM_ROLES: teamRoles,
                       GROSS_WEEKLY: fmtP(grossWk), NET_WEEKLY: fmtP(netWk), GROSS_TOTAL: fmtP(grossTotal),
                       NET_TOTAL: fmtP(netTotal), HEADLINE_GROSS: fmtP(headlineGross),
-                      CLIENT_NAME: form.client_name || "[Client]", PROJECT_NAME: form.project_name || "[Project]",
+                      CLIENT_NAME: form.client_name || "[Client]",
+                      PROJECT_NAME: displayProjectName(form.project_name, form.revision_letter) || "[Project]",
+                      PROJECT_CODE: form.project_name || "[Project]",
+                      REVISION_LETTER: (form.revision_letter || "A").toUpperCase(),
                       FUND_NAME: form.fund_name || "", ADMIN_PCT: String(adminFeePct),
                       VARIABLE_PCT: String(variableFeePct), CURRENCY: cur.code,
                       INVOICES_COUNT: String(invoiceCount), INVOICE_AMOUNT: fmtP(invoiceAmount),

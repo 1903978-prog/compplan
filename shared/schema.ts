@@ -316,9 +316,16 @@ export const pricingCases = pgTable("pricing_cases", {
   procurement_involvement: text("procurement_involvement"),
   case_discounts: jsonb("case_discounts"),
   // Three-timeline commercial-proposal comparison. Array of
-  // {weeks: number, commitPct: number} — e.g. the 12/16/20-week + 0/5/7%
-  // default curve rendered on every case. Null = use engine default.
-  case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number }[] | null>(),
+  // {weeks, commitPct, grossTotal?, commitAmount?} — default curve is
+  // 12/16/20 weeks at 0/5/7% commit. The two optional fields pin exact
+  // per-option numbers when the engine's derived values don't match
+  // the client-facing slide (e.g. mid-project rate reset, or compound-
+  // on-post-discount commit math). Null = use engine default.
+  case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number }[] | null>(),
+  // Revision letter appended to project_name in the display (A / B / C / D).
+  // A proposal goes through multiple revisions with the client — each is
+  // a separate row (same project_name, different letter). Default "A".
+  revision_letter: text("revision_letter"),
   // Value-based fields
   company_revenue_m: real("company_revenue_m"),
   aspiration_ebitda_eur: real("aspiration_ebitda_eur"),
