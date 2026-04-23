@@ -558,9 +558,27 @@ export default function ExecDashboard() {
         const eur = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
         // Compute each column's net total using the same compound discount
         // arithmetic as the Pricing Case card (gross × ∏(1 − discPct)).
+        // Weekly price is read from (in priority order):
+        //   1. Stored recommendation.target_weekly (set when user saves a case)
+        //   2. Seeded weekly_gross_override on the case (used by EMV01 seed)
+        //   3. Staffing build-up — days × daily_rate × count × a 2.0× markup
+        //      (rough 50% GM floor matching the engine's low_50gm calc)
+        // This avoids the "€0 everywhere" failure mode when a case hasn't
+        // been opened in PricingTool yet.
+        const deriveNetWeekly = (c: any): number => {
+          const stored = c.recommendation?.target_weekly;
+          if (typeof stored === "number" && stored > 0) return stored;
+          const override = c.weekly_gross_override;
+          if (typeof override === "number" && override > 0) return Math.round(override / 1.08);
+          const staffing = Array.isArray(c.staffing) ? c.staffing : [];
+          const cost = staffing.reduce((s: number, l: any) =>
+            s + (l.days_per_week || 0) * (l.daily_rate_used || 0) * (l.count || 0), 0);
+          // 2× markup = 50% gross margin floor; conservative estimate.
+          return Math.round(cost * 2);
+        };
         const computeCols = (c: any) => {
-          const wk = (c.recommendation?.target_weekly ?? 0);
-          const adminPct = 8; // match PricingTool default; recommendation has no admin-fee field
+          const wk = deriveNetWeekly(c);
+          const adminPct = 8; // match PricingTool default
           const grossWk = Math.round(wk * (1 + adminPct / 100));
           const baseDiscounts = (c.case_discounts ?? []).filter((d: any) => d.enabled && d.pct > 0 && d.id !== "commitment");
           return c.case_timelines.map((t: any) => {

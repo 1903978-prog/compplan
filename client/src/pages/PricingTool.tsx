@@ -198,40 +198,52 @@ function emptyProposal(): PricingProposal {
   };
 }
 
+// Proposal template — MUST mirror the "Commercial Proposal — Project fees
+// by option" table. The Gross already bakes in the admin fee, so we don't
+// mention it as a separate line. Success fee is deliberately NOT here
+// (removed per user request — table has no such row). Three timeline
+// options are the headline structure, each showing the full discount
+// stack so the proposal text reads 1:1 with the table.
 const DEFAULT_PROPOSAL_TEMPLATE = `The standard professional fees for this Statement of Work, covering a {{ENGAGEMENT_DURATION_WEEKS}}-week engagement and a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}), amount to {{STANDARD_PROFESSIONAL_FEES}}.
 
+{{#if COMMITMENT_OPTIONS_BLOCK}}
+In consideration of the parties' intention to establish a long-term partnership, Eendigo is pleased to propose three alternative timeline options for this engagement. The weekly rate and team composition remain identical across all three; the client may choose the option that best fits their objectives and speed of execution.
+
+**Option 1 — {{OPTION_1_WEEKS}} weeks**
+- Gross total price: {{OPTION_1_GROSS_TOTAL}}
+{{#if OPTION_1_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_1_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}
+{{/if}}{{#if OPTION_1_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_1_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
+{{/if}}{{#if OPTION_1_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_1_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
+{{/if}}{{#if OPTION_1_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_1_COMMIT_PCT}}%): −{{OPTION_1_COMMIT_AMOUNT}}
+{{/if}}- **Net total price: {{OPTION_1_NET_TOTAL}}**
+
+**Option 2 — {{OPTION_2_WEEKS}} weeks**
+- Gross total price: {{OPTION_2_GROSS_TOTAL}}
+{{#if OPTION_2_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_2_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}
+{{/if}}{{#if OPTION_2_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_2_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
+{{/if}}{{#if OPTION_2_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_2_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
+{{/if}}{{#if OPTION_2_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_2_COMMIT_PCT}}%): −{{OPTION_2_COMMIT_AMOUNT}}, granted in recognition of the extended engagement
+{{/if}}- **Net total price: {{OPTION_2_NET_TOTAL}}**
+
+**Option 3 — {{OPTION_3_WEEKS}} weeks**
+- Gross total price: {{OPTION_3_GROSS_TOTAL}}
+{{#if OPTION_3_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_3_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}
+{{/if}}{{#if OPTION_3_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_3_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
+{{/if}}{{#if OPTION_3_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_3_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
+{{/if}}{{#if OPTION_3_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_3_COMMIT_PCT}}%): −{{OPTION_3_COMMIT_AMOUNT}}, granted in recognition of the longer-term partnership
+{{/if}}- **Net total price: {{OPTION_3_NET_TOTAL}}**
+
+The additional commitment discount is contingent upon the client confirming the selected timeline at contract signing. All other commercial terms (team, methodology, governance, deliverables) remain unchanged across the three options. The fees shall be invoiced in equal instalments over the engagement, as detailed in the Statement of Work.
+{{/if}}
+
+{{#if NO_COMMITMENT_BLOCK}}
 In consideration of the parties' intention to establish a long-term partnership, the following commercial incentives may apply, where applicable:
 
-{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}
-A1. Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
+{{#if ONE_OFF_DISCOUNT_PERCENT}}- One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{PE_FUND_CLAUSE}}.
+{{/if}}{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}- Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
+{{/if}}{{#if REBATE_PERCENT}}- Rebate: {{REBATE_PERCENT}}% (equal to {{REBATE_AMOUNT}}), subject to the conditions set out in this Statement of Work.
 {{/if}}
-
-{{#if ONE_OFF_DISCOUNT_PERCENT}}
-A2. One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{PE_FUND_CLAUSE}}.
-{{/if}}
-
-{{#if REBATE_PERCENT}}
-A3. Rebate: {{REBATE_PERCENT}}% (equal to {{REBATE_AMOUNT}}), subject to the conditions set out in this Statement of Work.
-{{/if}}
-
-{{#if SUCCESS_FEE_PERCENT}}
-A4. Success Fee: {{SUCCESS_FEE_PERCENT}}% of the Base Fees (equal to {{SUCCESS_FEE_AMOUNT}}). This portion of the professional fees shall become due only upon achievement of the relevant objectives, as jointly defined by the parties if not otherwise specified in this Statement of Work. The success fee shall be invoiced only upon formal written confirmation by email from the Project Commissioner confirming satisfaction with the relevant outcomes, whether during or at the conclusion of the engagement.
-{{/if}}
-
-Accordingly, assuming all applicable incentives are achieved and excluding any success fee, the Net Professional Fees amount to {{NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE}}.
-
-The fees shall be invoiced in {{NUMBER_OF_INVOICES}} instalments, each in the amount of {{INVOICE_AMOUNT}}, inclusive of the {{ADMINISTRATION_FEE_PERCENT}}% administration fee.
-
-{{#if COMMITMENT_OPTIONS_BLOCK}}
-**Commercial options — three timeline alternatives**
-
-To reward a longer-term partnership, Eendigo is pleased to propose three alternative timeline options for this engagement. The weekly rate and team composition remain identical across all three; the client may choose the option that best fits their objectives and speed of execution:
-
-- **Option 1 — {{OPTION_1_WEEKS}} weeks** (base timeline): Net Professional Fees {{OPTION_1_NET_TOTAL}}.{{#if OPTION_1_COMMIT_PCT}} An additional commitment discount of {{OPTION_1_COMMIT_PCT}}% is applied.{{/if}}
-- **Option 2 — {{OPTION_2_WEEKS}} weeks** (medium horizon): Net Professional Fees {{OPTION_2_NET_TOTAL}}, reflecting an additional commitment discount of {{OPTION_2_COMMIT_PCT}}% in recognition of the extended engagement.
-- **Option 3 — {{OPTION_3_WEEKS}} weeks** (long-term partnership): Net Professional Fees {{OPTION_3_NET_TOTAL}}, reflecting an additional commitment discount of {{OPTION_3_COMMIT_PCT}}% to mark the deeper collaboration.
-
-The commitment discount is contingent upon the client confirming the selected timeline at contract signing. All other commercial terms (team, methodology, governance, deliverables) remain unchanged across the three options.
+Accordingly, assuming all applicable incentives are achieved, the Net Professional Fees amount to {{NET_TOTAL}}.
 {{/if}}`;
 
 // Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
@@ -2189,12 +2201,32 @@ export default function PricingTool() {
     // This intentionally overrides the band — the user has explicitly chosen this price
     running += manualDelta;
 
-    return Math.round(running);
-  }, [recommendation, manualDelta, form.region, benchmarks, disabledBars]);
+    // P7 — commitment discount. Applied LAST so the waterfall's NET1 bar
+    // lines up with the post-commitment price shown in the new P7 bar.
+    // The pricing engine treats commitment as a pre-NET1 reduction (it
+    // brings the weekly price DOWN when the client commits to a longer
+    // engagement), not as a post-NET1 gross markup like the other
+    // discounts. This matches the "Additional commitment discount" line
+    // in the commercial-proposal table.
+    const commitmentRow = caseDiscounts.find(d => d.id === "commitment");
+    if (commitmentRow?.enabled && commitmentRow.pct > 0) {
+      running = running * (1 - commitmentRow.pct / 100);
+    }
 
+    return Math.round(running);
+  }, [recommendation, manualDelta, form.region, benchmarks, disabledBars, caseDiscounts]);
+
+  // Gross weekly = Net × (1+admin) / ∏(1 - NON-COMMITMENT discounts).
+  // Commitment discount is INTENTIONALLY excluded here — it lives as a P7
+  // reduction bar between P6 and NET1 (pre-NET1), not as a post-NET1 markup.
+  // This matches the commercial-proposal table: Gross per week is the SAME
+  // across all three timeline options; only the commitment % (applied on
+  // top of other discounts to reach Net) differs per option.
   const canonicalGrossWeekly = useMemo(() => {
     let g = canonicalNetWeekly * (1 + adminFeePct / 100);
-    for (const d of caseDiscounts.filter(d => d.enabled && d.pct > 0)) g /= (1 - d.pct / 100);
+    for (const d of caseDiscounts.filter(d => d.enabled && d.pct > 0 && d.id !== "commitment")) {
+      g /= (1 - d.pct / 100);
+    }
     return Math.round(g);
   }, [canonicalNetWeekly, adminFeePct, caseDiscounts]);
 
@@ -4380,6 +4412,26 @@ export default function PricingTool() {
                 runningValue = newEnd;
               }
             }
+
+            // P7 — Commitment discount bar. When the commitment discount is
+            // enabled, insert a REDUCTION bar between the last P6 layer and
+            // NET1 so the waterfall visually shows how commitment brings
+            // the price down (the commercial-proposal table's "Additional
+            // commitment discount" line). Hidden when commit = 0%.
+            const commitmentRow = caseDiscounts.find(d => d.id === "commitment");
+            const commitmentPct = (commitmentRow?.enabled && commitmentRow.pct > 0) ? commitmentRow.pct : 0;
+            if (commitmentPct > 0) {
+              const reducedValue = Math.round(runningValue * (1 - commitmentPct / 100));
+              bars.push({
+                label: "Commitment",
+                start: runningValue,
+                end: reducedValue,
+                note: `P7 commitment discount −${commitmentPct}%`,
+                deltaPct: -commitmentPct,
+                isDisabled: false,
+              });
+              runningValue = reducedValue;
+            }
             const adjustedFinal = runningValue;
 
             // Discount/rebate/one-off bars: these ADD UP after the Rec. bar to show
@@ -4414,9 +4466,12 @@ export default function PricingTool() {
             // Duration & fee calculation for right panel
             const effectiveDuration = waterfallDuration ?? form.duration_weeks;
 
-            // Build markup bars: admin + each enabled discount → Gross
+            // Build markup bars: admin + each enabled NON-COMMITMENT
+            // discount → Gross. Commitment is rendered as a pre-NET1 P7
+            // bar (see CANONICAL loop above) and intentionally excluded
+            // here so it isn't double-counted.
             let markupRunning = recommendedNwf;
-            const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0);
+            const enabledDisc = caseDiscounts.filter(d => d.enabled && d.pct > 0 && d.id !== "commitment");
             if (adminFeePct > 0) {
               const newVal = Math.round(markupRunning * (1 + adminFeePct / 100));
               markupBars.push({ label: `Admin +${adminFeePct}%`, start: markupRunning, end: newVal, deltaPct: adminFeePct });
@@ -4458,6 +4513,7 @@ export default function PricingTool() {
             const SHORT: Record<string, string> = {
               "Geography": "P1 Geo", "Sector": "P2 Sector", "Ownership": "P3 PE/Corp",
               "Client Size": "P4 Size", "Client Profile": "P5 Sensitivity", "Strategic Intent": "P6 Intent",
+              "Commitment": "P7 Commit",
             };
             const TOOLTIP: Record<string, string> = {
               "Geography": "P1 — Geography: adjusts price based on regional market rates. IT=baseline, US=+60%, UK=+20%, DACH=+10%–20%, SEA=−10%",
@@ -4466,6 +4522,7 @@ export default function PricingTool() {
               "Client Size": "P4 — Client Size: revenue band multiplier. >€1B = baseline, €200M–€1B = 0.95×, €100M–€200M = 0.90×, <€100M = 0.80×",
               "Client Profile": "P5 — Price Sensitivity: High = −10%, Medium = baseline, Low = +10%. Reflects client's willingness to pay",
               "Strategic Intent": "P6 — Strategic Intent: adjusts for deal type. Offensive/competitive = premium, defensive/retention = discount",
+              "Commitment": "P7 — Commitment discount: reduces the weekly price when the client agrees to a longer engagement. Adjust % in the Discounts bar above",
             };
 
             const toggleBar = (label: string) => setDisabledBars(prev => {
@@ -4506,7 +4563,14 @@ export default function PricingTool() {
                         const x = xOf(i + 1);
                         const isZero = Math.abs(b.end - b.start) < 1;
                         const up = b.end >= b.start;
-                        const color = b.isDisabled ? "#94a3b8" : (isZero ? "#cbd5e1" : (up ? "#166534" : "#166534"));
+                        // Commitment (P7) is a DEDUCTION — paint it red so
+                        // it stands out from the P1-P6 driver bars, which
+                        // are all rendered in Eendigo green.
+                        const isCommitment = b.label === "Commitment";
+                        const color = b.isDisabled ? "#94a3b8"
+                          : (isZero ? "#cbd5e1"
+                          : (isCommitment ? "#dc2626"
+                          : "#166534"));
                         const y = up ? yOf(b.end) : yOf(b.start);
                         const h = Math.max(2, hOf(b.start, b.end));
                         const deltaEur = b.end - b.start;
@@ -5274,6 +5338,53 @@ export default function PricingTool() {
                     const oneOffAmt = oneOffPct > 0 ? Math.round(grossTotal * oneOffPct / 100) : 0;
                     const rebateAmt = rebatePct > 0 ? Math.round(grossTotal * rebatePct / 100) : 0;
 
+                    // Per-option numbers — mirror EXACTLY the three-timeline
+                    // table above. Same compound arithmetic as the table:
+                    // start with Gross (weekly × weeks), apply each enabled
+                    // discount compound, then commitment % last. This is
+                    // what populates OPTION_1/2/3_* vars in the template
+                    // so the proposal text reads 1:1 with the table.
+                    const baseEnabledDiscs = enabledDisc.filter(d => d.id !== "commitment");
+                    const computeOption = (weeks: number, commitPct: number) => {
+                      const gross = Math.round(grossWk * weeks);
+                      let running = gross;
+                      // Track each discount's absolute contribution for the
+                      // per-option line items in the template.
+                      const perDisc: Record<string, number> = {};
+                      for (const d of baseEnabledDiscs) {
+                        const before = running;
+                        running = running * (1 - d.pct / 100);
+                        perDisc[d.id] = Math.round(before - running);
+                      }
+                      const beforeCommit = running;
+                      running = commitPct > 0 ? running * (1 - commitPct / 100) : running;
+                      const commitAmt = Math.round(beforeCommit - running);
+                      return {
+                        weeks,
+                        commitPct,
+                        gross,
+                        net: Math.round(running),
+                        oneOffAmt: perDisc["oneoff"] ?? 0,
+                        promptAmt: perDisc["prompt_payment"] ?? 0,
+                        rebateAmt: perDisc["rebate"] ?? 0,
+                        commitAmt,
+                      };
+                    };
+                    // Pad / truncate so templates can always assume 3 cols.
+                    const tl = caseTimelines && caseTimelines.length > 0
+                      ? caseTimelines
+                      : [{ weeks: dur, commitPct: 0 }, { weeks: dur + 4, commitPct: 5 }, { weeks: dur + 8, commitPct: 7 }];
+                    const opt1 = computeOption(tl[0]?.weeks ?? dur,     tl[0]?.commitPct ?? 0);
+                    const opt2 = computeOption(tl[1]?.weeks ?? dur + 4, tl[1]?.commitPct ?? 5);
+                    const opt3 = computeOption(tl[2]?.weeks ?? dur + 8, tl[2]?.commitPct ?? 7);
+
+                    // A deal gets the 3-option narrative when the user has
+                    // actually configured non-default / non-zero commitment
+                    // percentages on at least one option. Otherwise the
+                    // single-option fallback paragraph is used.
+                    const hasThreeOptions = tl.length >= 2
+                      && tl.some(t => (t.commitPct ?? 0) > 0 || t.weeks !== dur);
+
                     // Build variable map for all replacements
                     const vars: Record<string, string> = {
                       // Legacy compat
@@ -5297,11 +5408,39 @@ export default function PricingTool() {
                       PE_FUND_CLAUSE: form.fund_name ? `, granted in connection with ${form.fund_name}` : "",
                       REBATE_PERCENT: rebatePct > 0 ? String(rebatePct) : "",
                       REBATE_AMOUNT: rebatePct > 0 ? fmtP(rebateAmt) : "",
-                      SUCCESS_FEE_PERCENT: variableFeePct > 0 ? String(variableFeePct) : "",
-                      SUCCESS_FEE_AMOUNT: variableFeePct > 0 ? fmtP(varFeeTotal) : "",
+                      // Success fee intentionally dropped from default
+                      // template — the table above has no success-fee row.
                       NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE: fmtP(netTotal),
                       NUMBER_OF_INVOICES: String(invoiceCount),
                       ADMINISTRATION_FEE_PERCENT: String(adminFeePct),
+                      // Three-option block — populated only when the user
+                      // has actually set up alternative timelines.
+                      COMMITMENT_OPTIONS_BLOCK: hasThreeOptions ? "yes" : "",
+                      NO_COMMITMENT_BLOCK: hasThreeOptions ? "" : "yes",
+                      OPTION_1_WEEKS: String(opt1.weeks),
+                      OPTION_1_COMMIT_PCT: opt1.commitPct > 0 ? String(opt1.commitPct) : "",
+                      OPTION_1_GROSS_TOTAL: fmtP(opt1.gross),
+                      OPTION_1_NET_TOTAL: fmtP(opt1.net),
+                      OPTION_1_ONE_OFF_AMOUNT: opt1.oneOffAmt > 0 ? fmtP(opt1.oneOffAmt) : "",
+                      OPTION_1_PROMPT_AMOUNT: opt1.promptAmt > 0 ? fmtP(opt1.promptAmt) : "",
+                      OPTION_1_REBATE_AMOUNT: opt1.rebateAmt > 0 ? fmtP(opt1.rebateAmt) : "",
+                      OPTION_1_COMMIT_AMOUNT: opt1.commitAmt > 0 ? fmtP(opt1.commitAmt) : "",
+                      OPTION_2_WEEKS: String(opt2.weeks),
+                      OPTION_2_COMMIT_PCT: opt2.commitPct > 0 ? String(opt2.commitPct) : "",
+                      OPTION_2_GROSS_TOTAL: fmtP(opt2.gross),
+                      OPTION_2_NET_TOTAL: fmtP(opt2.net),
+                      OPTION_2_ONE_OFF_AMOUNT: opt2.oneOffAmt > 0 ? fmtP(opt2.oneOffAmt) : "",
+                      OPTION_2_PROMPT_AMOUNT: opt2.promptAmt > 0 ? fmtP(opt2.promptAmt) : "",
+                      OPTION_2_REBATE_AMOUNT: opt2.rebateAmt > 0 ? fmtP(opt2.rebateAmt) : "",
+                      OPTION_2_COMMIT_AMOUNT: opt2.commitAmt > 0 ? fmtP(opt2.commitAmt) : "",
+                      OPTION_3_WEEKS: String(opt3.weeks),
+                      OPTION_3_COMMIT_PCT: opt3.commitPct > 0 ? String(opt3.commitPct) : "",
+                      OPTION_3_GROSS_TOTAL: fmtP(opt3.gross),
+                      OPTION_3_NET_TOTAL: fmtP(opt3.net),
+                      OPTION_3_ONE_OFF_AMOUNT: opt3.oneOffAmt > 0 ? fmtP(opt3.oneOffAmt) : "",
+                      OPTION_3_PROMPT_AMOUNT: opt3.promptAmt > 0 ? fmtP(opt3.promptAmt) : "",
+                      OPTION_3_REBATE_AMOUNT: opt3.rebateAmt > 0 ? fmtP(opt3.rebateAmt) : "",
+                      OPTION_3_COMMIT_AMOUNT: opt3.commitAmt > 0 ? fmtP(opt3.commitAmt) : "",
                     };
 
                     let text = template;
