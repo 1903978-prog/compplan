@@ -397,11 +397,11 @@ export default function ExecDashboard() {
                 <Target className="w-4 h-4 text-emerald-600" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold">Business development</h3>
+                <h3 className="text-sm font-semibold">Pricing proposals</h3>
                 <p className="text-[11px] text-muted-foreground">Last 12 months · win rate {bd.winRate}%</p>
               </div>
             </div>
-            <Link href="/bd" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+            <Link href="/pricing" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
               open <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>

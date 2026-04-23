@@ -257,7 +257,11 @@ export const calculateEmployeeMetrics = (
     }
 
     increase_amount_monthly = future_gross_month - gross_month;
-    increase_pct = (increase_amount_monthly / gross_month) * 100;
+    // Guard against divide-by-zero: when the employee has no current
+    // salary (new hire / missing data) the divisor would be 0 and the
+    // percentage renders as "+Infinity%". Return 0 instead; the UI
+    // should display "—" for rows where current salary is missing.
+    increase_pct = gross_month > 0 ? (increase_amount_monthly / gross_month) * 100 : 0;
   }
 
   // 6. Band Status (compare annual gross against ral_k ranges)

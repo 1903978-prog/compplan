@@ -1769,8 +1769,19 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
                         <ChevronLeft className="h-3 w-3" />
                       </button>
                       <div className="text-right min-w-[60px]">
-                        <div className="font-bold text-emerald-600">+{metrics.increase_pct.toFixed(1)}%</div>
-                        <div className="text-[10px] text-muted-foreground">+€{Math.round(metrics.increase_amount_monthly).toLocaleString()}/mo</div>
+                        {/* Employees without a current salary would show
+                            "+Infinity%" — render "New hire" instead. */}
+                        {!emp.current_gross_fixed_year || emp.current_gross_fixed_year <= 0 ? (
+                          <>
+                            <div className="font-bold text-muted-foreground">—</div>
+                            <div className="text-[10px] text-muted-foreground italic">New hire</div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="font-bold text-emerald-600">+{metrics.increase_pct.toFixed(1)}%</div>
+                            <div className="text-[10px] text-muted-foreground">+€{Math.round(metrics.increase_amount_monthly).toLocaleString()}/mo</div>
+                          </>
+                        )}
                       </div>
                       <button type="button" className="h-6 w-6 rounded border flex items-center justify-center hover:bg-muted text-muted-foreground"
                         onClick={async () => {

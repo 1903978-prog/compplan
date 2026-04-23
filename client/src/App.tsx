@@ -402,10 +402,12 @@ function Navigation() {
             </div>
             {(
               <Button
-                variant={apiPaused ? "destructive" : "outline"}
+                variant="outline"
                 size="sm"
                 onClick={toggleApiPause}
-                className={apiPaused ? "" : "text-green-600 border-green-300 hover:bg-green-50"}
+                className={apiPaused
+                  ? "text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100"
+                  : "text-green-600 border-green-300 hover:bg-green-50"}
                 title={apiPaused ? "API is paused — click to resume" : "API is active — click to pause"}
               >
                 {apiPaused ? <Pause className="w-3.5 h-3.5 mr-1.5" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}

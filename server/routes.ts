@@ -1658,6 +1658,13 @@ Extract visual and content patterns from the image. Only suggest additions that 
       if (!proposal) { res.status(404).json({ message: "Not found" }); return; }
 
       const { analyzeProposal } = await import("./proposalAI");
+      // Forward the client's active-model selection (if any) from either
+      // the request body or the X-AI-Provider/X-AI-Model headers so the
+      // AI-Models page actually controls which provider runs.
+      const hdrProvider = (req.header("x-ai-provider") || "").trim() || null;
+      const hdrModel = (req.header("x-ai-model") || "").trim() || null;
+      const bodyProvider = (req.body?._aiProvider as string | undefined) ?? null;
+      const bodyModel = (req.body?._aiModel as string | undefined) ?? null;
       const analysis = await analyzeProposal({
         company_name: proposal.company_name,
         website: proposal.website,
@@ -1668,6 +1675,8 @@ Extract visual and content patterns from the image. Only suggest additions that 
         scope_perimeter: proposal.scope_perimeter,
         objective: proposal.objective,
         urgency: proposal.urgency,
+        _aiProvider: (bodyProvider || hdrProvider) as any,
+        _aiModel: bodyModel || hdrModel,
       });
 
       const updated = await storage.updateProposal(id, {

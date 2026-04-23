@@ -2177,9 +2177,25 @@ export default function Proposals() {
     setAnalyzing(true);
 
     try {
+      // Forward the user's active AI model selection via headers so the
+      // server's analyzeProposal() can route the call to the chosen
+      // provider (Claude / OpenAI / Gemini) instead of hardcoded default.
+      const aiModelRaw = (() => {
+        try { return JSON.parse(localStorage.getItem("app_ai_model_v1") || "{}"); }
+        catch { return {}; }
+      })();
+      const aiModelId: string = aiModelRaw?.id ?? "";
+      // Infer provider from the model-id prefix when not stored explicitly.
+      const aiProvider = aiModelId.startsWith("gemini-") ? "gemini"
+        : aiModelId.startsWith("gpt-") || aiModelId.startsWith("o3") ? "openai"
+        : aiModelId.startsWith("claude-") ? "anthropic"
+        : "";
+      const aiHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (aiProvider) aiHeaders["X-AI-Provider"] = aiProvider;
+      if (aiModelId) aiHeaders["X-AI-Model"] = aiModelId;
       const analyzeRes = await fetch(`/api/proposals/${current!.id}/analyze`, {
         method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: aiHeaders,
       });
 
       if (!analyzeRes.ok) throw new Error("Analysis failed");

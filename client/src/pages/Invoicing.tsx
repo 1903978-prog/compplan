@@ -580,7 +580,7 @@ export default function Invoicing() {
     <div className="space-y-6">
       <PageHeader
         title="Invoicing"
-        description="Harvest invoice management \u2014 track payments, send reminders"
+        description="Harvest invoice management — track payments, send reminders"
         actions={
           <div className="flex items-center gap-2">
             <Button

@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { generateJSON, resolveActiveModel, MissingApiKeyError, ProviderError, type ProviderId } from "./aiProviders";
 
 interface ProposalInput {
   company_name: string;
@@ -10,6 +10,10 @@ interface ProposalInput {
   scope_perimeter?: string | null;
   objective?: string | null;
   urgency?: string | null;
+  /** Optional model override forwarded from the client. When absent, falls
+   *  back to env ACTIVE_AI_PROVIDER/ACTIVE_AI_MODEL, then hardcoded Claude. */
+  _aiProvider?: ProviderId | null;
+  _aiModel?: string | null;
 }
 
 interface TeamMember {
@@ -147,13 +151,12 @@ function getMockAnalysis(input: ProposalInput): ProposalAnalysis {
 }
 
 export async function analyzeProposal(input: ProposalInput): Promise<ProposalAnalysis> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.warn("ANTHROPIC_API_KEY not set — returning mock proposal analysis");
-    return getMockAnalysis(input);
-  }
-
-  const client = new Anthropic({ apiKey });
+  // Resolve the provider + model the caller asked for. Order of priority:
+  //   1. explicit _aiProvider / _aiModel in the input (from the HTTP body,
+  //      which the client forwards from its localStorage selection)
+  //   2. env ACTIVE_AI_PROVIDER / ACTIVE_AI_MODEL (stable Render default)
+  //   3. hardcoded Anthropic Sonnet 4.5
+  const active = resolveActiveModel({ provider: input._aiProvider, model: input._aiModel });
 
   const contextParts: string[] = [];
   contextParts.push(`Company: ${input.company_name}`);
@@ -182,27 +185,33 @@ Guidelines:
   const userMessage = contextParts.join("\n\n");
 
   try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
+    const out = await generateJSON<ProposalAnalysis>({
+      provider: active.provider,
+      model: active.model,
       system: systemPrompt,
-      tools: [ANALYSIS_TOOL],
-      tool_choice: { type: "tool", name: "submit_proposal_analysis" },
-      messages: [{ role: "user", content: userMessage }],
+      prompt: userMessage,
+      toolName: ANALYSIS_TOOL.name,
+      toolDescription: ANALYSIS_TOOL.description,
+      schema: ANALYSIS_TOOL.input_schema,
+      maxTokens: 4096,
     });
-
-    // Extract tool use result
-    const toolUse = response.content.find((block: any) => block.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") {
-      console.error("No tool_use block in Claude response");
+    // Minimal shape validation — if the model skipped required fields,
+    // fall back to mock so the caller doesn't crash on undefined.
+    if (!out.data || !Array.isArray((out.data as any).options)) {
+      console.error(`[proposalAI] ${active.provider} returned malformed payload, falling back to mock`);
       return getMockAnalysis(input);
     }
-
-    const analysis = toolUse.input as ProposalAnalysis;
-
-    return analysis;
+    return out.data;
   } catch (error) {
-    console.error("Claude API error:", error);
+    if (error instanceof MissingApiKeyError) {
+      console.warn(`[proposalAI] ${error.envVar} not set — returning mock proposal analysis (provider: ${active.provider})`);
+      return getMockAnalysis(input);
+    }
+    if (error instanceof ProviderError) {
+      console.error(`[proposalAI] ${active.provider} ${error.status}: ${error.message.slice(0, 300)}`);
+      return getMockAnalysis(input);
+    }
+    console.error("[proposalAI] unexpected error:", error);
     return getMockAnalysis(input);
   }
 }
