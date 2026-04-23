@@ -466,6 +466,7 @@ function Router() {
       <Route path="/admin" component={AppAdmin} />
       <Route path="/admin/backup" component={AdminBackup} />
       <Route path="/admin/ai-models" component={AdminAIModels} />
+      <Route path="/hiring/scores" component={CandidateScores} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -211,7 +211,7 @@ In consideration of the parties' intention to establish a long-term partnership,
 
 **Option 1 — {{OPTION_1_WEEKS}} weeks**
 - Gross total price: {{OPTION_1_GROSS_TOTAL}}
-{{#if OPTION_1_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_1_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}
+{{#if OPTION_1_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_1_ONE_OFF_AMOUNT}}
 {{/if}}{{#if OPTION_1_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_1_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
 {{/if}}{{#if OPTION_1_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_1_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
 {{/if}}{{#if OPTION_1_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_1_COMMIT_PCT}}%): −{{OPTION_1_COMMIT_AMOUNT}}
@@ -219,7 +219,7 @@ In consideration of the parties' intention to establish a long-term partnership,
 
 **Option 2 — {{OPTION_2_WEEKS}} weeks**
 - Gross total price: {{OPTION_2_GROSS_TOTAL}}
-{{#if OPTION_2_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_2_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}
+{{#if OPTION_2_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_2_ONE_OFF_AMOUNT}}
 {{/if}}{{#if OPTION_2_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_2_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
 {{/if}}{{#if OPTION_2_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_2_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
 {{/if}}{{#if OPTION_2_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_2_COMMIT_PCT}}%): −{{OPTION_2_COMMIT_AMOUNT}}, granted in recognition of the extended engagement
@@ -227,7 +227,7 @@ In consideration of the parties' intention to establish a long-term partnership,
 
 **Option 3 — {{OPTION_3_WEEKS}} weeks**
 - Gross total price: {{OPTION_3_GROSS_TOTAL}}
-{{#if OPTION_3_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_3_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}
+{{#if OPTION_3_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_3_ONE_OFF_AMOUNT}}
 {{/if}}{{#if OPTION_3_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_3_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
 {{/if}}{{#if OPTION_3_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_3_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
 {{/if}}{{#if OPTION_3_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_3_COMMIT_PCT}}%): −{{OPTION_3_COMMIT_AMOUNT}}, granted in recognition of the longer-term partnership
@@ -611,6 +611,11 @@ export default function PricingTool() {
     { weeks: 16, commitPct: 5 },
     { weeks: 20, commitPct: 7 },
   ]);
+
+  // Keep Option 1 (the "Base" column) locked to the case's duration and
+  // 0% commitment whenever the duration changes. Options 2 and 3 stay
+  // user-editable. Runs only when duration_weeks actually changes so it
+  // doesn't stomp on a user's Option 2/3 edits.
   const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
   // Won Projects moved to the AR / Invoicing page (Task 11) — no state here.
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
@@ -4413,25 +4418,27 @@ export default function PricingTool() {
               }
             }
 
-            // P7 — Commitment discount bar. When the commitment discount is
-            // enabled, insert a REDUCTION bar between the last P6 layer and
-            // NET1 so the waterfall visually shows how commitment brings
-            // the price down (the commercial-proposal table's "Additional
-            // commitment discount" line). Hidden when commit = 0%.
+            // P7 — Commitment discount bar. ALWAYS inserted between the
+            // last P6 layer and NET1 so the waterfall visually exposes the
+            // slot even when no commitment discount is active (matches the
+            // P1-P6 bars which also render as zero-height placeholders when
+            // their driver has no impact). Red when active, grey when 0%.
             const commitmentRow = caseDiscounts.find(d => d.id === "commitment");
             const commitmentPct = (commitmentRow?.enabled && commitmentRow.pct > 0) ? commitmentRow.pct : 0;
-            if (commitmentPct > 0) {
-              const reducedValue = Math.round(runningValue * (1 - commitmentPct / 100));
-              bars.push({
-                label: "Commitment",
-                start: runningValue,
-                end: reducedValue,
-                note: `P7 commitment discount −${commitmentPct}%`,
-                deltaPct: -commitmentPct,
-                isDisabled: false,
-              });
-              runningValue = reducedValue;
-            }
+            const reducedValue = commitmentPct > 0
+              ? Math.round(runningValue * (1 - commitmentPct / 100))
+              : runningValue;
+            bars.push({
+              label: "Commitment",
+              start: runningValue,
+              end: reducedValue,
+              note: commitmentPct > 0
+                ? `P7 commitment discount −${commitmentPct}%`
+                : "P7 — commitment discount not applied (toggle 1-10% in the Discounts row above)",
+              deltaPct: -commitmentPct,
+              isDisabled: commitmentPct === 0,
+            });
+            runningValue = reducedValue;
             const adjustedFinal = runningValue;
 
             // Discount/rebate/one-off bars: these ADD UP after the Rec. bar to show
@@ -5150,35 +5157,64 @@ export default function PricingTool() {
                               </div>
                             </div>
                             <div className="p-3 space-y-3 bg-background">
-                              {/* Editable weeks + commitment % row */}
+                              {/* Option-configuration row. Option 1 is
+                                  LOCKED to the case duration with 0%
+                                  commitment (the base quote). Options 2
+                                  and 3 are explicitly prompted — the user
+                                  picks weeks + commit% for each to build
+                                  the commercial proposal. */}
                               <div className="grid gap-2" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
                                 <div className="text-[10px] font-bold uppercase text-muted-foreground self-end pb-1">Option</div>
-                                {timelines.map((t, i) => (
-                                  <div key={i} className="flex flex-col gap-1 items-center bg-[#1A6571]/5 rounded p-1.5">
-                                    <div className="flex items-center gap-1">
-                                      <Input
-                                        type="number" min="1" max="52" step="1" value={t.weeks}
-                                        onChange={e => setCaseTimelines(prev => prev.map((x, j) => j === i ? { ...x, weeks: Math.max(1, parseInt(e.target.value) || 1) } : x))}
-                                        className="h-6 w-14 text-xs text-center font-semibold"
-                                      />
-                                      <span className="text-[10px] text-muted-foreground">weeks</span>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[9px] text-muted-foreground">Commit</span>
-                                      <Select
-                                        value={String(t.commitPct)}
-                                        onValueChange={v => setCaseTimelines(prev => prev.map((x, j) => j === i ? { ...x, commitPct: Number(v) } : x))}
-                                      >
-                                        <SelectTrigger className="h-6 w-14 text-[10px] px-1"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
-                                            <SelectItem key={p} value={String(p)} className="text-[11px]">{p}%</SelectItem>
+                                {timelines.map((t, i) => {
+                                  const isBase = i === 0;
+                                  return (
+                                    <div
+                                      key={i}
+                                      className={`flex flex-col gap-1 items-center rounded p-1.5 ${
+                                        isBase ? "bg-muted/50 border border-dashed" : "bg-[#1A6571]/5"
+                                      }`}
+                                    >
+                                      <div className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+                                        {isBase ? "Option 1 · Base" : `Option ${i + 1}`}
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <Input
+                                          type="number" min="1" max="52" step="1" value={t.weeks}
+                                          onChange={e => setCaseTimelines(prev => prev.map((x, j) =>
+                                            j === i ? { ...x, weeks: Math.max(1, parseInt(e.target.value) || 1) } : x
                                           ))}
-                                        </SelectContent>
-                                      </Select>
+                                          disabled={isBase}
+                                          title={isBase ? "Option 1 matches the case duration — edit the case's duration to change" : undefined}
+                                          className={`h-6 w-14 text-xs text-center font-semibold ${isBase ? "opacity-60" : ""}`}
+                                        />
+                                        <span className="text-[10px] text-muted-foreground">weeks</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[9px] text-muted-foreground">Commit</span>
+                                        <Select
+                                          value={String(t.commitPct)}
+                                          onValueChange={v => setCaseTimelines(prev => prev.map((x, j) =>
+                                            j === i ? { ...x, commitPct: Number(v) } : x
+                                          ))}
+                                          disabled={isBase}
+                                        >
+                                          <SelectTrigger className={`h-6 w-14 text-[10px] px-1 ${isBase ? "opacity-60" : ""}`} title={isBase ? "Base option has no commitment discount by convention" : undefined}>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
+                                              <SelectItem key={p} value={String(p)} className="text-[11px]">{p}%</SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground italic px-1">
+                                Option 1 is your base quote (same as the case's duration, no commitment discount).
+                                Options 2 and 3 let you offer longer timelines with a commitment discount to reward the extended engagement.
                               </div>
                               {/* Gross row */}
                               <div className="grid gap-2 items-center" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
@@ -5301,7 +5337,17 @@ export default function PricingTool() {
                     };
                     const cur = curMap[form.currency ?? "EUR"] ?? curMap.EUR;
                     const fmtP = (n: number) => cur.symbol + Math.round(n).toLocaleString("it-IT");
-                    const template = settings?.proposal_template ?? DEFAULT_PROPOSAL_TEMPLATE;
+                    // Template resolution with auto-migration from v1.
+                    // v1 templates included an "A4. Success Fee" paragraph
+                    // and an explicit admin-fee line — both removed in v2
+                    // because the commercial-proposal table above has no
+                    // such rows. Any saved template still carrying those
+                    // markers is stale and is silently replaced by the v2
+                    // default. The user can re-customize via Edit Template.
+                    const savedTemplate = settings?.proposal_template;
+                    const isStale = typeof savedTemplate === "string"
+                      && /A4\. Success Fee|excluding any success fee|administration fee/i.test(savedTemplate);
+                    const template = (!savedTemplate || isStale) ? DEFAULT_PROPOSAL_TEMPLATE : savedTemplate;
                     const dur = (waterfallDuration ?? form.duration_weeks) || 0;
                     // Use canonical values (= waterfall)
                     const netWk = canonicalNetWeekly;

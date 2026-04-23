@@ -559,22 +559,23 @@ export default function ExecDashboard() {
         // Compute each column's net total using the same compound discount
         // arithmetic as the Pricing Case card (gross × ∏(1 − discPct)).
         // Weekly price is read from (in priority order):
-        //   1. Stored recommendation.target_weekly (set when user saves a case)
-        //   2. Seeded weekly_gross_override on the case (used by EMV01 seed)
-        //   3. Staffing build-up — days × daily_rate × count × a 2.0× markup
-        //      (rough 50% GM floor matching the engine's low_50gm calc)
+        //   1. Stored recommendation.target_weekly  (set when PricingTool
+        //      saves a case, AND now pinned by the EMV01 seed)
+        //   2. Staffing build-up × 2.2× markup as a last-resort estimate
+        //      (calibrated so a typical EMV-shaped team lands around the
+        //      €30k/wk target rather than €27k — still a heuristic, not a
+        //      substitute for a stored recommendation)
         // This avoids the "€0 everywhere" failure mode when a case hasn't
         // been opened in PricingTool yet.
         const deriveNetWeekly = (c: any): number => {
           const stored = c.recommendation?.target_weekly;
           if (typeof stored === "number" && stored > 0) return stored;
-          const override = c.weekly_gross_override;
-          if (typeof override === "number" && override > 0) return Math.round(override / 1.08);
           const staffing = Array.isArray(c.staffing) ? c.staffing : [];
           const cost = staffing.reduce((s: number, l: any) =>
             s + (l.days_per_week || 0) * (l.daily_rate_used || 0) * (l.count || 0), 0);
-          // 2× markup = 50% gross margin floor; conservative estimate.
-          return Math.round(cost * 2);
+          // 2.2× markup ~ 55% gross margin; calibrated to the EMV reference
+          // (€13.5k cost × 2.2 = €29.7k, close to target €30.5k).
+          return Math.round(cost * 2.2);
         };
         const computeCols = (c: any) => {
           const wk = deriveNetWeekly(c);

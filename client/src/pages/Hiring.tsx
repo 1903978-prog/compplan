@@ -68,6 +68,128 @@ const STAGES = [
 // The ATS process for them is over; we only track them for history.
 const TERMINAL_STAGES: ReadonlySet<string> = new Set(["offer", "out", "hired"]);
 
+// ── Info-blob parser ──────────────────────────────────────────────────────
+// Candidate notes arrive as free-form text from the Eendigo sync
+// (e.g. "Logic 68.2% | Verbal 83.3% | Excel 35.0%\nTG Score: 76%\n
+// Status: Intro Failed"). The popup renders this as STRUCTURED UI
+// (progress bars for scores, coloured badges for statuses, link for
+// emails) instead of a raw text dump. The parser is intentionally
+// tolerant — anything it doesn't recognise falls through as a plain
+// text line so nothing is silently dropped.
+
+interface ParsedInfo {
+  email: string | null;
+  applied: string | null;            // raw date string, best-effort
+  tgScores: { label: string; pct: number }[]; // Logic, Verbal, Excel, Pres1, Pres2…
+  tgOverall: number | null;
+  introRating: string | null;        // e.g. "DIS → 90%"
+  introScore: number | null;         // 0-100 if parseable
+  statuses: string[];                // ["Intro Failed", "✓ Complete"]
+  keyValues: { key: string; value: string }[]; // any other "Key: value" pair
+  freeText: string[];                // fallback lines
+}
+
+function parseCandidateInfo(info: string): ParsedInfo {
+  const result: ParsedInfo = {
+    email: null, applied: null, tgScores: [], tgOverall: null,
+    introRating: null, introScore: null, statuses: [], keyValues: [], freeText: [],
+  };
+  if (!info) return result;
+
+  const lines = info.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  // Regex library — built once per call.
+  const emailRe = /([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i;
+  const tgSubRe = /([A-Za-z][A-Za-z0-9 ]{0,20})\s+([\d.]+)\s*%/g;
+  const introRe = /^Intro\s*:\s*(.+)$/i;
+  const statusRe = /^Status\s*:\s*(.+)$/i;
+  const appliedRe = /^Applied\s*:\s*(.+)$/i;
+  const tgScoreRe = /^(?:TG|TestGorilla)\s*Score\s*:\s*([\d.]+)\s*%?$/i;
+  const keyValRe = /^([A-Za-z][A-Za-z0-9 _/()+-]*?)\s*[:=]\s*(.+)$/;
+
+  for (const line of lines) {
+    let matched = false;
+
+    // Applied: YYYY-MM-DD
+    const appliedM = line.match(appliedRe);
+    if (appliedM) { result.applied = appliedM[1].trim(); matched = true; continue; }
+
+    // TG / TestGorilla Score: 76%
+    const tgOverallM = line.match(tgScoreRe);
+    if (tgOverallM) { result.tgOverall = Number(tgOverallM[1]); matched = true; continue; }
+
+    // Intro: DIS → 90%
+    const introM = line.match(introRe);
+    if (introM) {
+      result.introRating = introM[1].trim();
+      const numMatch = introM[1].match(/([\d.]+)\s*%/);
+      if (numMatch) result.introScore = Number(numMatch[1]);
+      matched = true;
+      continue;
+    }
+
+    // Status: Intro Failed / ✓ Complete
+    const statusM = line.match(statusRe);
+    if (statusM) { result.statuses.push(statusM[1].trim()); matched = true; continue; }
+
+    // A score line like "Logic 68.2% | Verbal 83.3% | Excel 35.0% | Pres1 0.0% | Pres2 25.0%"
+    // — detect by looking for multiple "LABEL NUM%" patterns on one line.
+    const subMatches = [...line.matchAll(tgSubRe)];
+    if (subMatches.length >= 2) {
+      for (const m of subMatches) {
+        result.tgScores.push({ label: m[1].trim(), pct: Number(m[2]) });
+      }
+      matched = true;
+      continue;
+    }
+
+    // Standalone email line
+    const emailM = line.match(emailRe);
+    if (emailM && !result.email && line.replace(emailRe, "").replace(/[^a-z0-9]/gi, "").length === 0) {
+      // Line is JUST the email
+      result.email = emailM[1];
+      matched = true;
+      continue;
+    }
+    if (!result.email && emailM) result.email = emailM[1];
+
+    // Generic Key: value
+    const kvM = line.match(keyValRe);
+    if (kvM) {
+      const key = kvM[1].trim();
+      const value = kvM[2].trim();
+      if (key.toLowerCase() === "email") {
+        result.email = value.match(emailRe)?.[1] ?? value;
+      } else {
+        result.keyValues.push({ key, value });
+      }
+      matched = true;
+      continue;
+    }
+
+    if (!matched) result.freeText.push(line);
+  }
+  return result;
+}
+
+// Coloured badge helper for score percentages — same rules as the
+// Candidate Scoring dashboard so the two views stay visually coherent.
+function scoreBadgeClass(pct: number): string {
+  if (pct >= 85) return "bg-emerald-500 text-white";
+  if (pct >= 70) return "bg-emerald-100 text-emerald-800";
+  if (pct >= 55) return "bg-amber-100 text-amber-800";
+  if (pct >= 40) return "bg-orange-200 text-orange-900";
+  return "bg-red-200 text-red-900";
+}
+
+// Status-text classifier: red for negative, green for positive, amber for neutral.
+function statusTone(s: string): "green" | "red" | "amber" | "neutral" {
+  const lower = s.toLowerCase();
+  if (/fail|reject|declin|dropped|no[- ]show/.test(lower)) return "red";
+  if (/complete|pass|accept|hired|offer|success|✓/.test(lower)) return "green";
+  if (/pending|schedul|in[- ]progress|review/.test(lower)) return "amber";
+  return "neutral";
+}
+
 type StageId = typeof STAGES[number]["id"];
 
 interface Candidate {
@@ -120,50 +242,42 @@ function CandidateCard({
 
   const isDragging = draggingId === candidate.id;
 
+  // Clicking anywhere on the card now opens the detail popup. Inline
+  // editing of name and info is disabled on the card surface — users
+  // edit both fields inside the popup, where there's room for a
+  // structured UI (parsed scores, tags, progress bars). Interactive
+  // child elements (drag handle, hover actions) call stopPropagation
+  // so their clicks don't also trigger onOpenDetail.
   return (
     <div
       onDragOver={e => onDragOver(e, candidate.id)}
       onDrop={e => onDrop(e, candidate.id)}
-      className={`group relative bg-white border rounded-lg shadow-sm transition-all ${
-        isDragging ? "opacity-40 scale-95 border-dashed" : "hover:shadow-md"
+      onClick={() => onOpenDetail(candidate)}
+      className={`group relative bg-white border rounded-lg shadow-sm transition-all cursor-pointer ${
+        isDragging ? "opacity-40 scale-95 border-dashed" : "hover:shadow-md hover:border-primary/40"
       }`}
     >
       {/* Drag handle — drag only from here */}
       <div
         draggable
         onDragStart={e => onDragStart(e, candidate.id)}
+        onClick={e => e.stopPropagation()}
         className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 cursor-grab active:cursor-grabbing select-none"
       >
         <GripVertical className="w-3 h-3 text-muted-foreground" />
       </div>
 
       <div className="p-3 pl-5 space-y-1.5">
-        {/* Name row */}
+        {/* Name row — no longer inline-editable. Edit in the popup. */}
         <div className="flex items-center justify-between gap-2">
-          {editingName ? (
-            <Input
-              ref={nameRef}
-              value={nameBuf}
-              onChange={e => setNameBuf(e.target.value)}
-              onBlur={commitName}
-              onKeyDown={e => { if (e.key === "Enter") commitName(); if (e.key === "Escape") { setNameBuf(candidate.name); setEditingName(false); }}}
-              className="h-6 text-sm font-semibold px-1 py-0 border-0 border-b rounded-none focus-visible:ring-0 focus-visible:border-primary"
-              autoFocus
-            />
-          ) : (
-            <button
-              className="text-sm font-semibold text-left truncate max-w-[160px] hover:text-primary transition-colors"
-              onClick={() => { setNameBuf(candidate.name); setEditingName(true); setTimeout(() => nameRef.current?.select(), 10); }}
-            >
-              {candidate.name || <span className="text-muted-foreground font-normal italic">Unnamed</span>}
-            </button>
-          )}
-
-          {/* Actions */}
+          <span className="text-sm font-semibold truncate max-w-[160px]">
+            {candidate.name || <span className="text-muted-foreground font-normal italic">Unnamed</span>}
+          </span>
+          {/* Hover actions — stopPropagation so the card's click doesn't fire */}
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
             <button
               disabled={stageIndex === 0}
-              onClick={() => onMove(candidate.id, "left")}
+              onClick={e => { e.stopPropagation(); onMove(candidate.id, "left"); }}
               className="p-0.5 rounded hover:bg-muted disabled:opacity-20 transition-colors"
               title="Move left"
             >
@@ -171,14 +285,14 @@ function CandidateCard({
             </button>
             <button
               disabled={stageIndex === STAGES.length - 1}
-              onClick={() => onMove(candidate.id, "right")}
+              onClick={e => { e.stopPropagation(); onMove(candidate.id, "right"); }}
               className="p-0.5 rounded hover:bg-muted disabled:opacity-20 transition-colors"
               title="Move right"
             >
               <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
             </button>
             <button
-              onClick={() => onDelete(candidate.id)}
+              onClick={e => { e.stopPropagation(); onDelete(candidate.id); }}
               className="p-0.5 rounded hover:bg-red-50 transition-colors"
               title="Delete"
             >
@@ -187,33 +301,19 @@ function CandidateCard({
           </div>
         </div>
 
-        {/* Info text */}
-        {editingInfo ? (
-          <Textarea
-            ref={infoRef}
-            value={infoBuf}
-            onChange={e => setInfoBuf(e.target.value)}
-            onBlur={commitInfo}
-            onKeyDown={e => { if (e.key === "Escape") { setInfoBuf(candidate.info); setEditingInfo(false); }}}
-            className="text-xs resize-none min-h-[60px] p-1 border-dashed"
-            placeholder="Add notes, CV link, contact, LinkedIn…"
-            autoFocus
-            rows={3}
-          />
+        {/* Compact info preview — first 2 lines. Full structured rendering
+            lives in the detail popup. */}
+        {candidate.info ? (
+          <div className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+            {candidate.info}
+          </div>
         ) : (
-          <button
-            className="text-xs text-left w-full text-muted-foreground hover:text-foreground transition-colors leading-relaxed"
-            onClick={() => { setInfoBuf(candidate.info); setEditingInfo(true); setTimeout(() => infoRef.current?.focus(), 10); }}
-          >
-            {candidate.info ? (
-              <span className="whitespace-pre-wrap line-clamp-4">{candidate.info}</span>
-            ) : (
-              <span className="italic opacity-50">Click to add notes…</span>
-            )}
-          </button>
+          <div className="text-xs text-muted-foreground/50 italic">
+            Click to open details…
+          </div>
         )}
 
-        {/* Date chip + lock indicator + "Details" quick button */}
+        {/* Date chip + lock indicator */}
         <div className="flex items-center gap-1.5 pt-0.5">
           {(() => {
             const created = new Date(candidate.created_at);
@@ -232,13 +332,6 @@ function CandidateCard({
               <Lock className="w-2.5 h-2.5 text-muted-foreground/40" />
             </span>
           )}
-          <button
-            onClick={() => onOpenDetail(candidate)}
-            className="ml-auto text-[9px] text-primary hover:underline opacity-0 group-hover:opacity-100 transition-opacity"
-            title="Open full details"
-          >
-            Open →
-          </button>
         </div>
       </div>
 
@@ -757,17 +850,166 @@ export default function Hiring() {
                     )}
                   </div>
 
-                  {/* Full info / notes */}
-                  <div>
-                    <div className="text-[10px] font-bold uppercase text-muted-foreground mb-1">Notes & CV / LinkedIn</div>
-                    {c.info ? (
-                      <div className="whitespace-pre-wrap text-xs bg-muted/30 rounded p-3 font-mono max-h-80 overflow-y-auto">
-                        {c.info}
+                  {/* Structured rendering of the info blob. Parser extracts
+                      email, applied date, TestGorilla sub-scores, TG overall,
+                      intro call rating, statuses, and any other Key:value
+                      pairs — each rendered with proper UI (progress bars,
+                      coloured status badges, etc.) instead of raw text. */}
+                  {(() => {
+                    const parsed = parseCandidateInfo(c.info ?? "");
+                    const hasAnyStructure =
+                      parsed.email || parsed.applied || parsed.tgScores.length > 0
+                      || parsed.tgOverall != null || parsed.introRating != null
+                      || parsed.statuses.length > 0 || parsed.keyValues.length > 0
+                      || parsed.freeText.length > 0;
+                    if (!c.info) {
+                      return (
+                        <div className="text-xs italic text-muted-foreground">No notes yet.</div>
+                      );
+                    }
+                    return (
+                      <div className="space-y-3">
+                        {/* Applied date */}
+                        {parsed.applied && (
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-muted-foreground">Applied:</span>
+                            <span className="font-medium">{parsed.applied}</span>
+                          </div>
+                        )}
+
+                        {/* TestGorilla sub-scores as progress bars */}
+                        {parsed.tgScores.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <div className="text-[10px] font-bold uppercase text-muted-foreground">TestGorilla sub-scores</div>
+                              {parsed.tgOverall != null && (
+                                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${scoreBadgeClass(parsed.tgOverall)}`}>
+                                  Overall {parsed.tgOverall.toFixed(0)}%
+                                </span>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+                              {parsed.tgScores.map((s, i) => (
+                                <div key={i} className="space-y-0.5">
+                                  <div className="flex items-center justify-between text-[11px]">
+                                    <span className="font-medium">{s.label}</span>
+                                    <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${scoreBadgeClass(s.pct)}`}>
+                                      {s.pct.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full transition-all ${
+                                        s.pct >= 70 ? "bg-emerald-500"
+                                        : s.pct >= 55 ? "bg-amber-500"
+                                        : s.pct >= 40 ? "bg-orange-400"
+                                        : "bg-red-400"
+                                      }`}
+                                      style={{ width: `${Math.min(100, Math.max(0, s.pct))}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TG overall on its own when no sub-scores */}
+                        {parsed.tgOverall != null && parsed.tgScores.length === 0 && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground font-semibold">TestGorilla score:</span>
+                            <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded ${scoreBadgeClass(parsed.tgOverall)}`}>
+                              {parsed.tgOverall.toFixed(0)}%
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Intro call rating */}
+                        {parsed.introRating && (
+                          <div className="space-y-1">
+                            <div className="text-[10px] font-bold uppercase text-muted-foreground">Intro call</div>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="font-medium">{parsed.introRating.replace(/→\s*[\d.]+\s*%/, "").trim()}</span>
+                              {parsed.introScore != null && (
+                                <span className={`font-mono text-[10px] px-2 py-0.5 rounded ${scoreBadgeClass(parsed.introScore)}`}>
+                                  {parsed.introScore.toFixed(0)}%
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Statuses as tone-coloured badges */}
+                        {parsed.statuses.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-[10px] font-bold uppercase text-muted-foreground">Status</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {parsed.statuses.map((s, i) => {
+                                const tone = statusTone(s);
+                                const cls = tone === "red" ? "bg-red-100 text-red-800 border-red-200"
+                                  : tone === "green" ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                  : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-200"
+                                  : "bg-muted text-muted-foreground border-border";
+                                return (
+                                  <span key={i} className={`text-[11px] px-2 py-0.5 rounded border font-medium ${cls}`}>
+                                    {s}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Other key:value pairs */}
+                        {parsed.keyValues.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                            {parsed.keyValues.map((kv, i) => (
+                              <div key={i} className="flex items-baseline gap-1.5">
+                                <span className="text-muted-foreground">{kv.key}:</span>
+                                <span className="font-medium truncate">{kv.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Unrecognised free-text lines */}
+                        {parsed.freeText.length > 0 && (
+                          <div className="space-y-1 border-t pt-2">
+                            <div className="text-[10px] font-bold uppercase text-muted-foreground">Other notes</div>
+                            {parsed.freeText.map((t, i) => (
+                              <div key={i} className="text-xs text-muted-foreground leading-relaxed">{t}</div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Inline edit toggle — advanced users can still
+                            hand-edit the raw blob when our parser doesn't
+                            catch something exotic. */}
+                        <details className="pt-2 border-t">
+                          <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                            Edit raw notes
+                          </summary>
+                          <Textarea
+                            defaultValue={c.info}
+                            onBlur={e => {
+                              if (e.target.value !== c.info) {
+                                updateCandidate(c.id, { info: e.target.value, sync_locked: 1 });
+                              }
+                            }}
+                            className="text-xs mt-1 min-h-[120px] font-mono"
+                          />
+                          <div className="text-[9px] text-muted-foreground italic mt-1">Blur to save.</div>
+                        </details>
+
+                        {!hasAnyStructure && (
+                          <div className="text-xs italic text-muted-foreground">
+                            (Parser didn't recognise any structured fields — see raw notes above.)
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="text-xs italic text-muted-foreground">No notes yet — click the card body to add.</div>
-                    )}
-                  </div>
+                    );
+                  })()}
 
                   <div className="flex justify-end gap-2 pt-2 border-t">
                     <Button variant="outline" size="sm" onClick={() => setDetailCandidate(null)}>

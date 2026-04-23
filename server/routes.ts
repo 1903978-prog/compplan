@@ -456,7 +456,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.put("/api/hiring/candidates/:id", requireAuth, async (req, res) => {
-    res.json(await storage.updateHiringCandidate(safeInt(req.params.id), req.body));
+    // Validate & clamp the `scores` field when present. Without this a
+    // client could write {hsa: 99999} and break the composite-score
+    // calculation downstream. Allow-list the known test IDs; unknown
+    // keys are silently dropped so the shape stays stable.
+    const ALLOWED_TESTS = new Set(["hsa", "testgorilla", "case_study", "intro_call", "ppt", "final"]);
+    const payload = { ...(req.body as Record<string, any>) };
+    if (payload.scores && typeof payload.scores === "object") {
+      const clean: Record<string, number | null> = {};
+      for (const [k, v] of Object.entries(payload.scores)) {
+        if (!ALLOWED_TESTS.has(k)) continue;
+        if (v == null) { clean[k] = null; continue; }
+        const n = Number(v);
+        if (!isFinite(n)) continue;
+        clean[k] = Math.max(0, Math.min(100, n));
+      }
+      payload.scores = clean;
+    }
+    res.json(await storage.updateHiringCandidate(safeInt(req.params.id), payload));
   });
 
   app.delete("/api/hiring/candidates/:id", requireAuth, async (req, res) => {

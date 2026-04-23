@@ -67,6 +67,20 @@ export default function AdminAIModels() {
         description="Choose which provider + model the app uses by default for its AI jobs, and compare per-token pricing."
       />
 
+      {/* Honesty banner — the selection below is currently a UI preference.
+          None of the server-side AI call sites (proposal generator, briefing,
+          deck analysis, summaries) read this preference yet — they hit their
+          hardcoded model. Wiring each call site to respect this setting is
+          a separate engineering task. Shipping with this banner prevents
+          the user from assuming behavioural changes that don't exist. */}
+      <div className="mb-4 rounded-lg border-2 border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+        <div className="font-bold uppercase tracking-wide text-[10px] mb-1">⚠ Preview feature — selection is cosmetic today</div>
+        Changing the model here updates the abbreviation in the top bar and this page's active marker.
+        It does <strong>not</strong> yet change which model the app actually calls on the server.
+        Proposal generation, briefing, and deck analysis still use their hardcoded models (Claude Sonnet 4.5).
+        Backend wiring is a separate task — vote for it if you need it sooner.
+      </div>
+
       <div className="space-y-6">
         {/* Selector card ------------------------------------------------ */}
         <Card className="p-5 space-y-4">

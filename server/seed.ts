@@ -597,34 +597,59 @@ export async function seedDatabase() {
       { role_id: "asc_in",      role_name: "ASC IN",      resource_label: "Associate INT",     days_per_week: 5, daily_rate_used: 250,  count: 2 },
     ]);
     const emv01Discounts = JSON.stringify([
-      { id: "carlyle_frame", name: "Carlyle frame agr. discount", pct: 5, enabled: true },
+      { id: "oneoff",         name: "One-off discount",        pct: 5, enabled: true },
       { id: "prompt_payment", name: "Prompt payment discount", pct: 3, enabled: true },
-      { id: "rebate", name: "Rebate", pct: 2, enabled: true },
-      { id: "commitment", name: "Commitment discount", pct: 0, enabled: false },
+      { id: "rebate",         name: "Rebate",                  pct: 2, enabled: true },
+      { id: "commitment",     name: "Commitment discount",     pct: 0, enabled: false },
     ]);
     const emv01Timelines = JSON.stringify([
       { weeks: 12, commitPct: 0 },
       { weeks: 16, commitPct: 5 },
       { weeks: 20, commitPct: 7 },
     ]);
+    // Pin a minimal recommendation so the Exec Dashboard three-timeline
+    // card has a stable target_weekly to multiply against, instead of
+    // falling through to the staffing-derived heuristic that produced
+    // wrong numbers (€27k/wk vs €30,561 expected).
+    const emv01Recommendation = JSON.stringify({
+      target_weekly: 30561,
+      base_weekly: 30000,
+      delivery_cost_weekly: 13500,
+      low_50gm_weekly: 27000,
+      layer_trace: [],
+      note: "Pinned by seed — EMV01 reference case for 3-timeline proposal.",
+    });
     const nowIso = new Date().toISOString();
     await db.execute(sql`
       INSERT INTO pricing_cases (
         project_name, client_name, fund_name, region, country,
         pe_owned, revenue_band, price_sensitivity, duration_weeks,
-        notes, status, staffing, case_discounts, case_timelines,
+        notes, status, staffing, case_discounts, case_timelines, recommendation,
         created_at, updated_at
       )
       SELECT 'EMV01', 'EMV', 'Carlyle',
              'Italy', 'Italy',
              1, 'above_1b', 'medium', 12,
              'Commercial proposal reference — three timeline options.',
-             'active', ${emv01Staffing}::jsonb, ${emv01Discounts}::jsonb, ${emv01Timelines}::jsonb,
+             'active', ${emv01Staffing}::jsonb, ${emv01Discounts}::jsonb,
+             ${emv01Timelines}::jsonb, ${emv01Recommendation}::jsonb,
              ${nowIso}, ${nowIso}
       WHERE NOT EXISTS (SELECT 1 FROM pricing_cases WHERE project_name = 'EMV01')
     `);
+    // Back-fill path: if EMV01 was seeded by an earlier version WITHOUT
+    // case_timelines / recommendation, patch those columns in place. Only
+    // fills NULL — never clobbers a user-edited row.
+    await db.execute(sql`
+      UPDATE pricing_cases
+      SET case_timelines = COALESCE(case_timelines, ${emv01Timelines}::jsonb),
+          recommendation = COALESCE(recommendation, ${emv01Recommendation}::jsonb),
+          case_discounts = COALESCE(case_discounts, ${emv01Discounts}::jsonb),
+          updated_at = ${nowIso}
+      WHERE project_name = 'EMV01'
+        AND (case_timelines IS NULL OR recommendation IS NULL OR case_discounts IS NULL)
+    `);
   } catch (e) {
-    console.error("Failed to seed EMV01 pricing case:", e);
+    console.error("Failed to seed/backfill EMV01 pricing case:", e);
   }
 
   // Add project_type and slide_selection columns to proposals (idempotent)
