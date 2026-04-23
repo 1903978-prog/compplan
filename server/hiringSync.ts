@@ -413,6 +413,12 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
     existing.filter(c => c.external_id).map(c => [c.external_id, c])
   );
 
+  // Terminal stages — once a candidate lands here, the ATS process is over.
+  // The Eendigo sync must leave them untouched (no stage move, no info
+  // overwrite, no re-import) so we can keep them as historical records
+  // without upstream churn re-promoting them through the pipeline.
+  const TERMINAL_STAGES = new Set(["offer", "hired", "out"]);
+
   let created = 0, updated = 0, skipped = 0;
 
   for (const [i, cand] of parsed.entries()) {
@@ -420,6 +426,11 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
     const existing = byEmail.get(cand.email);
 
     if (existing) {
+      if (TERMINAL_STAGES.has(existing.stage)) {
+        // Candidate's process is finished — don't touch them.
+        skipped++;
+        continue;
+      }
       if (existing.sync_locked) {
         // User manually moved — only advance stage if new is further, always merge info
         const currentOrder = STAGE_ORDER[existing.stage] ?? 0;

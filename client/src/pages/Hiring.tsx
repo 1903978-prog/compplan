@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, GripVertical, UserCheck, ChevronLeft, ChevronRight, RefreshCw, Lock, UserPlus } from "lucide-react";
+import { Plus, Trash2, GripVertical, UserCheck, ChevronLeft, ChevronRight, RefreshCw, Lock, UserPlus, Mail, Calendar, Info, ExternalLink, X } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 // ─── Stage config ────────────────────────────────────────────────────────────
 
@@ -42,21 +43,11 @@ const STAGES = [
     dot: "bg-emerald-400",
   },
   {
-    // Offer out — the intermediate stage for candidates who performed well
-    // during CSI and have a written offer in their inbox but haven't
-    // accepted yet. Distinct from "Hired" (signed) and "After CSI LM"
-    // (still in deliberation). Teal stands out between emerald (After CSI)
-    // and green (Hired).
+    // Combined offer-out + hired stage. Once a candidate has a written offer
+    // they stay here until the outcome is known; accepted = stays here,
+    // declined = moved to "Out". Keeps the column count tight.
     id: "offer",
-    label: "Offer out",
-    color: "bg-teal-50 border-teal-200",
-    header: "bg-teal-600",
-    badge: "bg-teal-100 text-teal-800",
-    dot: "bg-teal-400",
-  },
-  {
-    id: "hired",
-    label: "Hired",
+    label: "Make offer / Hired",
     color: "bg-green-50 border-green-300",
     header: "bg-green-700",
     badge: "bg-green-100 text-green-800",
@@ -71,6 +62,11 @@ const STAGES = [
     dot: "bg-red-400",
   },
 ] as const;
+
+// Stages marked here are "terminal" — once a candidate lands in one, the
+// Eendigo sync must leave them alone (no move, no overwrite, no re-import).
+// The ATS process for them is over; we only track them for history.
+const TERMINAL_STAGES: ReadonlySet<string> = new Set(["offer", "out", "hired"]);
 
 type StageId = typeof STAGES[number]["id"];
 
@@ -93,6 +89,7 @@ interface CardProps {
   onUpdate: (id: number, patch: Partial<Candidate>) => void;
   onDelete: (id: number) => void;
   onMove: (id: number, direction: "left" | "right") => void;
+  onOpenDetail: (candidate: Candidate) => void;
   // drag
   onDragStart: (e: React.DragEvent, id: number) => void;
   onDragOver: (e: React.DragEvent, id: number) => void;
@@ -101,7 +98,7 @@ interface CardProps {
 }
 
 function CandidateCard({
-  candidate, stageIndex, onUpdate, onDelete, onMove,
+  candidate, stageIndex, onUpdate, onDelete, onMove, onOpenDetail,
   onDragStart, onDragOver, onDrop, draggingId,
 }: CardProps) {
   const [editingName, setEditingName] = useState(false);
@@ -216,7 +213,7 @@ function CandidateCard({
           </button>
         )}
 
-        {/* Date chip + lock indicator */}
+        {/* Date chip + lock indicator + "Details" quick button */}
         <div className="flex items-center gap-1.5 pt-0.5">
           {(() => {
             const created = new Date(candidate.created_at);
@@ -235,8 +232,16 @@ function CandidateCard({
               <Lock className="w-2.5 h-2.5 text-muted-foreground/40" />
             </span>
           )}
+          <button
+            onClick={() => onOpenDetail(candidate)}
+            className="ml-auto text-[9px] text-primary hover:underline opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Open full details"
+          >
+            Open →
+          </button>
         </div>
       </div>
+
     </div>
   );
 }
@@ -251,6 +256,7 @@ interface ColumnProps {
   onUpdate: (id: number, patch: Partial<Candidate>) => void;
   onDelete: (id: number) => void;
   onMove: (id: number, direction: "left" | "right") => void;
+  onOpenDetail: (candidate: Candidate) => void;
   onDragStart: (e: React.DragEvent, id: number) => void;
   onDragOver: (e: React.DragEvent, id: number) => void;
   onDrop: (e: React.DragEvent, id: number) => void;
@@ -260,7 +266,7 @@ interface ColumnProps {
 
 function KanbanColumn({
   stage, stageIndex, candidates, onAdd,
-  onUpdate, onDelete, onMove,
+  onUpdate, onDelete, onMove, onOpenDetail,
   onDragStart, onDragOver, onDrop, onDropIntoColumn, draggingId,
 }: ColumnProps) {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -292,6 +298,7 @@ function KanbanColumn({
             onUpdate={onUpdate}
             onDelete={onDelete}
             onMove={onMove}
+            onOpenDetail={onOpenDetail}
             onDragStart={onDragStart}
             onDragOver={onDragOver}
             onDrop={onDrop}
@@ -332,6 +339,9 @@ export default function Hiring() {
   const [manualEmail, setManualEmail] = useState("");
   const [manualStage, setManualStage] = useState<StageId>("potential");
   const [addingManual, setAddingManual] = useState(false);
+  // Detail popup — clicked candidate shown in a Dialog with every field
+  // (name, info, stage history, email, lock state, created_at, external id).
+  const [detailCandidate, setDetailCandidate] = useState<Candidate | null>(null);
   const { toast } = useToast();
 
   const load = async () => {
@@ -489,8 +499,14 @@ export default function Hiring() {
     setDraggingId(null);
   };
 
-  const byStage = (stageId: StageId) =>
-    candidates.filter(c => c.stage === stageId).sort((a, b) => a.sort_order - b.sort_order);
+  // byStage: legacy "hired" records surface under the merged "Make offer /
+  // Hired" column so they don't disappear after the stage consolidation.
+  // Terminal stages ("offer" / "out") are rendered as-is.
+  const byStage = (stageId: StageId) => {
+    const match = (c: Candidate) =>
+      c.stage === stageId || (stageId === "offer" && (c.stage as string) === "hired");
+    return candidates.filter(match).sort((a, b) => a.sort_order - b.sort_order);
+  };
 
   const total = candidates.length;
 
@@ -540,6 +556,7 @@ export default function Hiring() {
               onUpdate={updateCandidate}
               onDelete={deleteCandidate}
               onMove={moveCandidate}
+              onOpenDetail={setDetailCandidate}
               onDragStart={handleDragStart}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
@@ -670,6 +687,108 @@ export default function Hiring() {
           </div>
         </details>
       </div>
+
+      {/* Candidate detail popup — opens on "Open →" click inside any card.
+          Shows every field the DB holds for this person plus a stage
+          timeline and the lock status. All fields are read-only here;
+          inline editing continues to live on the card itself. */}
+      <Dialog open={!!detailCandidate} onOpenChange={open => { if (!open) setDetailCandidate(null); }}>
+        <DialogContent className="max-w-2xl">
+          {detailCandidate && (() => {
+            const c = detailCandidate;
+            const stageObj = STAGES.find(s => s.id === c.stage) ?? null;
+            const created = new Date(c.created_at);
+            const daysInFunnel = Math.floor((Date.now() - created.getTime()) / 86400000);
+            // Extract email from info blob (we store "Email: x@y.com")
+            const emailMatch = c.info.match(/Email:\s*(\S+@\S+\.\S+)/i);
+            const email = emailMatch ? emailMatch[1] : c.external_id || "";
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <UserCheck className="w-5 h-5 text-primary" />
+                    {c.name || <span className="italic text-muted-foreground">Unnamed candidate</span>}
+                    {stageObj && (
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${stageObj.badge}`}>
+                        {stageObj.label}
+                      </span>
+                    )}
+                  </DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-4">
+                  {/* Meta grid */}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground">Email:</span>
+                      {email ? (
+                        <a href={`mailto:${email}`} className="text-primary hover:underline">{email}</a>
+                      ) : (
+                        <span className="italic text-muted-foreground">not captured</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground">Added:</span>
+                      <span>{created.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span>{daysInFunnel}d in funnel</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground">Stage:</span>
+                      <span className="font-semibold">{stageObj?.label ?? c.stage}</span>
+                      {TERMINAL_STAGES.has(c.stage) && (
+                        <span className="text-[9px] text-red-600 font-bold uppercase ml-1">terminal — sync skips</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground">Lock:</span>
+                      <span>{c.sync_locked === 1 ? "Manually positioned (won't be moved by sync)" : "Unlocked (sync may move this card)"}</span>
+                    </div>
+                    {c.external_id && (
+                      <div className="flex items-center gap-1.5 col-span-2">
+                        <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-muted-foreground">Eendigo sync ID:</span>
+                        <code className="text-[11px] font-mono bg-muted px-1.5 py-0.5 rounded">{c.external_id}</code>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Full info / notes */}
+                  <div>
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground mb-1">Notes & CV / LinkedIn</div>
+                    {c.info ? (
+                      <div className="whitespace-pre-wrap text-xs bg-muted/30 rounded p-3 font-mono max-h-80 overflow-y-auto">
+                        {c.info}
+                      </div>
+                    ) : (
+                      <div className="text-xs italic text-muted-foreground">No notes yet — click the card body to add.</div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <Button variant="outline" size="sm" onClick={() => setDetailCandidate(null)}>
+                      <X className="w-3.5 h-3.5 mr-1" /> Close
+                    </Button>
+                    <Button
+                      variant="destructive" size="sm"
+                      onClick={() => {
+                        deleteCandidate(c.id);
+                        setDetailCandidate(null);
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete candidate
+                    </Button>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
