@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
   Users, AlertTriangle, Eye, EyeOff, History, CheckCircle, XCircle, Info, Pencil, RefreshCw, Download, Paperclip, X, FileText, ChevronDown,
-  MessageSquare, ClipboardPaste, StickyNote, Save,
+  MessageSquare, ClipboardPaste, StickyNote, Save, Printer,
 } from "lucide-react";
 import {
   calculatePricing, DEFAULT_PRICING_SETTINGS, REVENUE_BANDS, REGIONS, SECTORS, DEFAULT_PROJECT_TYPES,
@@ -105,6 +105,72 @@ function ensureCommitmentRow(saved: CaseDiscountRow[]): CaseDiscountRow[] {
     ...saved,
     { id: "commitment", name: "Commitment discount", pct: 0, enabled: false },
   ];
+}
+
+/** Build the three default timeline options around a base duration:
+ *  short = base, medium = base+4, long = base+8, with Eendigo's standard
+ *  commitment discount curve (0 / 5 / 7 %). Kept pure so it can be called
+ *  from newCase, openCase, and any future "reset" button. */
+function deriveTimelines(baseWeeks: number): { weeks: number; commitPct: number }[] {
+  const b = Math.max(1, Math.round(baseWeeks || 12));
+  return [
+    { weeks: b,      commitPct: 0 },
+    { weeks: b + 4,  commitPct: 5 },
+    { weeks: b + 8,  commitPct: 7 },
+  ];
+}
+
+/** Render the three-timeline commercial-proposal block in a standalone pop-up
+ *  window and trigger the OS print dialog. The user picks "Save as PDF" as
+ *  destination to export — no pdf library required. Same layout as the
+ *  on-screen card so pasting the resulting PDF into a deck looks identical. */
+function printThreeTimelines(
+  form: { project_name?: string; client_name?: string },
+  cols: { weeks: number; commitPct: number; grossTotal: number; breakdown: { id: string; name: string; pct: number; amount: number }[]; netTotal: number }[],
+  rowDefs: { id: string; name: string; pct: number }[],
+  fmtC: (n: number) => string,
+  grossWk: number,
+  adminFeePct: number,
+): void {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const clientLabel = [form.client_name, form.project_name].filter(Boolean).join(" · ") || "Commercial proposal";
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+  const colHeaders = cols.map(c => `<th style="padding:10px;border-bottom:2px solid #1A6571;color:#1A6571;text-align:center;font-weight:600;font-size:12px;">${c.weeks} weeks${c.commitPct > 0 ? `<div style="font-size:9px;font-weight:400;color:#6b7280;">Commitment discount ${c.commitPct}%</div>` : ""}</th>`).join("");
+  const grossRow = `<tr><td style="padding:8px 10px;background:#5B7E7E;color:white;text-align:right;font-weight:600;font-size:11px;">Gross total price</td>${cols.map(c => `<td style="padding:8px 10px;text-align:center;font-family:monospace;border:1px solid #d1d5db;">${esc(fmtC(c.grossTotal))}</td>`).join("")}</tr>`;
+  const discountRows = rowDefs.map((row, idx) => `<tr><td style="padding:8px 10px;background:#5B7E7E;opacity:0.85;color:white;text-align:right;font-weight:600;font-size:11px;">${esc(row.id === "commitment" ? row.name : `${row.name} (${row.pct}%)`)}</td>${cols.map(c => {
+    const cell = c.breakdown[idx];
+    return `<td style="padding:8px 10px;text-align:center;font-family:monospace;border:1px solid #d1d5db;">${cell.amount > 0 ? `−${esc(fmtC(cell.amount))}` : "—"}</td>`;
+  }).join("")}</tr>`).join("");
+  const netRow = `<tr><td style="padding:10px;background:#5B7E7E;color:white;text-align:right;font-weight:700;font-size:12px;">Net total price</td>${cols.map(c => `<td style="padding:10px;text-align:center;font-family:monospace;font-weight:700;font-size:13px;background:#d1fae5;color:#065f46;border:2px solid #10b981;">${esc(fmtC(c.netTotal))}</td>`).join("")}</tr>`;
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8" />
+<title>Commercial proposal — ${esc(clientLabel)}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; padding: 32px 40px; color: #0f172a; }
+  .eyebrow { color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 2px; }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #1A6571; }
+  .sub { color: #6b7280; font-size: 11px; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: separate; border-spacing: 4px; }
+  th:first-child, td:first-child { text-align: right; }
+  .footnote { margin-top: 18px; font-size: 10px; color: #94a3b8; font-style: italic; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+  @media print { body { padding: 16px; } }
+</style></head><body>
+  <div class="eyebrow">Commercials</div>
+  <h1>Commercial proposal — ${esc(clientLabel)}</h1>
+  <div class="sub">Project fees by option · Generated ${today}</div>
+  <table>
+    <thead><tr><th></th>${colHeaders}</tr></thead>
+    <tbody>${grossRow}${discountRows}${netRow}</tbody>
+  </table>
+  <div class="footnote">Based on Gross weekly rate of ${esc(fmtC(grossWk))} (Net + ${adminFeePct}% admin). Same weekly price across all three options — commitment discount rewards longer engagements.</div>
+</body></html>`;
+
+  const w = window.open("", "_blank", "width=1100,height=800");
+  if (!w) return;
+  w.document.open(); w.document.write(html); w.document.close();
+  w.addEventListener("load", () => { w.focus(); w.print(); });
+  setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 400);
 }
 
 function emptyProposal(): PricingProposal {
@@ -512,6 +578,15 @@ export default function PricingTool() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
+  // Three-timeline commercial-proposal comparison (short / medium / long).
+  // Default: base duration + 4w + 8w, with 0 / 5 / 7% commitment discount
+  // matching Eendigo's standard pitch (longer engagement → bigger discount).
+  // Each row is fully editable inline on the pricing case.
+  const [caseTimelines, setCaseTimelines] = useState<{ weeks: number; commitPct: number }[]>([
+    { weeks: 12, commitPct: 0 },
+    { weeks: 16, commitPct: 5 },
+    { weeks: 20, commitPct: 7 },
+  ]);
   const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
   // Won Projects moved to the AR / Invoicing page (Task 11) — no state here.
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
@@ -769,6 +844,8 @@ export default function PricingTool() {
     setForm(base);
     setView("form");
     setCaseDiscounts(buildInitialDiscounts(settings?.discounts ?? []));
+    // Re-anchor the 3-timeline comparison around the new case duration.
+    setCaseTimelines(deriveTimelines(base.duration_weeks));
   };
 
   const openCase = (c: any) => {
@@ -788,6 +865,9 @@ export default function PricingTool() {
     } else if (settings) {
       setCaseDiscounts(buildInitialDiscounts(settings.discounts));
     }
+    setCaseTimelines(c.case_timelines?.length
+      ? c.case_timelines
+      : deriveTimelines(c.duration_weeks ?? 12));
   };
 
   const saveBenchmarks = async (data?: CountryBenchmarkRow[], opts?: { silent?: boolean }) => {
@@ -1916,6 +1996,7 @@ export default function PricingTool() {
         status,
         recommendation: recommendation ?? null,
         case_discounts: caseDiscounts,
+        case_timelines: caseTimelines,
       };
       const method = form.id ? "PUT" : "POST";
       const url = form.id ? `/api/pricing/cases/${form.id}` : "/api/pricing/cases";
@@ -4929,6 +5010,135 @@ export default function PricingTool() {
                             <div className="px-3 py-1.5 text-[9px] text-muted-foreground border-t bg-muted/10">
                               Use this when the client pushes back on price. Keeps the execution team intact;
                               the Partner steps out of day-to-day delivery. Reduction = Partner's {(partnerShare * 100).toFixed(0)}% share of team cost, applied proportionally to Gross & Net.
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── Commercial Proposal — three timeline options ──
+                          The "12/16/20 weeks" comparison block the client
+                          sees in the proposal deck. Same weekly price, three
+                          durations, each with its own commitment discount so
+                          longer engagements reward the client.
+
+                          State lives in module-scope caseTimelines — editable
+                          inline. The table order matches the proposal slide:
+                          Gross → each discount delta → commitment → Net.
+                          Print button opens a standalone formatted page and
+                          triggers the native print dialog ("Save as PDF"
+                          destination for PDF output). */}
+                      {(() => {
+                        const timelines = caseTimelines;
+                        // Apply the same enabled discounts (Carlyle / Prompt /
+                        // Rebate / Oneoff) PLUS a per-column commitment %.
+                        // Compound discounting matches the existing engine's
+                        // net=gross×prod(1-d) arithmetic used elsewhere.
+                        const discountsWithCommit = (commitPct: number) => {
+                          const base = enabledDiscounts.filter(d => d.id !== "commitment");
+                          return commitPct > 0
+                            ? [...base, { id: "commitment", name: "Additional commitment discount", pct: commitPct, enabled: true }]
+                            : [...base, { id: "commitment", name: "Additional commitment discount", pct: 0, enabled: false }];
+                        };
+                        const computeColumn = (weeks: number, commitPct: number) => {
+                          const weeklyGross = grossWk;
+                          const grossTotalCol = Math.round(weeklyGross * weeks);
+                          let running = grossTotalCol;
+                          const breakdown: { id: string; name: string; pct: number; amount: number }[] = [];
+                          for (const d of discountsWithCommit(commitPct)) {
+                            if (!d.enabled || d.pct <= 0) {
+                              breakdown.push({ id: d.id, name: d.name, pct: d.pct, amount: 0 });
+                              continue;
+                            }
+                            const before = running;
+                            running = running * (1 - d.pct / 100);
+                            breakdown.push({ id: d.id, name: d.name, pct: d.pct, amount: Math.round(before - running) });
+                          }
+                          return { weeks, commitPct, grossTotal: grossTotalCol, breakdown, netTotal: Math.round(running) };
+                        };
+                        const cols = timelines.map(t => computeColumn(t.weeks, t.commitPct));
+                        // Discount rows shown = union of rows across columns
+                        // (same structure since all cols use same discounts).
+                        const rowDefs = cols[0].breakdown;
+                        return (
+                          <div className="rounded-lg border-2 border-[#1A6571]/40 overflow-hidden">
+                            <div className="bg-[#1A6571] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 flex items-center justify-between">
+                              <span>Commercial Proposal — project fees by option</span>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm" variant="secondary"
+                                  className="h-6 text-[10px] px-2"
+                                  onClick={() => printThreeTimelines(form, cols, rowDefs, fmtC, grossWk, adminFeePct)}
+                                >
+                                  <Printer className="w-3 h-3 mr-1" /> Print / PDF
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="p-3 space-y-3 bg-background">
+                              {/* Editable weeks + commitment % row */}
+                              <div className="grid gap-2" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
+                                <div className="text-[10px] font-bold uppercase text-muted-foreground self-end pb-1">Option</div>
+                                {timelines.map((t, i) => (
+                                  <div key={i} className="flex flex-col gap-1 items-center bg-[#1A6571]/5 rounded p-1.5">
+                                    <div className="flex items-center gap-1">
+                                      <Input
+                                        type="number" min="1" max="52" step="1" value={t.weeks}
+                                        onChange={e => setCaseTimelines(prev => prev.map((x, j) => j === i ? { ...x, weeks: Math.max(1, parseInt(e.target.value) || 1) } : x))}
+                                        className="h-6 w-14 text-xs text-center font-semibold"
+                                      />
+                                      <span className="text-[10px] text-muted-foreground">weeks</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[9px] text-muted-foreground">Commit</span>
+                                      <Select
+                                        value={String(t.commitPct)}
+                                        onValueChange={v => setCaseTimelines(prev => prev.map((x, j) => j === i ? { ...x, commitPct: Number(v) } : x))}
+                                      >
+                                        <SelectTrigger className="h-6 w-14 text-[10px] px-1"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
+                                            <SelectItem key={p} value={String(p)} className="text-[11px]">{p}%</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              {/* Gross row */}
+                              <div className="grid gap-2 items-center" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
+                                <div className="text-xs font-bold text-white bg-[#5B7E7E] rounded px-2 py-1.5 text-right">Gross total price</div>
+                                {cols.map((c, i) => (
+                                  <div key={i} className="text-sm text-center font-mono border rounded px-2 py-1.5 bg-background">{fmtC(c.grossTotal)}</div>
+                                ))}
+                              </div>
+                              {/* Discount rows */}
+                              {rowDefs.map((row, idx) => (
+                                <div key={row.id} className="grid gap-2 items-center" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
+                                  <div className="text-xs font-bold text-white bg-[#5B7E7E]/80 rounded px-2 py-1.5 text-right">
+                                    {row.id === "commitment" ? row.name : `${row.name} (${row.pct}%)`}
+                                  </div>
+                                  {cols.map((c, i) => {
+                                    const cell = c.breakdown[idx];
+                                    return (
+                                      <div key={i} className="text-sm text-center font-mono border rounded px-2 py-1.5 bg-background">
+                                        {cell.amount > 0 ? `−${fmtC(cell.amount)}` : "—"}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                              {/* Net total row */}
+                              <div className="grid gap-2 items-center pt-1" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
+                                <div className="text-xs font-bold text-white bg-[#5B7E7E] rounded px-2 py-1.5 text-right">Net total price</div>
+                                {cols.map((c, i) => (
+                                  <div key={i} className="text-sm text-center font-mono font-bold border-2 border-emerald-500 rounded px-2 py-1.5 bg-emerald-50 text-emerald-900">
+                                    {fmtC(c.netTotal)}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="text-[9px] text-muted-foreground italic pt-1 border-t">
+                                Based on Gross weekly rate of {fmtC(grossWk)} (Net {fmtC(netWk)}/wk + {adminFeePct}% admin). Same weekly price across all three options — commitment discount rewards longer engagements.
+                              </div>
                             </div>
                           </div>
                         );
