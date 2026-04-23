@@ -11,6 +11,7 @@ import {
   RotateCcw, AlertTriangle, Info, ChevronRight, BookOpen, MessageSquare,
   Settings2, Image as ImageIcon, ClipboardPaste, Cpu, HelpCircle, Save,
   Wand2, TrendingUp, Maximize2, Minimize2, LayoutTemplate,
+  Video, Users, Copy, RefreshCw, ExternalLink,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -125,6 +126,251 @@ const WIZARD_STEPS = [
   { n: 5, label: "Deck" },
   { n: 6, label: "Generate" },
 ];
+
+// ── Read.ai meetings card ─────────────────────────────────────────────────────
+// Rendered on the Proposals list page. Fetches last 10 meetings from the
+// backend proxy (which either hits Read.ai's live API via READ_AI_TOKEN
+// or falls back to the seed). Green-badges conversations we think are
+// client-facing — heuristic: at least one participant whose email domain
+// is NOT eendigo.com and NOT a free-mail domain (gmail/hotmail/etc.).
+// That's a rough but reliable signal — internal all-hands and personal
+// emails won't fire; client emails from @coesia.com, @carlyle.com etc. will.
+
+interface ReadAIParticipant { name: string | null; email: string | null; invited?: boolean; attended?: boolean }
+interface ReadAIMeeting {
+  id: string;
+  start_time_ms: number;
+  end_time_ms: number;
+  title: string;
+  report_url: string;
+  folders: string[];
+  participants: ReadAIParticipant[];
+  summary: string | null;
+}
+
+const FREE_MAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "hotmail.com", "outlook.com", "live.com",
+  "yahoo.com", "yahoo.it", "icloud.com", "me.com", "aol.com", "proton.me",
+  "protonmail.com", "pm.me", "mail.com", "gmx.com", "gmx.net",
+]);
+
+function isClientMeeting(m: ReadAIMeeting): boolean {
+  const attended = m.participants.filter(p => p.attended !== false);
+  for (const p of attended) {
+    const email = (p.email || "").toLowerCase();
+    if (!email) continue;
+    const domain = email.split("@")[1] || "";
+    if (!domain) continue;
+    if (domain === "eendigo.com") continue;
+    if (FREE_MAIL_DOMAINS.has(domain)) continue;
+    // A corporate non-eendigo attendee = almost certainly a client/prospect.
+    return true;
+  }
+  return false;
+}
+
+function ReadAIMeetingsCard() {
+  const { toast } = useToast();
+  const [meetings, setMeetings] = useState<ReadAIMeeting[]>([]);
+  const [source, setSource] = useState<"live" | "seed" | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [copying, setCopying] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/read-ai/meetings", { credentials: "include" });
+      if (r.ok) {
+        const d = await r.json();
+        setMeetings(d.meetings ?? []);
+        setSource(d.source ?? null);
+      }
+    } catch {
+      // Best-effort; card just shows empty state on failure.
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  // Copy full script to clipboard: title + metadata + summary + transcript
+  // (if live source). Falls back to "just summary" when transcript isn't
+  // cached — the user can still paste that into a new proposal draft.
+  const copyScript = async (m: ReadAIMeeting) => {
+    setCopying(m.id);
+    try {
+      let transcript: string | null = null;
+      try {
+        const r = await fetch(`/api/read-ai/meetings/${m.id}/transcript`, { credentials: "include" });
+        if (r.ok) {
+          const d = await r.json();
+          transcript = typeof d.transcript === "string" ? d.transcript : null;
+        }
+      } catch { /* no-op */ }
+
+      const attendees = m.participants
+        .filter(p => p.attended !== false)
+        .map(p => `${p.name ?? p.email ?? "?"}${p.email ? ` <${p.email}>` : ""}`)
+        .join("\n  - ");
+      const dateStr = new Date(m.start_time_ms).toLocaleString("en-GB", {
+        day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+      const lines = [
+        `Meeting: ${m.title}`,
+        `Date: ${dateStr}`,
+        `Report: ${m.report_url}`,
+        `Attendees:\n  - ${attendees}`,
+        "",
+        m.summary ? `Summary:\n${m.summary}` : "(No summary available)",
+      ];
+      if (transcript) {
+        lines.push("", "Full transcript:", transcript);
+      } else {
+        lines.push("", "(Transcript not cached — ask Claude to refresh the Read.ai seed or set READ_AI_TOKEN for live fetch.)");
+      }
+      const full = lines.join("\n");
+      await navigator.clipboard.writeText(full);
+      toast({ title: "Copied to clipboard", description: "Paste it into a new proposal draft." });
+    } catch (e: any) {
+      toast({ title: "Copy failed", description: e?.message ?? "Clipboard permission denied", variant: "destructive" });
+    } finally {
+      setCopying(null);
+    }
+  };
+
+  if (loading && meetings.length === 0) {
+    return <Card className="p-4 text-xs text-muted-foreground italic">Loading recent meetings from Read.ai…</Card>;
+  }
+  if (meetings.length === 0) {
+    return (
+      <Card className="p-4 text-xs text-muted-foreground italic">
+        No recent Read.ai meetings found. Check the Read.ai connector / READ_AI_TOKEN.
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Video className="w-4 h-4 text-primary" />
+          <h3 className="font-bold text-sm">Recent Read.ai meetings</h3>
+          <span className="text-[10px] text-muted-foreground">
+            {meetings.length} meeting{meetings.length !== 1 ? "s" : ""}
+            {source === "seed" && " · cached snapshot (ask Claude to refresh)"}
+            {source === "live" && " · live from Read.ai"}
+          </span>
+        </div>
+        <Button size="sm" variant="outline" onClick={load} className="h-7 text-xs">
+          <RefreshCw className="w-3 h-3 mr-1" /> Reload
+        </Button>
+      </div>
+
+      <div className="divide-y">
+        {meetings.map(m => {
+          const isClient = isClientMeeting(m);
+          const attended = m.participants.filter(p => p.attended !== false);
+          const isExpanded = expandedId === m.id;
+          const dateStr = new Date(m.start_time_ms).toLocaleString("en-GB", {
+            day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+          });
+          const durationMins = Math.round((m.end_time_ms - m.start_time_ms) / 60000);
+          return (
+            <div
+              key={m.id}
+              className={`py-2.5 px-2 rounded -mx-2 transition-colors ${
+                isClient ? "bg-emerald-50/60 border-l-2 border-emerald-500" : ""
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <a href={m.report_url} target="_blank" rel="noopener noreferrer"
+                      className="font-semibold text-sm hover:text-primary transition-colors inline-flex items-center gap-1">
+                      {m.title}
+                      <ExternalLink className="w-3 h-3 opacity-50" />
+                    </a>
+                    {isClient && (
+                      <span className="text-[9px] font-bold uppercase bg-emerald-500 text-white px-1.5 py-0.5 rounded">
+                        Client
+                      </span>
+                    )}
+                    {m.folders.map(f => (
+                      <span key={f} className="text-[9px] text-muted-foreground border rounded px-1 py-0.5">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5 flex-wrap">
+                    <span>{dateStr}</span>
+                    <span>·</span>
+                    <span>{durationMins}m</span>
+                    <span>·</span>
+                    <Users className="w-3 h-3" />
+                    <span>{attended.length} attendee{attended.length !== 1 ? "s" : ""}</span>
+                  </div>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <Button size="sm" variant="ghost" className="h-7 text-xs"
+                    onClick={() => setExpandedId(e => e === m.id ? null : m.id)}
+                  >
+                    {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    Details
+                  </Button>
+                  <Button size="sm" variant={isClient ? "default" : "outline"} className="h-7 text-xs"
+                    disabled={copying === m.id}
+                    onClick={() => copyScript(m)}
+                    title="Copy meeting summary + transcript (if cached) to clipboard for use in a new proposal"
+                  >
+                    {copying === m.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Copy className="w-3 h-3 mr-1" />}
+                    Copy script
+                  </Button>
+                </div>
+              </div>
+              {isExpanded && (
+                <div className="mt-2 pl-3 border-l-2 border-border/40 space-y-2">
+                  <div className="text-[10px] font-semibold uppercase text-muted-foreground">Attendees</div>
+                  <div className="flex flex-wrap gap-1">
+                    {attended.map((p, i) => {
+                      const domain = (p.email || "").split("@")[1] || "";
+                      const external = domain && domain !== "eendigo.com" && !FREE_MAIL_DOMAINS.has(domain);
+                      return (
+                        <span key={i}
+                          className={`text-[10px] px-1.5 py-0.5 rounded ${
+                            external
+                              ? "bg-emerald-100 text-emerald-800 font-medium"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                          title={p.email ?? ""}
+                        >
+                          {p.name ?? p.email ?? "?"}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  {m.summary && (
+                    <>
+                      <div className="text-[10px] font-semibold uppercase text-muted-foreground pt-1">Summary</div>
+                      <div className="text-[11px] whitespace-pre-wrap text-foreground/80 leading-relaxed">
+                        {m.summary}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="text-[9px] text-muted-foreground italic border-t pt-2">
+        Green highlight = likely client conversation (at least one non-eendigo, non-free-mail attendee). "Copy script" pulls
+        summary + transcript (when cached) to your clipboard — paste into a new proposal to start the wizard with full context.
+      </div>
+    </Card>
+  );
+}
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -4418,6 +4664,13 @@ Root cause: Territory allocation..."
           </div>
         }
       />
+
+      {/* Read.ai recent meetings — green-highlight client conversations,
+          copy full script to clipboard for pasting into a new proposal. */}
+      <div className="mb-4">
+        <ReadAIMeetingsCard />
+      </div>
+
       <Card className="p-4">
         <Table>
           <TableHeader>

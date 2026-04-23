@@ -537,6 +537,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Read.ai — recent meetings cache ─────────────────────────────────────
+  // Proxies to Read.ai's public REST API when READ_AI_TOKEN is set in the
+  // environment; otherwise returns a static seed (10 most-recent meetings)
+  // so the Proposals UI still renders something useful. Read.ai's current
+  // OAuth 2.1 flow is browser-based with 10-minute tokens — once they ship
+  // static API keys (roadmap), swap the fallback for a live call.
+  app.get("/api/read-ai/meetings", requireAuth, async (_req, res) => {
+    const token = process.env.READ_AI_TOKEN;
+    if (token) {
+      try {
+        const r = await fetch("https://api.read.ai/v1/meetings?limit=10", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const data = await r.json();
+          res.json({ source: "live", meetings: data?.data ?? [], fetched_at: new Date().toISOString() });
+          return;
+        }
+      } catch (e) {
+        console.error("[read-ai] live fetch failed, falling back to seed:", e);
+      }
+    }
+    const { READ_AI_SEED } = await import("./readAISeed");
+    res.json({ source: "seed", meetings: READ_AI_SEED, fetched_at: "2026-04-21T00:00:00Z" });
+  });
+
+  // Transcript for a single meeting. Same live/fallback strategy; the seed
+  // doesn't carry transcripts (too large) so the fallback asks the user to
+  // refresh via Claude until live auth is wired.
+  app.get("/api/read-ai/meetings/:id/transcript", requireAuth, async (req, res) => {
+    const token = process.env.READ_AI_TOKEN;
+    const id = req.params.id;
+    if (token) {
+      try {
+        const r = await fetch(`https://api.read.ai/v1/meetings/${id}?expand=transcript`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const data = await r.json();
+          res.json({ source: "live", transcript: data?.transcript ?? null });
+          return;
+        }
+      } catch (e) {
+        console.error("[read-ai] live transcript fetch failed:", e);
+      }
+    }
+    res.json({
+      source: "seed",
+      transcript: null,
+      message: "Transcript not cached locally. Ask Claude to refresh the Read.ai seed (pulls full transcript via MCP) or set READ_AI_TOKEN once Read.ai enables static API keys.",
+    });
+  });
+
   // ── Proposals ──────────────────────────────────────────────────────────────
   app.get("/api/proposals", requireAuth, async (_req, res) => {
     res.json(await storage.getProposals());
