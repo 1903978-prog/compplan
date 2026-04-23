@@ -554,6 +554,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── AI providers: status + test endpoint ───────────────────────────────
+  // GET /api/ai/providers — tells the client which providers have their
+  // API key configured so the AI Models UI can badge them accurately.
+  // POST /api/ai/test — runs a tiny test prompt through the chosen
+  // provider + model and returns the reply + usage. Used by the "Test
+  // connection" button on the AI Models admin page.
+  app.get("/api/ai/providers", requireAuth, async (_req, res) => {
+    const { providerStatus } = await import("./aiProviders");
+    res.json(providerStatus());
+  });
+
+  app.post("/api/ai/test", requireAuth, async (req, res) => {
+    const { generateText, MissingApiKeyError, ProviderError } = await import("./aiProviders");
+    const { provider, model, prompt, system, maxTokens } = req.body ?? {};
+    if (!provider || !model || !prompt) {
+      res.status(400).json({ error: "Required: provider, model, prompt" });
+      return;
+    }
+    try {
+      const out = await generateText({
+        provider,
+        model,
+        prompt,
+        system,
+        maxTokens: Math.min(Math.max(1, Number(maxTokens) || 256), 2048),
+      });
+      res.json({ ok: true, ...out });
+    } catch (e: any) {
+      if (e instanceof MissingApiKeyError) {
+        res.status(400).json({ ok: false, error: "missing_api_key", provider: e.provider, envVar: e.envVar });
+        return;
+      }
+      if (e instanceof ProviderError) {
+        res.status(502).json({ ok: false, error: "provider_error", provider: e.provider, status: e.status, message: e.message });
+        return;
+      }
+      res.status(500).json({ ok: false, error: "unknown", message: String(e?.message ?? e) });
+    }
+  });
+
   // ── Read.ai — recent meetings cache ─────────────────────────────────────
   // Proxies to Read.ai's public REST API when READ_AI_TOKEN is set in the
   // environment; otherwise returns a static seed (10 most-recent meetings)

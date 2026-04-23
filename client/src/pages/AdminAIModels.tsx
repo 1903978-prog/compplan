@@ -1,16 +1,32 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Cpu, Check, Sparkles, Zap } from "lucide-react";
+import { Cpu, Check, Sparkles, Zap, Plug, AlertCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveAIModel } from "@/hooks/use-active-ai-model";
 import {
   AI_MODELS, PROVIDER_LABEL, modelsForProvider,
   type AIProvider, type AIModel,
 } from "@/lib/aiModels";
+
+// Shape returned by GET /api/ai/providers — mirrors server/aiProviders.ts providerStatus()
+type ProviderStatus = Record<AIProvider, { configured: boolean; envVar: string }>;
+
+// Shape returned by POST /api/ai/test (success / error branches)
+interface AITestResponse {
+  ok: boolean;
+  text?: string;
+  provider?: AIProvider;
+  model?: string;
+  usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+  error?: string;
+  envVar?: string;
+  status?: number;
+  message?: string;
+}
 
 // ── AI Model selector ───────────────────────────────────────────────────────
 // Admin submenu that lets the user pick which provider + model the app
@@ -34,6 +50,73 @@ export default function AdminAIModels() {
   // so the select is immediately consistent on first mount.
   const [provider, setProvider] = useState<AIProvider>(model?.provider ?? "anthropic");
   const [pendingId, setPendingId] = useState<string>(modelId);
+
+  // Live provider status — which providers actually have their API key
+  // configured on the server. Fetched once on mount; updated when a test
+  // call succeeds in case the user just set an env var and is watching
+  // the badge flip from "not configured" to "ok".
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
+  useEffect(() => {
+    fetch("/api/ai/providers", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(setProviderStatus)
+      .catch(() => setProviderStatus(null));
+  }, []);
+
+  // Per-provider test-connection state: result of the last "Test
+  // connection" click, keyed by provider so the user can test each one.
+  const [testing, setTesting] = useState<AIProvider | null>(null);
+  const [testResult, setTestResult] = useState<Record<AIProvider, AITestResponse | null>>(
+    { anthropic: null, openai: null, gemini: null },
+  );
+  const runTest = async (p: AIProvider) => {
+    // Use the model the user has picked for this provider, falling back
+    // to the cheapest option so the test is free-ish.
+    const pickedInProvider = modelsForProvider(p).find(m => m.id === pendingId) ?? modelsForProvider(p)[0];
+    if (!pickedInProvider) {
+      toast({ title: "No model defined for this provider", variant: "destructive" });
+      return;
+    }
+    setTesting(p);
+    setTestResult(r => ({ ...r, [p]: null }));
+    try {
+      const res = await fetch("/api/ai/test", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: p,
+          model: pickedInProvider.id,
+          prompt: "In one short sentence, confirm this connection works by replying with the current provider name and today's status.",
+          system: "You are a connection tester. Keep replies under 20 words.",
+          maxTokens: 80,
+        }),
+      });
+      const body: AITestResponse = await res.json();
+      setTestResult(r => ({ ...r, [p]: body }));
+      if (body.ok) {
+        toast({ title: `${PROVIDER_LABEL[p]}: connection ok`, description: body.text?.slice(0, 140) });
+        // Connection succeeded → the key is definitely configured. Reflect it.
+        setProviderStatus(s => s ? { ...s, [p]: { ...s[p], configured: true } } : s);
+      } else if (body.error === "missing_api_key") {
+        toast({
+          title: `${PROVIDER_LABEL[p]}: API key missing`,
+          description: `Set ${body.envVar} in the server environment.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: `${PROVIDER_LABEL[p]}: test failed`,
+          description: body.message?.slice(0, 200) ?? body.error ?? "Unknown error",
+          variant: "destructive",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Test request failed", description: e?.message ?? "Network error", variant: "destructive" });
+    } finally {
+      setTesting(null);
+    }
+  };
 
   // When the user changes provider, auto-select that provider's first
   // model unless the current pendingId already belongs to the new one.
@@ -67,18 +150,85 @@ export default function AdminAIModels() {
         description="Choose which provider + model the app uses by default for its AI jobs, and compare per-token pricing."
       />
 
-      {/* Honesty banner — the selection below is currently a UI preference.
-          None of the server-side AI call sites (proposal generator, briefing,
-          deck analysis, summaries) read this preference yet — they hit their
-          hardcoded model. Wiring each call site to respect this setting is
-          a separate engineering task. Shipping with this banner prevents
-          the user from assuming behavioural changes that don't exist. */}
+      {/* Honesty banner — the model PICKER below is a UI preference. The
+          existing call sites (proposal generator, briefings, deck analysis)
+          still hit Claude Sonnet 4.5 directly; we haven't migrated each one
+          to respect the picker yet. What DOES work end-to-end is the
+          "Test connection" button on each provider card below — it
+          actually hits each vendor's API and returns a real reply. */}
       <div className="mb-4 rounded-lg border-2 border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-        <div className="font-bold uppercase tracking-wide text-[10px] mb-1">⚠ Preview feature — selection is cosmetic today</div>
-        Changing the model here updates the abbreviation in the top bar and this page's active marker.
-        It does <strong>not</strong> yet change which model the app actually calls on the server.
-        Proposal generation, briefing, and deck analysis still use their hardcoded models (Claude Sonnet 4.5).
-        Backend wiring is a separate task — vote for it if you need it sooner.
+        <div className="font-bold uppercase tracking-wide text-[10px] mb-1">⚠ Preview feature — model picker is cosmetic today</div>
+        The "Test connection" button below <strong>does</strong> hit each provider's real API and returns a live reply — use it to verify your API keys.
+        Production AI calls (proposal generation, briefing, analysis) still use their hardcoded models and will be migrated in a follow-up.
+      </div>
+
+      {/* Provider status + test-connection grid — the part of this page
+          that actually does something useful today. One card per provider
+          with a configured/not-configured badge and a "Test connection"
+          button that POSTs to /api/ai/test with the smallest cheapest
+          model so the test is ~free. */}
+      <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {(Object.keys(PROVIDER_LABEL) as AIProvider[]).map(p => {
+          const status = providerStatus?.[p];
+          const result = testResult[p];
+          const isTesting = testing === p;
+          return (
+            <Card key={p} className="p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Plug className="w-4 h-4 text-primary" />
+                  <span className="font-bold text-sm">{PROVIDER_LABEL[p]}</span>
+                </div>
+                {status == null ? (
+                  <span className="text-[10px] text-muted-foreground italic">checking…</span>
+                ) : status.configured ? (
+                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 rounded px-2 py-0.5">Configured</span>
+                ) : (
+                  <span className="text-[10px] font-bold bg-red-100 text-red-700 rounded px-2 py-0.5" title={`Set ${status.envVar} in the server env`}>
+                    Not configured
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-muted-foreground font-mono">
+                env: <span className="text-foreground">{status?.envVar ?? "—"}</span>
+              </div>
+              <Button
+                size="sm" variant="outline" className="w-full h-8 text-xs"
+                disabled={isTesting || (status != null && !status.configured)}
+                onClick={() => runTest(p)}
+              >
+                {isTesting ? (
+                  <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Testing…</>
+                ) : (
+                  <><Plug className="w-3 h-3 mr-1" /> Test connection</>
+                )}
+              </Button>
+              {result && (
+                result.ok ? (
+                  <div className="rounded bg-emerald-50 border border-emerald-200 p-2 text-[10px] text-emerald-900 space-y-1">
+                    <div className="font-semibold">✓ OK · {result.model}</div>
+                    {result.text && <div className="italic leading-snug">"{result.text.slice(0, 160)}{result.text.length > 160 ? "…" : ""}"</div>}
+                    {result.usage?.total_tokens != null && (
+                      <div className="font-mono text-[9px] text-emerald-800/70">
+                        {result.usage.input_tokens ?? "?"} in · {result.usage.output_tokens ?? "?"} out · {result.usage.total_tokens} total tokens
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded bg-red-50 border border-red-200 p-2 text-[10px] text-red-900 space-y-1">
+                    <div className="font-semibold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {result.error === "missing_api_key" ? "Missing API key"
+                        : result.error === "provider_error" ? `Provider ${result.status ?? "error"}`
+                        : "Error"}
+                    </div>
+                    <div className="leading-snug break-words">{result.message ?? result.envVar ?? "See server logs"}</div>
+                  </div>
+                )
+              )}
+            </Card>
+          );
+        })}
       </div>
 
       <div className="space-y-6">
