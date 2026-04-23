@@ -25,10 +25,21 @@ jobs:
       GH_TOKEN: ${{ secrets.BACKUP_GH_PAT }}
 
     steps:
+      - name: Fail early if secrets are missing
+        run: |
+          missing=0
+          for var in GH_TOKEN; do
+            if [[ -z "${!var:-}" ]]; then
+              echo "::error::Secret $var is not set. Add BACKUP_GH_PAT in repo Settings → Secrets."
+              missing=1
+            fi
+          done
+          if [[ "$missing" -eq 1 ]]; then exit 1; fi
+
       - name: Build week tag
         id: meta
         run: |
-          WEEK_TAG="$(date -u +%Y-W%V)"
+          WEEK_TAG="$(date -u +%G-W%V)"
           DATE_HUMAN="$(date -u +'%Y-%m-%d')"
           echo "week_tag=${WEEK_TAG}" >> "$GITHUB_OUTPUT"
           echo "date_human=${DATE_HUMAN}" >> "$GITHUB_OUTPUT"
@@ -36,11 +47,13 @@ jobs:
 
       - name: Clone every repo (latest commit, no .git, no node_modules)
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mkdir -p out staging
           cd staging
 
           MANIFEST="../out/MANIFEST.txt"
+          CLONED=0
+          FAILED=0
           {
             echo "Weekly Code Backup"
             echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -48,28 +61,40 @@ jobs:
             echo
           } > "$MANIFEST"
 
-          # Read REPOS line by line, skipping blanks
+          # Read REPOS line by line, skipping blanks.
+          # A failed clone logs a warning and continues (partial > nothing).
           while IFS= read -r repo; do
             repo="${repo// /}"
             [[ -z "$repo" ]] && continue
             app="${repo##*/}"
             echo "==> Cloning $repo"
-            git clone --depth 1 --quiet \
+            if ! git clone --depth 1 --quiet \
               "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" \
-              "$app"
+              "$app" 2>&1; then
+              echo "::warning::Failed to clone ${repo} — skipping"
+              echo "App: ${app}  *** CLONE FAILED ***" >> "$MANIFEST"
+              echo >> "$MANIFEST"
+              FAILED=$((FAILED + 1))
+              continue
+            fi
+            CLONED=$((CLONED + 1))
 
             # Capture the commit we backed up
             pushd "$app" >/dev/null
             COMMIT="$(git rev-parse HEAD)"
             COMMIT_DATE="$(git log -1 --format=%cI)"
-            COMMIT_MSG="$(git log -1 --format=%s)"
+            COMMIT_MSG="$(git log -1 --format='%s' | tr -d '`$')"
             popd >/dev/null
 
             # Strip things that shouldn't be in a code backup
             rm -rf "$app/.git" "$app/node_modules" "$app/.next" \
                    "$app/dist" "$app/build" "$app/.cache" \
                    "$app/.venv" "$app/venv" "$app/__pycache__" \
-                   "$app/.turbo" "$app/.parcel-cache"
+                   "$app/.turbo" "$app/.parcel-cache" \
+                   "$app/coverage" "$app/.angular" "$app/.svelte-kit" \
+                   "$app/.output" "$app/.vercel" "$app/storybook-static" \
+                   "$app/.docusaurus" "$app/.wrangler" \
+                   "$app/attached_assets"
 
             FILE_COUNT="$(find "$app" -type f | wc -l)"
             DIR_SIZE="$(du -sh "$app" | awk '{print $1}')"
@@ -87,6 +112,13 @@ jobs:
           done <<< "$REPOS"
 
           cat "$MANIFEST"
+          echo "Cloned: ${CLONED}, Failed: ${FAILED}"
+
+          # Fail the step only if NOTHING was cloned (all repos failed)
+          if [[ "$CLONED" -eq 0 ]]; then
+            echo "::error::All repo clones failed. Check BACKUP_GH_PAT permissions."
+            exit 1
+          fi
 
       - name: Build the zip
         id: zip
@@ -105,11 +137,18 @@ jobs:
           echo "zip_path=out/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           echo "ZIP: ${ZIP_NAME} (${ZIP_HUMAN}, ${ZIP_BYTES} bytes)"
 
-      - name: Fail loudly if zip is too big for Gmail (>24 MB)
+      - name: Fail loudly if zip is too big for Gmail
         run: |
-          MAX=$((24 * 1024 * 1024))
-          if [[ "${{ steps.zip.outputs.zip_bytes }}" -gt "$MAX" ]]; then
-            echo "::error::ZIP is ${{ steps.zip.outputs.zip_human }}, over the 24 MB Gmail attachment cap."
+          ZIP_BYTES="${{ steps.zip.outputs.zip_bytes }}"
+          if [[ -z "$ZIP_BYTES" || "$ZIP_BYTES" -eq 0 ]]; then
+            echo "::error::ZIP size is empty or zero — the zip step may have failed."
+            exit 1
+          fi
+          # Gmail limit is 25 MB on the wire, but SMTP base64 adds ~37%.
+          # 18 MB on disk ≈ 24.7 MB base64 — safe margin.
+          MAX=$((18 * 1024 * 1024))
+          if [[ "$ZIP_BYTES" -gt "$MAX" ]]; then
+            echo "::error::ZIP is ${{ steps.zip.outputs.zip_human }} (${ZIP_BYTES} bytes), over the 18 MB safe limit for Gmail (base64 inflates to ~25 MB)."
             echo "::error::Tell Claude to add an S3 + presigned-URL fallback."
             exit 1
           fi
@@ -118,14 +157,14 @@ jobs:
       # the email step fails, you can download it from the Actions tab for
       # 90 days.
       - name: Upload zip as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # pin to v4 for stability
         with:
           name: ${{ steps.meta.outputs.zip_name }}
           path: ${{ steps.zip.outputs.zip_path }}
           retention-days: 90
 
       - name: Send email with zip attached
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v9
         with:
           server_address: smtp.gmail.com
           server_port: 465
