@@ -2145,16 +2145,19 @@ export default function PricingTool() {
     }
   };
 
-  // Compute weekly total only from visible STAFFING_ROLES (avoids phantom entries from old saves)
+  // Compute weekly total only from visible STAFFING_ROLES, mirroring the
+  // per-row display exactly: same count-gate, same rate source (the admin
+  // role's default_daily_rate, not the line's stored daily_rate_used, which
+  // can drift to 0 on legacy saves and silently zero out that row's weekly).
   const baseWeeklyDisplay = settings
     ? STAFFING_ROLES.reduce((acc, def) => {
         const role = settings.roles.find(r => r.role_name.toLowerCase().includes(def.match.toLowerCase()));
         if (!role) return acc;
         const line = form.staffing.find(s => s.role_id === role.id);
         const count = line?.count ?? 0;
+        if (count <= 0) return acc;
         const days = line?.days_per_week ?? def.defaultDays;
-        const rate = line?.daily_rate_used ?? role.default_daily_rate;
-        return acc + count * days * rate;
+        return acc + count * days * role.default_daily_rate;
       }, 0)
     : form.staffing.reduce((s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0);
 
@@ -4321,9 +4324,10 @@ export default function PricingTool() {
                       if (!role) return acc;
                       const line = form.staffing.find(s => s.role_id === role.id);
                       const count = line?.count ?? 0;
+                      if (count <= 0) return acc;
                       const days = line?.days_per_week ?? def.defaultDays;
-                      const rate = line?.daily_rate_used ?? role.default_daily_rate;
-                      return { people: acc.people + count, days: acc.days + count * days, weekly: acc.weekly + count * days * rate };
+                      const weekly = count * days * role.default_daily_rate;
+                      return { people: acc.people + count, days: acc.days + count * days, weekly: acc.weekly + weekly };
                     }, { people: 0, days: 0, weekly: 0 });
                     return (
                       <div className="flex items-center justify-between pt-3 border-t mt-2 px-2">
