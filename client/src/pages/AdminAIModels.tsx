@@ -150,16 +150,23 @@ export default function AdminAIModels() {
         description="Choose which provider + model the app uses by default for its AI jobs, and compare per-token pricing."
       />
 
-      {/* Honesty banner — the model PICKER below is a UI preference. The
-          existing call sites (proposal generator, briefings, deck analysis)
-          still hit Claude Sonnet 4.5 directly; we haven't migrated each one
-          to respect the picker yet. What DOES work end-to-end is the
-          "Test connection" button on each provider card below — it
-          actually hits each vendor's API and returns a real reply. */}
-      <div className="mb-4 rounded-lg border-2 border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-        <div className="font-bold uppercase tracking-wide text-[10px] mb-1">⚠ Preview feature — model picker is cosmetic today</div>
-        The "Test connection" button below <strong>does</strong> hit each provider's real API and returns a live reply — use it to verify your API keys.
-        Production AI calls (proposal generation, briefing, analysis) still use their hardcoded models and will be migrated in a follow-up.
+      {/* Migration status banner — tells the user which server-side call
+          sites actually honor the model picker. Kept accurate as each
+          call site is migrated to generateJSON / generateText. */}
+      <div className="mb-4 rounded-lg border-2 border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-900">
+        <div className="font-bold uppercase tracking-wide text-[10px] mb-1">✓ Model picker active for proposal generation</div>
+        <div className="space-y-1">
+          <div>
+            <strong>Migrated (respect your selection):</strong> Proposal generation
+            (<code className="text-[11px] bg-white px-1 rounded">/api/proposals/:id/analyze</code>) — calls the provider + model you pick below.
+          </div>
+          <div>
+            <strong>Not yet migrated (still hardcoded Claude Sonnet 4.5):</strong> Briefing extraction, slide analysis, reference-image analysis, candidate summaries.
+          </div>
+          <div className="italic text-emerald-800/80">
+            The "Test connection" button on each provider card hits each vendor's real API end-to-end — use it to verify your API keys before switching the picker.
+          </div>
+        </div>
       </div>
 
       {/* Provider status + test-connection grid — the part of this page

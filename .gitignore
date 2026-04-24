@@ -16,6 +16,10 @@ attached_assets/
 .env.local
 .env.*.local
 
+# Transient debug / scratch files that have slipped into commits
+ppt-generation-brief.json
+*.tmp.json
+
 # Backup secrets and dumps
 .env.backup
 *.dump

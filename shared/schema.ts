@@ -324,8 +324,10 @@ export const pricingCases = pgTable("pricing_cases", {
   case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number }[] | null>(),
   // Revision letter appended to project_name in the display (A / B / C / D).
   // A proposal goes through multiple revisions with the client — each is
-  // a separate row (same project_name, different letter). Default "A".
-  revision_letter: text("revision_letter"),
+  // a separate row (same project_name, different letter). Default "A" —
+  // mirrors the raw SQL migration in seed.ts so a future drizzle-kit push
+  // doesn't accidentally drop the DB-side default.
+  revision_letter: text("revision_letter").default("A"),
   // Value-based fields
   company_revenue_m: real("company_revenue_m"),
   aspiration_ebitda_eur: real("aspiration_ebitda_eur"),

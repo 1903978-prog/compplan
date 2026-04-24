@@ -382,35 +382,61 @@ function buildInfo(c: RawCandidate): string {
   return lines.join("\n");
 }
 
-/** Merge new info into existing info, adding new lines that aren't already present */
+/**
+ * Merge new info into existing info, adding new lines that aren't already
+ * present and updating the value of any line whose "key" already exists.
+ *
+ * Key derivation:
+ *   - "Key: value" lines → prefix before the first ":" (handles ALL
+ *     structured lines: "CS LM: Strong", "TG Score: 76%", "Email: x@y.com").
+ *   - Score lines like "Logic 68.2%" → prefix before the first digit/%
+ *     (legacy fallback, for lines that don't use "Key: value" form).
+ *
+ * Previously the implementation keyed every line off split(/[\d%]/) which
+ * failed on textual values ("CS LM: Strong" has no digits, so the key was
+ * the whole line — causing a re-sync with "CS LM: Pass" to append rather
+ * than update). The "Key:" form is now the authoritative path.
+ */
 function mergeInfo(existingInfo: string, newInfo: string): string {
-  const existingLines = new Set(existingInfo.split("\n").map(l => l.trim()).filter(Boolean));
+  const keyOf = (line: string): string => {
+    // Prefer "Key: value" — anything before the first colon.
+    const colon = line.indexOf(":");
+    if (colon > 0 && colon < 40) {
+      const k = line.slice(0, colon).trim();
+      if (k.length >= 2) return k;
+    }
+    // Legacy: score-style "Logic 68.2%" — prefix before first digit.
+    const digitMatch = line.match(/^([^\d%]+)/);
+    return digitMatch ? digitMatch[1].trim() : "";
+  };
+
+  const existingLines = existingInfo.split("\n").map(l => l.trim()).filter(Boolean);
+  const existingSet = new Set(existingLines);
   const newLines = newInfo.split("\n").map(l => l.trim()).filter(Boolean);
-  const toAdd: string[] = [];
-  for (const line of newLines) {
-    // Check if any existing line contains the same key data (before the first value)
-    const isNew = ![...existingLines].some(existing => {
-      // Same line exactly
-      if (existing === line) return true;
-      // Same prefix (e.g. "Logic 68.2%" vs "Logic 70.1%" — update the value)
-      const existKey = existing.split(/[\d%]/)[0].trim();
-      const newKey = line.split(/[\d%]/)[0].trim();
-      return existKey.length > 3 && existKey === newKey;
-    });
-    if (isNew) toAdd.push(line);
-  }
-  // Update existing lines where the key matches but value changed
+
+  // Pass 1 — update lines whose key already exists with a different value.
   let merged = existingInfo;
   for (const line of newLines) {
-    const newKey = line.split(/[\d%]/)[0].trim();
-    if (newKey.length <= 3) continue;
-    const existingLine = [...existingLines].find(e => {
-      const eKey = e.split(/[\d%]/)[0].trim();
-      return eKey === newKey && e !== line;
-    });
+    const nk = keyOf(line);
+    if (!nk || nk.length < 2) continue;
+    const existingLine = existingLines.find(e => keyOf(e) === nk && e !== line);
     if (existingLine) {
       merged = merged.replace(existingLine, line);
+      existingSet.delete(existingLine);
+      existingSet.add(line);
     }
+  }
+
+  // Pass 2 — append lines that have no matching key in the merged result.
+  const mergedSet = new Set(merged.split("\n").map(l => l.trim()).filter(Boolean));
+  const mergedKeys = new Set([...mergedSet].map(keyOf).filter(k => k.length >= 2));
+  const toAdd: string[] = [];
+  for (const line of newLines) {
+    if (mergedSet.has(line)) continue;
+    const nk = keyOf(line);
+    if (nk && nk.length >= 2 && mergedKeys.has(nk)) continue; // key already present, handled in pass 1
+    toAdd.push(line);
+    if (nk) mergedKeys.add(nk);
   }
   if (toAdd.length) merged = merged + "\n" + toAdd.join("\n");
   return merged.trim();

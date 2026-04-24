@@ -266,10 +266,29 @@ async function generateJSONOpenAI<T>(input: GenerateJSONInput<T>): Promise<Gener
   const messages: { role: "system" | "user"; content: string }[] = [];
   if (input.system) messages.push({ role: "system", content: input.system });
   messages.push({ role: "user", content: input.prompt });
-  // additionalProperties=false is required by OpenAI's strict mode. Callers
-  // that set the flag in their own schema will still work because we don't
-  // overwrite it.
-  const schemaWithStrict = { additionalProperties: false, ...input.schema };
+  // OpenAI strict-mode requires EVERY nested object to (a) set
+  // `additionalProperties: false` and (b) list every property in its
+  // `required[]` array. Callers usually write minimal JSON Schema
+  // without these, so we walk the tree and fill them in. Without this
+  // normalisation, OpenAI 400s any non-trivial schema (e.g. the
+  // proposal analysis tool with nested team + options arrays).
+  const normaliseForStrictMode = (s: any): any => {
+    if (!s || typeof s !== "object") return s;
+    const out: any = { ...s };
+    if (out.type === "object" && out.properties && typeof out.properties === "object") {
+      // Every property must be listed in required[] under strict mode.
+      out.required = Object.keys(out.properties);
+      out.additionalProperties = false;
+      out.properties = Object.fromEntries(
+        Object.entries(out.properties).map(([k, v]) => [k, normaliseForStrictMode(v)]),
+      );
+    }
+    if (out.type === "array" && out.items) {
+      out.items = normaliseForStrictMode(out.items);
+    }
+    return out;
+  };
+  const schemaWithStrict = normaliseForStrictMode(input.schema);
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
