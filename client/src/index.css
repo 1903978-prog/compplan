@@ -45,10 +45,13 @@
 }
 
 .dark {
-  --background: 222 47% 11%;
+  /* Dark navy ≈ #1B2540 — slightly warmer / less black than the default
+     "near-midnight" dark mode so cards still have contrast but the
+     page background is easier on the eyes for long sessions. */
+  --background: 222 40% 17%;
   --foreground: 210 40% 98%;
 
-  --card: 222 47% 11%;
+  --card: 222 35% 22%;
   --card-foreground: 210 40% 98%;
 
   --popover: 222 47% 11%;
