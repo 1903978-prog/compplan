@@ -5360,7 +5360,7 @@ export default function PricingTool() {
                                           ? "Manual override — click the ✕ to restore the derived value"
                                           : "Derived from weekly rate × weeks. Type a new number to override."}
                                         className={`text-sm text-center font-mono h-9 ${
-                                          isOverride ? "border-amber-400 bg-amber-50" : "bg-background"
+                                          isOverride ? "border-amber-400 bg-amber-50 text-amber-900" : "bg-background"
                                         }`}
                                       />
                                       {isOverride && (
