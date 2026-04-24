@@ -77,7 +77,7 @@ const TERMINAL_STAGES: ReadonlySet<string> = new Set(["offer", "out", "hired"]);
 // tolerant — anything it doesn't recognise falls through as a plain
 // text line so nothing is silently dropped.
 
-interface ParsedInfo {
+export interface ParsedInfo {
   email: string | null;
   applied: string | null;            // raw date string, best-effort
   tgScores: { label: string; pct: number }[]; // Logic, Verbal, Excel, Pres1, Pres2…
@@ -96,7 +96,7 @@ interface ParsedInfo {
   freeText: string[];                // fallback lines
 }
 
-function parseCandidateInfo(info: string): ParsedInfo {
+export function parseCandidateInfo(info: string): ParsedInfo {
   const result: ParsedInfo = {
     email: null, applied: null, tgScores: [], tgOverall: null,
     introRating: null, introScore: null,
@@ -1001,51 +1001,72 @@ export default function Hiring() {
                           </div>
                         )}
 
-                        {/* Case-study ratings — assessor (CS Rate) and
-                            partner LM review (CS LM). CS LM is the
-                            authoritative go/no-go signal so we render it
-                            first with a larger badge. */}
-                        {(parsed.csLM || parsed.csRate) && (
-                          <div className="space-y-1.5">
-                            <div className="text-[10px] font-bold uppercase text-muted-foreground">Case study</div>
-                            <div className="flex flex-wrap gap-3">
-                              {parsed.csLM && (() => {
-                                const score = parsed.csLMScore;
-                                const toneCls =
-                                  score != null
-                                    ? scoreBadgeClass(score)
-                                    : /fail|no|reject|weak|drop/i.test(parsed.csLM!)
-                                      ? "bg-red-200 text-red-900"
-                                      : /pass|strong|hire|go|✓|🟢|good|excellent/i.test(parsed.csLM!)
-                                        ? "bg-emerald-200 text-emerald-900"
-                                        : "bg-muted text-muted-foreground";
+                        {/* CSI from Manager — the two manager-driven scores:
+                            `CS rate` (assessor rating of the case study) and
+                            `CSI from LM` (the Line Manager's go/no-go rating
+                            after the case study review). Always rendered so
+                            the user can see at a glance what's missing and
+                            fill it in via "Edit raw notes" below. Source
+                            lines in notes:  `CS Rate: …` and `CS LM: …`. */}
+                        <div className="space-y-1.5">
+                          <div className="text-[10px] font-bold uppercase text-muted-foreground">CSI from Manager</div>
+                          <div className="flex flex-wrap gap-3">
+                            {/* CS rate */}
+                            {(() => {
+                              if (!parsed.csRate) {
                                 return (
                                   <div className="flex items-center gap-2">
-                                    <span className="text-[10px] font-semibold text-muted-foreground">Partner (LM):</span>
-                                    <span className={`text-sm font-bold font-mono px-2 py-0.5 rounded ${toneCls}`}>
-                                      {parsed.csLM}
-                                    </span>
+                                    <span className="text-[10px] font-semibold text-muted-foreground">CS rate:</span>
+                                    <span className="text-xs italic text-muted-foreground/70">— not set</span>
                                   </div>
                                 );
-                              })()}
-                              {parsed.csRate && (() => {
-                                const score = parsed.csRateScore;
-                                const toneCls =
-                                  score != null
-                                    ? scoreBadgeClass(score)
-                                    : "bg-muted text-muted-foreground";
+                              }
+                              const score = parsed.csRateScore;
+                              const toneCls = score != null ? scoreBadgeClass(score) : "bg-muted text-muted-foreground";
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-semibold text-muted-foreground">CS rate:</span>
+                                  <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${toneCls}`}>
+                                    {parsed.csRate}
+                                  </span>
+                                </div>
+                              );
+                            })()}
+                            {/* CSI from LM */}
+                            {(() => {
+                              if (!parsed.csLM) {
                                 return (
                                   <div className="flex items-center gap-2">
-                                    <span className="text-[10px] font-semibold text-muted-foreground">Assessor:</span>
-                                    <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${toneCls}`}>
-                                      {parsed.csRate}
-                                    </span>
+                                    <span className="text-[10px] font-semibold text-muted-foreground">CSI from LM:</span>
+                                    <span className="text-xs italic text-muted-foreground/70">— not set</span>
                                   </div>
                                 );
-                              })()}
-                            </div>
+                              }
+                              const score = parsed.csLMScore;
+                              const toneCls =
+                                score != null
+                                  ? scoreBadgeClass(score)
+                                  : /fail|no|reject|weak|drop/i.test(parsed.csLM!)
+                                    ? "bg-red-200 text-red-900"
+                                    : /pass|strong|hire|go|✓|🟢|good|excellent/i.test(parsed.csLM!)
+                                      ? "bg-emerald-200 text-emerald-900"
+                                      : "bg-muted text-muted-foreground";
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-semibold text-muted-foreground">CSI from LM:</span>
+                                  <span className={`text-sm font-bold font-mono px-2 py-0.5 rounded ${toneCls}`}>
+                                    {parsed.csLM}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
-                        )}
+                          {!parsed.csRate && !parsed.csLM && (
+                            <p className="text-[10px] text-muted-foreground/70 italic">
+                              Add <code className="text-[10px]">CS Rate: 72%</code> and <code className="text-[10px]">CS LM: Strong</code> lines via "Edit raw notes" below.
+                            </p>
+                          )}
+                        </div>
 
                         {/* Statuses as tone-coloured badges */}
                         {parsed.statuses.length > 0 && (

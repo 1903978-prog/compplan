@@ -521,7 +521,9 @@ function emptyCase(): PricingCase {
 function OutcomeBadge({ outcome }: { outcome: string }) {
   if (outcome === "won") return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Won</Badge>;
   if (outcome === "lost") return <Badge className="bg-red-100 text-red-700 border-red-200">Lost</Badge>;
-  return <Badge variant="secondary">Pending</Badge>;
+  // "pending" is the stored value; UI label is "TBD" until the user marks
+  // the case Won or Lost (see handleSave auto-creation below).
+  return <Badge className="bg-amber-100 text-amber-700 border-amber-200">TBD</Badge>;
 }
 
 function PostureBadge({ posture }: { posture: string }) {
@@ -1240,7 +1242,7 @@ export default function PricingTool() {
             <SelectContent>
               <SelectItem value="won">Won</SelectItem>
               <SelectItem value="lost">Lost</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="pending">TBD</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -2060,6 +2062,43 @@ export default function PricingTool() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error("Save failed");
+
+      // Auto-create a matching "TBD" entry in the win-loss proposals table
+      // so every saved case appears in Past Projects from day one. Outcome
+      // stays "pending" (rendered as "TBD") until the user clicks Mark as
+      // Won or Mark as Lost. Deduped by project_name so re-saving the same
+      // case never produces duplicates.
+      if (form.project_name && recommendation) {
+        const exists = proposals.some(
+          p => (p.project_name || "").trim().toLowerCase() === form.project_name.trim().toLowerCase(),
+        );
+        if (!exists) {
+          const baseWeekly = (recommendation.target_weekly ?? 0) + manualDelta;
+          const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
+          const tbdPayload = {
+            proposal_date: new Date().toISOString().slice(0, 10),
+            project_name: form.project_name,
+            client_name: form.client_name || null,
+            fund_name: form.fund_name || null,
+            region: form.region,
+            pe_owned: form.pe_owned ? 1 : 0,
+            revenue_band: form.revenue_band,
+            price_sensitivity: form.price_sensitivity,
+            duration_weeks: form.duration_weeks,
+            weekly_price: weeklyGrossAdmin,
+            total_fee: Math.round(baseWeekly * form.duration_weeks),
+            outcome: "pending",
+            sector: form.sector || null,
+            project_type: form.project_type || null,
+          };
+          fetch("/api/pricing/proposals", {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(tbdPayload),
+          }).catch(() => { /* non-fatal: case saved, win-loss row can be added manually */ });
+        }
+      }
+
       toast({ title: status === "final" ? "Case finalised" : "Saved as draft" });
       setView("list");
       loadAll();
@@ -2740,7 +2779,7 @@ export default function PricingTool() {
                                 ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
                                 : p.outcome === "lost"
                                 ? <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>
-                                : <Badge variant="secondary" className="text-xs">Pending</Badge>}
+                                : <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">TBD</Badge>}
                             </TableCell>
                             <TableCell onClick={e => e.stopPropagation()}>
                               <div className="flex gap-1 items-center">

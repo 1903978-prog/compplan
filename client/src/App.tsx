@@ -25,6 +25,7 @@ import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
 import AdminAIModels from "@/pages/AdminAIModels";
 import CandidateScores from "@/pages/CandidateScores";
+import HiringScoreboard from "@/pages/HiringScoreboard";
 import { useActiveAIModel } from "@/hooks/use-active-ai-model";
 import AdminBackup from "@/pages/AdminBackup";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
@@ -291,17 +292,18 @@ function Navigation() {
             </h1>
             <div className="flex items-center gap-1">
               {/* Executive Dashboard — single-screen rollup across every
-                  core stream. Lives at the top of the nav so it's one
-                  click from anywhere, and has its own dropdown so it's
-                  visually separate from HR's operational dashboard. */}
-              <NavDropdown
-                label="Exec"
-                icon={Activity}
-                basePaths={["/exec"]}
-                items={[
-                  { href: "/exec", label: "Dashboard", icon: LayoutDashboard },
-                ]}
-              />
+                  core stream. Direct link (no submenu) because there's
+                  only one page under /exec — clicking the top-level item
+                  goes straight to the dashboard. */}
+              <Link
+                href="/exec"
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-accent ${
+                  location === "/exec" ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                }`}
+              >
+                <Activity className="w-4 h-4" />
+                Exec
+              </Link>
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
@@ -343,6 +345,7 @@ function Navigation() {
                 items={[
                   { href: "/hiring", label: "Pipeline", icon: UserCheck },
                   { href: "/hiring/scores", label: "Candidate Scoring", icon: Activity },
+                  { href: "/hiring/scoreboard", label: "Scoreboard", icon: Grid3X3 },
                 ]}
               />
               <NavDropdown
@@ -469,6 +472,7 @@ function Router() {
       <Route path="/admin/backup" component={AdminBackup} />
       <Route path="/admin/ai-models" component={AdminAIModels} />
       <Route path="/hiring/scores" component={CandidateScores} />
+      <Route path="/hiring/scoreboard" component={HiringScoreboard} />
       <Route component={NotFound} />
     </Switch>
   );

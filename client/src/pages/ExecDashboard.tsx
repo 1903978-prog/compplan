@@ -300,6 +300,12 @@ export default function ExecDashboard() {
       total: recent.length,
       pendingCount: pending.length,
       pendingValue: sumFee(pending),
+      // Expose the actual TBD rows so the dashboard can list them below
+      // the Pending/Won/Lost summary. Sorted most-recent-first so the
+      // card always shows the freshest cases awaiting a decision.
+      pendingList: [...pending].sort((a, b) =>
+        String(b.proposal_date ?? "").localeCompare(String(a.proposal_date ?? ""))
+      ),
       wonCount: won.length,
       wonValue:  sumFee(won),
       lostCount: lost.length,
@@ -408,7 +414,7 @@ export default function ExecDashboard() {
           <div className="grid grid-cols-3 gap-2">
             <div className="text-center p-2 bg-amber-50 rounded border border-amber-100">
               <Clock className="w-4 h-4 text-amber-600 mx-auto mb-1" />
-              <div className="text-[10px] text-amber-700 uppercase font-semibold">Pending</div>
+              <div className="text-[10px] text-amber-700 uppercase font-semibold">TBD</div>
               <div className="text-lg font-bold text-amber-700" data-privacy="blur">{bd.pendingCount}</div>
               <div className="text-[10px] text-amber-600" data-privacy="blur">{eur(bd.pendingValue)}</div>
             </div>
@@ -429,6 +435,44 @@ export default function ExecDashboard() {
             <span className="text-muted-foreground">Total value in flight</span>
             <span className="font-bold" data-privacy="blur">{eur(bd.pendingValue + bd.wonValue)}</span>
           </div>
+
+          {/* TBD proposals list — every saved pricing case lands here with
+              outcome="pending" until the user marks it Won/Lost. Rendered
+              inside the Pricing proposals card so a leader scanning the
+              dashboard sees which deals still need a decision, sorted
+              most-recent first. */}
+          {bd.pendingList.length > 0 && (
+            <div className="mt-3 pt-3 border-t">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 mb-2">
+                TBD · awaiting decision ({bd.pendingList.length})
+              </p>
+              <div className="space-y-1">
+                {bd.pendingList.slice(0, 6).map(p => (
+                  <Link
+                    key={p.id}
+                    href="/pricing"
+                    className="flex items-center gap-2 text-xs py-1 px-2 rounded hover:bg-amber-50 transition-colors"
+                  >
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-semibold uppercase">
+                      <Clock className="w-3 h-3" /> TBD
+                    </span>
+                    <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
+                      <span className="font-medium">{p.client_name ?? "—"}</span>
+                      <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
+                    </span>
+                    <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
+                      {eur(toEUR(p.total_fee, p.currency))}
+                    </span>
+                  </Link>
+                ))}
+                {bd.pendingList.length > 6 && (
+                  <p className="text-[10px] text-muted-foreground italic px-2 pt-1">
+                    +{bd.pendingList.length - 6} more — see Pricing
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -465,7 +509,7 @@ export default function ExecDashboard() {
                 return (
                   <div key={p.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase ${tone}`}>
-                      {icon}{p.outcome ?? "pending"}
+                      {icon}{p.outcome === "won" ? "won" : p.outcome === "lost" ? "lost" : "tbd"}
                     </span>
                     <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
                       <span className="font-medium">{p.client_name ?? "—"}</span>

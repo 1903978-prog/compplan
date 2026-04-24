@@ -5,8 +5,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Trophy, ArrowLeft, Save, RefreshCw, Info } from "lucide-react";
+import { Trophy, ArrowLeft, Save, RefreshCw, Info, Wand2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { parseCandidateInfo } from "./Hiring";
 
 // ── Candidate Scoring Dashboard ────────────────────────────────────────────
 // A ranked view of every candidate with per-test scores across the funnel.
@@ -97,6 +98,7 @@ export default function CandidateScores() {
   });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [scoreBuffer, setScoreBuffer] = useState<Record<string, string>>({});
+  const [backfilling, setBackfilling] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -159,11 +161,108 @@ export default function CandidateScores() {
     }
   };
 
-  // Ranking — pre-filter to candidates with at least one score, then sort
-  // by composite desc. Candidates with no scores are shown at the bottom
-  // in a separate "Not yet scored" section so they don't drop off.
+  // Backfill scores from the free-text `info` blob that the Eendigo sync
+  // writes. Many candidates have real TestGorilla / Intro / CS LM values
+  // sitting in `info` but their `scores` JSONB column is empty, so the
+  // ranking ignores them. This sweeps every candidate, runs the same
+  // parser used by the popup, and copies the numeric fields into
+  // `scores` WITHOUT overwriting anything already present.
+  //
+  // Mapping:
+  //   parsed.tgOverall    → scores.testgorilla
+  //   parsed.introScore   → scores.intro_call
+  //   parsed.csLMScore    → scores.case_study  (LM is the authoritative
+  //                                             post-case-study score;
+  //                                             falls back to csRateScore
+  //                                             if LM absent)
+  //   HSA / PPT / Final   → not present in info, left as-is
+  //
+  // Partial data is fine — the composite formula already redistributes
+  // weight across whatever scores are present.
+  const backfillFromNotes = async () => {
+    if (!confirm(`Scan ${candidates.length} candidates and fill any missing scores from their notes? Existing scores are preserved.`)) return;
+    setBackfilling(true);
+    let updated = 0, skipped = 0;
+    try {
+      for (const c of candidates) {
+        const parsed = parseCandidateInfo(c.info ?? "");
+        const current = c.scores ?? {};
+        const patch: Record<string, number> = {};
+        // Only set a field if it's currently null/undefined AND we have a number
+        if (current.testgorilla == null && parsed.tgOverall != null) {
+          patch.testgorilla = Math.max(0, Math.min(100, parsed.tgOverall));
+        }
+        if (current.intro_call == null && parsed.introScore != null) {
+          patch.intro_call = Math.max(0, Math.min(100, parsed.introScore));
+        }
+        if (current.case_study == null) {
+          const csNum = parsed.csLMScore ?? parsed.csRateScore;
+          if (csNum != null) patch.case_study = Math.max(0, Math.min(100, csNum));
+        }
+        if (Object.keys(patch).length === 0) { skipped++; continue; }
+        const next = { ...current, ...patch };
+        // Optimistic local update so the ranking reshuffles immediately
+        setCandidates(prev => prev.map(x => x.id === c.id ? { ...x, scores: next } : x));
+        const r = await fetch(`/api/hiring/candidates/${c.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scores: next }),
+        });
+        if (r.ok) updated++;
+      }
+      toast({ title: `Backfill done`, description: `${updated} candidate${updated === 1 ? "" : "s"} updated, ${skipped} already complete or no parseable scores.` });
+    } catch (e: any) {
+      toast({ title: "Backfill failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+      load(); // re-sync from server
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
+  // Count how many of the "Not yet scored" candidates have at least one
+  // parseable score in their info — used to label the button so the user
+  // knows it'll do something before clicking.
+  const backfillPreview = useMemo(() => {
+    let n = 0;
+    for (const c of candidates) {
+      const parsed = parseCandidateInfo(c.info ?? "");
+      const current = c.scores ?? {};
+      const wouldAdd =
+        (current.testgorilla == null && parsed.tgOverall != null) ||
+        (current.intro_call == null && parsed.introScore != null) ||
+        (current.case_study == null && (parsed.csLMScore != null || parsed.csRateScore != null));
+      if (wouldAdd) n++;
+    }
+    return n;
+  }, [candidates]);
+
+  // Effective scores = manual entries FIRST, parsed-from-notes as
+  // fallback. This way the ranking shows ALL candidates who have any
+  // parseable data (TG overall, Intro, CS LM / CS Rate) without
+  // requiring a DB write — the Backfill button just persists these
+  // values so manual overrides don't disappear on next sync.
+  const effectiveScores = (c: Candidate): Record<string, number | null> => {
+    const manual = c.scores ?? {};
+    const parsed = parseCandidateInfo(c.info ?? "");
+    const out: Record<string, number | null> = { ...manual };
+    if (out.testgorilla == null && parsed.tgOverall != null) out.testgorilla = parsed.tgOverall;
+    if (out.intro_call == null && parsed.introScore != null) out.intro_call = parsed.introScore;
+    if (out.case_study == null) {
+      const cs = parsed.csLMScore ?? parsed.csRateScore;
+      if (cs != null) out.case_study = cs;
+    }
+    return out;
+  };
+
+  // Ranking — every candidate whose effective scores produce a
+  // composite lands in the ranked table. "Not yet scored" now really
+  // means "no parseable data AND no manual entries" — which is the
+  // honest answer.
   const ranked = useMemo(() => {
-    const enriched = candidates.map(c => ({ c, score: compositeScore(c.scores, weights) }));
+    const enriched = candidates.map(c => {
+      const eff = effectiveScores(c);
+      return { c, score: compositeScore(eff, weights), eff };
+    });
     const withScore = enriched.filter(r => r.score != null).sort((a, b) => (b.score! - a.score!));
     const noScore = enriched.filter(r => r.score == null);
     return { withScore, noScore };
@@ -193,6 +292,15 @@ export default function CandidateScores() {
             </Link>
             <Button variant="outline" size="sm" onClick={load}>
               <RefreshCw className="w-3.5 h-3.5 mr-1" /> Reload
+            </Button>
+            <Button
+              size="sm"
+              onClick={backfillFromNotes}
+              disabled={backfilling || backfillPreview === 0}
+              title={backfillPreview === 0 ? "All scores already filled from notes" : `Will fill scores for ${backfillPreview} candidate${backfillPreview === 1 ? "" : "s"} with parseable data in notes`}
+            >
+              <Wand2 className="w-3.5 h-3.5 mr-1" />
+              {backfilling ? "Backfilling…" : `Backfill from notes${backfillPreview > 0 ? ` (${backfillPreview})` : ""}`}
             </Button>
           </div>
         }
@@ -286,7 +394,12 @@ export default function CandidateScores() {
                           <div className="text-[10px] text-muted-foreground capitalize">{stageLabel}</div>
                         </TableCell>
                         {TESTS.map(t => {
-                          const v = c.scores?.[t.id];
+                          // Prefer manual entry for display; fall back to
+                          // the effective score (parsed from notes) so the
+                          // ranking cells actually show a value before the
+                          // user has saved anything.
+                          const manualV = c.scores?.[t.id];
+                          const v = typeof manualV === "number" ? manualV : row.eff[t.id];
                           if (isEditing) {
                             return (
                               <TableCell key={t.id} className="p-1">

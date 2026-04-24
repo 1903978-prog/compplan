@@ -9,7 +9,11 @@
   --font-display: 'Outfit', sans-serif;
 
   /* Refined Blue/Slate Palette */
-  --background: 210 40% 98%;
+  /* Background is a warm beige (not pure white) to reduce eye strain
+     AND cut blue-light exposure during long work sessions. Paper-like
+     tone. Cards stay white so they still "lift" off the page and
+     content remains high-contrast. */
+  --background: 30 40% 75%;
   --foreground: 222 47% 11%;
 
   --card: 0 0% 100%;
