@@ -2064,16 +2064,27 @@ export default function PricingTool() {
       if (!res.ok) throw new Error("Save failed");
 
       // Auto-create a matching "TBD" entry in the win-loss proposals table
-      // so every saved case appears in Past Projects from day one. Outcome
-      // stays "pending" (rendered as "TBD") until the user clicks Mark as
-      // Won or Mark as Lost. Deduped by project_name so re-saving the same
-      // case never produces duplicates.
-      if (form.project_name && recommendation) {
-        const exists = proposals.some(
-          p => (p.project_name || "").trim().toLowerCase() === form.project_name.trim().toLowerCase(),
-        );
-        if (!exists) {
-          const baseWeekly = (recommendation.target_weekly ?? 0) + manualDelta;
+      // so every FINALISED pricing case appears in Past Projects from day
+      // one. Outcome stays "pending" (rendered as "TBD") until the user
+      // clicks Mark as Won or Mark as Lost. Deduped by project_name so
+      // re-saving the same case never produces duplicates. Draft saves do
+      // NOT create a proposal row — and if a prior auto-created TBD exists
+      // for this project and is still undecided, it's removed so the row
+      // doesn't linger in Past Projects after a final→draft downgrade.
+      const matchName = form.project_name.trim().toLowerCase();
+      const matching = form.project_name
+        ? proposals.find(p => (p.project_name || "").trim().toLowerCase() === matchName)
+        : undefined;
+
+      if (status === "draft" && matching && (matching.outcome === "pending" || !matching.outcome) && matching.id) {
+        fetch(`/api/pricing/proposals/${matching.id}`, {
+          method: "DELETE", credentials: "include",
+        }).catch(() => { /* non-fatal */ });
+      }
+
+      if (status === "final" && form.project_name) {
+        if (!matching) {
+          const baseWeekly = (recommendation?.target_weekly ?? 0) + manualDelta;
           const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
           const tbdPayload = {
             proposal_date: new Date().toISOString().slice(0, 10),
