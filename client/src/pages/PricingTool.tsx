@@ -140,7 +140,7 @@ function deriveTimelines(baseWeeks: number): { weeks: number; commitPct: number 
  *  on-screen card so pasting the resulting PDF into a deck looks identical. */
 function printThreeTimelines(
   form: { project_name?: string; client_name?: string; revision_letter?: string },
-  cols: { weeks: number; commitPct: number; grossTotal: number; breakdown: { id: string; name: string; pct: number; amount: number }[]; netTotal: number }[],
+  cols: { weeks: number; commitPct: number; grossTotal: number; breakdown: { id: string; name: string; pct: number; amount: number }[]; netTotal: number; note?: string }[],
   rowDefs: { id: string; name: string; pct: number }[],
   fmtC: (n: number) => string,
   grossWk: number,
@@ -150,7 +150,7 @@ function printThreeTimelines(
   const clientLabel = [form.client_name, displayProjectName(form.project_name, form.revision_letter)].filter(Boolean).join(" · ") || "Commercial proposal";
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
-  const colHeaders = cols.map(c => `<th style="padding:10px;border-bottom:2px solid #1A6571;color:#1A6571;text-align:center;font-weight:600;font-size:12px;">${c.weeks} weeks${c.commitPct > 0 ? `<div style="font-size:9px;font-weight:400;color:#6b7280;">Commitment discount ${c.commitPct}%</div>` : ""}</th>`).join("");
+  const colHeaders = cols.map(c => `<th style="padding:10px;border-bottom:2px solid #1A6571;color:#1A6571;text-align:center;font-weight:600;font-size:12px;">${c.weeks} weeks${c.note ? `<div style="font-size:10px;font-style:italic;font-weight:400;color:#6b7280;">(${esc(c.note)})</div>` : ""}${c.commitPct > 0 ? `<div style="font-size:9px;font-weight:400;color:#6b7280;">Commitment discount ${c.commitPct}%</div>` : ""}</th>`).join("");
   const grossRow = `<tr><td style="padding:8px 10px;background:#5B7E7E;color:white;text-align:right;font-weight:600;font-size:11px;">Gross total price</td>${cols.map(c => `<td style="padding:8px 10px;text-align:center;font-family:monospace;border:1px solid #d1d5db;">${esc(fmtC(c.grossTotal))}</td>`).join("")}</tr>`;
   const discountRows = rowDefs.map((row, idx) => `<tr><td style="padding:8px 10px;background:#5B7E7E;opacity:0.85;color:white;text-align:right;font-weight:600;font-size:11px;">${esc(row.id === "commitment" ? row.name : `${row.name} (${row.pct}%)`)}</td>${cols.map(c => {
     const cell = c.breakdown[idx];
@@ -620,19 +620,17 @@ export default function PricingTool() {
   // Default: base duration + 4w + 8w, with 0 / 5 / 7% commitment discount
   // matching Eendigo's standard pitch (longer engagement → bigger discount).
   // Each row is fully editable inline on the pricing case.
-  // Timeline options for the 3-option commercial-proposal table. The
-  // optional grossTotal / commitAmount fields pin exact values per
-  // option — useful when the weekly rate or commit amount differs
-  // between options (e.g. mid-project rate reset, or a case where the
-  // commit math is compound-on-post-discount instead of flat-on-gross).
-  // When absent, the engine derives:
-  //   grossTotal  = grossWk × weeks
-  //   commitAmt   = commitPct × gross (flat)
+  // Timeline options for the 3-option commercial-proposal table.
+  //  grossTotal   — override weekly × weeks (e.g. mid-project rate reset)
+  //  commitAmount — override commitPct × gross (e.g. compound-on-post-disc)
+  //  note         — small italic subtitle rendered under the option header
+  //                 (e.g. "exc. US reset"). Free-text, optional.
   const [caseTimelines, setCaseTimelines] = useState<{
     weeks: number;
     commitPct: number;
     grossTotal?: number;
     commitAmount?: number;
+    note?: string;
   }[]>([
     { weeks: 12, commitPct: 0 },
     { weeks: 16, commitPct: 5 },
@@ -5182,7 +5180,7 @@ export default function PricingTool() {
                             : (commitPct > 0 ? Math.round(grossTotalCol * commitPct / 100) : 0);
                           breakdown.push({ id: "commitment", name: "Additional commitment discount", pct: commitPct, amount: commitAmt });
                           const netTotal = Math.round(running - commitAmt);
-                          return { weeks, commitPct, grossTotal: grossTotalCol, breakdown, netTotal, hasGrossOverride: typeof t.grossTotal === "number" && t.grossTotal > 0 };
+                          return { weeks, commitPct, grossTotal: grossTotalCol, breakdown, netTotal, hasGrossOverride: typeof t.grossTotal === "number" && t.grossTotal > 0, note: t.note };
                         };
                         const cols = timelines.map(computeColumn);
                         // Discount rows shown = union of rows across columns
@@ -5220,8 +5218,13 @@ export default function PricingTool() {
                                         isBase ? "bg-muted/50 border border-dashed" : "bg-[#1A6571]/5"
                                       }`}
                                     >
-                                      <div className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+                                      <div className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground text-center leading-tight">
                                         {isBase ? "Option 1 · Base" : `Option ${i + 1}`}
+                                        {t.note && (
+                                          <div className="text-[9px] font-normal italic normal-case text-muted-foreground/80 mt-0.5">
+                                            ({t.note})
+                                          </div>
+                                        )}
                                       </div>
                                       <div className="flex items-center gap-1">
                                         <Input
@@ -5254,6 +5257,20 @@ export default function PricingTool() {
                                           </SelectContent>
                                         </Select>
                                       </div>
+                                      {/* Optional per-option subtitle — e.g.
+                                          "exc. US reset" under the 12-week
+                                          column on SCHA01. Free-text, small,
+                                          italic. Shown in the print view too. */}
+                                      <Input
+                                        type="text"
+                                        value={t.note ?? ""}
+                                        onChange={e => setCaseTimelines(prev => prev.map((x, j) =>
+                                          j === i ? { ...x, note: e.target.value || undefined } : x
+                                        ))}
+                                        placeholder="Note (optional)"
+                                        title="Optional subtitle shown under the option header, e.g. 'exc. US reset'"
+                                        className="h-5 text-[10px] text-center italic border-dashed mt-0.5 w-28"
+                                      />
                                     </div>
                                   );
                                 })}

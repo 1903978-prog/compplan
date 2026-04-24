@@ -691,7 +691,7 @@ export async function seedDatabase() {
       { id: "commitment",     name: "Commitment discount",     pct: 0, enabled: false },
     ]);
     const schaTimelines = JSON.stringify([
-      { weeks: 12, commitPct: 0, grossTotal: 458436 },
+      { weeks: 12, commitPct: 0, grossTotal: 458436, note: "exc. US reset" },
       { weeks: 16, commitPct: 4, grossTotal: 675248, commitAmount: 24392 },
       { weeks: 20, commitPct: 7, grossTotal: 827996, commitAmount: 52342 },
     ]);
@@ -720,7 +720,9 @@ export async function seedDatabase() {
              ${nowIso}, ${nowIso}
       WHERE NOT EXISTS (SELECT 1 FROM pricing_cases WHERE project_name = 'SCHA01')
     `);
-    // Backfill legacy SCHA01 rows that existed before the override shape.
+    // Backfill legacy SCHA01 rows: repair if timelines missing, wrong
+    // shape, or missing the "exc. US reset" note on Option 1 (added in
+    // the note-field commit).
     await db.execute(sql`
       UPDATE pricing_cases
       SET case_timelines = ${schaTimelines}::jsonb,
@@ -728,7 +730,12 @@ export async function seedDatabase() {
           recommendation = COALESCE(recommendation, ${schaRecommendation}::jsonb),
           updated_at = ${nowIso}
       WHERE project_name = 'SCHA01'
-        AND (case_timelines IS NULL OR jsonb_array_length(case_timelines) < 3 OR NOT (case_timelines -> 1 ? 'grossTotal'))
+        AND (
+          case_timelines IS NULL
+          OR jsonb_array_length(case_timelines) < 3
+          OR NOT (case_timelines -> 1 ? 'grossTotal')
+          OR NOT (case_timelines -> 0 ? 'note')
+        )
     `);
   } catch (e) {
     console.error("Failed to seed/backfill SCHA01 pricing case:", e);
