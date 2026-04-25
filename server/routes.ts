@@ -365,14 +365,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return b;
   }
 
+  // Server-side guarantee: when a pricing_case is saved with status='final'
+  // and no matching pricing_proposal row exists, insert a pending TBD row
+  // so the case appears in Past Projects atomically with the save. Replaces
+  // the previously client-side fetch which had a silent catch and could
+  // leave the row uncreated if the call ever failed. Idempotent — uses
+  // case-insensitive project_name match against pricing_proposals.
+  async function ensureTbdProposalForFinalCase(caseRow: { project_name?: string | null; status?: string | null; client_name?: string | null; fund_name?: string | null; region?: string | null; pe_owned?: number | null; revenue_band?: string | null; price_sensitivity?: string | null; duration_weeks?: number | null; sector?: string | null; project_type?: string | null }) {
+    if (caseRow.status !== "final") return;
+    const name = (caseRow.project_name ?? "").trim();
+    if (!name) return;
+    const all = await storage.getPricingProposals();
+    const lower = name.toLowerCase();
+    const exists = all.some(p => (p.project_name ?? "").trim().toLowerCase() === lower);
+    if (exists) return;
+    const today = new Date().toISOString().slice(0, 10);
+    await storage.createPricingProposal({
+      proposal_date: today,
+      project_name: name,
+      client_name: caseRow.client_name ?? null,
+      fund_name: caseRow.fund_name ?? null,
+      region: caseRow.region ?? "Italy",
+      pe_owned: caseRow.pe_owned ?? 1,
+      revenue_band: caseRow.revenue_band ?? "above_1b",
+      price_sensitivity: caseRow.price_sensitivity ?? null,
+      duration_weeks: caseRow.duration_weeks ?? null,
+      weekly_price: 0,
+      total_fee: 0,
+      outcome: "pending",
+      sector: caseRow.sector ?? null,
+      project_type: caseRow.project_type ?? null,
+    });
+  }
+
   app.post("/api/pricing/cases", requireAuth, async (req, res) => {
     const c = await storage.createPricingCase(sanitisePricingCaseBody(req.body));
+    try { await ensureTbdProposalForFinalCase(c); }
+    catch (e) { console.error("ensureTbdProposalForFinalCase (POST) failed:", e); }
     res.status(201).json(c);
   });
 
   app.put("/api/pricing/cases/:id", requireAuth, async (req, res) => {
     const c = await storage.updatePricingCase(safeInt(req.params.id), sanitisePricingCaseBody(req.body));
+    try { await ensureTbdProposalForFinalCase(c); }
+    catch (e) { console.error("ensureTbdProposalForFinalCase (PUT) failed:", e); }
     res.json(c);
+  });
+
+  // One-shot repair endpoint: re-runs the same retroactive backfill that
+  // server/seed.ts does at boot. Useful if the seed step errored once or
+  // a case was finalised before the server-side guarantee landed. Returns
+  // count of rows inserted. Auth-gated.
+  app.post("/api/pricing/proposals/repair-from-final-cases", requireAuth, async (_req, res) => {
+    try {
+      const cases = await storage.getPricingCases();
+      const proposals = await storage.getPricingProposals();
+      const existingNames = new Set(proposals.map(p => (p.project_name ?? "").trim().toLowerCase()).filter(Boolean));
+      const finals = cases.filter(c => c.status === "final" && (c.project_name ?? "").trim() !== "");
+      const toCreate = finals.filter(c => !existingNames.has((c.project_name as string).trim().toLowerCase()));
+      const today = new Date().toISOString().slice(0, 10);
+      for (const c of toCreate) {
+        await storage.createPricingProposal({
+          proposal_date: today,
+          project_name: (c.project_name as string).trim(),
+          client_name: c.client_name ?? null,
+          fund_name: c.fund_name ?? null,
+          region: c.region ?? "Italy",
+          pe_owned: c.pe_owned ?? 1,
+          revenue_band: c.revenue_band ?? "above_1b",
+          price_sensitivity: c.price_sensitivity ?? null,
+          duration_weeks: c.duration_weeks ?? null,
+          weekly_price: 0,
+          total_fee: 0,
+          outcome: "pending",
+          sector: c.sector ?? null,
+          project_type: c.project_type ?? null,
+        });
+      }
+      res.json({ ok: true, inserted: toCreate.length, finalCases: finals.length, alreadyPresent: finals.length - toCreate.length });
+    } catch (e) {
+      console.error("repair-from-final-cases failed:", e);
+      res.status(500).json({ ok: false, message: (e as Error).message });
+    }
   });
 
   app.delete("/api/pricing/cases/:id", requireAuth, async (req, res) => {
