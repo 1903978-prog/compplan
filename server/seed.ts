@@ -741,6 +741,47 @@ export async function seedDatabase() {
     console.error("Failed to seed/backfill SCHA01 pricing case:", e);
   }
 
+  // ── Retroactive Past-Projects backfill ─────────────────────────────
+  // Any pricing_case with status='final' that is missing a corresponding
+  // pricing_proposals row (matched on project_name, case-insensitive)
+  // gets a pending/TBD proposal row so it appears in Past Projects and
+  // the Exec Dashboard. Idempotent: WHERE NOT EXISTS skips any case that
+  // already has a matching proposal regardless of outcome.
+  try {
+    await db.execute(sql`
+      INSERT INTO pricing_proposals (
+        proposal_date, project_name, client_name, fund_name, region,
+        pe_owned, revenue_band, price_sensitivity, duration_weeks,
+        weekly_price, total_fee, outcome, sector, project_type
+      )
+      SELECT
+        COALESCE(c.created_at::date::text, ${nowIso.slice(0, 10)}),
+        c.project_name,
+        c.client_name,
+        c.fund_name,
+        c.region,
+        c.pe_owned,
+        c.revenue_band,
+        c.price_sensitivity,
+        c.duration_weeks,
+        0,
+        0,
+        'pending',
+        c.sector,
+        c.project_type
+      FROM pricing_cases c
+      WHERE c.status = 'final'
+        AND c.project_name IS NOT NULL
+        AND c.project_name <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM pricing_proposals p
+          WHERE LOWER(TRIM(p.project_name)) = LOWER(TRIM(c.project_name))
+        )
+    `);
+  } catch (e) {
+    console.error("Failed to backfill TBD proposals for finalised cases:", e);
+  }
+
   // Add project_type and slide_selection columns to proposals (idempotent)
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS project_type TEXT`);
   await db.execute(sql`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS slide_selection JSONB NOT NULL DEFAULT '[]'`);

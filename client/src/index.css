@@ -58,7 +58,17 @@
    --background so users can pick a different page color while keeping
    readable contrast. Pair light themes (no .dark) with light grey/white
    and dark themes (.dark) with navy/dark-grey. */
-.theme-white         { --background: 0 0% 100%; }
+/* On pure-white background, --card stays 100% white in :root which would
+   make borderless `bg-card` regions blend into the page. Bump card and
+   muted to faint off-white tones so card surfaces still "lift" off the
+   page while preserving overall whiteness. */
+.theme-white         {
+  --background: 0 0% 100%;
+  --card: 0 0% 98%;
+  --muted: 0 0% 96%;
+  --secondary: 0 0% 96%;
+  --accent: 0 0% 96%;
+}
 .theme-light-grey    { --background: 0 0% 93%; }
 .theme-medium-grey   { --background: 0 0% 78%; }
 .theme-dark-grey     { --background: 0 0% 22%; }

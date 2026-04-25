@@ -346,13 +346,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(c);
   });
 
+  // Lightweight defensive sanitiser for pricing-case write payloads. We
+  // don't have a full zod schema here yet (the form is large and fields
+  // evolve frequently), but jsonb bombs and obviously-malformed arrays
+  // would otherwise land directly in Postgres. Caps array sizes and drops
+  // non-object array entries; everything else passes through unchanged.
+  function sanitisePricingCaseBody(body: unknown): Record<string, unknown> {
+    const b = (body && typeof body === "object" ? { ...(body as Record<string, unknown>) } : {});
+    const capArr = (key: string, max: number) => {
+      const v = b[key];
+      if (Array.isArray(v)) {
+        b[key] = v.filter(x => x && typeof x === "object").slice(0, max);
+      }
+    };
+    capArr("case_timelines", 10);
+    capArr("case_discounts", 30);
+    capArr("staffing", 50);
+    return b;
+  }
+
   app.post("/api/pricing/cases", requireAuth, async (req, res) => {
-    const c = await storage.createPricingCase(req.body);
+    const c = await storage.createPricingCase(sanitisePricingCaseBody(req.body));
     res.status(201).json(c);
   });
 
   app.put("/api/pricing/cases/:id", requireAuth, async (req, res) => {
-    const c = await storage.updatePricingCase(safeInt(req.params.id), req.body);
+    const c = await storage.updatePricingCase(safeInt(req.params.id), sanitisePricingCaseBody(req.body));
     res.json(c);
   });
 

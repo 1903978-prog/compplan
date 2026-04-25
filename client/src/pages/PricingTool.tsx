@@ -2145,6 +2145,18 @@ export default function PricingTool() {
     }
   };
 
+  // Resolve the effective daily rate for a staffing line. Legacy saves
+  // sometimes have line.daily_rate_used = 0 even though the role's admin
+  // default is non-zero — when that happens any cost calculation that
+  // multiplies by line.daily_rate_used silently collapses to 0 (the
+  // "Partner reduction is 0%" symptom). All non-totalizer cost callers
+  // should use this helper so a stale-zero never produces a 0 share.
+  const effectiveLineRate = (l: StaffingLine): number => {
+    if (l.daily_rate_used && l.daily_rate_used > 0) return l.daily_rate_used;
+    const role = settings?.roles.find(r => r.id === l.role_id);
+    return role?.default_daily_rate ?? 0;
+  };
+
   // Compute weekly total only from visible STAFFING_ROLES, mirroring the
   // per-row display exactly: same count-gate, same rate source (the admin
   // role's default_daily_rate, not the line's stored daily_rate_used, which
@@ -4904,7 +4916,7 @@ export default function PricingTool() {
             // Subtract from Net1 weekly to get the non-partner share of fees.
             const partnerWeeklyCost = activeStaff
               .filter(isPartnerRole)
-              .reduce((s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0);
+              .reduce((s, l) => s + l.days_per_week * effectiveLineRate(l) * l.count, 0);
             // Fallback proportional split when no cost data: assume partner weight
             // = partner_days / total_team_days (person-days per week).
             const totalPersonDaysPerWk = activeStaff.reduce((s, l) => s + l.days_per_week * l.count, 0);
@@ -5142,7 +5154,7 @@ export default function PricingTool() {
                         );
                         if (partnerLines.length === 0 || teamCostWk <= 0) return null;
                         const partnerWeeklyCost = partnerLines.reduce(
-                          (s, l) => s + l.days_per_week * l.daily_rate_used * l.count, 0,
+                          (s, l) => s + l.days_per_week * effectiveLineRate(l) * l.count, 0,
                         );
                         const partnerShare = partnerWeeklyCost / teamCostWk; // 0..1
                         // Reduce gross and net by the partner's share of total

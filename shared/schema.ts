@@ -321,7 +321,7 @@ export const pricingCases = pgTable("pricing_cases", {
   // per-option numbers when the engine's derived values don't match
   // the client-facing slide (e.g. mid-project rate reset, or compound-
   // on-post-discount commit math). Null = use engine default.
-  case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number }[] | null>(),
+  case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number; note?: string }[] | null>(),
   // Revision letter appended to project_name in the display (A / B / C / D).
   // A proposal goes through multiple revisions with the client — each is
   // a separate row (same project_name, different letter). Default "A" —
