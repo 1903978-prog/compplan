@@ -774,7 +774,7 @@ export async function seedDatabase() {
         c.sector,
         c.project_type
       FROM pricing_cases c
-      WHERE c.status IN ('final', 'active')
+      WHERE c.status = 'final'
         AND c.project_name IS NOT NULL
         AND c.project_name <> ''
         AND NOT EXISTS (
