@@ -742,11 +742,15 @@ export async function seedDatabase() {
   }
 
   // ── Retroactive Past-Projects backfill ─────────────────────────────
-  // Any pricing_case with status='final' that is missing a corresponding
-  // pricing_proposals row (matched on project_name, case-insensitive)
-  // gets a pending/TBD proposal row so it appears in Past Projects and
-  // the Exec Dashboard. Idempotent: WHERE NOT EXISTS skips any case that
-  // already has a matching proposal regardless of outcome.
+  // Any pricing_case with status IN ('final', 'active') that is missing
+  // a corresponding pricing_proposals row (matched on project_name,
+  // case-insensitive) gets a pending/TBD proposal row so it appears in
+  // Past Projects and the Exec Dashboard. Idempotent: WHERE NOT EXISTS
+  // skips any case that already has a matching proposal regardless of
+  // outcome. We include 'active' because the seed inserts SCHA01 / EMV01
+  // with status='active', and any case the user has finalised gets
+  // status='final' from handleSave — both should surface in Past Projects.
+  // Drafts are intentionally excluded so unfinished work doesn't pollute.
   try {
     await db.execute(sql`
       INSERT INTO pricing_proposals (
@@ -770,7 +774,7 @@ export async function seedDatabase() {
         c.sector,
         c.project_type
       FROM pricing_cases c
-      WHERE c.status = 'final'
+      WHERE c.status IN ('final', 'active')
         AND c.project_name IS NOT NULL
         AND c.project_name <> ''
         AND NOT EXISTS (
