@@ -24,6 +24,7 @@ import Invoicing from "@/pages/Invoicing";
 import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
 import AdminAIModels from "@/pages/AdminAIModels";
+import AdminTheme from "@/pages/AdminTheme";
 import CandidateScores from "@/pages/CandidateScores";
 import HiringScoreboard from "@/pages/HiringScoreboard";
 import { useActiveAIModel } from "@/hooks/use-active-ai-model";
@@ -31,7 +32,7 @@ import AdminBackup from "@/pages/AdminBackup";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -374,6 +375,7 @@ function Navigation() {
                   { href: "/admin", label: "Cybersecurity", icon: Shield },
                   { href: "/admin/backup", label: "Backup & Restore", icon: Database },
                   { href: "/admin/ai-models", label: "AI Models", icon: Cpu },
+                  { href: "/admin/theme", label: "Background Theme", icon: Palette },
                 ]}
               />
             </div>
@@ -471,6 +473,7 @@ function Router() {
       <Route path="/admin" component={AppAdmin} />
       <Route path="/admin/backup" component={AdminBackup} />
       <Route path="/admin/ai-models" component={AdminAIModels} />
+      <Route path="/admin/theme" component={AdminTheme} />
       <Route path="/hiring/scores" component={CandidateScores} />
       <Route path="/hiring/scoreboard" component={HiringScoreboard} />
       <Route component={NotFound} />

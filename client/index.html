@@ -1,9 +1,24 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
     <title>Eendigo Op Model</title>
+    <script>
+      // Apply background theme BEFORE first paint to avoid flash. Reads
+      // localStorage("compplan_bg_theme") set from /admin/theme. Default = navy.
+      // The .dark class controls the dark-mode token set; theme-* overrides only --background.
+      (function () {
+        try {
+          var t = localStorage.getItem('compplan_bg_theme') || 'navy';
+          var html = document.documentElement;
+          if (t === 'navy' || t === 'dark-grey') html.classList.add('dark');
+          html.classList.add('theme-' + t);
+        } catch (e) {
+          document.documentElement.classList.add('dark', 'theme-navy');
+        }
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23166534'/><text x='16' y='23' font-family='Arial Black,sans-serif' font-size='17' font-weight='900' text-anchor='middle' fill='%2322c55e'>$$</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

@@ -50,6 +50,22 @@
      page background is easier on the eyes for long sessions. */
   --background: 222 40% 17%;
   --foreground: 210 40% 98%;
+}
+
+/* ── Background theme overrides (set via /admin/theme) ──────────────────
+   The presence of the `.dark` class controls the dark-mode token set
+   (foreground, card, borders…). The `theme-*` class then overrides ONLY
+   --background so users can pick a different page color while keeping
+   readable contrast. Pair light themes (no .dark) with light grey/white
+   and dark themes (.dark) with navy/dark-grey. */
+.theme-white         { --background: 0 0% 100%; }
+.theme-light-grey    { --background: 0 0% 93%; }
+.theme-medium-grey   { --background: 0 0% 78%; }
+.theme-dark-grey     { --background: 0 0% 22%; }
+/* theme-navy is implicit: it just uses the .dark default --background.
+   Defined as a no-op class so the admin selector can still tag the html
+   element with a single class for state-tracking / CSS extensions. */
+.theme-navy          { /* uses .dark defaults */
 
   --card: 222 35% 22%;
   --card-foreground: 210 40% 98%;
