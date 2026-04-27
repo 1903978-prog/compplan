@@ -656,6 +656,7 @@ export default function PricingTool() {
   const [variableFeePct, setVariableFeePct] = useState(10);
   const [adminFeePct, setAdminFeePct] = useState(8);
   const [markingOutcome, setMarkingOutcome] = useState(false);
+  const [backfillingTbd, setBackfillingTbd] = useState(false);
   const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
   const [teamPreset, setTeamPreset] = useState<string>("1+2");
@@ -2097,7 +2098,9 @@ export default function PricingTool() {
           sector: form.sector || null,
           project_type: form.project_type || null,
         };
-        fetch("/api/pricing/proposals", {
+        // AWAIT — without this loadAll() below races the POST and the
+        // new TBD row doesn't show up until the user manually refreshes.
+        await fetch("/api/pricing/proposals", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(tbdPayload),
@@ -2113,6 +2116,85 @@ export default function PricingTool() {
       setSaving(false);
     }
   };
+
+  // ── Backfill TBD proposals from existing cases ──────────────────
+  // For every pricing case that has NO matching row in pricing_proposals
+  // (matched by lower-cased project_name), create a TBD proposal so it
+  // appears in Past Projects + Executive Dashboard. Idempotent — re-
+  // running it after the first sweep finds nothing to do. Skipped cases
+  // are reported in the toast so the user can spot mismatched names.
+  const backfillTbdFromCases = async () => {
+    setBackfillingTbd(true);
+    try {
+      const propNames = new Set(proposals.map(p => (p.project_name || "").trim().toLowerCase()).filter(Boolean));
+      const missing = cases.filter((c: any) => {
+        const n = (c.project_name || "").trim().toLowerCase();
+        return n && !propNames.has(n);
+      });
+      if (missing.length === 0) {
+        toast({ title: "Nothing to backfill", description: "Every case already has a matching Past Projects row." });
+        setBackfillingTbd(false);
+        return;
+      }
+      let created = 0, failed = 0;
+      for (const c of missing) {
+        // Use the recommendation already stored on the case (set when it
+        // was saved). Fall back to a staffing-derived weekly if missing.
+        const targetWeekly = (c.recommendation?.target_weekly as number | undefined)
+          ?? (Array.isArray(c.staffing)
+                ? Math.round(c.staffing.reduce((s: number, l: any) =>
+                    s + (l.days_per_week || 0) * (l.daily_rate_used || 0) * (l.count || 0), 0) * 2)
+                : 0);
+        const adminPct = adminFeePct ?? 8;
+        const weeklyGrossAdmin = Math.round(targetWeekly * (1 + adminPct / 100));
+        const dur = c.duration_weeks ?? 12;
+        const payload = {
+          proposal_date: new Date().toISOString().slice(0, 10),
+          project_name: c.project_name,
+          client_name: c.client_name || null,
+          fund_name: c.fund_name || null,
+          region: c.region,
+          pe_owned: c.pe_owned ? 1 : 0,
+          revenue_band: c.revenue_band,
+          price_sensitivity: c.price_sensitivity,
+          duration_weeks: dur,
+          weekly_price: weeklyGrossAdmin,
+          total_fee: Math.round(targetWeekly * dur),
+          outcome: "pending",
+          sector: c.sector || null,
+          project_type: c.project_type || null,
+        };
+        try {
+          const r = await fetch("/api/pricing/proposals", {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (r.ok) created++; else failed++;
+        } catch {
+          failed++;
+        }
+      }
+      toast({
+        title: `Backfill done`,
+        description: `${created} TBD proposal${created === 1 ? "" : "s"} created${failed > 0 ? `, ${failed} failed` : ""}.`,
+        variant: failed > 0 ? "destructive" : undefined,
+      });
+      loadAll();
+    } finally {
+      setBackfillingTbd(false);
+    }
+  };
+
+  // How many cases are missing a matching proposal — drives the button
+  // label so the user knows whether clicking will do anything.
+  const tbdBackfillCount = (() => {
+    const propNames = new Set(proposals.map(p => (p.project_name || "").trim().toLowerCase()).filter(Boolean));
+    return cases.filter((c: any) => {
+      const n = (c.project_name || "").trim().toLowerCase();
+      return n && !propNames.has(n);
+    }).length;
+  })();
 
   const updateStaffingLine = (roleId: string, field: keyof StaffingLine, value: any) => {
     setForm(f => ({
@@ -2520,6 +2602,27 @@ export default function PricingTool() {
         ) : mainTab === "history" ? (
           /* ── PAST PROJECTS TAB ─────────────────────────────────────── */
           <div className="space-y-4">
+            {/* Backfill TBD from cases — creates a "pending" proposal
+                row for every saved pricing case that doesn't have one
+                yet. Use this once after a batch import or when a save
+                missed the auto-create flow. */}
+            <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+              <div className="text-xs">
+                <span className="font-semibold text-amber-900">Sync TBD from cases</span>
+                <span className="text-amber-700 ml-2">
+                  {tbdBackfillCount > 0
+                    ? `${tbdBackfillCount} pricing case${tbdBackfillCount === 1 ? "" : "s"} not yet in Past Projects`
+                    : "Every case is already in Past Projects."}
+                </span>
+              </div>
+              <Button
+                size="sm"
+                onClick={backfillTbdFromCases}
+                disabled={backfillingTbd || tbdBackfillCount === 0}
+              >
+                {backfillingTbd ? "Syncing…" : `Backfill ${tbdBackfillCount || ""}`}
+              </Button>
+            </div>
             {/* Stats */}
             <div className="grid grid-cols-4 gap-4">
               {(() => {
