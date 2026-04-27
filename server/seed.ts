@@ -1281,11 +1281,13 @@ Run with: node eendigo_template.js',
       role_key: "cfo", role_name: "Chief Financial Officer", parent_role_key: "ceo",
       person_name: "Mario Draghi", sort_order: 1, status: "active",
       goals: [
-        "Outstanding AR <€50k at end of every month",
-        "Cash runway visible 12+ weeks at all times",
+        "[Supports CEO €3M revenue goal] Track booked-and-invoiced ≥€1.6M by Q3 — flag the gap weekly",
+        "[Supports CEO €3M revenue goal] DSO <45 days; outstanding AR <€50k month-end",
+        "Cash runway visible 12+ weeks at all times so CEO can act on hires + investments",
         "Monthly close packaged for CEO by working day 5",
       ],
       okrs: [
+        { objective: "Cascade: ≥€1.6M booked-and-invoiced by Q3 close", key_results: ["Weekly variance to plan tracked + reported", "≥€750k recognised by Q2 close (CEO O1.KR1)", "0 invoices stuck >60d unbilled-from-Won"] },
         { objective: "Tight AR", key_results: ["≤10 invoices overdue >30d", "no invoices >90d overdue", "DSO <45 days trailing 90d"] },
         { objective: "Predictable close", key_results: ["Close completed by WD-5 every month", "P&L variance commentary delivered with the close", "0 surprise reclassifications post-close"] },
       ],
@@ -1295,13 +1297,14 @@ Run with: node eendigo_template.js',
       role_key: "sales-director", role_name: "Sales Director", parent_role_key: "ceo",
       person_name: null, sort_order: 2, status: "vacant",
       goals: [
-        "1+ new signed engagement per month",
-        "Pipeline coverage ≥3× quarterly target",
-        "Every prospect call → pricing case opened in compplan + tracked in BD pipeline",
+        "[Supports CEO €3M revenue + Sell ≥1/month goals] 1+ new signed engagement every single month of 2026",
+        "[Supports CEO Always-on pipeline OKR] ≥6 active TBDs at any time; pipeline coverage ≥3× quarterly target",
+        "[Supports CEO €3M revenue goal] Win-rate ≥50% trailing 10 deals — never lose a winnable project",
+        "Every prospect call → pricing case opened in compplan + tracked in BD pipeline within 24h",
       ],
       okrs: [
-        { objective: "Steady win cadence", key_results: ["≥1 new Won/month, every month of 2026", "win-rate ≥50% trailing 10 decided deals", "no deal stalled >14d untouched"] },
-        { objective: "Disciplined pipeline hygiene", key_results: ["Every BD deal has next-step + owner + due-date", "Lost-to-price <30% of total losses", "Pricing case opened within 24h of every prospect call"] },
+        { objective: "Cascade: ≥1 new Won/month for 12 months", key_results: ["12 of 12 months hit ≥1 Won (CEO Goal #3)", "Win-rate ≥50% trailing 10 (CEO O1.KR3)", "No deal stalled >14d untouched"] },
+        { objective: "Cascade: ≥6 active TBDs sustained", key_results: ["TBD count ≥6 at any time (CEO O3.KR1)", "Every BD deal has next-step + owner + due-date", "Lost-to-price <30% of total losses"] },
       ],
       tasks_10d: [],
     },
@@ -1309,13 +1312,14 @@ Run with: node eendigo_template.js',
       role_key: "marketing-manager", role_name: "Marketing Manager", parent_role_key: "ceo",
       person_name: "Philip Kotler", sort_order: 3, status: "active",
       goals: [
-        "12 published thought-leadership pieces in 2026",
-        "≥2 inbound qualified leads / month from content+media",
-        "1 case study published per Won engagement (within 30d of close)",
+        "[Supports CEO Media presence goal] 12 published thought-leadership pieces in 2026 (1/month)",
+        "[Supports CEO Always-on pipeline OKR] ≥2 inbound qualified leads / month from content+media",
+        "[Supports CEO €3M revenue goal] 1 case study published per Won engagement within 30d of close — feeds the proof-base",
+        "[Supports CEO Hire ≥2 Partners goal] Brand strong enough that ex-MBB Partners take the call",
       ],
       okrs: [
-        { objective: "Build the Eendigo brand voice", key_results: ["1 LinkedIn post/wk consistent for 26 wks", "1 long-form article/month", "1 podcast or media mention/quarter"] },
-        { objective: "Convert content into pipeline", key_results: ["≥24 inbound leads/yr from content", "≥2 leads → won in 2026", "Newsletter list 500+ by EOY"] },
+        { objective: "Cascade: 12 thought-leadership pieces in 2026", key_results: ["1 LinkedIn long-form post / week (52 wks)", "1 deep article / month (12 in 2026)", "1 podcast or media mention / quarter"] },
+        { objective: "Cascade: ≥2 inbound leads/month from content (CEO O3.KR2)", key_results: ["≥24 inbound leads logged in 2026", "≥2 inbound leads → Won in 2026", "Newsletter list 500+ by EOY"] },
       ],
       tasks_10d: [],
     },
@@ -1323,13 +1327,14 @@ Run with: node eendigo_template.js',
       role_key: "pricing-director", role_name: "Pricing Director", parent_role_key: "ceo",
       person_name: null, sort_order: 4, status: "vacant",
       goals: [
+        "[Supports CEO €3M revenue goal] Win-rate ≥50% on quoted deals — protect margin, don't leave money on the table",
+        "[Supports CEO €3M revenue goal] Lost-to-price <30% of total losses (tune regional bands, not global discounts)",
         "Every pricing case has 3-timeline commercial proposal + partner-fallback option",
-        "Lost-to-price <30% of total losses (tune regional bands, not global discounts)",
-        "Win-rate ≥50% on quoted deals trailing 10",
+        "Time from case-saved → proposal-sent ≤24h (so Sales never blocks on Pricing)",
       ],
       okrs: [
-        { objective: "Quote discipline", key_results: ["100% of cases use 3 timelines", "100% have partner-fallback computed", "Time from case-saved → proposal-sent ≤24h"] },
-        { objective: "Pattern intelligence", key_results: ["Quarterly win/loss read by region+sector+fund delivered to CEO", "Regional multipliers reviewed once/quarter", "Rate card refreshed annually"] },
+        { objective: "Cascade: ≥50% win-rate trailing 10 (CEO O1.KR3)", key_results: ["100% of cases use 3 timelines + partner-fallback", "Lost-to-price <30% of losses", "Quarterly win/loss read by region+sector+fund delivered to CEO"] },
+        { objective: "Pricing intelligence", key_results: ["Regional multipliers reviewed once/quarter", "Rate card refreshed annually", "Inputs to Sales when a deal looks unwinnable at quoted price"] },
       ],
       tasks_10d: [],
     },
@@ -1337,10 +1342,10 @@ Run with: node eendigo_template.js',
       role_key: "coo", role_name: "COO — Tech & Operations", parent_role_key: "ceo",
       person_name: null, sort_order: 5, status: "active",
       goals: [
-        "Compplan app stays solid: every page loads, no 5xx, no broken flows",
-        "AI agents and skills evolve continuously — propose improvements weekly",
-        "All agent-requested code changes flow through Claude Code with co-CEO approval",
-        "Infrastructure (Render, Neon, GitHub) remains within healthy limits",
+        "[Enables every CEO goal] Compplan app stays solid: every page loads, no 5xx, no broken flows",
+        "[Enables CEO governance] AI agents + skills evolve weekly; co-CEO approves all code before push",
+        "[Enables €3M revenue] Pricing/Hiring/AR/Delivery pages used daily without friction",
+        "Infrastructure (Render, Neon, GitHub) remains within healthy limits — backups verified weekly",
       ],
       okrs: [
         { objective: "App health green", key_results: ["0 P0 bugs in trailing 7d", "≥99.5% uptime trailing 30d", "every nav route returns 200 / 401 / 503-by-design"] },
@@ -1357,27 +1362,30 @@ Run with: node eendigo_template.js',
       role_key: "delivery-director", role_name: "Delivery Director", parent_role_key: "ceo",
       person_name: null, sort_order: 6, status: "vacant",
       goals: [
+        "[Supports CEO bench-capacity goal] Visibility on team utilisation per engagement so we know when to hire",
+        "[Supports CEO Marketing case-study goal] Every Won engagement closes with a publishable artefact within 30d",
         "Every ongoing project has a weekly report by EOD Monday",
-        "Project health visibility: green/amber/red status across the portfolio",
-        "Surface risks 4+ weeks before end_date so CEO can act",
+        "Surface risks 4+ weeks before end_date so CEO + Sales can act (extension or scope-cut)",
       ],
       okrs: [
         { objective: "On-time, on-scope delivery", key_results: ["100% projects deliver by their end_date", "≥80% projects close green", "0 surprise overruns >20% of budget"] },
-        { objective: "Health visibility", key_results: ["Weekly status logged for every active project", "Amber/red flagged with mitigation plan within 48h", "Quarterly review: top 3 delivery learnings published internally"] },
+        { objective: "Cascade: bench utilisation visibility (CEO Goal #5)", key_results: ["Weekly utilisation report to CEO", "Flag Senior+ASC bench risk ≥3w before need", "0 projects without an EM-of-record"] },
       ],
       tasks_10d: [],
     },
     {
       role_key: "hiring-manager", role_name: "Hiring Manager", parent_role_key: "ceo",
-      person_name: "Adrian", sort_order: 6, status: "active",
+      person_name: "Adrian", sort_order: 7, status: "active",
       goals: [
+        "[Supports CEO Hire ≥2 Partners goal] Run dedicated Partner search; ≥1 ex-MBB Partner referred-in-pipeline",
+        "[Supports CEO Bench-capacity goal] Bench supports 4 concurrent engagements (Senior + Associate + BA mix)",
         "Maintain ≥10 active candidates across stages at all times",
         "Top scorers (weighted ≥70) reach final-round in <14 days",
-        "Bench supports 4 concurrent engagements (Senior + Associate + BA mix)",
       ],
       okrs: [
+        { objective: "Cascade: 2 Partner-grade hires signed (CEO O2)", key_results: ["2 Partner offers signed in 2026", "1 ex-MBB Partner referred-in-pipeline (CEO O2.KR2)", "JDs + comp benchmarks ready by end of Q2"] },
+        { objective: "Cascade: bench for 4 concurrent engagements (CEO Goal #5)", key_results: ["≥2 Seniors hireable on 4-week notice", "≥3 Associates available for new project", "≥2 BAs onboarding-ready"] },
         { objective: "Steady pipeline depth", key_results: ["≥10 active candidates always", "≥3 weighted-≥80 candidates in any 30d window", "0 stage with 0 movement >14d"] },
-        { objective: "Right-mix bench", key_results: ["≥2 Seniors hireable on 4-week notice", "≥3 Associates available for new project", "≥2 BAs onboarding-ready"] },
       ],
       tasks_10d: [
         { id: "hm-1", title: "Review pipeline; surface top 3 scorers to CEO", due_date: _addDays(1), status: "todo" },
@@ -1395,6 +1403,26 @@ Run with: node eendigo_template.js',
              ${JSON.stringify(a.tasks_10d)}::jsonb,
              ${a.sort_order}, ${_orgNow}, ${_orgNow}
       WHERE NOT EXISTS (SELECT 1 FROM org_agents WHERE role_key = ${a.role_key})
+    `);
+    // Cascade upgrade: existing rows get their goals/okrs/role_name/person_name
+    // refreshed if they haven't been cascaded yet (proxy: goals don't contain
+    // the "[Supports CEO" marker introduced in the cascade pass). Idempotent —
+    // once cascaded, this is a no-op. Won't overwrite user edits if the user
+    // manually added the marker themselves.
+    await db.execute(sql`
+      UPDATE org_agents
+      SET role_name   = ${a.role_name},
+          person_name = ${a.person_name},
+          status      = CASE WHEN status = 'vacant' THEN ${a.status} ELSE status END,
+          goals       = ${JSON.stringify(a.goals)}::jsonb,
+          okrs        = ${JSON.stringify(a.okrs)}::jsonb,
+          sort_order  = ${a.sort_order},
+          updated_at  = ${_orgNow}
+      WHERE role_key = ${a.role_key}
+        AND (goals::text NOT LIKE '%[Supports CEO%'
+             AND goals::text NOT LIKE '%[Enables CEO%'
+             AND goals::text NOT LIKE '%[Enables every CEO%'
+             AND goals::text NOT LIKE '%[Enables €3M%')
     `);
   }
 
