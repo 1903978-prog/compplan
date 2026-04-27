@@ -220,6 +220,7 @@ function emptyProposal(): PricingProposal {
     last_invoice_at: null,
     win_probability: null,
     start_date: null,
+    weekly_reports: [],
   };
 }
 
@@ -1548,6 +1549,101 @@ export default function PricingTool() {
           />
           <div className="text-[9px] text-muted-foreground">
             If &gt;30 days ago and project is ongoing → flagged for invoicing.
+          </div>
+        </div>
+        {/* Weekly reports — managers post here; Delivery Director reads the
+            stack to compute green/amber/red health and surface risks. Only
+            useful for Won + ongoing projects but always editable so the
+            user can backfill historical reports if needed. */}
+        <div className="space-y-1 sm:col-span-2 lg:col-span-3">
+          <Label className="text-xs">Weekly reports (Delivery Director reads these)</Label>
+          <div className="space-y-2">
+            {(historyForm.weekly_reports ?? []).map((r, i) => (
+              <div key={i} className="border rounded p-2 bg-muted/20 space-y-1">
+                <div className="flex gap-2 items-center flex-wrap">
+                  <Input
+                    type="date"
+                    value={r.week_of}
+                    onChange={e => setHistoryForm(f => {
+                      const next = [...(f.weekly_reports ?? [])];
+                      next[i] = { ...next[i], week_of: e.target.value };
+                      return { ...f, weekly_reports: next };
+                    })}
+                    className="h-7 text-xs w-36"
+                    title="Week-of (Monday)"
+                  />
+                  <Select
+                    value={r.status}
+                    onValueChange={v => setHistoryForm(f => {
+                      const next = [...(f.weekly_reports ?? [])];
+                      next[i] = { ...next[i], status: v as "green" | "amber" | "red" };
+                      return { ...f, weekly_reports: next };
+                    })}
+                  >
+                    <SelectTrigger className="h-7 w-24 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="green">🟢 Green</SelectItem>
+                      <SelectItem value="amber">🟡 Amber</SelectItem>
+                      <SelectItem value="red">🔴 Red</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    type="number" min="0" max="100" step="5"
+                    value={r.pct_complete ?? ""}
+                    onChange={e => setHistoryForm(f => {
+                      const next = [...(f.weekly_reports ?? [])];
+                      next[i] = { ...next[i], pct_complete: e.target.value === "" ? undefined : +e.target.value };
+                      return { ...f, weekly_reports: next };
+                    })}
+                    className="h-7 text-xs w-16 font-mono"
+                    placeholder="% done"
+                    title="Completion percentage"
+                  />
+                  <Input
+                    type="text"
+                    value={r.author ?? ""}
+                    onChange={e => setHistoryForm(f => {
+                      const next = [...(f.weekly_reports ?? [])];
+                      next[i] = { ...next[i], author: e.target.value };
+                      return { ...f, weekly_reports: next };
+                    })}
+                    className="h-7 text-xs flex-1 min-w-32"
+                    placeholder="Author (manager name)"
+                  />
+                  <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                    onClick={() => setHistoryForm(f => ({
+                      ...f,
+                      weekly_reports: (f.weekly_reports ?? []).filter((_, j) => j !== i),
+                    }))}
+                  >×</Button>
+                </div>
+                <Textarea
+                  value={r.body}
+                  onChange={e => setHistoryForm(f => {
+                    const next = [...(f.weekly_reports ?? [])];
+                    next[i] = { ...next[i], body: e.target.value };
+                    return { ...f, weekly_reports: next };
+                  })}
+                  rows={2}
+                  className="text-xs"
+                  placeholder="What shipped this week, what's blocked, what's next"
+                />
+              </div>
+            ))}
+            <Button
+              type="button" size="sm" variant="outline"
+              className="h-7 text-xs"
+              onClick={() => setHistoryForm(f => ({
+                ...f,
+                weekly_reports: [
+                  ...(f.weekly_reports ?? []),
+                  { week_of: new Date().toISOString().slice(0, 10), status: "green" as const, body: "", author: "", pct_complete: undefined },
+                ],
+              }))}
+            >+ Add weekly report</Button>
+          </div>
+          <div className="text-[9px] text-muted-foreground">
+            Delivery Director scores green/amber/red across the portfolio every Monday + Thursday.
           </div>
         </div>
         {/* New: company financials — useful for TNF/EBITDA benchmarking */}

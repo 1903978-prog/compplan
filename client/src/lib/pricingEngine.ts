@@ -455,6 +455,7 @@ export interface PricingProposal {
   last_invoice_at?: string | null;                     // YYYY-MM-DD; "needs invoice" if >30d ago
   win_probability?: number | null;                     // 0-100, only meaningful for outcome=pending
   start_date?: string | null;                          // YYYY-MM-DD, falls back to proposal_date
+  weekly_reports?: { week_of: string; status: "green" | "amber" | "red"; body: string; author?: string; blockers?: string[]; pct_complete?: number }[] | null;
 }
 
 export interface PricingRecommendation {
