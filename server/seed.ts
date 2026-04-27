@@ -239,6 +239,19 @@ export async function seedDatabase() {
   // = "not yet tested" (distinct from 0 = "failed").
   await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS scores JSONB`);
 
+  // Structured score columns extracted from the Eendigo scrape (was all
+  // crammed into the `info` text blob). Real numbers so we can sort/filter
+  // candidates by individual sub-tests; cs_lm stays TEXT because the
+  // partner's Case-Study LM rating can be a percentage OR a textual grade.
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS logic_pct REAL`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS verbal_pct REAL`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS excel_pct REAL`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS p1_pct REAL`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS p2_pct REAL`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS intro_rate_pct REAL`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS cs_rate_pct REAL`);
+  await db.execute(sql`ALTER TABLE hiring_candidates ADD COLUMN IF NOT EXISTS cs_lm TEXT`);
+
   // Seed the "Back Up" manual candidate list — people who live outside the
   // Eendigo sync (personal referrals, cold replies). sync_locked=1 so the
   // nightly Eendigo import never overwrites or moves them. Idempotent via

@@ -902,6 +902,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       payload.scores = clean;
     }
+    // Same hardening for the structured percentage columns populated by
+    // the Eendigo scrape. Clamp to 0-100, drop non-numeric trash, allow
+    // explicit null to clear a measurement.
+    const PCT_FIELDS = ["logic_pct", "verbal_pct", "excel_pct", "p1_pct", "p2_pct", "intro_rate_pct", "cs_rate_pct"] as const;
+    for (const f of PCT_FIELDS) {
+      if (!(f in payload)) continue;
+      const v = payload[f];
+      if (v == null) { payload[f] = null; continue; }
+      const n = Number(v);
+      payload[f] = isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+    }
+    if ("cs_lm" in payload) {
+      const v = payload.cs_lm;
+      payload.cs_lm = v == null ? null : String(v).slice(0, 32);
+    }
     res.json(await storage.updateHiringCandidate(safeInt(req.params.id), payload));
   });
 

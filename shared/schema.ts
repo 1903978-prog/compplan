@@ -775,6 +775,21 @@ export const hiringCandidates = pgTable("hiring_candidates", {
   // testgorilla, intro_call, case_study, ppt, final) so the hiring team
   // can add a new test without a schema change. Values are 0-100 or null.
   scores: jsonb("scores").$type<Record<string, number | null>>(),
+  // Structured columns for the headline scrape fields the hiring team
+  // ranks candidates on. The same numbers are still embedded in `info`
+  // for human display/back-compat, but having them as real columns lets
+  // us sort, filter, and chart without parsing free text. Populated by
+  // server/hiringSync.ts during the Eendigo scrape; null = not measured.
+  // cs_lm stays TEXT because the partner's Case-Study LM rating can be
+  // a percentage ("85%") OR a textual grade ("Strong", "Pass", "Fail").
+  logic_pct: real("logic_pct"),
+  verbal_pct: real("verbal_pct"),
+  excel_pct: real("excel_pct"),
+  p1_pct: real("p1_pct"),
+  p2_pct: real("p2_pct"),
+  intro_rate_pct: real("intro_rate_pct"),
+  cs_rate_pct: real("cs_rate_pct"),
+  cs_lm: text("cs_lm"),
   created_at: text("created_at").notNull(),
 });
 

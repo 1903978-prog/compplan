@@ -353,6 +353,42 @@ function parseCandidates(html: string): RawCandidate[] {
   return results;
 }
 
+/**
+ * Pull the percentage-scored fields out of a parsed candidate and shape them
+ * for the structured DB columns added alongside the legacy `info` blob. Empty
+ * strings become null so "not yet measured" stays distinct from a real 0%.
+ * cs_lm passes through as text — it's the only one that can be a textual
+ * grade ("Strong", "Pass", "Fail") instead of a percentage.
+ */
+function extractScoreColumns(c: RawCandidate): {
+  logic_pct: number | null;
+  verbal_pct: number | null;
+  excel_pct: number | null;
+  p1_pct: number | null;
+  p2_pct: number | null;
+  intro_rate_pct: number | null;
+  cs_rate_pct: number | null;
+  cs_lm: string | null;
+} {
+  const toNum = (s: string): number | null => {
+    if (!s) return null;
+    const m = s.match(/(\d+\.?\d*)/);
+    if (!m) return null;
+    const n = parseFloat(m[1]);
+    return isFinite(n) ? n : null;
+  };
+  return {
+    logic_pct: toNum(c.logic),
+    verbal_pct: toNum(c.verbal),
+    excel_pct: toNum(c.excel),
+    p1_pct: toNum(c.pres1),
+    p2_pct: toNum(c.pres2),
+    intro_rate_pct: toNum(c.introRating),
+    cs_rate_pct: toNum(c.csRating),
+    cs_lm: c.csLM || null,
+  };
+}
+
 function buildInfo(c: RawCandidate): string {
   const lines: string[] = [];
   lines.push(`📧 ${c.email}`);
@@ -472,6 +508,7 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
 
   for (const [i, cand] of parsed.entries()) {
     const info = buildInfo(cand);
+    const scoreCols = extractScoreColumns(cand);
     const existing = byEmail.get(cand.email);
 
     if (existing) {
@@ -487,11 +524,11 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
         const advancedStage = newOrder > currentOrder ? cand.stage : existing.stage;
         // Merge info: append new data that isn't already present
         const mergedInfo = mergeInfo(existing.info, info);
-        await storage.updateHiringCandidate(existing.id, { name: cand.name || existing.name, info: mergedInfo, stage: advancedStage });
+        await storage.updateHiringCandidate(existing.id, { name: cand.name || existing.name, info: mergedInfo, stage: advancedStage, ...scoreCols });
       } else {
         // Not locked — update everything, but still merge info to preserve history
         const mergedInfo = mergeInfo(existing.info, info);
-        await storage.updateHiringCandidate(existing.id, { name: cand.name || existing.name, info: mergedInfo, stage: cand.stage });
+        await storage.updateHiringCandidate(existing.id, { name: cand.name || existing.name, info: mergedInfo, stage: cand.stage, ...scoreCols });
       }
       updated++;
     } else {
@@ -502,6 +539,7 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
         external_id: cand.email,
         sync_locked: 0,
         sort_order: i,
+        ...scoreCols,
       });
       created++;
     }
