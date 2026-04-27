@@ -2063,51 +2063,45 @@ export default function PricingTool() {
       });
       if (!res.ok) throw new Error("Save failed");
 
-      // Auto-create a matching "TBD" entry in the win-loss proposals table
-      // so every FINALISED pricing case appears in Past Projects from day
-      // one. Outcome stays "pending" (rendered as "TBD") until the user
-      // clicks Mark as Won or Mark as Lost. Deduped by project_name so
-      // re-saving the same case never produces duplicates. Draft saves do
-      // NOT create a proposal row — and if a prior auto-created TBD exists
-      // for this project and is still undecided, it's removed so the row
-      // doesn't linger in Past Projects after a final→draft downgrade.
+      // Auto-create a matching "TBD" entry in the win-loss proposals
+      // table so every saved pricing case appears in Past Projects /
+      // Executive Dashboard immediately. Outcome stays "pending"
+      // (rendered as "TBD") until the user clicks Mark as Won or
+      // Mark as Lost. Deduped by project_name so re-saves never make
+      // duplicates. Runs on BOTH draft AND final saves — the user's
+      // mental model is "I saved a case, I should see it" and we
+      // honour that without forcing a status distinction. If they
+      // really don't want it in Past Projects yet, they can delete
+      // the TBD row from the win-loss table directly.
       const matchName = form.project_name.trim().toLowerCase();
       const matching = form.project_name
         ? proposals.find(p => (p.project_name || "").trim().toLowerCase() === matchName)
         : undefined;
 
-      if (status === "draft" && matching && (matching.outcome === "pending" || !matching.outcome) && matching.id) {
-        fetch(`/api/pricing/proposals/${matching.id}`, {
-          method: "DELETE", credentials: "include",
-        }).catch(() => { /* non-fatal */ });
-      }
-
-      if (status === "final" && form.project_name) {
-        if (!matching) {
-          const baseWeekly = (recommendation?.target_weekly ?? 0) + manualDelta;
-          const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
-          const tbdPayload = {
-            proposal_date: new Date().toISOString().slice(0, 10),
-            project_name: form.project_name,
-            client_name: form.client_name || null,
-            fund_name: form.fund_name || null,
-            region: form.region,
-            pe_owned: form.pe_owned ? 1 : 0,
-            revenue_band: form.revenue_band,
-            price_sensitivity: form.price_sensitivity,
-            duration_weeks: form.duration_weeks,
-            weekly_price: weeklyGrossAdmin,
-            total_fee: Math.round(baseWeekly * form.duration_weeks),
-            outcome: "pending",
-            sector: form.sector || null,
-            project_type: form.project_type || null,
-          };
-          fetch("/api/pricing/proposals", {
-            method: "POST", credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(tbdPayload),
-          }).catch(() => { /* non-fatal: case saved, win-loss row can be added manually */ });
-        }
+      if (form.project_name && !matching) {
+        const baseWeekly = (recommendation?.target_weekly ?? 0) + manualDelta;
+        const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
+        const tbdPayload = {
+          proposal_date: new Date().toISOString().slice(0, 10),
+          project_name: form.project_name,
+          client_name: form.client_name || null,
+          fund_name: form.fund_name || null,
+          region: form.region,
+          pe_owned: form.pe_owned ? 1 : 0,
+          revenue_band: form.revenue_band,
+          price_sensitivity: form.price_sensitivity,
+          duration_weeks: form.duration_weeks,
+          weekly_price: weeklyGrossAdmin,
+          total_fee: Math.round(baseWeekly * form.duration_weeks),
+          outcome: "pending",
+          sector: form.sector || null,
+          project_type: form.project_type || null,
+        };
+        fetch("/api/pricing/proposals", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(tbdPayload),
+        }).catch(() => { /* non-fatal: case saved, win-loss row can be added manually */ });
       }
 
       toast({ title: status === "final" ? "Case finalised" : "Saved as draft" });
