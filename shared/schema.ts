@@ -110,6 +110,7 @@ export const COMEX_AREAS = [
 export const employeeInputSchema = z.object({
   id: z.string(),
   name: z.string().min(1, "Name is required"),
+  email: z.string().email("Invalid email").or(z.literal("")).nullable().optional(),
   date_of_birth: z.string(),
   current_role_code: z.string(),
   hire_date: z.string(),
@@ -163,6 +164,7 @@ export interface EmployeeCalculationResult {
 export const employees = pgTable("employees", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  email: text("email"),
   date_of_birth: text("date_of_birth").notNull(),
   current_role_code: text("current_role_code").notNull(),
   hire_date: text("hire_date").notNull(),

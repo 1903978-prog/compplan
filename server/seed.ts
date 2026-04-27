@@ -608,6 +608,43 @@ export async function seedDatabase() {
     WHERE email = 'melissa.marten@eendigo.com' AND kind = 'freelancer'
   `);
 
+  // ── Employees email column + dedupe with external_contacts ────────
+  // Each person should live in ONE table, not both. The 6 entries that
+  // are real employees with proper roles get their emails moved into
+  // employees.email and removed from external_contacts. Cosmin (and
+  // any other employee without a known email) keeps email NULL until
+  // the user enters it via the Edit Employee form.
+  await db.execute(sql`
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS email TEXT
+  `);
+  // Backfill known emails — match by FIRST NAME (case-insensitive).
+  // Conditional on email IS NULL so any user-entered email survives.
+  const empEmailUpdates: { firstName: string; email: string }[] = [
+    { firstName: "alessandro", email: "alessandro.monti@eendigo.com" },
+    { firstName: "defne",      email: "defne.isler@eendigo.com" },
+    { firstName: "edoardo",    email: "edoardo.tiani@eendigo.com" },
+    { firstName: "gabriele",   email: "gabriele.papa@eendigo.com" },
+    { firstName: "leonardo",   email: "leonardo.briccoli@eendigo.com" },
+    { firstName: "malika",     email: "malika.makhmutkhazhieva@eendigo.com" },
+  ];
+  for (const u of empEmailUpdates) {
+    await db.execute(sql`
+      UPDATE employees
+      SET email = ${u.email}
+      WHERE LOWER(SPLIT_PART(name, ' ', 1)) = ${u.firstName}
+        AND (email IS NULL OR email = '')
+    `);
+  }
+  // Now remove the duplicates from external_contacts. Routes the
+  // delete through trash_bin so it's recoverable for 30 days. Done
+  // only after employees.email is populated so we don't lose the
+  // address. Conditional on actually existing in external_contacts.
+  for (const u of empEmailUpdates) {
+    await db.execute(sql`
+      DELETE FROM external_contacts WHERE email = ${u.email}
+    `);
+  }
+
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS api_usage_log (

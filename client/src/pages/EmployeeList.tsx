@@ -324,21 +324,29 @@ export default function EmployeeList() {
   // ── "Copy all emails" — full Eendigo mailing list ──────────────────
   // Plain emails only, sorted alphabetically by email, joined by `; `.
   // Pastes directly into Outlook / Gmail "To" field. Outlook will
-  // resolve display names from its own contact book on send.
-  // Includes external_contacts + any employee with a TDL-stored email.
+  // resolve display names from its own contact book on send. Pulls:
+  //   • employees.email (proper schema column, edit via Edit form)
+  //   • external_contacts.email (true externals only — partners,
+  //     advisors, freelancers without an employee record)
+  //   • Legacy TDL localStorage emails as a final fallback.
   const copyAllEmails = async () => {
     const all = new Set<string>();
+    for (const emp of employees) {
+      const e = (emp as any).email;
+      if (e && typeof e === "string" && e.includes("@")) {
+        all.add(e.toLowerCase().trim());
+      } else {
+        // Fallback to TDL-stored localStorage email if employee.email
+        // hasn't been entered yet.
+        const stored = personEmails[emp.name];
+        if (stored && stored.includes("@")) all.add(stored.toLowerCase().trim());
+      }
+    }
     for (const c of externalContacts) {
       if (c.email && c.email.includes("@")) all.add(c.email.toLowerCase().trim());
     }
-    // Pick up employee emails captured by the existing TDL "person email"
-    // localStorage feature so people who use that don't get left out.
-    for (const emp of employees) {
-      const stored = personEmails[emp.name];
-      if (stored && stored.includes("@")) all.add(stored.toLowerCase().trim());
-    }
     if (all.size === 0) {
-      toast({ title: "No emails to copy", description: "Add some freelancers/partners first." });
+      toast({ title: "No emails to copy", description: "Add emails to employees / freelancers / partners first." });
       return;
     }
     const text = [...all].sort().join("; ");
@@ -590,18 +598,14 @@ Thanks,`;
   };
 
   const filteredEmployees = useMemo(() => {
-    // Build dynamic rank from roleGrid order (last = highest rank)
-    const dynamicRank: Record<string, number> = {};
-    roleGrid.forEach((r, i) => { dynamicRank[r.role_code] = i + 1; });
+    // Sort alphabetically by name (case-insensitive, locale-aware).
+    // Was previously sorted by role rank desc — switched per user
+    // request to make the roster easier to scan when looking up
+    // someone by name.
     return employees
       .filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
-      .sort((a, b) => {
-        const rankA = dynamicRank[a.current_role_code] || 0;
-        const rankB = dynamicRank[b.current_role_code] || 0;
-        if (rankA !== rankB) return rankB - rankA;
-        return a.name.localeCompare(b.name);
-      });
-  }, [employees, search, roleGrid]);
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  }, [employees, search]);
 
   const MONTHS_PAID_BY_ROLE: Record<string, number> = { INT: 12, BA: 12, A1: 12, A2: 13, S1: 13, S2: 13, C1: 13, C2: 13, EM1: 13, EM2: 13 };
   const MIN_GROSS_BY_ROLE: Record<string, number> = { INT: 16000, BA: 24600, A1: 28788, A2: 31187, S1: 33358, S2: 35035, C1: 36777, C2: 41197, EM1: 48204, EM2: 50609 };
@@ -2632,6 +2636,7 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
   
   const defaultValues: Partial<EmployeeInput> = {
     name: "",
+    email: "",
     date_of_birth: "1990-01-01",
     current_role_code: roleGrid[0]?.role_code || "",
     hire_date: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
@@ -2762,7 +2767,12 @@ function EmployeeDialog({ open, onOpenChange, editingId }: { open: boolean, onOp
               <Input {...form.register("name")} placeholder="John Doe" />
               {form.formState.errors.name && <span className="text-destructive text-xs">{form.formState.errors.name.message}</span>}
             </div>
-            
+
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input type="email" {...form.register("email")} placeholder="firstname.lastname@eendigo.com" />
+            </div>
+
             <div className="space-y-2">
               <Label>Date of Birth</Label>
               <Input type="date" {...form.register("date_of_birth")} />
