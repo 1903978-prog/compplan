@@ -1116,11 +1116,13 @@ export function calculatePricing(
   }
 
   // ── Base staffing rate ────────────────────────────────────────────────────
-  // Fallback: if a legacy line has daily_rate_used = 0 (drift from old
-  // saves), use the admin role's default_daily_rate so the base doesn't
-  // collapse to 0 silently. Mirrors effectiveLineRate() in PricingTool.tsx.
+  // ALWAYS use the admin role's default_daily_rate (not line.daily_rate_used).
+  // This makes base_weekly identical to baseWeeklyDisplay in PricingTool.tsx,
+  // so a +10% Geo multiplier paints a +€3,000 step on a €30,000 staffing bar
+  // in the waterfall — instead of the engine secretly applying the multiplier
+  // to a different (per-line override) base and producing deltas the user
+  // can't reconcile against the displayed Staffing total.
   const rateOf = (l: typeof input.staffing[number]): number => {
-    if (l.daily_rate_used && l.daily_rate_used > 0) return l.daily_rate_used;
     const role = settings.roles.find(r => r.id === l.role_id);
     return role?.default_daily_rate ?? 0;
   };

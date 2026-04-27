@@ -22,6 +22,7 @@ import {
   type CountryBenchmarkRow, type PricingRegion, type PricingAdjustment,
 } from "@/lib/pricingEngine";
 import { useBenchmarkNotes, cellKey as benchCellKey, tierKey as benchTierKey } from "@/lib/benchmarkNotes";
+import { computeOptionColumn, centralOptionWeekly } from "@/lib/proposalOptions";
 import { BenchmarkNotesEditor } from "@/components/BenchmarkNotesEditor";
 
 interface PricingCase {
@@ -2518,7 +2519,17 @@ export default function PricingTool() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {cases.map(c => (
+                    {cases.map(c => {
+                      // Source of truth for Target/wk = central column (Option 2)
+                      // of the Commercial Proposal table: net total / weeks.
+                      // Falls back to recommendation.target_weekly when timelines
+                      // or discounts haven't been configured yet.
+                      const centralWk = centralOptionWeekly({
+                        recommendation: c.recommendation,
+                        case_timelines: c.case_timelines,
+                        case_discounts: c.case_discounts,
+                      }) ?? c.recommendation?.target_weekly ?? 0;
+                      return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
                         <TableCell className="font-semibold font-mono">{displayProjectName(c.project_name, c.revision_letter)}</TableCell>
                         <TableCell>{c.client_name || "—"}</TableCell>
@@ -2526,11 +2537,11 @@ export default function PricingTool() {
                         <TableCell><Badge variant="secondary" className="text-xs">{c.region}</Badge></TableCell>
                         <TableCell>{c.duration_weeks}w</TableCell>
                         <TableCell className="font-semibold text-emerald-600">
-                          {c.recommendation?.target_weekly ? fmt(c.recommendation.target_weekly) : "—"}
+                          {centralWk > 0 ? fmt(centralWk) : "—"}
                         </TableCell>
                         <TableCell className="text-center">
                           {(() => {
-                            const price = c.recommendation?.target_weekly;
+                            const price = centralWk;
                             if (!price) return <span className="text-muted-foreground text-xs">—</span>;
                             const band = getBandForPrice(price, c.region, benchmarks);
                             if (!band) return <span className="text-muted-foreground text-xs">—</span>;
@@ -2561,7 +2572,8 @@ export default function PricingTool() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </Card>
@@ -2859,7 +2871,20 @@ export default function PricingTool() {
                               </Select>
                             </TableCell>
                             <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
-                            <TableCell className="font-semibold text-sm font-mono">{fmt(p.weekly_price)}</TableCell>
+                            <TableCell className="font-semibold text-sm font-mono">
+                              {/* Derived weekly = total fee / weeks. Same rule
+                                  as the Pricing Cases list (Option 2 net /
+                                  weeks): the displayed weekly price always
+                                  comes from the project's total / its
+                                  duration. Falls back to the stored
+                                  weekly_price when total_fee or
+                                  duration_weeks isn't populated yet. */}
+                              {fmt(
+                                p.total_fee && p.total_fee > 0 && p.duration_weeks && p.duration_weeks > 0
+                                  ? p.total_fee / p.duration_weeks
+                                  : p.weekly_price
+                              )}
+                            </TableCell>
                             <TableCell className="font-semibold text-sm font-mono text-right">
                               {p.total_fee && p.total_fee > 0
                                 ? `${Math.round(p.total_fee / 1000).toLocaleString("it-IT")}`
@@ -4539,7 +4564,13 @@ export default function PricingTool() {
           {/* SECTION B: Pricing Waterfall Chart */}
           {recommendation && (() => {
             const trace = recommendation.layer_trace;
-            const base = baseWeeklyDisplay;
+            // Use the engine's own base (same source the layer deltas were
+            // computed from) so the visual proportions line up: a -10%
+            // layer paints as 10% of the bar to its left, not 10% of some
+            // other display total. baseWeeklyDisplay can diverge because
+            // it uses default_daily_rate while the engine uses
+            // daily_rate_used — see PricingTool.tsx:2204 comment.
+            const base = recommendation.base_weekly;
 
             // Map trace entries by normalized label
             const traceByKey: Record<string, LayerTrace> = {};
@@ -5281,39 +5312,11 @@ export default function PricingTool() {
                           destination for PDF output). */}
                       {(() => {
                         const timelines = caseTimelines;
-                        const baseEnabled = enabledDiscounts.filter(d => d.id !== "commitment");
-                        // Math:
-                        //   gross = override if set, else grossWk × weeks
-                        //   non-commit discounts applied COMPOUND in caseDiscounts order
-                        //   commit = override if set, else pct × gross (flat)
-                        //   net = (running after compound) − commitAmt
-                        // This matches the user's commercial-proposal table where
-                        // commitment is a flat % of Gross (not compound) and the
-                        // per-discount breakdown shows Carlyle → Prompt → Rebate
-                        // as compound deductions from Gross.
-                        const computeColumn = (t: { weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number }) => {
-                          const weeks = t.weeks;
-                          const commitPct = t.commitPct;
-                          const grossTotalCol = typeof t.grossTotal === "number" && t.grossTotal > 0
-                            ? Math.round(t.grossTotal)
-                            : Math.round(grossWk * weeks);
-                          let running = grossTotalCol;
-                          const breakdown: { id: string; name: string; pct: number; amount: number }[] = [];
-                          for (const d of baseEnabled) {
-                            if (d.pct <= 0) { breakdown.push({ id: d.id, name: d.name, pct: d.pct, amount: 0 }); continue; }
-                            const before = running;
-                            running = running * (1 - d.pct / 100);
-                            breakdown.push({ id: d.id, name: d.name, pct: d.pct, amount: Math.round(before - running) });
-                          }
-                          // Commitment — flat % × gross (or explicit override)
-                          const commitAmt = typeof t.commitAmount === "number" && t.commitAmount > 0
-                            ? Math.round(t.commitAmount)
-                            : (commitPct > 0 ? Math.round(grossTotalCol * commitPct / 100) : 0);
-                          breakdown.push({ id: "commitment", name: "Additional commitment discount", pct: commitPct, amount: commitAmt });
-                          const netTotal = Math.round(running - commitAmt);
-                          return { weeks, commitPct, grossTotal: grossTotalCol, breakdown, netTotal, hasGrossOverride: typeof t.grossTotal === "number" && t.grossTotal > 0, note: t.note };
-                        };
-                        const cols = timelines.map(computeColumn);
+                        // Math now lives in client/src/lib/proposalOptions.ts so the
+                        // Pricing Cases LIST page can compute the same Option-2
+                        // weekly target without duplicating logic. See
+                        // computeOptionColumn there.
+                        const cols = timelines.map(t => computeOptionColumn(t, grossWk, caseDiscounts));
                         // Discount rows shown = union of rows across columns
                         // (same structure since all cols use same discounts).
                         const rowDefs = cols[0].breakdown;
