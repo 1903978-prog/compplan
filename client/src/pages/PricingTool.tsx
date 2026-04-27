@@ -210,6 +210,10 @@ function emptyProposal(): PricingProposal {
     team_size: 1,
     notes: "",
     client_feedback: null,
+    end_date: null,
+    manager_name: "",
+    team_members: [],
+    last_invoice_at: null,
   };
 }
 
@@ -1419,6 +1423,93 @@ export default function PricingTool() {
               {fmt(historyForm.total_fee)} ÷ {historyForm.duration_weeks}w ÷ {historyForm.team_size ?? 1} team = {fmt(Math.round(historyForm.total_fee / historyForm.duration_weeks / (historyForm.team_size || 1)))}/wk
             </div>
           )}
+        </div>
+        {/* End date — when set + future + outcome=won, project shows up on
+            Exec → Ongoing Projects with weeks-remaining + invoice cadence. */}
+        <div className="space-y-1">
+          <Label className="text-xs">End date (optional)</Label>
+          <Input
+            type="date"
+            value={historyForm.end_date ?? ""}
+            onChange={e => setHistoryForm(f => ({ ...f, end_date: e.target.value || null }))}
+            className="h-8 text-sm"
+          />
+          <div className="text-[9px] text-muted-foreground">
+            If in the future + outcome=Won → appears in Exec dashboard as "ongoing".
+          </div>
+        </div>
+        {/* Manager — the EM running the engagement day-to-day */}
+        <div className="space-y-1">
+          <Label className="text-xs">Manager (EM)</Label>
+          <Input
+            type="text"
+            value={historyForm.manager_name ?? ""}
+            onChange={e => setHistoryForm(f => ({ ...f, manager_name: e.target.value || null }))}
+            className="h-8 text-sm"
+            placeholder="e.g. Marco Rossi"
+          />
+        </div>
+        {/* Team members — Partner + ASCs + BAs etc. Free-text role + name. */}
+        <div className="space-y-1 sm:col-span-2 lg:col-span-3">
+          <Label className="text-xs">Team members (beyond manager)</Label>
+          <div className="space-y-1">
+            {(historyForm.team_members ?? []).map((m, i) => (
+              <div key={i} className="flex gap-1 items-center">
+                <Input
+                  type="text"
+                  value={m.role}
+                  onChange={e => setHistoryForm(f => {
+                    const next = [...(f.team_members ?? [])];
+                    next[i] = { ...next[i], role: e.target.value };
+                    return { ...f, team_members: next };
+                  })}
+                  className="h-7 text-xs w-32"
+                  placeholder="Role (e.g. Partner)"
+                />
+                <Input
+                  type="text"
+                  value={m.name}
+                  onChange={e => setHistoryForm(f => {
+                    const next = [...(f.team_members ?? [])];
+                    next[i] = { ...next[i], name: e.target.value };
+                    return { ...f, team_members: next };
+                  })}
+                  className="h-7 text-xs flex-1"
+                  placeholder="Name"
+                />
+                <Button
+                  type="button" size="sm" variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setHistoryForm(f => ({
+                    ...f,
+                    team_members: (f.team_members ?? []).filter((_, j) => j !== i),
+                  }))}
+                >×</Button>
+              </div>
+            ))}
+            <Button
+              type="button" size="sm" variant="outline"
+              className="h-7 text-xs"
+              onClick={() => setHistoryForm(f => ({
+                ...f,
+                team_members: [...(f.team_members ?? []), { role: "", name: "" }],
+              }))}
+            >+ Add team member</Button>
+          </div>
+        </div>
+        {/* Last invoice — drives the "needs invoice" flag on Exec dashboard
+            for ongoing projects. >30d ago = flagged amber. */}
+        <div className="space-y-1">
+          <Label className="text-xs">Last invoice sent</Label>
+          <Input
+            type="date"
+            value={historyForm.last_invoice_at ?? ""}
+            onChange={e => setHistoryForm(f => ({ ...f, last_invoice_at: e.target.value || null }))}
+            className="h-8 text-sm"
+          />
+          <div className="text-[9px] text-muted-foreground">
+            If &gt;30 days ago and project is ongoing → flagged for invoicing.
+          </div>
         </div>
         {/* New: company financials — useful for TNF/EBITDA benchmarking */}
         <div className="space-y-1">

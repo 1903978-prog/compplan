@@ -448,6 +448,11 @@ export interface PricingProposal {
   attachment_url?: string | null;
   excluded_from_analysis?: boolean | number | null;
   created_at?: string;
+  // ── Engagement tracking (for Won projects)
+  end_date?: string | null;                            // YYYY-MM-DD; if future + outcome=won → ongoing
+  manager_name?: string | null;                        // EM running the engagement
+  team_members?: { role: string; name: string }[] | null;
+  last_invoice_at?: string | null;                     // YYYY-MM-DD; "needs invoice" if >30d ago
 }
 
 export interface PricingRecommendation {

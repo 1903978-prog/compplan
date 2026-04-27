@@ -430,6 +430,19 @@ export const pricingProposals = pgTable("pricing_proposals", {
   attachment_url: text("attachment_url"),
   excluded_from_analysis: integer("excluded_from_analysis").notNull().default(0),
   created_at: text("created_at").notNull(),
+  // ── Engagement tracking (Won projects)
+  // end_date: when the engagement ends (YYYY-MM-DD). When set AND in the
+  // future AND outcome='won', the proposal appears in Exec → Ongoing
+  // Projects so the team can track delivery + invoicing cadence.
+  end_date: text("end_date"),
+  // manager_name: the EM running the engagement day-to-day. Free text.
+  manager_name: text("manager_name"),
+  // team_members: list of { role, name } pairs for everyone working on it
+  // beyond the manager (Partner, ASCs, BAs, etc.). Free-text role and name.
+  team_members: jsonb("team_members").$type<{ role: string; name: string }[]>(),
+  // last_invoice_at: most recent invoice date for this engagement (YYYY-MM-DD).
+  // Used to flag "needs invoice" when >30 days have passed AND project is ongoing.
+  last_invoice_at: text("last_invoice_at"),
 });
 
 // ─── Employee Tasks (TDL) ────────────────────────────────────────────────────

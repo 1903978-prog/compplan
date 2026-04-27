@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Link } from "wouter";
 import { useStore } from "@/hooks/use-store";
@@ -329,6 +330,27 @@ export default function ExecDashboard() {
     return { count: list.length, value };
   }, [wonProjects]);
 
+  // ─── Ongoing projects from pricing_proposals (won + end_date in future) ───
+  // A proposal becomes "ongoing" once the user enters an end_date that's in
+  // the future. Independent of the won_projects table — the user enters
+  // end_date / manager / team directly on the past-projects row.
+  const ongoing = useMemo(() => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const list = proposals
+      .filter(p => p.outcome === "won" && p.end_date && p.end_date >= todayIso)
+      .sort((a, b) => String(a.end_date ?? "").localeCompare(String(b.end_date ?? "")));
+    const totalValue = list.reduce((s, p) => s + toEUR(p.total_fee, p.currency), 0);
+    // "Needs invoice" = no last_invoice_at OR last_invoice_at >30d ago
+    const todayMs = Date.now();
+    const needsInvoice = list.filter(p => {
+      if (!p.last_invoice_at) return true;
+      const last = new Date(p.last_invoice_at).getTime();
+      if (isNaN(last)) return true;
+      return (todayMs - last) > 30 * 86_400_000;
+    });
+    return { list, count: list.length, totalValue, needsInvoice };
+  }, [proposals]);
+
   // ─── Recent BD activity — last 10 proposals ──────────────────────────
   const recentBD = useMemo(() => {
     return [...proposals]
@@ -358,6 +380,96 @@ export default function ExecDashboard() {
         <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
         <Kpi label="Active projects" value={String(active.count)}      sub={eur(active.value)}             icon={Briefcase}  tone="emerald" href="/bd" />
       </div>
+
+      {/* ── Ongoing Projects (proposals with end_date in the future) ─── */}
+      {ongoing.list.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center">
+                <Briefcase className="w-4 h-4 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Ongoing projects</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Won deals with an end_date in the future. Edit end_date / manager / team on the past-projects row.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="text-muted-foreground">{ongoing.count} ongoing · <span data-privacy="blur">{eur(ongoing.totalValue)}</span></span>
+              {ongoing.needsInvoice.length > 0 && (
+                <Badge variant="destructive" className="text-[10px]">
+                  {ongoing.needsInvoice.length} need invoice
+                </Badge>
+              )}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-left text-[10px] uppercase text-muted-foreground tracking-wide">
+                <tr className="border-b">
+                  <th className="py-2 pr-3">Project</th>
+                  <th className="py-2 pr-3">Client</th>
+                  <th className="py-2 pr-3">End date</th>
+                  <th className="py-2 pr-3 text-right">Wks left</th>
+                  <th className="py-2 pr-3">Manager</th>
+                  <th className="py-2 pr-3">Team</th>
+                  <th className="py-2 pr-3 text-right">Total fee</th>
+                  <th className="py-2 pr-3">Last invoice</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ongoing.list.map(p => {
+                  const today = new Date();
+                  const end = p.end_date ? new Date(p.end_date) : null;
+                  const wksLeft = end ? Math.max(0, Math.round((end.getTime() - today.getTime()) / (7 * 86_400_000))) : null;
+                  const lastInv = p.last_invoice_at ? new Date(p.last_invoice_at) : null;
+                  const daysSinceInv = lastInv ? Math.round((today.getTime() - lastInv.getTime()) / 86_400_000) : null;
+                  const needsInvoice = !lastInv || (daysSinceInv != null && daysSinceInv > 30);
+                  return (
+                    <tr key={p.id} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="py-1.5 pr-3 font-mono font-semibold">
+                        <a href="/pricing" className="hover:underline">{p.project_name}</a>
+                      </td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{p.client_name || "—"}</td>
+                      <td className="py-1.5 pr-3">{p.end_date ?? "—"}</td>
+                      <td className="py-1.5 pr-3 text-right tabular-nums" data-privacy="blur">{wksLeft ?? "—"}</td>
+                      <td className="py-1.5 pr-3">{p.manager_name || <span className="text-muted-foreground italic">—</span>}</td>
+                      <td className="py-1.5 pr-3 max-w-xs">
+                        {p.team_members && p.team_members.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {p.team_members.map((m, i) => (
+                              <Badge key={i} variant="outline" className="text-[10px] py-0 h-5">
+                                {m.role || "?"}: {m.name || "?"}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : <span className="text-muted-foreground italic">—</span>}
+                      </td>
+                      <td className="py-1.5 pr-3 text-right font-mono" data-privacy="blur">
+                        {p.total_fee ? eur(p.total_fee) : "—"}
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        {lastInv ? (
+                          <span className={needsInvoice ? "text-amber-600 font-semibold" : "text-muted-foreground"}>
+                            {p.last_invoice_at} {needsInvoice && <span className="ml-1">⚠️ {daysSinceInv}d</span>}
+                          </span>
+                        ) : (
+                          <Badge variant="destructive" className="text-[9px] py-0 h-4">never invoiced</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-3 text-[10px] text-muted-foreground">
+            ⚠️ = last invoice &gt;30 days ago. Edit invoice date on the past-project row in /pricing.
+          </div>
+        </Card>
+      )}
 
       {/* ── Row 2: Hiring funnel + BD pipeline ───────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
