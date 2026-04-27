@@ -1191,6 +1191,155 @@ Run with: node eendigo_template.js',
       AND (onboarding_ratings IS NULL OR onboarding_ratings = '[]'::jsonb)
   `);
 
+  // ── Agent Knowledge ──────────────────────────────────────────────────
+  // Per-role memory. Each role-skill reads all status='active' rows for
+  // its role_key on every run.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS agent_knowledge (
+      id              SERIAL PRIMARY KEY,
+      role_key        TEXT NOT NULL,
+      content         TEXT NOT NULL,
+      title           TEXT,
+      source          TEXT NOT NULL DEFAULT 'user',
+      tags            JSONB DEFAULT '[]'::jsonb,
+      status          TEXT NOT NULL DEFAULT 'active',
+      created_by_role TEXT,
+      created_at      TEXT NOT NULL,
+      decided_at      TEXT,
+      decided_note    TEXT
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_knowledge_role_idx ON agent_knowledge(role_key, status, created_at DESC)`);
+  // Seed first knowledge note for marketing-manager: the user's stated 2026
+  // goals + OKRs that Marketing should always remember as company direction.
+  // Idempotent: only inserts if no knowledge for that role yet.
+  await db.execute(sql`
+    INSERT INTO agent_knowledge (role_key, title, content, source, tags, status, created_at)
+    SELECT 'marketing-manager',
+           'Eendigo 2026 — Company goals + OKRs (set by co-CEO)',
+           ${`Hit €3M revenue in 2026
+• Hire ≥2 new Partners by end of 2026
+• Sell at least 1 project per month, every month
+• Build media presence: 12 thought-leadership pieces / yr
+• Maintain bench: enough Senior+Associate+BA for 4 concurrent engagements
+
+OKRs
+1. €3M revenue 2026
+– ≥€750k recognised by Q2 close
+– ≥€1.6M booked-and-invoiced by Q3
+– win-rate ≥50% trailing 10 deals
+2. Strengthen the Partner bench
+– 2 Partner-grade hires signed
+– 1 ex-MBB Partner referred-in-pipeline
+– Partner utilisation ≤60%
+3. Always-on commercial pipeline
+– ≥6 active TBDs at any time
+– ≥2 inbound leads/month from media+content`},
+           'user',
+           '["company-direction","2026-okrs"]'::jsonb,
+           'active',
+           ${new Date().toISOString()}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM agent_knowledge
+      WHERE role_key = 'marketing-manager' AND title = 'Eendigo 2026 — Company goals + OKRs (set by co-CEO)'
+    )
+  `);
+  // Seed Sales Director playbook — Livio's accumulated best practices
+  // (negotiation tactics, follow-up emails, win/loss survey, etc.).
+  await db.execute(sql`
+    INSERT INTO agent_knowledge (role_key, title, content, source, tags, status, created_at)
+    SELECT 'sales-director',
+           'Eendigo Sales Playbook (set by co-CEO)',
+           ${`Best practices for LM
+1. Start promo intro with negatives so they don't negotiate: salary already high, early promo, still don't check all boxes, higher increase than expected etc
+2. Each proposal have 3 options and add 9% admin fees
+3. Example of slow growth bamboo before getting fast and bees some are random exploring
+4. Comm strategy that regardless of answers you come out on top
+5. Example of cost of wine, ex pricing of Repubblica 12E/y or 6e/week..they miss gain opportunities
+6. Ask clients to introduce to a potential client for discount, and referral on linkedin
+7. Propose diagnostic and they pay only if maturity below 3
+8. Email of follow up after a week from sending the proposal to engage us on a comex project. key rules:
+   a. Recap offer and why they should engage us: benefits (we bring in top tier consultants at fraction of the cost, focused only on one area). Mention the potential top line uplift of similar programs
+   b. Present the risk of doing nothing or doing it with wrong partner (can backfire, can be too theoretical and not implemented, might be done without understanding the full picture)
+   c. Propose some podcasts related to the topic
+   d. Suggest a follow up call
+9. Chiedi i drivers di crescita nelle scoping calls
+
+Pricing & commercial rules
+1. Costs: small company part time small team from 30k for basics, large full scope work 300k
+2. Admin fee 9% and present 3 options
+3. Spiega subito a cliente che fees non vanno discusse e mai menzionate al team
+4. A fine progetto fai slide con supporto a 18 mesi con go o no go a 6 mesi
+5. Do a CAPDB if you think we can generate 1-2m in incremental EBITDA so the ROI is 3-5x in year 1 and recurring. 2000-hour exercise → done internally takes 4000h → 3 FTEs over 1 year, cost 200-250k€
+10. When hiring ask also to present a document (avoid EVE issues)
+11. Survey lost bids: why they did not chose us and feedback to improve our offers, presentation, pricing
+12. Day 1 of pitch: ask client to commit to answer our 10Q survey if we win or lose, in exchange share our win/loss playbook
+13. Ask WA numbers to all clients in first intro call
+14. Train an associate to run interviews until he gives right judgment. Record them
+15. Run an outside-in diagnostic for clients to show their gaps and link to what we can do for them
+16. If makes sense anchor price to MBB: 80-120k€/wk in Europe, up to 200k$/wk in US
+17. Ask WA, say you will send a message after sending offer (anti-spam). Email after 2 days to confirm receipt
+18. If unsure about a candidate: 4-6 weeks at 1500-2000€/m + meal vouchers, then decide A1/A2/S1; announce future salary 3-4k€/m + 10% bonus + meal voucher + 13ma + 10k bonus per client they source
+19. Always add admin fees to each proposal (e.g. 8%) except Carlyle
+20. If no success fees: send fixed; if they complain propose 10% or 20% variable; if still no propose run without partner — just senior manager + 1 associate
+
+Process
+1. Intro call: record with read.ai → email P1, attach CS and podcast (use podcast excel to identify best)
+2. Create proposal document → email P2:
+   a. Exec summary with total cost and impact
+   b. One page per topic with activities, deliverables
+   c. Outside-in analysis (annual reports, online search + AI, pricing, customer experience, web)
+3. Discuss with team: invite manager + 2 associates
+4. Send win/loss email + survey → propose touch base on other support areas
+
+— EMAIL TEMPLATES ARCHIVED IN PLAYBOOK —
+
+EMAIL P1 (post-intro recap, IT)
+Ciao [Nome], grazie ancora per la chiacchierata.
+1. Contesto generale — [recap of strategic context, tailored]
+2. Bisogni e priorità emerse — [3-5 bullets reflecting client's words]
+3. Possibili prossimi passi — [diagnostic / deep-dive / scope option]
++ podcast link + case study PDF + warm sign-off
+
+EMAIL P1 PROMPT
+Based on the transcript of the intro call, write concise senior consulting-style follow-up:
+- 3 sections: recap / needs / next steps
+- Reflect client's language verbatim
+- Suggest podcast + attach case study
+- 150-180 words, no salesy phrases
+- Sign with [name]
+
+EMAIL P2 (proposal sharing, EN)
+Section structure: Intro / Scope / Engagement options / Timeline / Start date / Team / Budget / Our USP / Next steps
++ confidentiality P.S.
+
+EMAIL P2 PROMPT
+Use the attached proposal to write professional consulting-style email:
+- Structure: 9 short headers as above
+- Reference specific page numbers
+- Position options without pushing
+- Confidence + flexibility + execution focus
+- No buzzwords, short paragraphs, bullets where useful
+- End with confirmation request, follow-up offer, P.S. confidentiality note
+
+EMAIL P3 (win/loss after lost deal, EN)
+Subject: A quick favor — and your choice of something useful in return
+Body: thank for time, request 10Q survey (~2min), in return offer one of:
+1. Executive point-of-view note
+2. 20-min benchmark call (no pitch)
+3. Win-rate playbook
+4. Locked-in rate card with +5% discount on engagements starting in next 12 months
+Sign warmly.`},
+           'user',
+           '["sales-playbook","best-practices","email-templates","negotiation"]'::jsonb,
+           'active',
+           ${new Date().toISOString()}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM agent_knowledge
+      WHERE role_key = 'sales-director' AND title = 'Eendigo Sales Playbook (set by co-CEO)'
+    )
+  `);
+
   // ── Agent Proposals ──────────────────────────────────────────────────
   // Skills POST here when their scheduled run produces a recommendation.
   // Rendered at the bottom of /exec/org-chart for the user to act on.

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -227,6 +227,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(rows);
     } catch (e) {
       console.error("[org-chart] GET failed:", e);
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // ── Agent Knowledge ───────────────────────────────────────────────────
+  // Per-role memory the user / agents have given to a role. Each role-skill
+  // reads these on every run before producing a brief or decision.
+  app.get("/api/agent-knowledge", requireAuth, async (req, res) => {
+    try {
+      const role = req.query.role_key as string | undefined;
+      const status = (req.query.status as string | undefined) ?? "active";
+      let q = db.select().from(agentKnowledge).$dynamic();
+      if (role && status === "active") {
+        q = q.where(and(eq(agentKnowledge.role_key, role), eq(agentKnowledge.status, "active")));
+      } else if (role) {
+        q = q.where(eq(agentKnowledge.role_key, role));
+      } else if (status !== "all") {
+        q = q.where(eq(agentKnowledge.status, status));
+      }
+      const rows = await q.orderBy(desc(agentKnowledge.created_at));
+      res.json(rows);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  app.post("/api/agent-knowledge", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      const role_key = String(b.role_key ?? "").trim();
+      const content = String(b.content ?? "").trim().slice(0, 12000);
+      if (!role_key || !content) { res.status(400).json({ message: "role_key + content required" }); return; }
+      const row = {
+        role_key,
+        content,
+        title: typeof b.title === "string" ? b.title.slice(0, 200) : null,
+        source: ["user", "agent", "web"].includes(String(b.source)) ? String(b.source) : "user",
+        tags: Array.isArray(b.tags) ? (b.tags as unknown[]).slice(0, 20).map(String) : [],
+        status: "active" as const,
+        created_by_role: typeof b.created_by_role === "string" ? b.created_by_role.slice(0, 60) : null,
+        created_at: new Date().toISOString(),
+      };
+      const inserted = await db.insert(agentKnowledge).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  app.put("/api/agent-knowledge/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: any = {};
+      if (typeof b.content === "string") update.content = b.content.slice(0, 12000);
+      if (typeof b.title === "string") update.title = b.title.slice(0, 200);
+      if (typeof b.status === "string" && ["active", "archived", "rejected"].includes(b.status)) {
+        update.status = b.status;
+        update.decided_at = new Date().toISOString();
+        if (typeof b.decided_note === "string") update.decided_note = b.decided_note.slice(0, 1000);
+      }
+      const rows = await db.update(agentKnowledge).set(update).where(eq(agentKnowledge.id, id)).returning();
+      if (rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(rows[0]);
+    } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
   });

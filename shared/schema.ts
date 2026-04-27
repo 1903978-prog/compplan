@@ -947,6 +947,37 @@ export const knowledgeFiles = pgTable("knowledge_files", {
   uploaded_at: text("uploaded_at").notNull(),
 });
 
+// ── Agent Knowledge ─────────────────────────────────────────────────────────
+// Per-role memory: every note, instruction, insight, or context the user
+// (or another agent) has explicitly given to a specific role. The CEO and
+// each role-skill MUST read all `status='active'` knowledge for their
+// role on every run before producing a brief or making a decision.
+//
+// Sources:
+//   user  — pasted directly via the "+ Knowledge" button on /exec/org-chart
+//   agent — proposed by the CEO during its 9am web-research pass
+//           (lands in agent_proposals as category='knowledge'; once user
+//            accepts there, a row is created here with source='agent')
+//   web   — direct web-research insight (currently equivalent to agent)
+//
+// Status:
+//   active   — currently in the role's memory
+//   archived — user removed it (kept for audit trail)
+//   rejected — user rejected an agent-proposed insertion
+export const agentKnowledge = pgTable("agent_knowledge", {
+  id: serial("id").primaryKey(),
+  role_key: text("role_key").notNull(),                         // matches org_agents.role_key
+  content: text("content").notNull(),                           // the note itself; markdown allowed
+  title: text("title"),                                          // optional short label
+  source: text("source").notNull().default("user"),             // user | agent | web
+  tags: jsonb("tags").$type<string[]>().default([]),
+  status: text("status").notNull().default("active"),           // active | archived | rejected
+  created_by_role: text("created_by_role"),                     // null for user; e.g. 'ceo' if proposed by an agent
+  created_at: text("created_at").notNull(),
+  decided_at: text("decided_at"),
+  decided_note: text("decided_note"),
+});
+
 // ── Agent Proposals ─────────────────────────────────────────────────────────
 // Each role-skill (CEO, CFO, Sales Director, etc.) writes structured
 // proposals here when its scheduled run produces a recommendation. The

@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Archive } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface OkrItem { objective: string; key_results: string[] }
@@ -28,6 +29,18 @@ interface OrgRole {
   tasks_10d: TaskItem[];
   sort_order: number;
   updated_at: string;
+}
+
+interface KnowledgeNote {
+  id: number;
+  role_key: string;
+  title: string | null;
+  content: string;
+  source: "user" | "agent" | "web";
+  tags: string[];
+  status: "active" | "archived" | "rejected";
+  created_by_role: string | null;
+  created_at: string;
 }
 
 interface AgentProposal {
@@ -81,8 +94,13 @@ export default function OrgChart() {
   const { toast } = useToast();
   const [roles, setRoles] = useState<OrgRole[]>([]);
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
+  const [knowledge, setKnowledge] = useState<KnowledgeNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [openRole, setOpenRole] = useState<OrgRole | null>(null);
+  const [addKnowledgeForRole, setAddKnowledgeForRole] = useState<OrgRole | null>(null);
+  const [knowledgeDraftTitle, setKnowledgeDraftTitle] = useState("");
+  const [knowledgeDraftContent, setKnowledgeDraftContent] = useState("");
+  const [showFullLog, setShowFullLog] = useState(false);
 
   const refreshProposals = () => {
     fetch("/api/agent-proposals?status=pending", { credentials: "include" })
@@ -91,16 +109,61 @@ export default function OrgChart() {
       .catch(() => { /* silent — section just hides */ });
   };
 
+  const refreshKnowledge = () => {
+    fetch("/api/agent-knowledge?status=active", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: KnowledgeNote[]) => setKnowledge(rows))
+      .catch(() => { /* silent */ });
+  };
+
   useEffect(() => {
     Promise.all([
       fetch("/api/org-chart", { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/agent-proposals?status=pending", { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([orgs, props]) => {
+      fetch("/api/agent-knowledge?status=active", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([orgs, props, kn]) => {
       setRoles(orgs);
       setProposals(props);
+      setKnowledge(kn);
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
   }, [toast]);
+
+  const saveKnowledge = async () => {
+    if (!addKnowledgeForRole || !knowledgeDraftContent.trim()) return;
+    const r = await fetch("/api/agent-knowledge", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        role_key: addKnowledgeForRole.role_key,
+        title: knowledgeDraftTitle.trim() || null,
+        content: knowledgeDraftContent.trim(),
+        source: "user",
+      }),
+    });
+    if (r.ok) {
+      const note = await r.json();
+      setKnowledge(prev => [note, ...prev]);
+      setAddKnowledgeForRole(null);
+      setKnowledgeDraftTitle("");
+      setKnowledgeDraftContent("");
+      toast({ title: "Knowledge added" });
+    } else {
+      toast({ title: "Failed to add knowledge", variant: "destructive" });
+    }
+  };
+
+  const archiveKnowledge = async (note: KnowledgeNote) => {
+    const r = await fetch(`/api/agent-knowledge/${note.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "archived" }),
+    });
+    if (r.ok) {
+      setKnowledge(prev => prev.filter(x => x.id !== note.id));
+      toast({ title: "Archived" });
+    }
+  };
 
   const decideProposal = async (p: AgentProposal, status: AgentProposal["status"], note?: string) => {
     const r = await fetch(`/api/agent-proposals/${p.id}`, {
@@ -139,7 +202,12 @@ export default function OrgChart() {
       {/* CEO row */}
       {ceo && (
         <div className="flex justify-center mb-8">
-          <RoleCard role={ceo} highlight onClick={() => setOpenRole(ceo)} />
+          <RoleCard
+            role={ceo} highlight
+            knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
+            onClick={() => setOpenRole(ceo)}
+            onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
+          />
         </div>
       )}
 
@@ -151,11 +219,59 @@ export default function OrgChart() {
       )}
 
       {/* Direct reports row */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
         {reports.map(r => (
-          <RoleCard key={r.id} role={r} onClick={() => setOpenRole(r)} />
+          <RoleCard
+            key={r.id} role={r}
+            knowledgeCount={knowledge.filter(k => k.role_key === r.role_key).length}
+            onClick={() => setOpenRole(r)}
+            onAddKnowledge={() => setAddKnowledgeForRole(r)}
+          />
         ))}
       </div>
+
+      {/* ── Add-knowledge popup ────────────────────────────────────── */}
+      <Dialog open={!!addKnowledgeForRole} onOpenChange={(o) => !o && setAddKnowledgeForRole(null)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-primary" />
+              Add knowledge for {addKnowledgeForRole?.role_name}
+            </DialogTitle>
+            <DialogDescription>
+              Paste an instruction, insight, playbook, or any context this role should always remember. The CEO and this role's skill will read all active knowledge before producing any brief or making any decision.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <div>
+              <label className="text-xs font-semibold">Title (optional)</label>
+              <input
+                type="text"
+                value={knowledgeDraftTitle}
+                onChange={e => setKnowledgeDraftTitle(e.target.value)}
+                placeholder="e.g. 'Negotiation playbook' or 'Q2 priorities'"
+                className="w-full h-8 mt-1 px-2 text-sm border rounded bg-background"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold">Knowledge / instruction</label>
+              <Textarea
+                value={knowledgeDraftContent}
+                onChange={e => setKnowledgeDraftContent(e.target.value)}
+                placeholder="Paste the instruction or insight here. Markdown supported."
+                rows={10}
+                className="mt-1 font-mono text-xs"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setAddKnowledgeForRole(null)}>Cancel</Button>
+            <Button onClick={saveKnowledge} disabled={!knowledgeDraftContent.trim()}>
+              <Plus className="w-4 h-4 mr-1" /> Save knowledge
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Proposals from your team — pending decisions ───────────── */}
       <div className="mt-10">
@@ -248,7 +364,10 @@ export default function OrgChart() {
       {/* Task popup */}
       <RoleDetailDialog
         role={openRole}
+        knowledge={openRole ? knowledge.filter(k => k.role_key === openRole.role_key) : []}
         onClose={() => setOpenRole(null)}
+        onAddKnowledgeFromDialog={() => { if (openRole) setAddKnowledgeForRole(openRole); }}
+        onArchiveKnowledge={archiveKnowledge}
         onTaskToggle={async (task, newStatus) => {
           if (!openRole) return;
           const nextTasks = openRole.tasks_10d.map(t => t.id === task.id ? { ...t, status: newStatus } : t);
@@ -271,7 +390,13 @@ export default function OrgChart() {
 }
 
 // ── Role card ─────────────────────────────────────────────────────────
-function RoleCard({ role, highlight, onClick }: { role: OrgRole; highlight?: boolean; onClick: () => void }) {
+function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: {
+  role: OrgRole;
+  highlight?: boolean;
+  knowledgeCount: number;
+  onClick: () => void;
+  onAddKnowledge: () => void;
+}) {
   const openTasks = role.tasks_10d.filter(t => t.status === "todo" || t.status === "in_progress").length;
   const overdue = role.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
 
@@ -293,6 +418,15 @@ function RoleCard({ role, highlight, onClick }: { role: OrgRole; highlight?: boo
               <p className="text-xs text-muted-foreground mt-0.5 truncate">{role.person_name}</p>
             )}
           </div>
+          <Button
+            size="sm" variant="ghost"
+            className="h-7 px-2 shrink-0"
+            onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
+            title={`Add knowledge for ${role.role_name}`}
+          >
+            <BookOpen className="w-3.5 h-3.5 mr-1" />
+            <span className="text-[11px]">{knowledgeCount > 0 ? `${knowledgeCount}` : "+"}</span>
+          </Button>
         </div>
 
         {role.goals.length > 0 && (
@@ -341,11 +475,17 @@ function RoleCard({ role, highlight, onClick }: { role: OrgRole; highlight?: boo
 // ── Detail dialog with tasks ──────────────────────────────────────────
 function RoleDetailDialog({
   role,
+  knowledge,
   onClose,
+  onAddKnowledgeFromDialog,
+  onArchiveKnowledge,
   onTaskToggle,
 }: {
   role: OrgRole | null;
+  knowledge: KnowledgeNote[];
   onClose: () => void;
+  onAddKnowledgeFromDialog: () => void;
+  onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
   onTaskToggle: (task: TaskItem, newStatus: TaskItem["status"]) => Promise<void>;
 }) {
   if (!role) return null;
@@ -368,6 +508,44 @@ function RoleDetailDialog({
             </div>
           </div>
         </DialogHeader>
+
+        {/* Knowledge / instructions */}
+        <section className="mt-4">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-semibold text-sm flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-primary" />
+              Knowledge / instructions
+              <span className="text-xs font-normal text-muted-foreground">({knowledge.length})</span>
+            </h4>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onAddKnowledgeFromDialog}>
+              <Plus className="w-3 h-3 mr-1" /> Add
+            </Button>
+          </div>
+          {knowledge.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic px-1">
+              No knowledge yet. Click "Add" to paste instructions, playbooks, or context this role should always remember.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {knowledge.map(n => (
+                <div key={n.id} className="border rounded p-2 bg-muted/20 text-xs">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      {n.title && <span className="font-semibold truncate">{n.title}</span>}
+                      <Badge variant="outline" className="text-[9px] py-0 h-4">{n.source}</Badge>
+                      <span className="text-[10px] text-muted-foreground">{fmtDate(n.created_at)}</span>
+                    </div>
+                    <Button size="sm" variant="ghost" className="h-6 px-1.5"
+                      onClick={() => onArchiveKnowledge(n)}
+                      title="Archive (kept in log)"
+                    ><Archive className="w-3 h-3" /></Button>
+                  </div>
+                  <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed">{n.content}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         {/* Goals */}
         {role.goals.length > 0 && (
