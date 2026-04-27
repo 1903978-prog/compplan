@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
-import { storage } from "./storage";
+import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem } from "./storage";
 import { insertEmployeeSchema, type BenchmarkRow } from "@shared/schema";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
@@ -179,6 +179,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ ok: true, before: beforeCount, after: afterCount, inserted, seed_size: SEED_PROPOSALS.length });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ── Trash Bin ─────────────────────────────────────────────────────────────
+  // Soft-delete safety net. Wrapped DELETE endpoints copy the row to
+  // trash_bin (30-day TTL) instead of erasing it. The /admin/trash page
+  // lets the user list and restore. Auto-purge runs on server boot.
+  app.get("/api/trash", requireAuth, async (_req, res) => {
+    try {
+      const items = await listTrash();
+      res.json(items);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message ?? "Failed to list trash" });
+    }
+  });
+
+  app.post("/api/trash/:id/restore", requireAuth, async (req, res) => {
+    try {
+      const out = await restoreTrash(safeInt(req.params.id));
+      res.json(out);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message ?? "Restore failed" });
+    }
+  });
+
+  app.delete("/api/trash/:id", requireAuth, async (req, res) => {
+    // Permanent purge — bypasses the 30-day wait. Used for items the
+    // user is sure they want gone now (e.g. accidental confidential
+    // data leak that the user wants out of the snapshot immediately).
+    try {
+      await purgeTrashItem(safeInt(req.params.id));
+      res.status(204).end();
+    } catch (err: any) {
+      res.status(500).json({ message: err.message ?? "Purge failed" });
     }
   });
 
@@ -450,8 +484,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/pricing/cases/:id", requireAuth, async (req, res) => {
-    await storage.deletePricingCase(safeInt(req.params.id));
-    res.status(204).end();
+    // Soft-delete: row is moved to trash_bin (30-day TTL) so the user
+    // can restore from /admin/trash. Hard-delete only happens after
+    // expiry. See server/storage.ts trashAndDelete.
+    const ok = await trashAndDelete("pricing_cases", safeInt(req.params.id));
+    res.status(ok ? 204 : 404).end();
   });
 
   app.get("/api/pricing/proposals", requireAuth, async (_req, res) => {
@@ -470,8 +507,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/pricing/proposals/:id", requireAuth, async (req, res) => {
-    await storage.deletePricingProposal(safeInt(req.params.id));
-    res.status(204).end();
+    // Soft-delete to trash_bin (30-day TTL).
+    const ok = await trashAndDelete("pricing_proposals", safeInt(req.params.id));
+    res.status(ok ? 204 : 404).end();
   });
 
   // ── Proposal file attachments ──────────────────────────────────────────────
@@ -570,8 +608,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/hiring/candidates/:id", requireAuth, async (req, res) => {
-    await storage.deleteHiringCandidate(safeInt(req.params.id));
-    res.status(204).end();
+    // Soft-delete to trash_bin (30-day TTL).
+    const ok = await trashAndDelete("hiring_candidates", safeInt(req.params.id));
+    res.status(ok ? 204 : 404).end();
   });
 
   // ── Employee Tasks (TDL) ──────────────────────────────────────────────────
@@ -777,8 +816,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/proposals/:id", requireAuth, async (req, res) => {
-    await storage.deleteProposal(safeInt(req.params.id));
-    res.status(204).end();
+    // Soft-delete to trash_bin (30-day TTL).
+    const ok = await trashAndDelete("proposals", safeInt(req.params.id));
+    res.status(ok ? 204 : 404).end();
   });
 
   // Bulk-delete blank drafts. Cleans up debris from the old stale-closure
@@ -2690,10 +2730,8 @@ RULES:
 
   app.delete("/api/won-projects/:id", requireAuth, async (req, res) => {
     try {
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      const id = safeInt(req.params.id);
-      await db.execute(sql`DELETE FROM won_projects WHERE id = ${id}`);
+      // Soft-delete to trash_bin (30-day TTL).
+      await trashAndDelete("won_projects", safeInt(req.params.id));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

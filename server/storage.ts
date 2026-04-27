@@ -5,7 +5,7 @@ import {
   pricingSettingsTable, pricingCases, pricingProposals, hiringCandidates, employeeTasks,
   performanceIssues, timeTrackingTopics, timeTrackingEntries,
   proposals, proposalTemplates, slideMethodologyConfigs, deckTemplateConfigs, projectTypeSlideDefaults,
-  slideBackgrounds, slideTemplates,
+  slideBackgrounds, slideTemplates, wonProjects,
   type Employee, type InsertEmployee,
   type AdminSettings, type RoleGridRow, type DaysOffEntry, type SalaryHistoryEntry,
   type EmployeeTask, type PerformanceIssue,
@@ -564,3 +564,115 @@ export class DatabaseStorage implements IStorage {
 }
 
 export const storage = new DatabaseStorage();
+
+// ── Trash Bin / Soft-Delete Layer ──────────────────────────────────────
+// Wraps DELETE on whitelisted tables. The full row is copied to
+// trash_bin (JSONB snapshot) then removed from the source table. Items
+// auto-expire after 30 days unless restored. Restore re-INSERTs the
+// snapshot back into the source.
+//
+// Adding a new table to the safety net:
+//   1. Import its Drizzle table object
+//   2. Add an entry to TRASH_REGISTRY below
+//   3. Replace `db.delete(table).where(eq(table.id, id))` calls in
+//      routes.ts with `await trashAndDelete("<table_name>", id)`
+//
+// SAFETY: only tables in TRASH_REGISTRY can be operated on, so the
+// table-name parameter cannot be used for SQL injection.
+
+interface TrashEntry {
+  table: any;          // Drizzle table object
+  pk: any;             // Drizzle column for the primary key
+  pkType: "int" | "text";
+  displayType: string; // Human-readable label shown in the UI
+  nameField?: string;  // Column whose value labels the row in the UI
+}
+
+const TRASH_REGISTRY: Record<string, TrashEntry> = {
+  pricing_cases:     { table: pricingCases,     pk: pricingCases.id,     pkType: "int",  displayType: "Pricing Case",      nameField: "project_name" },
+  pricing_proposals: { table: pricingProposals, pk: pricingProposals.id, pkType: "int",  displayType: "Past Project",      nameField: "project_name" },
+  hiring_candidates: { table: hiringCandidates, pk: hiringCandidates.id, pkType: "int",  displayType: "Candidate",         nameField: "name" },
+  proposals:         { table: proposals,        pk: proposals.id,        pkType: "int",  displayType: "Proposal Deck",     nameField: "company_name" },
+  won_projects:      { table: wonProjects,      pk: wonProjects.id,      pkType: "int",  displayType: "Won Project",       nameField: "project_name" },
+};
+
+const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+/**
+ * Soft-delete: copy the row to trash_bin, then erase from source.
+ * Returns true if a row was found+trashed, false if no row matched.
+ */
+export async function trashAndDelete(tableName: string, idRaw: string | number): Promise<boolean> {
+  const reg = TRASH_REGISTRY[tableName];
+  if (!reg) throw new Error(`trashAndDelete: table "${tableName}" is not in TRASH_REGISTRY`);
+  const id = reg.pkType === "int" ? Number(idRaw) : String(idRaw);
+  // Fetch the row first — we need a snapshot before deleting.
+  const rows = await db.select().from(reg.table).where(eq(reg.pk, id));
+  if (rows.length === 0) return false;
+  const row = rows[0];
+  const expires = new Date(Date.now() + TRASH_TTL_MS).toISOString();
+  const displayName = reg.nameField ? String((row as any)[reg.nameField] ?? "") : "";
+  await db.execute(sql`
+    INSERT INTO trash_bin (table_name, row_id, row_data, display_name, display_type, expires_at)
+    VALUES (${tableName}, ${String(id)}, ${JSON.stringify(row)}::jsonb, ${displayName}, ${reg.displayType}, ${expires})
+  `);
+  await db.delete(reg.table).where(eq(reg.pk, id));
+  return true;
+}
+
+export interface TrashItem {
+  id: number;
+  table_name: string;
+  row_id: string;
+  display_name: string | null;
+  display_type: string | null;
+  deleted_at: string;
+  expires_at: string;
+}
+
+export async function listTrash(): Promise<TrashItem[]> {
+  const result = await db.execute(sql`
+    SELECT id, table_name, row_id, display_name, display_type, deleted_at, expires_at
+    FROM trash_bin
+    WHERE restored_at IS NULL AND expires_at > NOW()
+    ORDER BY deleted_at DESC
+  `);
+  return result.rows as unknown as TrashItem[];
+}
+
+/**
+ * Re-insert a trashed row back into its source table. Marks the trash
+ * row as restored (kept for audit trail). Throws if the row's original
+ * id collides with an existing row (which can happen if the user
+ * created a new entity with the reused id while the old was in trash).
+ */
+export async function restoreTrash(trashId: number): Promise<{ tableName: string; rowData: any }> {
+  const result = await db.execute(sql`
+    SELECT id, table_name, row_id, row_data
+    FROM trash_bin
+    WHERE id = ${trashId} AND restored_at IS NULL
+  `);
+  if (result.rows.length === 0) throw new Error("Trash item not found or already restored");
+  const item = result.rows[0] as any;
+  const reg = TRASH_REGISTRY[item.table_name];
+  if (!reg) throw new Error(`Cannot restore: table "${item.table_name}" not in TRASH_REGISTRY`);
+  // Re-insert the original row data (including its old id, so links/
+  // foreign keys from elsewhere still resolve).
+  await db.insert(reg.table).values(item.row_data as any);
+  await db.execute(sql`UPDATE trash_bin SET restored_at = NOW() WHERE id = ${trashId}`);
+  return { tableName: item.table_name, rowData: item.row_data };
+}
+
+/** Permanently delete a single trash item (skips the 30-day wait). */
+export async function purgeTrashItem(trashId: number): Promise<void> {
+  await db.execute(sql`DELETE FROM trash_bin WHERE id = ${trashId}`);
+}
+
+/** Permanently delete every expired (>30d) trash item. Run on boot. */
+export async function purgeExpiredTrash(): Promise<number> {
+  const r = await db.execute(sql`
+    DELETE FROM trash_bin
+    WHERE expires_at < NOW() AND restored_at IS NULL
+  `);
+  return (r as any).rowCount ?? 0;
+}

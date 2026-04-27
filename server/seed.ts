@@ -511,6 +511,35 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE won_projects ALTER COLUMN project_name DROP NOT NULL`);
   await db.execute(sql`ALTER TABLE won_projects ALTER COLUMN won_date     DROP NOT NULL`);
 
+  // ── Trash Bin (soft-delete safety net) ─────────────────────────────
+  // Every wrapped DELETE endpoint copies the row here before erasing it
+  // from the source table. Items expire after 30 days unless restored.
+  // Storage helpers: trashAndDelete / restoreTrash / listTrash /
+  // purgeExpiredTrash in server/storage.ts.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS trash_bin (
+      id           SERIAL PRIMARY KEY,
+      table_name   TEXT NOT NULL,
+      row_id       TEXT NOT NULL,
+      row_data     JSONB NOT NULL,
+      display_name TEXT,
+      display_type TEXT,
+      deleted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at   TIMESTAMPTZ NOT NULL,
+      restored_at  TIMESTAMPTZ
+    )
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS trash_bin_active_idx ON trash_bin(deleted_at DESC)
+    WHERE restored_at IS NULL
+  `);
+  // Auto-purge on every boot — anything past its 30-day window AND not
+  // restored is permanently gone. Cheap query, safe to run unconditionally.
+  await db.execute(sql`
+    DELETE FROM trash_bin
+    WHERE expires_at < NOW() AND restored_at IS NULL
+  `);
+
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS api_usage_log (
