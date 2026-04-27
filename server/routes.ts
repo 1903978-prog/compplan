@@ -539,10 +539,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   }
 
+  // Companion to ensureTbdProposalForFinalCase: when a case is no
+  // longer Final (Draft / Active), delete any pending TBD that was
+  // auto-created for it. Won/Lost rows are never touched. This makes
+  // the case→proposal sync self-healing on every save instead of
+  // requiring the user to click the "Sync TBD" button.
+  async function removeStaleTbdForNonFinalCase(caseRow: { project_name?: string | null; status?: string | null }) {
+    if (!caseRow.project_name) return;
+    if (caseRow.status === "final") return;
+    const lower = caseRow.project_name.trim().toLowerCase();
+    if (!lower) return;
+    const all = await storage.getPricingProposals();
+    const targets = all.filter(p =>
+      p.outcome === "pending" &&
+      (p.project_name ?? "").trim().toLowerCase() === lower
+    );
+    for (const p of targets) {
+      if (p.id != null) await trashAndDelete("pricing_proposals", p.id);
+    }
+  }
+
   app.post("/api/pricing/cases", requireAuth, async (req, res) => {
     const c = await storage.createPricingCase(sanitisePricingCaseBody(req.body));
     try { await ensureTbdProposalForFinalCase(c); }
     catch (e) { console.error("ensureTbdProposalForFinalCase (POST) failed:", e); }
+    try { await removeStaleTbdForNonFinalCase(c); }
+    catch (e) { console.error("removeStaleTbdForNonFinalCase (POST) failed:", e); }
     res.status(201).json(c);
   });
 
@@ -550,6 +572,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const c = await storage.updatePricingCase(safeInt(req.params.id), sanitisePricingCaseBody(req.body));
     try { await ensureTbdProposalForFinalCase(c); }
     catch (e) { console.error("ensureTbdProposalForFinalCase (PUT) failed:", e); }
+    try { await removeStaleTbdForNonFinalCase(c); }
+    catch (e) { console.error("removeStaleTbdForNonFinalCase (PUT) failed:", e); }
     res.json(c);
   });
 

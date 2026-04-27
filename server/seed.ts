@@ -645,6 +645,35 @@ export async function seedDatabase() {
     `);
   }
 
+  // ── TBD self-heal: keep pending proposals aligned with Final cases ──
+  // On every boot, remove pending pricing_proposals whose backing case
+  // is NOT status='final' (i.e. Draft / Active). Won/Lost rows are
+  // never touched — they're real decisions. Manually-added pendings
+  // (no matching case) are left alone. This makes the dashboard show
+  // the right TBD count automatically without requiring the user to
+  // click the "Sync TBD" button on the Pricing page.
+  try {
+    const stale = await db.execute(sql`
+      SELECT p.id
+      FROM pricing_proposals p
+      JOIN pricing_cases c
+        ON LOWER(TRIM(p.project_name)) = LOWER(TRIM(c.project_name))
+      WHERE p.outcome = 'pending'
+        AND c.status <> 'final'
+    `);
+    if (stale.rows.length > 0) {
+      const ids = stale.rows.map((r: any) => Number(r.id)).filter(Boolean);
+      if (ids.length > 0) {
+        await db.execute(sql`
+          DELETE FROM pricing_proposals WHERE id = ANY(${ids})
+        `);
+        console.log(`[seed] TBD self-heal: removed ${ids.length} stale pending proposal(s) whose case is no longer Final`);
+      }
+    }
+  } catch (e) {
+    console.error("[seed] TBD self-heal failed:", e);
+  }
+
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS api_usage_log (
