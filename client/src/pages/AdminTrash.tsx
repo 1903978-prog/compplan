@@ -89,8 +89,11 @@ export default function AdminTrash() {
         setItems(prev => prev.filter(x => x.id !== item.id));
       } else {
         const body = await r.json().catch(() => ({}));
+        // 409 = PK collision (someone created a new row with this id while
+        // the old was in trash). Surface a clear, actionable message.
+        const isConflict = r.status === 409 || body.code === "RESTORE_CONFLICT";
         toast({
-          title: "Restore failed",
+          title: isConflict ? "Cannot restore — ID already in use" : "Restore failed",
           description: body.message || "Unknown error — the original ID may already be in use.",
           variant: "destructive",
         });

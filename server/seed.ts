@@ -533,6 +533,11 @@ export async function seedDatabase() {
     CREATE INDEX IF NOT EXISTS trash_bin_active_idx ON trash_bin(deleted_at DESC)
     WHERE restored_at IS NULL
   `);
+  // app_version stamp on each trash row — guards against silent schema
+  // drift over the 30-day retention window. If the source table gains or
+  // drops a column between trashing and restoring, the version helps an
+  // operator decide whether the snapshot is still safe to re-insert.
+  await db.execute(sql`ALTER TABLE trash_bin ADD COLUMN IF NOT EXISTS app_version TEXT`);
   // Auto-purge on every boot — anything past its 30-day window AND not
   // restored is permanently gone. Cheap query, safe to run unconditionally.
   await db.execute(sql`

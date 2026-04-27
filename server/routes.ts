@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
-import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem } from "./storage";
-import { insertEmployeeSchema, type BenchmarkRow } from "@shared/schema";
+import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
+import { insertEmployeeSchema, insertPricingCaseSchema, type BenchmarkRow } from "@shared/schema";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -186,6 +186,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Soft-delete safety net. Wrapped DELETE endpoints copy the row to
   // trash_bin (30-day TTL) instead of erasing it. The /admin/trash page
   // lets the user list and restore. Auto-purge runs on server boot.
+  // Streams a zip of the entire repo (tip-of-HEAD on the deployed branch)
+  // by piping `git archive` straight to the response. Excludes node_modules,
+  // dist, .env automatically (git only knows about tracked files). Useful
+  // as an offline snapshot or to bootstrap the same app on another machine.
+  app.get("/api/code-download", requireAuth, async (_req, res) => {
+    try {
+      const { spawn } = await import("child_process");
+      const date = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="compplan-code-${date}.zip"`);
+      const git = spawn("git", ["archive", "--format=zip", "HEAD"], { cwd: process.cwd() });
+      git.stdout.pipe(res);
+      git.stderr.on("data", (d) => console.error("[code-download] git stderr:", d.toString()));
+      git.on("error", (err) => {
+        console.error("[code-download] spawn failed:", err);
+        if (!res.headersSent) res.status(500).json({ message: "git archive unavailable" });
+      });
+      git.on("close", (code) => {
+        if (code !== 0 && !res.headersSent) {
+          res.status(500).json({ message: `git archive exited ${code}` });
+        }
+      });
+    } catch (e) {
+      console.error("[code-download] failed:", e);
+      if (!res.headersSent) res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
   app.get("/api/trash", requireAuth, async (_req, res) => {
     try {
       const items = await listTrash();
@@ -200,6 +228,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const out = await restoreTrash(safeInt(req.params.id));
       res.json(out);
     } catch (err: any) {
+      // PK collision → 409 Conflict so the UI can show a clear "delete
+      // the conflicting row first" message instead of a generic 400.
+      if (err instanceof TrashRestoreConflictError) {
+        res.status(409).json({ message: err.message, code: "RESTORE_CONFLICT", tableName: err.tableName, rowId: err.rowId });
+        return;
+      }
       res.status(400).json({ message: err.message ?? "Restore failed" });
     }
   });
@@ -371,7 +405,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/employees/:id", requireAuth, async (req, res) => {
-    await storage.deleteEmployee(req.params.id);
+    // Soft-delete to trash_bin (30-day TTL).
+    await trashAndDelete("employees", req.params.id);
     res.status(204).end();
   });
 
@@ -443,7 +478,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/salary-history/:id", requireAuth, async (req, res) => {
-    await storage.deleteSalaryHistoryEntry(safeInt(req.params.id));
+    // Soft-delete to trash_bin (30-day TTL).
+    await trashAndDelete("salary_history", safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -461,7 +497,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/days-off/:id", requireAuth, async (req, res) => {
-    await storage.deleteDaysOff(safeInt(req.params.id));
+    // Soft-delete to trash_bin (30-day TTL).
+    await trashAndDelete("days_off_entries", safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -512,7 +549,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // the previously client-side fetch which had a silent catch and could
   // leave the row uncreated if the call ever failed. Idempotent — uses
   // case-insensitive project_name match against pricing_proposals.
-  async function ensureTbdProposalForFinalCase(caseRow: { project_name?: string | null; status?: string | null; client_name?: string | null; fund_name?: string | null; region?: string | null; pe_owned?: number | null; revenue_band?: string | null; price_sensitivity?: string | null; duration_weeks?: number | null; sector?: string | null; project_type?: string | null }) {
+  async function ensureTbdProposalForFinalCase(caseRow: { project_name?: string | null; status?: string | null; client_name?: string | null; fund_name?: string | null; region?: string | null; pe_owned?: number | null; revenue_band?: string | null; price_sensitivity?: string | null; duration_weeks?: number | null; sector?: string | null; project_type?: string | null; recommendation?: any }) {
     if (caseRow.status !== "final") return;
     const name = (caseRow.project_name ?? "").trim();
     if (!name) return;
@@ -520,6 +557,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const lower = name.toLowerCase();
     const exists = all.some(p => (p.project_name ?? "").trim().toLowerCase() === lower);
     if (exists) return;
+    // Compute weekly_price + total_fee from the case's saved recommendation
+    // (jsonb { target_weekly, … }). Fallback to 0/0 if missing — better
+    // than refusing to create the row, but visually surfaces "no rec" cases.
+    const targetWeekly = Number(caseRow.recommendation?.target_weekly ?? 0);
+    const dur = Number(caseRow.duration_weeks ?? 0);
+    // 8% admin fee matches the default in the client-side handleSave path.
+    const weeklyGrossAdmin = targetWeekly > 0 ? Math.round(targetWeekly * 1.08) : 0;
+    const totalFee = targetWeekly > 0 && dur > 0 ? Math.round(targetWeekly * dur) : 0;
     const today = new Date().toISOString().slice(0, 10);
     await storage.createPricingProposal({
       proposal_date: today,
@@ -531,8 +576,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       revenue_band: caseRow.revenue_band ?? "above_1b",
       price_sensitivity: caseRow.price_sensitivity ?? null,
       duration_weeks: caseRow.duration_weeks ?? null,
-      weekly_price: 0,
-      total_fee: 0,
+      weekly_price: weeklyGrossAdmin,
+      total_fee: totalFee,
       outcome: "pending",
       sector: caseRow.sector ?? null,
       project_type: caseRow.project_type ?? null,
@@ -560,7 +605,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   app.post("/api/pricing/cases", requireAuth, async (req, res) => {
-    const c = await storage.createPricingCase(sanitisePricingCaseBody(req.body));
+    // Validate first (zod schema strips unknown keys + enforces project_name).
+    // Then sanitise array sizes (jsonb-bomb defence).
+    const parsed = insertPricingCaseSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: "Invalid pricing case payload", issues: parsed.error.issues });
+      return;
+    }
+    const c = await storage.createPricingCase(sanitisePricingCaseBody(parsed.data));
     try { await ensureTbdProposalForFinalCase(c); }
     catch (e) { console.error("ensureTbdProposalForFinalCase (POST) failed:", e); }
     try { await removeStaleTbdForNonFinalCase(c); }
@@ -569,7 +621,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.put("/api/pricing/cases/:id", requireAuth, async (req, res) => {
-    const c = await storage.updatePricingCase(safeInt(req.params.id), sanitisePricingCaseBody(req.body));
+    // PUT is partial (any subset of fields), so use the schema's .partial()
+    // variant. Still strips unknown keys + caps types.
+    const parsed = insertPricingCaseSchema.partial().safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: "Invalid pricing case payload", issues: parsed.error.issues });
+      return;
+    }
+    const c = await storage.updatePricingCase(safeInt(req.params.id), sanitisePricingCaseBody(parsed.data));
     try { await ensureTbdProposalForFinalCase(c); }
     catch (e) { console.error("ensureTbdProposalForFinalCase (PUT) failed:", e); }
     try { await removeStaleTbdForNonFinalCase(c); }
@@ -674,10 +733,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (p.id != null) await trashAndDelete("pricing_proposals", p.id);
       }
 
+      // ── DEDUP phase: ≥2 pending TBDs for the same project_name ─────
+      // Pre-fix bug: the old client + server both inserted on save,
+      // producing two rows per finalised case. Keep the row with the
+      // largest weekly_price (real numbers from the client side beat
+      // the 0/0 placeholders), tie-break by highest id (newest), trash
+      // the rest. Won/Lost rows untouched.
+      const dupBuckets = new Map<string, typeof proposals>();
+      for (const p of proposals) {
+        if (p.outcome !== "pending") continue;
+        const n = (p.project_name ?? "").trim().toLowerCase();
+        if (!n) continue;
+        // Skip rows we just trashed in the stale phase.
+        if (stale.some(s => s.id === p.id)) continue;
+        const arr = dupBuckets.get(n) ?? [];
+        arr.push(p);
+        dupBuckets.set(n, arr);
+      }
+      let dedupCount = 0;
+      for (const [, rows] of dupBuckets) {
+        if (rows.length < 2) continue;
+        const sorted = [...rows].sort((a, b) => {
+          const wa = Number(a.weekly_price ?? 0);
+          const wb = Number(b.weekly_price ?? 0);
+          if (wa !== wb) return wb - wa;             // highest weekly first
+          return Number(b.id ?? 0) - Number(a.id ?? 0); // newest id first
+        });
+        const [, ...losers] = sorted;
+        for (const p of losers) {
+          if (p.id != null) {
+            await trashAndDelete("pricing_proposals", p.id);
+            dedupCount++;
+          }
+        }
+      }
+
       res.json({
         ok: true,
         inserted: toCreate.length,
         deleted: stale.length,
+        deduped: dedupCount,
         finalCases: finals.length,
       });
     } catch (e) {
@@ -831,7 +926,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/employee-tasks/:id", requireAuth, async (req, res) => {
-    await storage.deleteEmployeeTask(safeInt(req.params.id));
+    // Soft-delete to trash_bin (30-day TTL).
+    await trashAndDelete("employee_tasks", safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -850,7 +946,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/performance-issues/:id", requireAuth, async (req, res) => {
-    await storage.deletePerformanceIssue(safeInt(req.params.id));
+    // Soft-delete to trash_bin (30-day TTL).
+    await trashAndDelete("performance_issues", safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -868,7 +965,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/time-tracking/topics/:id", requireAuth, async (req, res) => {
-    await storage.deleteTimeTrackingTopic(safeInt(req.params.id));
+    // Soft-delete to trash_bin (30-day TTL).
+    await trashAndDelete("time_tracking_topics", safeInt(req.params.id));
     res.status(204).end();
   });
 
@@ -885,7 +983,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/time-tracking/entries/:id", requireAuth, async (req, res) => {
-    await storage.deleteTimeTrackingEntry(safeInt(req.params.id));
+    // Soft-delete to trash_bin (30-day TTL).
+    await trashAndDelete("time_tracking_entries", safeInt(req.params.id));
     res.status(204).end();
   });
 

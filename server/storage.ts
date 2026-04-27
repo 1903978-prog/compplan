@@ -589,14 +589,27 @@ interface TrashEntry {
 }
 
 const TRASH_REGISTRY: Record<string, TrashEntry> = {
-  pricing_cases:     { table: pricingCases,     pk: pricingCases.id,     pkType: "int",  displayType: "Pricing Case",      nameField: "project_name" },
-  pricing_proposals: { table: pricingProposals, pk: pricingProposals.id, pkType: "int",  displayType: "Past Project",      nameField: "project_name" },
-  hiring_candidates: { table: hiringCandidates, pk: hiringCandidates.id, pkType: "int",  displayType: "Candidate",         nameField: "name" },
-  proposals:         { table: proposals,        pk: proposals.id,        pkType: "int",  displayType: "Proposal Deck",     nameField: "company_name" },
-  won_projects:      { table: wonProjects,      pk: wonProjects.id,      pkType: "int",  displayType: "Won Project",       nameField: "project_name" },
+  pricing_cases:        { table: pricingCases,         pk: pricingCases.id,         pkType: "int",  displayType: "Pricing Case",       nameField: "project_name" },
+  pricing_proposals:    { table: pricingProposals,     pk: pricingProposals.id,     pkType: "int",  displayType: "Past Project",       nameField: "project_name" },
+  hiring_candidates:    { table: hiringCandidates,     pk: hiringCandidates.id,     pkType: "int",  displayType: "Candidate",          nameField: "name" },
+  proposals:            { table: proposals,            pk: proposals.id,            pkType: "int",  displayType: "Proposal Deck",      nameField: "company_name" },
+  won_projects:         { table: wonProjects,          pk: wonProjects.id,          pkType: "int",  displayType: "Won Project",        nameField: "project_name" },
+  // ── Added: previously hard-deleted endpoints now soft-delete to trash
+  employees:            { table: employees,            pk: employees.id,            pkType: "text", displayType: "Employee",           nameField: "name" },
+  salary_history:       { table: salaryHistoryEntries, pk: salaryHistoryEntries.id, pkType: "int",  displayType: "Salary History",     nameField: "effective_date" },
+  days_off_entries:     { table: daysOffEntries,       pk: daysOffEntries.id,       pkType: "int",  displayType: "Days Off",           nameField: "start_date" },
+  employee_tasks:       { table: employeeTasks,        pk: employeeTasks.id,        pkType: "int",  displayType: "Employee Task" },
+  performance_issues:   { table: performanceIssues,    pk: performanceIssues.id,    pkType: "int",  displayType: "Performance Issue" },
+  time_tracking_topics: { table: timeTrackingTopics,   pk: timeTrackingTopics.id,   pkType: "int",  displayType: "Time-Tracking Topic" },
+  time_tracking_entries:{ table: timeTrackingEntries,  pk: timeTrackingEntries.id,  pkType: "int",  displayType: "Time-Tracking Entry" },
 };
 
 const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// Schema version stamp. Bump this string whenever a TRASH_REGISTRY-tracked
+// table gains or loses a column. Trash rows older than the bump may not
+// restore cleanly — see TrashRestoreError.SchemaMismatch handling.
+const TRASH_APP_VERSION = "2026-04-27";
 
 /**
  * Soft-delete: copy the row to trash_bin, then erase from source.
@@ -613,11 +626,19 @@ export async function trashAndDelete(tableName: string, idRaw: string | number):
   const expires = new Date(Date.now() + TRASH_TTL_MS).toISOString();
   const displayName = reg.nameField ? String((row as any)[reg.nameField] ?? "") : "";
   await db.execute(sql`
-    INSERT INTO trash_bin (table_name, row_id, row_data, display_name, display_type, expires_at)
-    VALUES (${tableName}, ${String(id)}, ${JSON.stringify(row)}::jsonb, ${displayName}, ${reg.displayType}, ${expires})
+    INSERT INTO trash_bin (table_name, row_id, row_data, display_name, display_type, expires_at, app_version)
+    VALUES (${tableName}, ${String(id)}, ${JSON.stringify(row)}::jsonb, ${displayName}, ${reg.displayType}, ${expires}, ${TRASH_APP_VERSION})
   `);
   await db.delete(reg.table).where(eq(reg.pk, id));
   return true;
+}
+
+/** Structured error so the API can surface a 409 conflict cleanly to the UI. */
+export class TrashRestoreConflictError extends Error {
+  constructor(public readonly tableName: string, public readonly rowId: string) {
+    super(`Cannot restore: a row with id="${rowId}" already exists in "${tableName}". Delete or rename the conflicting row, then try again.`);
+    this.name = "TrashRestoreConflictError";
+  }
 }
 
 export interface TrashItem {
@@ -656,6 +677,15 @@ export async function restoreTrash(trashId: number): Promise<{ tableName: string
   const item = result.rows[0] as any;
   const reg = TRASH_REGISTRY[item.table_name];
   if (!reg) throw new Error(`Cannot restore: table "${item.table_name}" not in TRASH_REGISTRY`);
+  // Pre-flight PK collision check so the UI can show a clear 409 instead
+  // of the raw Postgres unique-violation. Most likely cause: user created
+  // a new entity with the original id (or a deterministic id like
+  // project_name) while the old was sitting in trash.
+  const idVal = reg.pkType === "int" ? Number(item.row_id) : String(item.row_id);
+  const existing = await db.select().from(reg.table).where(eq(reg.pk, idVal));
+  if (existing.length > 0) {
+    throw new TrashRestoreConflictError(item.table_name, String(item.row_id));
+  }
   // Re-insert the original row data (including its old id, so links/
   // foreign keys from elsewhere still resolve).
   await db.insert(reg.table).values(item.row_data as any);

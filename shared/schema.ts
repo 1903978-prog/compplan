@@ -351,6 +351,34 @@ export const pricingCases = pgTable("pricing_cases", {
   updated_at: text("updated_at").notNull(),
 });
 
+// Insert schema for pricing_cases write endpoints. Server-side validators
+// strip unknown keys so the client can't push columns we didn't declare.
+// Most fields are optional: the table has DB defaults and the client
+// often saves partial state (e.g. just status + staffing).
+export const insertPricingCaseSchema = createInsertSchema(pricingCases).partial({
+  client_name: true,
+  industry: true,
+  country: true,
+  region: true,
+  pe_owned: true,
+  revenue_band: true,
+  price_sensitivity: true,
+  duration_weeks: true,
+  notes: true,
+  status: true,
+  staffing: true,
+  recommendation: true,
+  case_discounts: true,
+  case_timelines: true,
+  revision_letter: true,
+  created_at: true,
+  updated_at: true,
+}).extend({
+  // project_name is the only required-by-the-server field beyond an id.
+  project_name: z.string().min(1).max(60),
+});
+export type InsertPricingCase = z.infer<typeof insertPricingCaseSchema>;
+
 export const pricingProposals = pgTable("pricing_proposals", {
   id: serial("id").primaryKey(),
   proposal_date: text("proposal_date").notNull(),

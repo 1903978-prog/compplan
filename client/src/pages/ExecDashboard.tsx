@@ -162,6 +162,11 @@ export default function ExecDashboard() {
   // Active pricing cases — used by the "Commercial Options (3 timelines)"
   // card to preview each deal's Net fee across its configured timelines.
   const [pricingCases, setPricingCases] = useState<any[]>([]);
+  // Admin role defaults — used as fallback rate when a staffing line has
+  // daily_rate_used = 0 (legacy drift). Without this, deriveNetWeekly
+  // would silently return 0 for any pre-rec-pinned case with drifted
+  // staffing rates.
+  const [pricingRoles, setPricingRoles] = useState<{ id: string; default_daily_rate: number }[]>([]);
   const [loading, setLoading] = useState(!cached); // skip spinner if cache is warm
   const [lastFetch, setLastFetch] = useState<Date | null>(cached?.ts ? new Date(cached.ts) : null);
 
@@ -172,12 +177,13 @@ export default function ExecDashboard() {
       // already has content and we're just silently refreshing.
       if (!cached) setLoading(true);
       try {
-        const [cRes, iRes, pRes, wRes, casesRes] = await Promise.all([
+        const [cRes, iRes, pRes, wRes, casesRes, settingsRes] = await Promise.all([
           fetch("/api/hiring/candidates",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/harvest/invoices",   { credentials: "include" }).then(r => r.ok ? r.json().then(d => d.invoices ?? []) : []),
           fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/won-projects",       { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/pricing/cases",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
+          fetch("/api/pricing/settings",   { credentials: "include" }).then(r => r.ok ? r.json() : null),
         ]);
         if (cancelled) return;
         const c = Array.isArray(cRes) ? cRes : [];
@@ -189,6 +195,8 @@ export default function ExecDashboard() {
         setProposals(p);
         setWonProjects(w);
         setPricingCases(Array.isArray(casesRes) ? casesRes : []);
+        const roles = Array.isArray(settingsRes?.roles) ? settingsRes.roles : [];
+        setPricingRoles(roles.map((r: any) => ({ id: r.id, default_daily_rate: Number(r.default_daily_rate ?? 0) })));
         setLastFetch(new Date());
         writeCache(c, i, p, w);
       } catch (e) {
@@ -615,10 +623,19 @@ export default function ExecDashboard() {
           const stored = c.recommendation?.target_weekly;
           if (typeof stored === "number" && stored > 0) return stored;
           const staffing = Array.isArray(c.staffing) ? c.staffing : [];
+          // Fallback rate: line.daily_rate_used if > 0, else admin role's
+          // default. Mirrors effectiveLineRate / pricingEngine.rateOf so
+          // legacy drift (line.daily_rate_used = 0) doesn't silently
+          // collapse the cost to 0.
+          const rateOf = (l: any): number => {
+            const stored = Number(l.daily_rate_used ?? 0);
+            if (stored > 0) return stored;
+            const role = pricingRoles.find(r => r.id === l.role_id);
+            return role?.default_daily_rate ?? 0;
+          };
           const cost = staffing.reduce((s: number, l: any) =>
-            s + (l.days_per_week || 0) * (l.daily_rate_used || 0) * (l.count || 0), 0);
-          // 2.2× markup ~ 55% gross margin; calibrated to the EMV reference
-          // (€13.5k cost × 2.2 = €29.7k, close to target €30.5k).
+            s + (l.days_per_week || 0) * rateOf(l) * (l.count || 0), 0);
+          // 2.2× markup ~ 55% gross margin baseline.
           return Math.round(cost * 2.2);
         };
         const computeCols = (c: any) => {

@@ -2090,43 +2090,10 @@ export default function PricingTool() {
       });
       if (!res.ok) throw new Error("Save failed");
 
-      // Auto-create a matching "TBD" entry in the win-loss proposals
-      // table — but only when the user clicked "Save & Finalise"
-      // (status === "final"). Drafts are work-in-progress and don't
-      // belong in Past Projects yet; Active engagements are already
-      // tracked elsewhere (won_projects). Deduped by project_name.
-      const matchName = form.project_name.trim().toLowerCase();
-      const matching = form.project_name
-        ? proposals.find(p => (p.project_name || "").trim().toLowerCase() === matchName)
-        : undefined;
-
-      if (status === "final" && form.project_name && !matching) {
-        const baseWeekly = (recommendation?.target_weekly ?? 0) + manualDelta;
-        const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
-        const tbdPayload = {
-          proposal_date: new Date().toISOString().slice(0, 10),
-          project_name: form.project_name,
-          client_name: form.client_name || null,
-          fund_name: form.fund_name || null,
-          region: form.region,
-          pe_owned: form.pe_owned ? 1 : 0,
-          revenue_band: form.revenue_band,
-          price_sensitivity: form.price_sensitivity,
-          duration_weeks: form.duration_weeks,
-          weekly_price: weeklyGrossAdmin,
-          total_fee: Math.round(baseWeekly * form.duration_weeks),
-          outcome: "pending",
-          sector: form.sector || null,
-          project_type: form.project_type || null,
-        };
-        // AWAIT — without this loadAll() below races the POST and the
-        // new TBD row doesn't show up until the user manually refreshes.
-        await fetch("/api/pricing/proposals", {
-          method: "POST", credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(tbdPayload),
-        }).catch(() => { /* non-fatal: case saved, win-loss row can be added manually */ });
-      }
+      // (TBD auto-create / stale-cleanup happens server-side now — see
+      // ensureTbdProposalForFinalCase + removeStaleTbdForNonFinalCase in
+      // server/routes.ts. Removed the client-side duplicate POST that
+      // used to run alongside it and double-insert the proposal row.)
 
       toast({ title: status === "final" ? "Case finalised" : "Saved as draft" });
       setView("list");
@@ -2162,8 +2129,10 @@ export default function PricingTool() {
       const out = await r.json();
       const parts: string[] = [];
       if (out.inserted > 0) parts.push(`${out.inserted} added`);
-      if (out.deleted > 0)  parts.push(`${out.deleted} removed (restorable from /admin/trash)`);
+      if (out.deleted > 0)  parts.push(`${out.deleted} removed`);
+      if (out.deduped > 0)  parts.push(`${out.deduped} dup TBDs collapsed`);
       if (parts.length === 0) parts.push("Already in sync — no changes needed.");
+      else parts.push("(restorable from /admin/trash)");
       toast({ title: "TBD sync complete", description: parts.join(" · ") });
       loadAll();
     } finally {

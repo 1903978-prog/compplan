@@ -1116,8 +1116,16 @@ export function calculatePricing(
   }
 
   // ── Base staffing rate ────────────────────────────────────────────────────
+  // Fallback: if a legacy line has daily_rate_used = 0 (drift from old
+  // saves), use the admin role's default_daily_rate so the base doesn't
+  // collapse to 0 silently. Mirrors effectiveLineRate() in PricingTool.tsx.
+  const rateOf = (l: typeof input.staffing[number]): number => {
+    if (l.daily_rate_used && l.daily_rate_used > 0) return l.daily_rate_used;
+    const role = settings.roles.find(r => r.id === l.role_id);
+    return role?.default_daily_rate ?? 0;
+  };
   const base_weekly = input.staffing.reduce((sum, line) =>
-    sum + line.days_per_week * line.daily_rate_used * line.count, 0);
+    sum + line.days_per_week * rateOf(line) * line.count, 0);
 
   layer_trace.push({
     layer: "L1",

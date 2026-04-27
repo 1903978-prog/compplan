@@ -283,6 +283,35 @@ export default function AdminBackup() {
         </CardContent>
       </Card>
 
+      {/* ── DOWNLOAD CODE ─────────────────────────────────────────────── */}
+      <Card>
+        <CardContent className="p-5">
+          <div className="flex items-center gap-2 mb-2">
+            <Download className="w-5 h-5 text-blue-600" />
+            <h3 className="text-lg font-semibold">Download full code</h3>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Get the entire app source code as a zip — same content as the GitHub repo
+            tip-of-master, no node_modules / dist / .env. Useful as a quick offline
+            snapshot or to seed a new Claude Code session on another machine.
+          </p>
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => { window.location.href = "/api/code-download"; }}
+              size="lg"
+              variant="outline"
+              data-testid="button-download-code"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download code (zip)
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              The fastest official copy is <code className="text-xs bg-muted px-1 py-0.5 rounded">git clone https://github.com/1903978-prog/compplan</code>
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* ── RESTORE ───────────────────────────────────────────────────── */}
       <Card>
         <CardContent className="p-5">

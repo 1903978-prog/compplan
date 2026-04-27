@@ -95,6 +95,20 @@ async function main() {
   server.listen(port, "0.0.0.0", () => {
     console.log(`Eendigo Op Model running on port ${port}`);
   });
+
+  // Trash auto-purge heartbeat. seedDatabase() already purges on boot, but
+  // long-running services (no redeploy in 30+ days) would otherwise let
+  // expired rows linger. Run every 6h. Cheap query, errors are non-fatal.
+  const { purgeExpiredTrash } = await import("./storage");
+  const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+  setInterval(async () => {
+    try {
+      const n = await purgeExpiredTrash();
+      if (n > 0) console.log(`[trash] heartbeat purged ${n} expired item(s)`);
+    } catch (e) {
+      console.error("[trash] heartbeat purge failed:", e);
+    }
+  }, PURGE_INTERVAL_MS).unref();
 }
 
 main();
