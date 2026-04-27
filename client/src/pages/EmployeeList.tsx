@@ -23,6 +23,8 @@ import { ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
 
 function SalaryChart({ employeeId, hireDate, refreshKey }: { employeeId: string; hireDate: string; refreshKey?: number }) {
   const [history, setHistory] = useState<any[]>([]);
+  const [hover, setHover] = useState<{ x: number; date: string; gross: number; bonus: number; role: string; months: number } | null>(null);
+
   useEffect(() => {
     fetch(`/api/salary-history/${employeeId}`, { credentials: "include" })
       .then(r => r.json())
@@ -32,81 +34,261 @@ function SalaryChart({ employeeId, hireDate, refreshKey }: { employeeId: string;
       .catch(() => {});
   }, [employeeId, refreshKey]);
 
-  if (history.length === 0) return <div className="text-xs text-muted-foreground italic py-2">No salary history data.</div>;
+  if (history.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 p-6 text-center">
+        <div className="text-xs text-muted-foreground italic">No salary history yet.</div>
+        <div className="text-[10px] text-muted-foreground/70 mt-1">Add a salary log below to see the chart.</div>
+      </div>
+    );
+  }
 
+  // Yearly gross — gross_fixed_year is already annual, but the logged
+  // value may have been entered as monthly × months_paid; we trust the
+  // stored gross_fixed_year as the canonical annual figure. Switching
+  // from 12 to 13 monthly payments is therefore visible as a real ~8.3%
+  // jump on the yearly chart (which is correct — the person's yearly
+  // total income IS larger), unlike the monthly view where the per-
+  // month figure barely moves.
   const today = new Date().toISOString().slice(0, 10);
-  interface Pt { date: string; grossMonth: number; bonusPct: number; roleCode: string }
+  interface Pt { date: string; gross: number; bonusPct: number; roleCode: string; monthsPaid: number }
   const pts: Pt[] = history.map(h => ({
     date: h.effective_date,
-    grossMonth: Math.round(h.gross_fixed_year / (h.months_paid ?? 12)),
+    gross: Math.round(h.gross_fixed_year),
     bonusPct: h.bonus_pct ?? 0,
     roleCode: h.role_code ?? "",
+    monthsPaid: h.months_paid ?? 12,
   }));
-  if (pts.length > 0) pts.push({ ...pts[pts.length - 1], date: today });
+  // Extend the line to "today" so the latest period is visible.
+  const extended = [...pts];
+  if (pts.length > 0) extended.push({ ...pts[pts.length - 1], date: today });
 
-  const W = 560, H = 110, pad = { top: 8, right: 16, bottom: 28, left: 52 };
-  const iW = W - pad.left - pad.right, iH = H - pad.top - pad.bottom;
-  const t0 = new Date(pts[0].date).getTime(), t1 = new Date(pts[pts.length - 1].date).getTime();
+  // ── Layout (responsive, larger, more readable than the v1 chart) ──
+  const W = 720, H = 220, pad = { top: 28, right: 24, bottom: 36, left: 64 };
+  const iW = W - pad.left - pad.right;
+  const iH = H - pad.top - pad.bottom;
+
+  const t0 = new Date(extended[0].date).getTime();
+  const t1 = new Date(extended[extended.length - 1].date).getTime();
   const xOf = (d: string) => t1 === t0 ? 0 : ((new Date(d).getTime() - t0) / (t1 - t0)) * iW;
-  const gVals = pts.map(p => p.grossMonth);
-  const gMin = Math.min(...gVals) * 0.9, gMax = Math.max(...gVals) * 1.1;
+  const gVals = extended.map(p => p.gross);
+  const rawMin = Math.min(...gVals), rawMax = Math.max(...gVals);
+  // Pad the y-domain a little so peaks don't graze the top, and round
+  // the bounds to nice 5k multiples for cleaner tick labels.
+  const round5k = (v: number, dir: "up" | "down") => {
+    const k = 5000;
+    return dir === "up" ? Math.ceil(v / k) * k : Math.floor(v / k) * k;
+  };
+  const gMin = round5k(rawMin * 0.92, "down");
+  const gMax = round5k(rawMax * 1.08, "up");
   const yG = (v: number) => iH - ((v - gMin) / (gMax - gMin || 1)) * iH;
-  const bMax = Math.max(...pts.map(p => p.bonusPct), 1);
-  const yB = (v: number) => iH - (v / bMax) * iH;
 
-  const mkPath = (points: Pt[], yFn: (v: number) => number, key: "grossMonth" | "bonusPct") =>
-    points.map((p, i) => {
-      const x = xOf(p.date).toFixed(1), y = yFn(p[key]).toFixed(1);
-      return i === 0 ? `M${x},${y}` : `H${x} V${y}`;
-    }).join(" ");
+  // Step path — yearly gross steps up/down at each effective_date.
+  const stepPath = extended.map((p, i) => {
+    const x = xOf(p.date).toFixed(1);
+    const y = yG(p.gross).toFixed(1);
+    return i === 0 ? `M${x},${y}` : `H${x} V${y}`;
+  }).join(" ");
+  // Closed area for the gradient fill underneath the line.
+  const areaPath = `${stepPath} V${iH} H0 Z`;
 
-  const grossPath = mkPath(pts, yG, "grossMonth");
-  const bonusPath = mkPath(pts, yB, "bonusPct");
-  const gTicks = [gMin, (gMin + gMax) / 2, gMax];
-  const startYr = new Date(pts[0].date).getFullYear(), endYr = new Date(today).getFullYear();
+  // Y-axis ticks — 5 nice rounded values
+  const tickStep = round5k((gMax - gMin) / 4, "up");
+  const yTicks: number[] = [];
+  for (let v = gMin; v <= gMax + 1; v += tickStep) yTicks.push(v);
+
+  // X-axis year ticks
+  const startYr = new Date(extended[0].date).getFullYear();
+  const endYr = new Date(today).getFullYear();
   const yrTicks: { x: number; label: string }[] = [];
   for (let yr = startYr; yr <= endYr + 1; yr++) {
     const d = `${yr}-01-01`;
-    if (d >= pts[0].date && d <= today) yrTicks.push({ x: xOf(d), label: String(yr) });
+    if (d >= extended[0].date && d <= today) yrTicks.push({ x: xOf(d), label: String(yr) });
   }
 
+  const fmtEur = (v: number) =>
+    v >= 1_000_000 ? `€${(v / 1_000_000).toFixed(1)}M` :
+    v >= 1000      ? `€${Math.round(v / 1000)}k` :
+                     `€${v}`;
+
+  // Role-change markers — only render label when role_code transitions.
+  const roleMarkers: { x: number; label: string; date: string }[] = [];
+  let lastRole = "";
+  for (const h of history) {
+    if (h.role_code && h.role_code !== lastRole) {
+      roleMarkers.push({ x: xOf(h.effective_date), label: h.role_code, date: h.effective_date });
+      lastRole = h.role_code;
+    }
+  }
+
+  // Hover handler — finds the data point closest to the mouse x, then
+  // shows a vertical guide-line + tooltip card. Plays well with touch
+  // since we use pointer events on the overlay rect.
+  const handleHover = (e: React.PointerEvent<SVGRectElement>) => {
+    const svg = e.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const localX = ((e.clientX - rect.left) / rect.width) * W - pad.left;
+    if (localX < 0 || localX > iW) { setHover(null); return; }
+    // Pick the latest point whose x ≤ cursor x — step-function semantics.
+    let chosen = pts[0];
+    for (const p of pts) {
+      if (xOf(p.date) <= localX) chosen = p;
+      else break;
+    }
+    setHover({
+      x: xOf(chosen.date),
+      date: chosen.date,
+      gross: chosen.gross,
+      bonus: chosen.bonusPct,
+      role: chosen.roleCode,
+      months: chosen.monthsPaid,
+    });
+  };
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
-      <g transform={`translate(${pad.left},${pad.top})`}>
-        {gTicks.map((v, i) => <line key={i} x1={0} y1={yG(v)} x2={iW} y2={yG(v)} stroke="#e5e7eb" strokeWidth={0.5} />)}
-        <path d={grossPath} fill="none" stroke="#3b82f6" strokeWidth={2} />
-        {history.map((h, i) => (
-          <circle key={i} cx={xOf(h.effective_date)} cy={yG(Math.round(h.gross_fixed_year / (h.months_paid ?? 12)))} r={3} fill="#3b82f6" />
-        ))}
-        {bMax > 0 && <path d={bonusPath} fill="none" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 2" />}
-        <line x1={0} y1={0} x2={0} y2={iH} stroke="#d1d5db" strokeWidth={1} />
-        {gTicks.map((v, i) => (
-          <g key={i}>
-            <line x1={-3} y1={yG(v)} x2={0} y2={yG(v)} stroke="#9ca3af" strokeWidth={1} />
-            <text x={-6} y={yG(v) + 4} textAnchor="end" fontSize={8} fill="#6b7280">€{Math.round(v / 1000)}k</text>
-          </g>
-        ))}
-        <line x1={0} y1={iH} x2={iW} y2={iH} stroke="#d1d5db" strokeWidth={1} />
-        {yrTicks.map((t, i) => (
-          <g key={i}>
-            <line x1={t.x} y1={iH} x2={t.x} y2={iH + 4} stroke="#9ca3af" strokeWidth={1} />
-            <text x={t.x} y={iH + 14} textAnchor="middle" fontSize={8} fill="#6b7280">{t.label}</text>
-          </g>
-        ))}
-        {history.map((h, i) => h.role_code ? (
-          <g key={i}>
-            <line x1={xOf(h.effective_date)} y1={0} x2={xOf(h.effective_date)} y2={iH} stroke="#e5e7eb" strokeWidth={0.5} strokeDasharray="3 2" />
-            <text x={xOf(h.effective_date) + 3} y={14} fontSize={7} fill="#9ca3af">{h.role_code}</text>
-          </g>
-        ) : null)}
-        <g transform={`translate(${iW - 88}, 2)`}>
-          <line x1={0} y1={4} x2={10} y2={4} stroke="#3b82f6" strokeWidth={2} />
-          <text x={13} y={8} fontSize={7} fill="#3b82f6">Monthly Gross</text>
-          <line x1={0} y1={14} x2={10} y2={14} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 2" />
-          <text x={13} y={18} fontSize={7} fill="#ef4444">Bonus %</text>
+    <div className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Salary history chart — yearly gross over time">
+        <defs>
+          <linearGradient id="salaryArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"  stopColor="#6366f1" stopOpacity="0.32" />
+            <stop offset="60%" stopColor="#6366f1" stopOpacity="0.08" />
+            <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="salaryLine" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"  stopColor="#4f46e5" />
+            <stop offset="100%" stopColor="#7c3aed" />
+          </linearGradient>
+        </defs>
+
+        <g transform={`translate(${pad.left},${pad.top})`}>
+          {/* Y-axis grid lines */}
+          {yTicks.map((v, i) => (
+            <line key={i} x1={0} y1={yG(v)} x2={iW} y2={yG(v)} stroke="hsl(var(--border))" strokeOpacity={0.5} strokeDasharray="2 4" />
+          ))}
+
+          {/* Filled area under the salary line */}
+          <path d={areaPath} fill="url(#salaryArea)" />
+
+          {/* Salary step line */}
+          <path d={stepPath} fill="none" stroke="url(#salaryLine)" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
+
+          {/* Step-change dots at every effective_date */}
+          {history.map((h, i) => {
+            const cx = xOf(h.effective_date);
+            const cy = yG(Math.round(h.gross_fixed_year));
+            return (
+              <g key={i}>
+                <circle cx={cx} cy={cy} r={5} fill="white" stroke="#4f46e5" strokeWidth={2} />
+                <circle cx={cx} cy={cy} r={2} fill="#4f46e5" />
+              </g>
+            );
+          })}
+
+          {/* Role-change vertical markers + pill labels */}
+          {roleMarkers.map((r, i) => (
+            <g key={i}>
+              <line
+                x1={r.x} y1={-4} x2={r.x} y2={iH}
+                stroke="#94a3b8" strokeWidth={1} strokeDasharray="3 3" opacity={0.6}
+              />
+              <g transform={`translate(${r.x}, -10)`}>
+                <rect x={-14} y={-9} rx={3} ry={3} width={28} height={14} fill="#1e293b" />
+                <text x={0} y={1} textAnchor="middle" fontSize={9} fontWeight={700} fill="white" fontFamily="ui-sans-serif, system-ui">
+                  {r.label}
+                </text>
+              </g>
+            </g>
+          ))}
+
+          {/* Y-axis labels (yearly gross in k€) */}
+          <line x1={0} y1={0} x2={0} y2={iH} stroke="hsl(var(--border))" strokeWidth={1} />
+          {yTicks.map((v, i) => (
+            <g key={i}>
+              <line x1={-4} y1={yG(v)} x2={0} y2={yG(v)} stroke="hsl(var(--border))" strokeWidth={1} />
+              <text x={-8} y={yG(v) + 4} textAnchor="end" fontSize={11} fontFamily="ui-sans-serif, system-ui" fill="hsl(var(--muted-foreground))" fontWeight={500}>
+                {fmtEur(v)}
+              </text>
+            </g>
+          ))}
+
+          {/* X-axis */}
+          <line x1={0} y1={iH} x2={iW} y2={iH} stroke="hsl(var(--border))" strokeWidth={1} />
+          {yrTicks.map((t, i) => (
+            <g key={i}>
+              <line x1={t.x} y1={iH} x2={t.x} y2={iH + 5} stroke="hsl(var(--border))" strokeWidth={1} />
+              <text x={t.x} y={iH + 18} textAnchor="middle" fontSize={11} fontFamily="ui-sans-serif, system-ui" fill="hsl(var(--muted-foreground))" fontWeight={500}>
+                {t.label}
+              </text>
+            </g>
+          ))}
+
+          {/* Y-axis title */}
+          <text x={-pad.left + 8} y={-pad.top + 14} fontSize={10} fill="hsl(var(--muted-foreground))" fontWeight={600} fontFamily="ui-sans-serif, system-ui">
+            Yearly gross (€)
+          </text>
+
+          {/* Hover crosshair + tooltip */}
+          {hover && (
+            <g pointerEvents="none">
+              <line x1={hover.x} y1={0} x2={hover.x} y2={iH} stroke="#4f46e5" strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
+              <circle cx={hover.x} cy={yG(hover.gross)} r={6} fill="#4f46e5" stroke="white" strokeWidth={2} />
+            </g>
+          )}
+
+          {/* Invisible overlay to capture pointer events */}
+          <rect
+            x={0} y={0} width={iW} height={iH}
+            fill="transparent"
+            onPointerMove={handleHover}
+            onPointerLeave={() => setHover(null)}
+          />
         </g>
-      </g>
-    </svg>
+      </svg>
+
+      {/* Tooltip card — sits outside the SVG so it can use full
+          shadcn/Tailwind styling (shadows, rounded corners, etc.). */}
+      {hover && (
+        <div
+          className="absolute pointer-events-none bg-popover text-popover-foreground border rounded-md shadow-lg px-3 py-2 text-xs"
+          style={{
+            left: `calc(${((hover.x + pad.left) / W) * 100}% + 12px)`,
+            top: 8,
+            minWidth: 160,
+          }}
+        >
+          <div className="font-semibold mb-1">
+            {new Date(hover.date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Yearly gross</span>
+            <span className="font-mono font-semibold">€{hover.gross.toLocaleString("it-IT")}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Months paid</span>
+            <span className="font-mono">{hover.months}×</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Per month</span>
+            <span className="font-mono text-muted-foreground">
+              €{Math.round(hover.gross / hover.months).toLocaleString("it-IT")}
+            </span>
+          </div>
+          {hover.bonus > 0 && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground">Bonus target</span>
+              <span className="font-mono text-rose-600">{hover.bonus}%</span>
+            </div>
+          )}
+          {hover.role && (
+            <div className="flex items-center justify-between gap-3 mt-1 pt-1 border-t border-border/50">
+              <span className="text-muted-foreground">Role</span>
+              <span className="font-bold">{hover.role}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1357,6 +1539,12 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
   const [ratings12, setRatings12] = useState<{ month: string; score: number | null }[]>(initialRatings12);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [salaryRefreshKey, setSalaryRefreshKey] = useState(0);
+  // Auto-save plumbing — debounce form changes and write through after
+  // a brief idle period so the user never has to remember to click
+  // Save. The Save button stays as an immediate-save affordance and a
+  // status indicator (Saving… / Saved).
+  const autoSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitialMountRef = React.useRef(true);
 
   // Reset form when employee changes
   useEffect(() => {
@@ -1442,12 +1630,63 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
       if (grossChanged || roleChanged) setSalaryRefreshKey(k => k + 1);
       setSaveState("saved");
       setTimeout(() => setSaveState("idle"), 1500);
-      toast({ title: "Employee saved" });
+      // Skip the toast for auto-saves — too noisy. Only show on
+      // explicit submit (the form button click goes through this same
+      // path but with isAutoSave=false).
+      if (!(data as any).__autoSave) {
+        toast({ title: "Employee saved" });
+      }
     } catch (err) {
       setSaveState("idle");
       toast({ title: "Error saving employee", description: String(err), variant: "destructive" });
     }
   };
+
+  // ── Auto-save effect ─────────────────────────────────────────────
+  // Watches every form field via react-hook-form's watch() subscription
+  // and triggers `onSubmit` after 1.5s of idle time. The merged-fields
+  // logic from the explicit submit handler is replicated here so inline
+  // store updates (promo_increase_override, completed_tests, etc.) are
+  // preserved. Validation runs through the same employeeInputSchema —
+  // if it fails (mid-edit, missing required field) the save is silently
+  // skipped and re-attempted on the next change.
+  useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      return;
+    }
+    const subscription = form.watch(() => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = setTimeout(() => {
+        const raw = form.getValues();
+        // Merge inline-updated fields from the latest employee snapshot
+        // so auto-save doesn't clobber inline edits made elsewhere.
+        raw.promo_increase_override = employee.promo_increase_override;
+        raw.completed_tests = employee.completed_tests;
+        (raw as any).onboarding_ratings = (employee as any).onboarding_ratings;
+        (raw as any).yearly_reviews = (employee as any).yearly_reviews;
+        (raw as any).comex_areas = (employee as any).comex_areas;
+        (raw as any).university_grade = (employee as any).university_grade;
+        (raw as any).university_grade_type = (employee as any).university_grade_type;
+        (raw as any).promotion_discussion_notes = (employee as any).promotion_discussion_notes;
+        const result = employeeInputSchema.safeParse(raw);
+        if (!result.success) {
+          // Mid-edit invalid state — skip silently. The form will be
+          // valid again on the next keystroke and we'll retry.
+          return;
+        }
+        (result.data as any).__autoSave = true;
+        onSubmit(result.data);
+      }, 1500);
+    });
+    return () => {
+      subscription.unsubscribe();
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+    // employee.id is the stable key for which employee we're editing;
+    // form is a stable react-hook-form instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee.id]);
 
   const handleDetailDelete = async () => {
     if (confirm("Are you sure you want to delete this employee?")) {
