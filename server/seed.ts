@@ -595,6 +595,18 @@ export async function seedDatabase() {
     UPDATE external_contacts SET kind = 'intern'
     WHERE email = 'alessandro.monti@eendigo.com' AND kind = 'partner'
   `);
+  await db.execute(sql`
+    UPDATE external_contacts SET kind = 'intern'
+    WHERE email = 'gabriele.papa@eendigo.com' AND kind = 'freelancer'
+  `);
+  await db.execute(sql`
+    UPDATE external_contacts SET kind = 'intern'
+    WHERE email = 'leonardo.briccoli@eendigo.com' AND kind = 'freelancer'
+  `);
+  await db.execute(sql`
+    UPDATE external_contacts SET kind = 'intern'
+    WHERE email = 'melissa.marten@eendigo.com' AND kind = 'freelancer'
+  `);
 
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`

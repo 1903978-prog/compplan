@@ -321,38 +321,31 @@ export default function EmployeeList() {
     } catch { /* non-fatal */ }
   };
 
-  // ── "Copy all emails" — assembles the full Eendigo mailing list ────
-  // Format: `Name <email>` for every contact with a name, joined by
-  // `; ` so it pastes directly into the Outlook / Gmail "To" field.
-  // Sorted case-insensitive by name. Includes:
-  //   • All external_contacts (freelancers, partners, founders)
-  //   • Any employee with an email stored in localStorage (TDL feature)
+  // ── "Copy all emails" — full Eendigo mailing list ──────────────────
+  // Plain emails only, sorted alphabetically by email, joined by `; `.
+  // Pastes directly into Outlook / Gmail "To" field. Outlook will
+  // resolve display names from its own contact book on send.
+  // Includes external_contacts + any employee with a TDL-stored email.
   const copyAllEmails = async () => {
-    const entries: { name: string; email: string }[] = [];
+    const all = new Set<string>();
     for (const c of externalContacts) {
-      if (c.email && c.name) entries.push({ name: c.name, email: c.email });
+      if (c.email && c.email.includes("@")) all.add(c.email.toLowerCase().trim());
     }
     // Pick up employee emails captured by the existing TDL "person email"
     // localStorage feature so people who use that don't get left out.
     for (const emp of employees) {
       const stored = personEmails[emp.name];
-      if (stored && stored.includes("@")) entries.push({ name: emp.name, email: stored });
+      if (stored && stored.includes("@")) all.add(stored.toLowerCase().trim());
     }
-    // Dedupe by lowercased email — newest entry wins.
-    const byEmail = new Map<string, { name: string; email: string }>();
-    for (const e of entries) byEmail.set(e.email.toLowerCase(), e);
-    const sorted = [...byEmail.values()].sort((a, b) =>
-      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-    );
-    if (sorted.length === 0) {
+    if (all.size === 0) {
       toast({ title: "No emails to copy", description: "Add some freelancers/partners first." });
       return;
     }
-    const text = sorted.map(e => `${e.name} <${e.email}>`).join("; ");
+    const text = [...all].sort().join("; ");
     try {
       await navigator.clipboard.writeText(text);
       toast({
-        title: `Copied ${sorted.length} email${sorted.length === 1 ? "" : "s"}`,
+        title: `Copied ${all.size} email${all.size === 1 ? "" : "s"}`,
         description: "Paste into Outlook / Gmail To: field.",
       });
     } catch {
