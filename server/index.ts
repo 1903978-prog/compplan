@@ -1,3 +1,7 @@
+// MUST be first — populates process.env from .env before db.ts (transitively
+// imported below) reads DATABASE_URL at module-eval time.
+import "./loadEnv";
+
 import express, { type Request, type Response, type NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -5,37 +9,6 @@ import { setupAuth } from "./auth";
 import { seedDatabase } from "./seed";
 import path from "path";
 import fs from "fs";
-
-// ── Minimal .env loader ───────────────────────────────────────────────────────
-// Load a .env file at the project root before any other code reads from
-// process.env. We avoid `dotenv` to keep the dep tree small — this handles
-// `KEY=value`, `KEY="value with spaces"`, `KEY='value'`, blank lines, and
-// `#` comments. Silently no-ops if the file is missing (production / Render
-// sets env vars directly through the dashboard, so .env is dev-only).
-// Existing process.env values (e.g. from the shell) take precedence so
-// CI overrides still work.
-(function loadDotenv() {
-  try {
-    const envPath = path.join(process.cwd(), ".env");
-    if (!fs.existsSync(envPath)) return;
-    const text = fs.readFileSync(envPath, "utf8");
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (!line || line.startsWith("#")) continue;
-      const eq = line.indexOf("=");
-      if (eq < 0) continue;
-      const key = line.slice(0, eq).trim();
-      let val = line.slice(eq + 1).trim();
-      // Strip surrounding quotes if present
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      if (!(key in process.env)) process.env[key] = val;
-    }
-  } catch {
-    // Best-effort — missing or malformed .env shouldn't prevent server start.
-  }
-})();
 
 const app = express();
 app.set("trust proxy", 1);
