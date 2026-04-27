@@ -617,32 +617,62 @@ export async function seedDatabase() {
   await db.execute(sql`
     ALTER TABLE employees ADD COLUMN IF NOT EXISTS email TEXT
   `);
-  // Backfill known emails — match by FIRST NAME (case-insensitive).
-  // Conditional on email IS NULL so any user-entered email survives.
-  const empEmailUpdates: { firstName: string; email: string }[] = [
-    { firstName: "alessandro", email: "alessandro.monti@eendigo.com" },
-    { firstName: "defne",      email: "defne.isler@eendigo.com" },
-    { firstName: "edoardo",    email: "edoardo.tiani@eendigo.com" },
-    { firstName: "gabriele",   email: "gabriele.papa@eendigo.com" },
-    { firstName: "leonardo",   email: "leonardo.briccoli@eendigo.com" },
-    { firstName: "malika",     email: "malika.makhmutkhazhieva@eendigo.com" },
+  // Backfill emails AND surnames for the standing roster. Match by
+  // FIRST NAME (case-insensitive), but only when there's exactly ONE
+  // such employee — the two-Marcos / two-Alessandros problem. If
+  // multiple employees share a first name, skip and warn so the user
+  // resolves manually via Edit Employee.
+  const empEmailUpdates: { firstName: string; fullName: string; email: string }[] = [
+    { firstName: "alessandro", fullName: "Alessandro Monti",        email: "alessandro.monti@eendigo.com" },
+    { firstName: "defne",      fullName: "Defne Isler",             email: "defne.isler@eendigo.com" },
+    { firstName: "edoardo",    fullName: "Edoardo Tiani",           email: "edoardo.tiani@eendigo.com" },
+    { firstName: "gabriele",   fullName: "Gabriele Papa",           email: "gabriele.papa@eendigo.com" },
+    { firstName: "leonardo",   fullName: "Leonardo Briccoli",       email: "leonardo.briccoli@eendigo.com" },
+    { firstName: "malika",     fullName: "Malika Makhmutkhazhieva", email: "malika.makhmutkhazhieva@eendigo.com" },
   ];
   for (const u of empEmailUpdates) {
+    // Count first-name matches first to avoid the blanket-update
+    // problem. The "needs work" filter looks for either missing email
+    // OR a name that's still just the first name (no surname yet).
+    const countRes = await db.execute(sql`
+      SELECT COUNT(*)::int AS n FROM employees
+      WHERE LOWER(SPLIT_PART(name, ' ', 1)) = ${u.firstName}
+    `);
+    const n = (countRes.rows[0] as any)?.n ?? 0;
+    if (n === 0) continue;
+    if (n > 1) {
+      console.warn(`[seed] Skipping email/surname backfill for "${u.firstName}" — ${n} employees with that first name. Resolve manually via Employees → Edit.`);
+      continue;
+    }
+    // Set email if missing.
     await db.execute(sql`
       UPDATE employees
       SET email = ${u.email}
       WHERE LOWER(SPLIT_PART(name, ' ', 1)) = ${u.firstName}
         AND (email IS NULL OR email = '')
     `);
-  }
-  // Now remove the duplicates from external_contacts. Routes the
-  // delete through trash_bin so it's recoverable for 30 days. Done
-  // only after employees.email is populated so we don't lose the
-  // address. Conditional on actually existing in external_contacts.
-  for (const u of empEmailUpdates) {
+    // Add surname if the stored name is still just the first name
+    // (case-insensitive trimmed match). Don't overwrite if the user
+    // has already typed a different full name.
     await db.execute(sql`
-      DELETE FROM external_contacts WHERE email = ${u.email}
+      UPDATE employees
+      SET name = ${u.fullName}
+      WHERE LOWER(TRIM(name)) = ${u.firstName}
     `);
+  }
+  // Remove duplicates from external_contacts ONLY when the matching
+  // employee actually has the email now. Without this guard, a
+  // SKIPPED UPDATE (count != 1 above) would still cause the DELETE
+  // → permanent data loss with no employee record holding the email.
+  for (const u of empEmailUpdates) {
+    const matched = await db.execute(sql`
+      SELECT 1 FROM employees WHERE email = ${u.email} LIMIT 1
+    `);
+    if (matched.rows.length > 0) {
+      await db.execute(sql`
+        DELETE FROM external_contacts WHERE email = ${u.email}
+      `);
+    }
   }
 
   // ── TBD self-heal: keep pending proposals aligned with Final cases ──
@@ -652,14 +682,27 @@ export async function seedDatabase() {
   // (no matching case) are left alone. This makes the dashboard show
   // the right TBD count automatically without requiring the user to
   // click the "Sync TBD" button on the Pricing page.
+  // Self-heal logic: remove pending pricing_proposals whose project
+  // name has a matching pricing_case but NO matching Final case. Uses
+  // NOT EXISTS instead of a JOIN so duplicate cases (one Final + one
+  // Draft sharing a project_name) don't cause the Final twin's TBD
+  // to be wrongly deleted via the Draft twin's match.
   try {
     const stale = await db.execute(sql`
       SELECT p.id
       FROM pricing_proposals p
-      JOIN pricing_cases c
-        ON LOWER(TRIM(p.project_name)) = LOWER(TRIM(c.project_name))
       WHERE p.outcome = 'pending'
-        AND c.status <> 'final'
+        AND p.project_name IS NOT NULL
+        AND TRIM(p.project_name) <> ''
+        AND EXISTS (
+          SELECT 1 FROM pricing_cases c
+          WHERE LOWER(TRIM(c.project_name)) = LOWER(TRIM(p.project_name))
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM pricing_cases c
+          WHERE LOWER(TRIM(c.project_name)) = LOWER(TRIM(p.project_name))
+            AND c.status = 'final'
+        )
     `);
     if (stale.rows.length > 0) {
       const ids = stale.rows.map((r: any) => Number(r.id)).filter(Boolean);
