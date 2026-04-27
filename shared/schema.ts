@@ -324,6 +324,11 @@ export const pricingCases = pgTable("pricing_cases", {
   // the client-facing slide (e.g. mid-project rate reset, or compound-
   // on-post-discount commit math). Null = use engine default.
   case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number; note?: string }[] | null>(),
+  // proposal_options_count: how many of the case_timelines columns to render
+  // in the Commercial Proposal block. 1 = single-option mode (hides Options
+  // 2 & 3); 3 = full 3-option mode (default). State for hidden options is
+  // preserved in case_timelines so toggling back doesn't lose user input.
+  proposal_options_count: integer("proposal_options_count").notNull().default(3),
   // Revision letter appended to project_name in the display (A / B / C / D).
   // A proposal goes through multiple revisions with the client — each is
   // a separate row (same project_name, different letter). Default "A" —
@@ -443,6 +448,15 @@ export const pricingProposals = pgTable("pricing_proposals", {
   // last_invoice_at: most recent invoice date for this engagement (YYYY-MM-DD).
   // Used to flag "needs invoice" when >30 days have passed AND project is ongoing.
   last_invoice_at: text("last_invoice_at"),
+  // win_probability (0-100): only meaningful for outcome='pending'. Sales
+  // Director sets/updates this each cycle. Used by the staffing Gantt to
+  // compute probability-weighted demand and by the Hiring Manager's
+  // buffer-rule hiring trigger.
+  win_probability: real("win_probability"),
+  // start_date (YYYY-MM-DD): when delivery begins. If null, the staffing
+  // Gantt falls back to proposal_date as a proxy. Sales Director should
+  // commit start_date only after checking /exec/staffing for capacity.
+  start_date: text("start_date"),
   // weekly_reports: per-week delivery status snapshots written by the team.
   // The Delivery Director skill reads these every Monday to compute project
   // health (green/amber/red) and surface risks. Each entry:

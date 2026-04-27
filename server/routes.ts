@@ -368,8 +368,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Whitelist editable fields. role_key, parent_role_key, sort_order are
       // structural and shouldn't be changed via this endpoint (use a
       // dedicated migration if the org tree shape changes).
-      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d"]) {
+      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d", "parent_role_key"]) {
         if (k in req.body) allowed[k] = req.body[k];
+      }
+      // Sanity: parent_role_key must reference a real role (or be null for CEO).
+      // Block self-parenting so we don't break the tree render.
+      if (typeof allowed.parent_role_key === "string") {
+        const parent = await db.select().from(orgAgents).where(eq(orgAgents.role_key, allowed.parent_role_key as string));
+        if (parent.length === 0) { res.status(400).json({ message: "Unknown parent_role_key" }); return; }
+        const self = await db.select().from(orgAgents).where(eq(orgAgents.id, safeInt(req.params.id)));
+        if (self[0] && self[0].role_key === allowed.parent_role_key) {
+          res.status(400).json({ message: "Role cannot report to itself" }); return;
+        }
       }
       // Cap array sizes (jsonb-bomb defence).
       if (Array.isArray(allowed.goals)) allowed.goals = (allowed.goals as unknown[]).slice(0, 30);
@@ -720,22 +730,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // the previously client-side fetch which had a silent catch and could
   // leave the row uncreated if the call ever failed. Idempotent — uses
   // case-insensitive project_name match against pricing_proposals.
-  async function ensureTbdProposalForFinalCase(caseRow: { project_name?: string | null; status?: string | null; client_name?: string | null; fund_name?: string | null; region?: string | null; pe_owned?: number | null; revenue_band?: string | null; price_sensitivity?: string | null; duration_weeks?: number | null; sector?: string | null; project_type?: string | null; recommendation?: any }) {
+  async function ensureTbdProposalForFinalCase(caseRow: { id?: number; project_name?: string | null; status?: string | null; client_name?: string | null; fund_name?: string | null; region?: string | null; pe_owned?: number | null; revenue_band?: string | null; price_sensitivity?: string | null; duration_weeks?: number | null; sector?: string | null; project_type?: string | null; recommendation?: any }) {
     if (caseRow.status !== "final") return;
     const name = (caseRow.project_name ?? "").trim();
     if (!name) return;
     const all = await storage.getPricingProposals();
     const lower = name.toLowerCase();
-    const exists = all.some(p => (p.project_name ?? "").trim().toLowerCase() === lower);
-    if (exists) return;
-    // Compute weekly_price + total_fee from the case's saved recommendation
-    // (jsonb { target_weekly, … }). Fallback to 0/0 if missing — better
-    // than refusing to create the row, but visually surfaces "no rec" cases.
+    // weekly_price = engine's recommended NET1 weekly (target_weekly). This
+    // matches the headline figure in the Pricing Waterfall + the cases-list
+    // Target/wk column. Previously stored target_weekly × 1.08 which baked
+    // in admin and confused the user.
     const targetWeekly = Number(caseRow.recommendation?.target_weekly ?? 0);
     const dur = Number(caseRow.duration_weeks ?? 0);
-    // 8% admin fee matches the default in the client-side handleSave path.
-    const weeklyGrossAdmin = targetWeekly > 0 ? Math.round(targetWeekly * 1.08) : 0;
+    const weeklyNet = targetWeekly > 0 ? Math.round(targetWeekly) : 0;
     const totalFee = targetWeekly > 0 && dur > 0 ? Math.round(targetWeekly * dur) : 0;
+
+    // If a pending TBD already exists, refresh its weekly_price + total_fee
+    // so a re-saved case (with updated recommendation) doesn't leave a stale
+    // weekly behind. Won/Lost are user-decided, never touched.
+    const matching = all.find(p => (p.project_name ?? "").trim().toLowerCase() === lower);
+    if (matching) {
+      if (matching.outcome === "pending" && weeklyNet > 0 && (matching.id != null)) {
+        const stale = matching.weekly_price !== weeklyNet || matching.total_fee !== totalFee;
+        if (stale) {
+          await storage.updatePricingProposal(matching.id, {
+            weekly_price: weeklyNet,
+            total_fee: totalFee,
+            duration_weeks: caseRow.duration_weeks ?? matching.duration_weeks,
+          });
+        }
+      }
+      return; // existing row — done
+    }
+
     const today = new Date().toISOString().slice(0, 10);
     await storage.createPricingProposal({
       proposal_date: today,
@@ -747,7 +774,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       revenue_band: caseRow.revenue_band ?? "above_1b",
       price_sensitivity: caseRow.price_sensitivity ?? null,
       duration_weeks: caseRow.duration_weeks ?? null,
-      weekly_price: weeklyGrossAdmin,
+      weekly_price: weeklyNet,
       total_fee: totalFee,
       outcome: "pending",
       sector: caseRow.sector ?? null,

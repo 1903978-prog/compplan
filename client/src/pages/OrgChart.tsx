@@ -184,8 +184,28 @@ export default function OrgChart() {
   }
 
   const ceo = roles.find(r => r.role_key === "ceo");
-  const reports = roles.filter(r => r.parent_role_key === "ceo").sort((a, b) => a.sort_order - b.sort_order);
-  // (Future: COO + grandchildren render below)
+  // Build a tree from parent_role_key. Direct reports of CEO render in row 2.
+  // Roles that report to a non-CEO role (e.g. Pricing → CFO) render beneath
+  // their parent in row 3+. Use a recursive helper.
+  const childrenOf = (key: string): OrgRole[] =>
+    roles.filter(r => r.parent_role_key === key).sort((a, b) => a.sort_order - b.sort_order);
+  const directReports = ceo ? childrenOf(ceo.role_key) : [];
+
+  const updateReportsTo = async (role: OrgRole, newParent: string | null) => {
+    const r = await fetch(`/api/org-chart/${role.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parent_role_key: newParent }),
+    });
+    if (r.ok) {
+      const updated = await r.json();
+      setRoles(prev => prev.map(x => x.id === updated.id ? updated : x));
+      if (openRole?.id === updated.id) setOpenRole(updated);
+      toast({ title: "Reports-to updated" });
+    } else {
+      toast({ title: "Failed to update", variant: "destructive" });
+    }
+  };
 
   return (
     <div className="container mx-auto py-6 max-w-7xl">
@@ -201,7 +221,7 @@ export default function OrgChart() {
 
       {/* CEO row */}
       {ceo && (
-        <div className="flex justify-center mb-8">
+        <div className="flex justify-center mb-3">
           <RoleCard
             role={ceo} highlight
             knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
@@ -211,24 +231,55 @@ export default function OrgChart() {
         </div>
       )}
 
-      {/* Connector line */}
-      {ceo && reports.length > 0 && (
-        <div className="flex justify-center mb-2">
-          <div className="w-0.5 h-6 bg-border" />
+      {/* Direct reports row + connector lines */}
+      {ceo && directReports.length > 0 && (
+        <div className="relative">
+          {/* Vertical line down from CEO */}
+          <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-3 bg-foreground/40" />
+          {/* Horizontal line spanning all reports */}
+          <div className="absolute left-[5%] right-[5%] top-3 h-0.5 bg-foreground/40" />
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 pt-6 relative">
+            {directReports.map(r => {
+              const grandchildren = childrenOf(r.role_key);
+              return (
+                <div key={r.id} className="flex flex-col items-stretch relative">
+                  {/* Vertical drop from horizontal line into this card */}
+                  <div className="absolute left-1/2 -translate-x-1/2 -top-3 w-0.5 h-3 bg-foreground/40" />
+                  <RoleCard
+                    role={r}
+                    knowledgeCount={knowledge.filter(k => k.role_key === r.role_key).length}
+                    onClick={() => setOpenRole(r)}
+                    onAddKnowledge={() => setAddKnowledgeForRole(r)}
+                  />
+                  {grandchildren.length > 0 && (
+                    <div className="relative mt-3 pt-4">
+                      {/* Vertical line down from this role */}
+                      <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-2 bg-foreground/40" />
+                      {/* Horizontal line for grandchildren */}
+                      {grandchildren.length > 1 && (
+                        <div className="absolute left-[10%] right-[10%] top-2 h-0.5 bg-foreground/40" />
+                      )}
+                      <div className="grid grid-cols-1 gap-2 relative">
+                        {grandchildren.map(g => (
+                          <div key={g.id} className="relative">
+                            <div className="absolute left-1/2 -translate-x-1/2 -top-2 w-0.5 h-2 bg-foreground/40" />
+                            <RoleCard
+                              role={g}
+                              knowledgeCount={knowledge.filter(k => k.role_key === g.role_key).length}
+                              onClick={() => setOpenRole(g)}
+                              onAddKnowledge={() => setAddKnowledgeForRole(g)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
-
-      {/* Direct reports row */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
-        {reports.map(r => (
-          <RoleCard
-            key={r.id} role={r}
-            knowledgeCount={knowledge.filter(k => k.role_key === r.role_key).length}
-            onClick={() => setOpenRole(r)}
-            onAddKnowledge={() => setAddKnowledgeForRole(r)}
-          />
-        ))}
-      </div>
 
       {/* ── Add-knowledge popup ────────────────────────────────────── */}
       <Dialog open={!!addKnowledgeForRole} onOpenChange={(o) => !o && setAddKnowledgeForRole(null)}>
@@ -365,6 +416,8 @@ export default function OrgChart() {
       <RoleDetailDialog
         role={openRole}
         knowledge={openRole ? knowledge.filter(k => k.role_key === openRole.role_key) : []}
+        allRoles={roles}
+        onUpdateReportsTo={updateReportsTo}
         onClose={() => setOpenRole(null)}
         onAddKnowledgeFromDialog={() => { if (openRole) setAddKnowledgeForRole(openRole); }}
         onArchiveKnowledge={archiveKnowledge}
@@ -476,6 +529,8 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
 function RoleDetailDialog({
   role,
   knowledge,
+  allRoles,
+  onUpdateReportsTo,
   onClose,
   onAddKnowledgeFromDialog,
   onArchiveKnowledge,
@@ -483,6 +538,8 @@ function RoleDetailDialog({
 }: {
   role: OrgRole | null;
   knowledge: KnowledgeNote[];
+  allRoles: OrgRole[];
+  onUpdateReportsTo: (role: OrgRole, newParent: string | null) => Promise<void>;
   onClose: () => void;
   onAddKnowledgeFromDialog: () => void;
   onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
@@ -508,6 +565,28 @@ function RoleDetailDialog({
             </div>
           </div>
         </DialogHeader>
+
+        {/* Reports to — dropdown lets co-CEO move a role under a different
+            parent (e.g. Pricing under CFO). CEO has no parent. */}
+        {role.role_key !== "ceo" && (
+          <section className="mt-3 flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Reports to:</span>
+            <select
+              className="h-7 px-2 text-xs border rounded bg-background"
+              value={role.parent_role_key ?? ""}
+              onChange={e => onUpdateReportsTo(role, e.target.value || null)}
+            >
+              {allRoles
+                .filter(r => r.role_key !== role.role_key)
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map(r => (
+                  <option key={r.role_key} value={r.role_key}>
+                    {r.role_name}{r.person_name ? ` (${r.person_name})` : ""}
+                  </option>
+                ))}
+            </select>
+          </section>
+        )}
 
         {/* Knowledge / instructions */}
         <section className="mt-4">

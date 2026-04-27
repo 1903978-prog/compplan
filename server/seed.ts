@@ -312,6 +312,8 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS team_members JSONB`);
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS last_invoice_at TEXT`);
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS weekly_reports JSONB`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS win_probability REAL`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS start_date TEXT`);
 
   // Time tracking tables
   await db.execute(sql`
@@ -814,6 +816,7 @@ export async function seedDatabase() {
   // {weeks, commitPct, grossTotal?, commitAmount?} rows. Optional; engine
   // falls back to the default short/medium/long curve when null.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS case_timelines JSONB`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS proposal_options_count INTEGER NOT NULL DEFAULT 3`);
   // Revision letter appended to project_name in the UI (A / B / C / D).
   // Lets a case track its proposal revision count without renaming.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS revision_letter TEXT DEFAULT 'A'`);
@@ -844,6 +847,32 @@ export async function seedDatabase() {
     `);
   } catch (e) {
     console.error("Failed to rename SCHA01 → SCH01:", e);
+  }
+
+  // ── One-time refresh of pending TBD weekly_price ────────────────────
+  // Earlier code stored weekly_price = target_weekly × 1.08 (admin-loaded)
+  // which diverged from the headline NET1 number shown in the Pricing
+  // Waterfall and confused the user. Refresh: for every pending TBD with
+  // a matching final pricing_case, set weekly_price = case.recommendation.
+  // target_weekly. Also fixes total_fee. Won/Lost rows are NEVER touched.
+  // Idempotent: only updates when the stored weekly_price differs from the
+  // case's current target_weekly AND outcome='pending'.
+  try {
+    await db.execute(sql`
+      UPDATE pricing_proposals p
+      SET weekly_price = ROUND((c.recommendation->>'target_weekly')::numeric)::real,
+          total_fee    = ROUND((c.recommendation->>'target_weekly')::numeric * COALESCE(c.duration_weeks, 0))::real
+      FROM pricing_cases c
+      WHERE p.outcome = 'pending'
+        AND c.status = 'final'
+        AND LOWER(TRIM(p.project_name)) = LOWER(TRIM(c.project_name))
+        AND c.recommendation IS NOT NULL
+        AND (c.recommendation->>'target_weekly') IS NOT NULL
+        AND (c.recommendation->>'target_weekly')::numeric > 0
+        AND p.weekly_price <> ROUND((c.recommendation->>'target_weekly')::numeric)::real
+    `);
+  } catch (e) {
+    console.error("Failed to refresh pending TBD weekly_price:", e);
   }
 
   // ── Retroactive Past-Projects backfill ─────────────────────────────

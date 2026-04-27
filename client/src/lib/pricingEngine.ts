@@ -453,6 +453,8 @@ export interface PricingProposal {
   manager_name?: string | null;                        // EM running the engagement
   team_members?: { role: string; name: string }[] | null;
   last_invoice_at?: string | null;                     // YYYY-MM-DD; "needs invoice" if >30d ago
+  win_probability?: number | null;                     // 0-100, only meaningful for outcome=pending
+  start_date?: string | null;                          // YYYY-MM-DD, falls back to proposal_date
 }
 
 export interface PricingRecommendation {

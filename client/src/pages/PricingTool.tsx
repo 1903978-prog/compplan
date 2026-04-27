@@ -214,6 +214,8 @@ function emptyProposal(): PricingProposal {
     manager_name: "",
     team_members: [],
     last_invoice_at: null,
+    win_probability: null,
+    start_date: null,
   };
 }
 
@@ -1424,6 +1426,20 @@ export default function PricingTool() {
             </div>
           )}
         </div>
+        {/* Start date — when delivery begins. Used by the staffing Gantt;
+            falls back to proposal_date if blank. */}
+        <div className="space-y-1">
+          <Label className="text-xs">Start date (optional)</Label>
+          <Input
+            type="date"
+            value={historyForm.start_date ?? ""}
+            onChange={e => setHistoryForm(f => ({ ...f, start_date: e.target.value || null }))}
+            className="h-8 text-sm"
+          />
+          <div className="text-[9px] text-muted-foreground">
+            Drives the /exec/staffing Gantt. If blank, falls back to proposal date.
+          </div>
+        </div>
         {/* End date — when set + future + outcome=won, project shows up on
             Exec → Ongoing Projects with weeks-remaining + invoice cadence. */}
         <div className="space-y-1">
@@ -1438,6 +1454,24 @@ export default function PricingTool() {
             If in the future + outcome=Won → appears in Exec dashboard as "ongoing".
           </div>
         </div>
+        {/* Win probability — only relevant for outcome=pending. Drives the
+            probability-weighted demand on the staffing Gantt and the Hiring
+            Manager's buffer-rule hire trigger. */}
+        {historyForm.outcome === "pending" && (
+          <div className="space-y-1">
+            <Label className="text-xs">Win probability (%)</Label>
+            <Input
+              type="number" min="0" max="100" step="5"
+              value={historyForm.win_probability ?? ""}
+              onChange={e => setHistoryForm(f => ({ ...f, win_probability: e.target.value === "" ? null : Math.max(0, Math.min(100, +e.target.value)) }))}
+              className="h-8 text-sm font-mono"
+              placeholder="e.g. 60"
+            />
+            <div className="text-[9px] text-muted-foreground">
+              Probability-weighted demand on /exec/staffing.
+            </div>
+          </div>
+        )}
         {/* Manager — the EM running the engagement day-to-day */}
         <div className="space-y-1">
           <Label className="text-xs">Manager (EM)</Label>
@@ -2611,15 +2645,16 @@ export default function PricingTool() {
                   </TableHeader>
                   <TableBody>
                     {cases.map(c => {
-                      // Source of truth for Target/wk = central column (Option 2)
-                      // of the Commercial Proposal table: net total / weeks.
-                      // Falls back to recommendation.target_weekly when timelines
-                      // or discounts haven't been configured yet.
-                      const centralWk = centralOptionWeekly({
-                        recommendation: c.recommendation,
-                        case_timelines: c.case_timelines,
-                        case_discounts: c.case_discounts,
-                      }) ?? c.recommendation?.target_weekly ?? 0;
+                      // Source of truth for Target/wk = the engine's recommended
+                      // NET1 weekly (recommendation.target_weekly). This matches
+                      // the headline figure in the Pricing Waterfall (NET1 =
+                      // post-Pi adjustments, before discount stack). Per-option
+                      // pinned grossTotal overrides are deliberately NOT used
+                      // here — they answer a different question ("what we
+                      // committed for option X") that diverges from "what's the
+                      // recommended weekly". Use centralOptionWeekly elsewhere
+                      // when the option-level number is what's needed.
+                      const centralWk = c.recommendation?.target_weekly ?? 0;
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
                         <TableCell className="font-semibold font-mono">{displayProjectName(c.project_name, c.revision_letter)}</TableCell>
