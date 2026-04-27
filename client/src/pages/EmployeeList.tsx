@@ -226,7 +226,7 @@ const ROLE_RANK: Record<string, number> = {
 export default function EmployeeList() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
-  const [mainTab, setMainTab] = useState<"employees" | "tdl" | "performance">("employees");
+  const [mainTab, setMainTab] = useState<"employees" | "tdl" | "performance" | "external">("employees");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
@@ -267,6 +267,94 @@ export default function EmployeeList() {
   };
 
   // ── Performance Issues state ──────────────────────────────────────────────
+  // ── External contacts (freelancers + partners) ─────────────────────
+  // Lightweight list of people who aren't in the rich `employees` table
+  // (no birthday/salary/role required) but still need to be in the
+  // company-wide mailing list. CRUD via /api/external-contacts.
+  type ExternalContact = { id: number; name: string; email: string; kind: string; created_at: string };
+  const [externalContacts, setExternalContacts] = useState<ExternalContact[]>([]);
+  const [newExtName, setNewExtName] = useState("");
+  const [newExtEmail, setNewExtEmail] = useState("");
+  const [newExtKind, setNewExtKind] = useState<"freelancer" | "partner">("freelancer");
+  const loadExternalContacts = async () => {
+    try {
+      const r = await fetch("/api/external-contacts", { credentials: "include" });
+      if (r.ok) {
+        const data = await r.json();
+        setExternalContacts(Array.isArray(data) ? data : []);
+      }
+    } catch { /* non-fatal */ }
+  };
+  useEffect(() => { loadExternalContacts(); }, []);
+
+  const addExternalContact = async () => {
+    if (!newExtName.trim() || !newExtEmail.trim()) return;
+    try {
+      const r = await fetch("/api/external-contacts", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newExtName.trim(), email: newExtEmail.trim(), kind: newExtKind }),
+      });
+      if (r.ok) {
+        setNewExtName(""); setNewExtEmail(""); setNewExtKind("freelancer");
+        loadExternalContacts();
+        toast({ title: "Contact added" });
+      } else {
+        toast({ title: "Failed to add contact", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to add contact", variant: "destructive" });
+    }
+  };
+
+  const deleteExternalContact = async (id: number, name: string) => {
+    if (!confirm(`Remove ${name}?`)) return;
+    try {
+      await fetch(`/api/external-contacts/${id}`, { method: "DELETE", credentials: "include" });
+      loadExternalContacts();
+    } catch { /* non-fatal */ }
+  };
+
+  // ── "Copy all emails" — assembles the full Eendigo mailing list ────
+  // Format: `Name <email>` for every contact with a name, joined by
+  // `; ` so it pastes directly into the Outlook / Gmail "To" field.
+  // Sorted case-insensitive by name. Includes:
+  //   • All external_contacts (freelancers, partners, founders)
+  //   • Any employee with an email stored in localStorage (TDL feature)
+  const copyAllEmails = async () => {
+    const entries: { name: string; email: string }[] = [];
+    for (const c of externalContacts) {
+      if (c.email && c.name) entries.push({ name: c.name, email: c.email });
+    }
+    // Pick up employee emails captured by the existing TDL "person email"
+    // localStorage feature so people who use that don't get left out.
+    for (const emp of employees) {
+      const stored = personEmails[emp.name];
+      if (stored && stored.includes("@")) entries.push({ name: emp.name, email: stored });
+    }
+    // Dedupe by lowercased email — newest entry wins.
+    const byEmail = new Map<string, { name: string; email: string }>();
+    for (const e of entries) byEmail.set(e.email.toLowerCase(), e);
+    const sorted = [...byEmail.values()].sort((a, b) =>
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+    );
+    if (sorted.length === 0) {
+      toast({ title: "No emails to copy", description: "Add some freelancers/partners first." });
+      return;
+    }
+    const text = sorted.map(e => `${e.name} <${e.email}>`).join("; ");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({
+        title: `Copied ${sorted.length} email${sorted.length === 1 ? "" : "s"}`,
+        description: "Paste into Outlook / Gmail To: field.",
+      });
+    } catch {
+      // Fallback: show in a prompt for manual copy
+      window.prompt("Copy this list (Ctrl+C):", text);
+    }
+  };
+
   const [perfIssues, setPerfIssues] = useState<any[]>([]);
   const [newPerfEmployee, setNewPerfEmployee] = useState("");
   const [newPerfDate, setNewPerfDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -580,6 +668,10 @@ Thanks,`;
         description="Manage your team members and their current compensation details."
         actions={
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={copyAllEmails}>
+              <Mail className="w-4 h-4 mr-2" />
+              Copy all emails
+            </Button>
             <label>
               <Button variant="outline" size="sm" asChild>
                 <span className="cursor-pointer">
@@ -633,6 +725,18 @@ Thanks,`;
               {perfIssues.length > 0 && (
                 <span className={`text-[10px] rounded-full px-1.5 font-bold ${mainTab === "performance" ? "bg-white/30 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
                   {perfIssues.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setMainTab("external")}
+              className={`px-4 py-1.5 font-medium transition-colors flex items-center gap-1.5 ${mainTab === "external" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+            >
+              <User className="w-3.5 h-3.5" />
+              Freelancers & Partners
+              {externalContacts.length > 0 && (
+                <span className={`text-[10px] rounded-full px-1.5 font-bold ${mainTab === "external" ? "bg-white/30 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
+                  {externalContacts.length}
                 </span>
               )}
             </button>
@@ -952,6 +1056,103 @@ Thanks,`;
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {mainTab === "external" && (
+          <div>
+            {/* Add form */}
+            <div className="p-4 border-b bg-muted/10">
+              <div className="flex gap-2 items-end flex-wrap">
+                <div className="min-w-[180px] flex-1">
+                  <Label className="text-xs mb-1 block">Name</Label>
+                  <Input
+                    placeholder="e.g. Mario Rossi"
+                    value={newExtName}
+                    onChange={e => setNewExtName(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="min-w-[220px] flex-1">
+                  <Label className="text-xs mb-1 block">Email</Label>
+                  <Input
+                    type="email"
+                    placeholder="mario.rossi@eendigo.com"
+                    value={newExtEmail}
+                    onChange={e => setNewExtEmail(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="min-w-[140px]">
+                  <Label className="text-xs mb-1 block">Type</Label>
+                  <Select value={newExtKind} onValueChange={v => setNewExtKind(v as "freelancer" | "partner")}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="freelancer">Freelancer</SelectItem>
+                      <SelectItem value="partner">Partner</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={addExternalContact} disabled={!newExtName.trim() || !newExtEmail.trim()}>
+                  <Plus className="w-4 h-4 mr-1" /> Add
+                </Button>
+              </div>
+            </div>
+
+            {/* List */}
+            {externalContacts.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground italic">
+                No freelancers or partners yet. Add one above.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead className="w-[140px]">Type</TableHead>
+                    <TableHead className="w-[80px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...externalContacts]
+                    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+                    .map(c => (
+                      <TableRow key={c.id} className="hover:bg-muted/20">
+                        <TableCell className="font-semibold text-sm">{c.name}</TableCell>
+                        <TableCell className="text-xs font-mono">
+                          <a href={`mailto:${c.email}`} className="text-primary hover:underline">
+                            {c.email}
+                          </a>
+                        </TableCell>
+                        <TableCell>
+                          <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium uppercase ${
+                            c.kind === "partner"
+                              ? "bg-violet-100 text-violet-800"
+                              : "bg-blue-100 text-blue-800"
+                          }`}>
+                            {c.kind}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <button
+                            onClick={() => deleteExternalContact(c.id, c.name)}
+                            className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
+                            title="Remove"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            )}
+            <div className="text-[10px] text-muted-foreground italic px-4 py-2 border-t">
+              The "Copy all emails" button (top-right) gathers every name+email here, plus any employee
+              email captured elsewhere, sorts alphabetically, and copies to clipboard as
+              <code className="text-[10px] mx-1">Name &lt;email&gt;; …</code> ready to paste in Outlook.
             </div>
           </div>
         )}

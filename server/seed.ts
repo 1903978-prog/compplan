@@ -540,6 +540,47 @@ export async function seedDatabase() {
     WHERE expires_at < NOW() AND restored_at IS NULL
   `);
 
+  // ── External Contacts (freelancers + partners) ───────────────────────
+  // Lightweight table for people who aren't in the rich `employees`
+  // table (which requires birth date, salary, role, etc.) but still
+  // need to be in the "everyone at Eendigo" mailing list. Used by the
+  // Employees page's "Copy all emails" button.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS external_contacts (
+      id           SERIAL PRIMARY KEY,
+      name         TEXT NOT NULL,
+      email        TEXT NOT NULL UNIQUE,
+      kind         TEXT NOT NULL DEFAULT 'freelancer',
+      created_at   TEXT NOT NULL
+    )
+  `);
+  // Pre-seed the standing roster on first boot. Idempotent: only inserts
+  // when the email isn't already present, so the user can rename/delete
+  // freely without the seed re-creating rows.
+  const seedContacts = [
+    { name: "Thomas R. Hahn",         email: "thomas.r.hahn@eendigo.com",         kind: "partner"    },
+    { name: "Wissam Kahi",            email: "wissam.kahi@eendigo.com",           kind: "partner"    },
+    { name: "Edoardo Tiani",          email: "edoardo.tiani@eendigo.com",         kind: "freelancer" },
+    { name: "Defne Isler",            email: "defne.isler@eendigo.com",           kind: "freelancer" },
+    { name: "Malika Makhmutkhazhieva", email: "malika.makhmutkhazhieva@eendigo.com", kind: "freelancer" },
+    { name: "Renata Vancini",         email: "renata.vancini@eendigo.com",        kind: "freelancer" },
+    { name: "Massimo Dal Bosco",      email: "massimo.dalbosco@eendigo.com",      kind: "partner"    },
+    { name: "Alessandro Monti",       email: "alessandro.monti@eendigo.com",      kind: "partner"    },
+    { name: "Gabriele Papa",          email: "gabriele.papa@eendigo.com",         kind: "freelancer" },
+    { name: "Melissa Marten",         email: "melissa.marten@eendigo.com",        kind: "freelancer" },
+    { name: "Gustavo Daniel Lardone", email: "gustavo.lardone@eendigo.com",       kind: "freelancer" },
+    { name: "Leonardo Briccoli",      email: "leonardo.briccoli@eendigo.com",     kind: "freelancer" },
+    { name: "Livio Moretti",          email: "moretti.livio@gmail.com",           kind: "partner"    },
+  ];
+  const nowIso = new Date().toISOString();
+  for (const c of seedContacts) {
+    await db.execute(sql`
+      INSERT INTO external_contacts (name, email, kind, created_at)
+      VALUES (${c.name}, ${c.email}, ${c.kind}, ${nowIso})
+      ON CONFLICT (email) DO NOTHING
+    `);
+  }
+
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS api_usage_log (

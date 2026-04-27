@@ -240,6 +240,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ paused: !!paused });
   });
 
+  // ── External Contacts (freelancers + partners) ────────────────────────
+  // CRUD endpoints for the lightweight people table. Schema in seed.ts.
+  // Used by the Employees page's "Copy all emails" button to assemble
+  // the full mailing list (employees + freelancers + partners).
+  app.get("/api/external-contacts", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`
+        SELECT id, name, email, kind, created_at
+        FROM external_contacts
+        ORDER BY name ASC
+      `);
+      res.json(r.rows);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to load" });
+    }
+  });
+
+  app.post("/api/external-contacts", requireAuth, async (req, res) => {
+    try {
+      const { name, email, kind } = req.body ?? {};
+      if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
+      const k = (kind === "partner" ? "partner" : "freelancer");
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        INSERT INTO external_contacts (name, email, kind, created_at)
+        VALUES (${String(name).trim()}, ${String(email).trim().toLowerCase()}, ${k}, ${now})
+        ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
+        RETURNING id, name, email, kind, created_at
+      `);
+      res.status(201).json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to save" });
+    }
+  });
+
+  app.put("/api/external-contacts/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { name, email, kind } = req.body ?? {};
+      if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
+      const k = (kind === "partner" ? "partner" : "freelancer");
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`
+        UPDATE external_contacts
+        SET name = ${String(name).trim()}, email = ${String(email).trim().toLowerCase()}, kind = ${k}
+        WHERE id = ${id}
+        RETURNING id, name, email, kind, created_at
+      `);
+      if (r.rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to update" });
+    }
+  });
+
+  app.delete("/api/external-contacts/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`DELETE FROM external_contacts WHERE id = ${id}`);
+      res.status(204).end();
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to delete" });
+    }
+  });
+
   // ── Employees ──────────────────────────────────────────────────────────────
   app.get("/api/employees", requireAuth, async (_req, res) => {
     const emps = await storage.getEmployees();
