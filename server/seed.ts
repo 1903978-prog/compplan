@@ -1552,7 +1552,7 @@ Sign warmly.`},
       tasks_10d: [],
     },
     {
-      role_key: "hiring-manager", role_name: "Hiring Manager", parent_role_key: "ceo",
+      role_key: "hiring-manager", role_name: "CHRO", parent_role_key: "ceo",
       person_name: "Adrian", sort_order: 7, status: "active",
       goals: [
         "[Supports CEO Hire ≥2 Partners goal] Run dedicated Partner search; ≥1 ex-MBB Partner referred-in-pipeline",
@@ -1572,6 +1572,13 @@ Sign warmly.`},
       ],
     },
   ];
+  // One-shot rename: Hiring Manager → CHRO. Idempotent: only fires while
+  // the live row still has the old role_name. Once renamed, this is a no-op.
+  await db.execute(sql`
+    UPDATE org_agents SET role_name = 'CHRO', updated_at = ${_orgNow}
+    WHERE role_key = 'hiring-manager' AND role_name = 'Hiring Manager'
+  `);
+
   for (const a of _orgSeed) {
     await db.execute(sql`
       INSERT INTO org_agents (role_key, role_name, parent_role_key, person_name, status, goals, okrs, tasks_10d, sort_order, created_at, updated_at)

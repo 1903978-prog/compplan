@@ -340,6 +340,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Acceptance-rate stats per (role_key, category). The CEO skill reads this
+  // each cycle to bias ranking: ideas from roles/categories that get rejected
+  // a lot are scored down, ideas from roles whose ideas get accepted often
+  // are surfaced higher. This is the "learning without API tokens" loop —
+  // no model fine-tune, just an acceptance-rate prior the skill applies on
+  // its own scoring pass.
+  app.get("/api/agent-proposals/acceptance-stats", requireAuth, async (_req, res) => {
+    try {
+      const result = await db.execute(sql`
+        SELECT role_key, category,
+               SUM(CASE WHEN status = 'accepted' OR status = 'actioned' THEN 1 ELSE 0 END) AS accepted,
+               SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END)                       AS rejected,
+               SUM(CASE WHEN status = 'pending'  THEN 1 ELSE 0 END)                       AS pending,
+               COUNT(*) AS total
+        FROM agent_proposals
+        WHERE created_at > (NOW() - INTERVAL '30 days')::text
+        GROUP BY role_key, category
+        ORDER BY role_key, category
+      `);
+      const rows = result.rows as unknown as { role_key: string; category: string; accepted: number; rejected: number; pending: number; total: number }[];
+      const stats = rows.map(r => {
+        const decided = Number(r.accepted) + Number(r.rejected);
+        const rate = decided > 0 ? Number(r.accepted) / decided : null;
+        return {
+          role_key: r.role_key,
+          category: r.category,
+          accepted: Number(r.accepted),
+          rejected: Number(r.rejected),
+          pending: Number(r.pending),
+          total: Number(r.total),
+          acceptance_rate: rate,  // null when no decisions yet
+        };
+      });
+      res.json(stats);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
   app.put("/api/agent-proposals/:id", requireAuth, async (req, res) => {
     try {
       const id = safeInt(req.params.id);

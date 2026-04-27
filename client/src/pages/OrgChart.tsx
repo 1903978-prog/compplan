@@ -43,6 +43,16 @@ interface KnowledgeNote {
   created_at: string;
 }
 
+interface AcceptanceStat {
+  role_key: string;
+  category: string;
+  accepted: number;
+  rejected: number;
+  pending: number;
+  total: number;
+  acceptance_rate: number | null;
+}
+
 interface AgentProposal {
   id: number;
   role_key: string;
@@ -95,6 +105,7 @@ export default function OrgChart() {
   const [roles, setRoles] = useState<OrgRole[]>([]);
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeNote[]>([]);
+  const [acceptanceStats, setAcceptanceStats] = useState<AcceptanceStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [openRole, setOpenRole] = useState<OrgRole | null>(null);
   const [addKnowledgeForRole, setAddKnowledgeForRole] = useState<OrgRole | null>(null);
@@ -121,10 +132,12 @@ export default function OrgChart() {
       fetch("/api/org-chart", { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/agent-proposals?status=pending", { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/agent-knowledge?status=active", { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([orgs, props, kn]) => {
+      fetch("/api/agent-proposals/acceptance-stats", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([orgs, props, kn, stats]) => {
       setRoles(orgs);
       setProposals(props);
       setKnowledge(kn);
+      setAcceptanceStats(stats);
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
   }, [toast]);
@@ -323,6 +336,40 @@ export default function OrgChart() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Rejection-learning stats (last 30 days) ────────────────── */}
+      {acceptanceStats.filter(s => s.acceptance_rate !== null).length > 0 && (
+        <div className="mt-10 mb-2">
+          <h2 className="text-lg font-semibold flex items-center gap-2 mb-2">
+            <Sparkles className="w-5 h-5 text-primary" />
+            Learning — acceptance rate by role × category (last 30d)
+          </h2>
+          <p className="text-xs text-muted-foreground mb-3">
+            CEO uses this on its hourly run to bias scoring: low-acceptance categories get scored DOWN; high-acceptance categories get surfaced first. Reject ideas you don't want; the next cycle will propose less of that kind.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {acceptanceStats
+              .filter(s => s.acceptance_rate !== null)
+              .sort((a, b) => (b.acceptance_rate ?? 0) - (a.acceptance_rate ?? 0))
+              .map(s => {
+                const role = roles.find(r => r.role_key === s.role_key);
+                const pct = Math.round((s.acceptance_rate ?? 0) * 100);
+                const tone = pct >= 70 ? "text-emerald-600" : pct >= 40 ? "text-amber-600" : "text-red-600";
+                return (
+                  <Card key={`${s.role_key}-${s.category}`} className="p-2">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide truncate">
+                      {role?.role_name ?? s.role_key} · {s.category}
+                    </div>
+                    <div className={`text-lg font-bold tabular-nums ${tone}`}>{pct}%</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {s.accepted}/{s.accepted + s.rejected} decisions{s.pending > 0 && ` · ${s.pending} pending`}
+                    </div>
+                  </Card>
+                );
+              })}
+          </div>
+        </div>
+      )}
 
       {/* ── Proposals from your team — pending decisions ───────────── */}
       <div className="mt-10">
