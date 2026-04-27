@@ -483,6 +483,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Two-way sync: keep TBD proposals exactly aligned with status='final'
+  // pricing_cases. INSERTs missing TBDs (same as repair-from-final-cases)
+  // AND removes pending TBDs whose backing case has status != 'final'
+  // (e.g. Draft, Active) — those cases shouldn't appear in Past Projects.
+  // Won/Lost proposals are NEVER touched (they're real decisions).
+  // Manually-added TBDs without a matching case are also untouched (the
+  // user added them deliberately).
+  app.post("/api/pricing/proposals/sync-tbd-with-final-cases", requireAuth, async (_req, res) => {
+    try {
+      const cases = await storage.getPricingCases();
+      const proposals = await storage.getPricingProposals();
+      const today = new Date().toISOString().slice(0, 10);
+
+      // ── INSERT phase: TBD for every Final case missing one ──────────
+      const existingNames = new Set(proposals.map(p => (p.project_name ?? "").trim().toLowerCase()).filter(Boolean));
+      const finals = cases.filter(c => c.status === "final" && (c.project_name ?? "").trim() !== "");
+      const toCreate = finals.filter(c => !existingNames.has((c.project_name as string).trim().toLowerCase()));
+      for (const c of toCreate) {
+        await storage.createPricingProposal({
+          proposal_date: today,
+          project_name: (c.project_name as string).trim(),
+          client_name: c.client_name ?? null,
+          fund_name: c.fund_name ?? null,
+          region: c.region ?? "Italy",
+          pe_owned: c.pe_owned ?? 1,
+          revenue_band: c.revenue_band ?? "above_1b",
+          price_sensitivity: c.price_sensitivity ?? null,
+          duration_weeks: c.duration_weeks ?? null,
+          weekly_price: 0,
+          total_fee: 0,
+          outcome: "pending",
+          sector: c.sector ?? null,
+          project_type: c.project_type ?? null,
+        });
+      }
+
+      // ── DELETE phase: pending TBDs whose case is NOT final ──────────
+      // Only acts on outcome === "pending" (won/lost are decided
+      // outcomes and we never auto-delete them). And only when a
+      // matching case exists with non-final status — proposals without
+      // any matching case are manual entries we leave alone.
+      const caseByName = new Map<string, typeof cases[number]>();
+      for (const c of cases) {
+        const n = (c.project_name ?? "").trim().toLowerCase();
+        if (n) caseByName.set(n, c);
+      }
+      const stale = proposals.filter(p => {
+        if (p.outcome !== "pending") return false;
+        const n = (p.project_name ?? "").trim().toLowerCase();
+        if (!n) return false;
+        const matchingCase = caseByName.get(n);
+        return matchingCase != null && matchingCase.status !== "final";
+      });
+      // Use trashAndDelete so the cleanup is recoverable from the
+      // /admin/trash UI for 30 days. If the user changes a case's
+      // status back to Final, they can simply restore the row.
+      for (const p of stale) {
+        if (p.id != null) await trashAndDelete("pricing_proposals", p.id);
+      }
+
+      res.json({
+        ok: true,
+        inserted: toCreate.length,
+        deleted: stale.length,
+        finalCases: finals.length,
+      });
+    } catch (e) {
+      console.error("sync-tbd-with-final-cases failed:", e);
+      res.status(500).json({ ok: false, message: (e as Error).message });
+    }
+  });
+
   app.delete("/api/pricing/cases/:id", requireAuth, async (req, res) => {
     // Soft-delete: row is moved to trash_bin (30-day TTL) so the user
     // can restore from /admin/trash. Hard-delete only happens after

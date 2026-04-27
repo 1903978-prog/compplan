@@ -2065,21 +2065,16 @@ export default function PricingTool() {
       if (!res.ok) throw new Error("Save failed");
 
       // Auto-create a matching "TBD" entry in the win-loss proposals
-      // table so every saved pricing case appears in Past Projects /
-      // Executive Dashboard immediately. Outcome stays "pending"
-      // (rendered as "TBD") until the user clicks Mark as Won or
-      // Mark as Lost. Deduped by project_name so re-saves never make
-      // duplicates. Runs on BOTH draft AND final saves — the user's
-      // mental model is "I saved a case, I should see it" and we
-      // honour that without forcing a status distinction. If they
-      // really don't want it in Past Projects yet, they can delete
-      // the TBD row from the win-loss table directly.
+      // table — but only when the user clicked "Save & Finalise"
+      // (status === "final"). Drafts are work-in-progress and don't
+      // belong in Past Projects yet; Active engagements are already
+      // tracked elsewhere (won_projects). Deduped by project_name.
       const matchName = form.project_name.trim().toLowerCase();
       const matching = form.project_name
         ? proposals.find(p => (p.project_name || "").trim().toLowerCase() === matchName)
         : undefined;
 
-      if (form.project_name && !matching) {
+      if (status === "final" && form.project_name && !matching) {
         const baseWeekly = (recommendation?.target_weekly ?? 0) + manualDelta;
         const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
         const tbdPayload = {
@@ -2126,60 +2121,24 @@ export default function PricingTool() {
   const backfillTbdFromCases = async () => {
     setBackfillingTbd(true);
     try {
-      const propNames = new Set(proposals.map(p => (p.project_name || "").trim().toLowerCase()).filter(Boolean));
-      const missing = cases.filter((c: any) => {
-        const n = (c.project_name || "").trim().toLowerCase();
-        return n && !propNames.has(n);
+      // Calls the server-side two-way sync. It (a) inserts a TBD row for
+      // every Final case that doesn't have one and (b) removes pending
+      // TBDs whose backing case is no longer Final (Draft / Active).
+      // Won/Lost proposals are never touched. Removed rows go to the
+      // 30-day trash bin so a mistake is one click away from recovery.
+      const r = await fetch("/api/pricing/proposals/sync-tbd-with-final-cases", {
+        method: "POST", credentials: "include",
       });
-      if (missing.length === 0) {
-        toast({ title: "Nothing to backfill", description: "Every case already has a matching Past Projects row." });
-        setBackfillingTbd(false);
+      if (!r.ok) {
+        toast({ title: "Sync failed", variant: "destructive" });
         return;
       }
-      let created = 0, failed = 0;
-      for (const c of missing) {
-        // Use the recommendation already stored on the case (set when it
-        // was saved). Fall back to a staffing-derived weekly if missing.
-        const targetWeekly = (c.recommendation?.target_weekly as number | undefined)
-          ?? (Array.isArray(c.staffing)
-                ? Math.round(c.staffing.reduce((s: number, l: any) =>
-                    s + (l.days_per_week || 0) * (l.daily_rate_used || 0) * (l.count || 0), 0) * 2)
-                : 0);
-        const adminPct = adminFeePct ?? 8;
-        const weeklyGrossAdmin = Math.round(targetWeekly * (1 + adminPct / 100));
-        const dur = c.duration_weeks ?? 12;
-        const payload = {
-          proposal_date: new Date().toISOString().slice(0, 10),
-          project_name: c.project_name,
-          client_name: c.client_name || null,
-          fund_name: c.fund_name || null,
-          region: c.region,
-          pe_owned: c.pe_owned ? 1 : 0,
-          revenue_band: c.revenue_band,
-          price_sensitivity: c.price_sensitivity,
-          duration_weeks: dur,
-          weekly_price: weeklyGrossAdmin,
-          total_fee: Math.round(targetWeekly * dur),
-          outcome: "pending",
-          sector: c.sector || null,
-          project_type: c.project_type || null,
-        };
-        try {
-          const r = await fetch("/api/pricing/proposals", {
-            method: "POST", credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          if (r.ok) created++; else failed++;
-        } catch {
-          failed++;
-        }
-      }
-      toast({
-        title: `Backfill done`,
-        description: `${created} TBD proposal${created === 1 ? "" : "s"} created${failed > 0 ? `, ${failed} failed` : ""}.`,
-        variant: failed > 0 ? "destructive" : undefined,
-      });
+      const out = await r.json();
+      const parts: string[] = [];
+      if (out.inserted > 0) parts.push(`${out.inserted} added`);
+      if (out.deleted > 0)  parts.push(`${out.deleted} removed (restorable from /admin/trash)`);
+      if (parts.length === 0) parts.push("Already in sync — no changes needed.");
+      toast({ title: "TBD sync complete", description: parts.join(" · ") });
       loadAll();
     } finally {
       setBackfillingTbd(false);
@@ -2188,12 +2147,26 @@ export default function PricingTool() {
 
   // How many cases are missing a matching proposal — drives the button
   // label so the user knows whether clicking will do anything.
+  // Sum of pending changes the sync would perform: missing Final TBDs
+  // to add + stale Draft/Active TBDs to remove. Drives the button label.
   const tbdBackfillCount = (() => {
     const propNames = new Set(proposals.map(p => (p.project_name || "").trim().toLowerCase()).filter(Boolean));
-    return cases.filter((c: any) => {
+    const toAdd = cases.filter((c: any) => {
       const n = (c.project_name || "").trim().toLowerCase();
-      return n && !propNames.has(n);
+      return n && c.status === "final" && !propNames.has(n);
     }).length;
+    const caseByName = new Map<string, any>();
+    for (const c of cases) {
+      const n = (c.project_name || "").trim().toLowerCase();
+      if (n) caseByName.set(n, c);
+    }
+    const toRemove = proposals.filter(p => {
+      if (p.outcome !== "pending") return false;
+      const n = (p.project_name || "").trim().toLowerCase();
+      const matchingCase = caseByName.get(n);
+      return matchingCase != null && matchingCase.status !== "final";
+    }).length;
+    return toAdd + toRemove;
   })();
 
   const updateStaffingLine = (roleId: string, field: keyof StaffingLine, value: any) => {
@@ -2608,11 +2581,11 @@ export default function PricingTool() {
                 missed the auto-create flow. */}
             <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
               <div className="text-xs">
-                <span className="font-semibold text-amber-900">Sync TBD from cases</span>
+                <span className="font-semibold text-amber-900">Sync TBD with Final cases</span>
                 <span className="text-amber-700 ml-2">
                   {tbdBackfillCount > 0
-                    ? `${tbdBackfillCount} pricing case${tbdBackfillCount === 1 ? "" : "s"} not yet in Past Projects`
-                    : "Every case is already in Past Projects."}
+                    ? `${tbdBackfillCount} change${tbdBackfillCount === 1 ? "" : "s"} pending — adds TBD for missing Finals, removes TBD for non-Finals`
+                    : "Past Projects matches the Final cases — nothing to sync."}
                 </span>
               </div>
               <Button
@@ -2620,7 +2593,7 @@ export default function PricingTool() {
                 onClick={backfillTbdFromCases}
                 disabled={backfillingTbd || tbdBackfillCount === 0}
               >
-                {backfillingTbd ? "Syncing…" : `Backfill ${tbdBackfillCount || ""}`}
+                {backfillingTbd ? "Syncing…" : `Sync ${tbdBackfillCount || ""}`}
               </Button>
             </div>
             {/* Stats */}
