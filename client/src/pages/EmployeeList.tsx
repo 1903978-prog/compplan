@@ -271,7 +271,13 @@ export default function EmployeeList() {
   // Lightweight list of people who aren't in the rich `employees` table
   // (no birthday/salary/role required) but still need to be in the
   // company-wide mailing list. CRUD via /api/external-contacts.
-  type ExternalContact = { id: number; name: string; email: string; kind: string; created_at: string };
+  type ExternalContact = {
+    id: number; name: string; email: string; kind: string; created_at: string;
+    is_employee?: boolean;
+    employee_id?: string;
+    employee_role_code?: string;
+    employee_role_name?: string;
+  };
   const [externalContacts, setExternalContacts] = useState<ExternalContact[]>([]);
   const [newExtName, setNewExtName] = useState("");
   const [newExtEmail, setNewExtEmail] = useState("");
@@ -1132,9 +1138,30 @@ Thanks,`;
                         </TableCell>
                         <TableCell>
                           {(() => {
-                            // Per-kind badge colour. Unknown kinds fall
-                            // back to neutral grey so any custom value
-                            // typed by the user still renders cleanly.
+                            // If a matching employee record exists, show
+                            // the live employee role (e.g. EM1, A2, INT)
+                            // — that's the source of truth. Otherwise
+                            // fall back to the stored kind for true
+                            // externals (founders, partners, advisors).
+                            if (c.is_employee && c.employee_role_code) {
+                              const code = c.employee_role_code.toLowerCase();
+                              const cls =
+                                code.startsWith("em") ? "bg-emerald-100 text-emerald-800" :
+                                code === "int"        ? "bg-amber-100 text-amber-800" :
+                                code.startsWith("a")  ? "bg-blue-100 text-blue-800" :
+                                code.startsWith("p")  ? "bg-violet-100 text-violet-800" :
+                                                        "bg-slate-100 text-slate-800";
+                              return (
+                                <span
+                                  className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium ${cls}`}
+                                  title={c.employee_role_name ?? c.employee_role_code}
+                                >
+                                  {c.employee_role_code}
+                                  <span className="ml-1 text-[8px] opacity-60">EMP</span>
+                                </span>
+                              );
+                            }
+                            // Stored-kind fallback for non-employees.
                             const cls =
                               c.kind === "partner"    ? "bg-violet-100 text-violet-800" :
                               c.kind === "freelancer" ? "bg-blue-100 text-blue-800" :

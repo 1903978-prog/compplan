@@ -253,7 +253,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM external_contacts
         ORDER BY name ASC
       `);
-      res.json(r.rows);
+      // Merge live role info from the employees + role_grid tables.
+      // Many entries in external_contacts ARE current employees (Edoardo
+      // Tiani = EM1, Defne Isler = A2, etc.). When a name matches we
+      // return the employee's actual role code + name so the UI can
+      // show the live role instead of the hardcoded "kind". Match is
+      // by FIRST NAME (case-insensitive) since the employees table
+      // stores first names only and external_contacts has full names.
+      const employees = await storage.getEmployees();
+      const roles = await storage.getRoleGrid();
+      const roleByCode = new Map<string, string>();
+      for (const r of roles) roleByCode.set(r.role_code, r.role_name);
+      // First-name → employee mapping (case-insensitive).
+      const empByFirstName = new Map<string, typeof employees[number]>();
+      for (const e of employees) {
+        const first = (e.name ?? "").trim().split(/\s+/)[0]?.toLowerCase();
+        if (first && !empByFirstName.has(first)) empByFirstName.set(first, e);
+      }
+      const enriched = r.rows.map((c: any) => {
+        const first = (c.name ?? "").trim().split(/\s+/)[0]?.toLowerCase();
+        const matched = first ? empByFirstName.get(first) : undefined;
+        if (!matched) return { ...c, is_employee: false };
+        return {
+          ...c,
+          is_employee: true,
+          employee_id: matched.id,
+          employee_role_code: matched.current_role_code,
+          employee_role_name: roleByCode.get(matched.current_role_code) ?? matched.current_role_code,
+        };
+      });
+      res.json(enriched);
     } catch (e: any) {
       res.status(500).json({ message: e.message ?? "Failed to load" });
     }
