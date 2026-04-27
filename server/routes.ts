@@ -263,7 +263,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { name, email, kind } = req.body ?? {};
       if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
-      const k = (kind === "partner" ? "partner" : "freelancer");
+      // Free-text kind — front-end offers a curated dropdown
+      // (freelancer, partner, manager, intern, founder, advisor, …)
+      // but any string is accepted. Default if empty/missing.
+      const k = (typeof kind === "string" && kind.trim()) ? kind.trim().toLowerCase() : "freelancer";
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const now = new Date().toISOString();
@@ -284,7 +287,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const id = safeInt(req.params.id);
       const { name, email, kind } = req.body ?? {};
       if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
-      const k = (kind === "partner" ? "partner" : "freelancer");
+      // Free-text kind — front-end offers a curated dropdown
+      // (freelancer, partner, manager, intern, founder, advisor, …)
+      // but any string is accepted. Default if empty/missing.
+      const k = (typeof kind === "string" && kind.trim()) ? kind.trim().toLowerCase() : "freelancer";
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const r = await db.execute(sql`

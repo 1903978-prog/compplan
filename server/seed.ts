@@ -560,12 +560,12 @@ export async function seedDatabase() {
   const seedContacts = [
     { name: "Thomas R. Hahn",         email: "thomas.r.hahn@eendigo.com",         kind: "partner"    },
     { name: "Wissam Kahi",            email: "wissam.kahi@eendigo.com",           kind: "partner"    },
-    { name: "Edoardo Tiani",          email: "edoardo.tiani@eendigo.com",         kind: "freelancer" },
+    { name: "Edoardo Tiani",          email: "edoardo.tiani@eendigo.com",         kind: "manager"    },
     { name: "Defne Isler",            email: "defne.isler@eendigo.com",           kind: "freelancer" },
     { name: "Malika Makhmutkhazhieva", email: "malika.makhmutkhazhieva@eendigo.com", kind: "freelancer" },
     { name: "Renata Vancini",         email: "renata.vancini@eendigo.com",        kind: "freelancer" },
-    { name: "Massimo Dal Bosco",      email: "massimo.dalbosco@eendigo.com",      kind: "partner"    },
-    { name: "Alessandro Monti",       email: "alessandro.monti@eendigo.com",      kind: "partner"    },
+    { name: "Massimo Dal Bosco",      email: "massimo.dalbosco@eendigo.com",      kind: "freelancer" },
+    { name: "Alessandro Monti",       email: "alessandro.monti@eendigo.com",      kind: "intern"     },
     { name: "Gabriele Papa",          email: "gabriele.papa@eendigo.com",         kind: "freelancer" },
     { name: "Melissa Marten",         email: "melissa.marten@eendigo.com",        kind: "freelancer" },
     { name: "Gustavo Daniel Lardone", email: "gustavo.lardone@eendigo.com",       kind: "freelancer" },
@@ -580,6 +580,21 @@ export async function seedDatabase() {
       ON CONFLICT (email) DO NOTHING
     `);
   }
+  // One-time corrections for kinds that were initially seeded wrong.
+  // Conditional on the OLD value so any manual UI edits the user has
+  // already made are preserved (the UPDATE is a no-op for them).
+  await db.execute(sql`
+    UPDATE external_contacts SET kind = 'freelancer'
+    WHERE email = 'massimo.dalbosco@eendigo.com' AND kind = 'partner'
+  `);
+  await db.execute(sql`
+    UPDATE external_contacts SET kind = 'manager'
+    WHERE email = 'edoardo.tiani@eendigo.com' AND kind = 'freelancer'
+  `);
+  await db.execute(sql`
+    UPDATE external_contacts SET kind = 'intern'
+    WHERE email = 'alessandro.monti@eendigo.com' AND kind = 'partner'
+  `);
 
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`

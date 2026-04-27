@@ -275,7 +275,7 @@ export default function EmployeeList() {
   const [externalContacts, setExternalContacts] = useState<ExternalContact[]>([]);
   const [newExtName, setNewExtName] = useState("");
   const [newExtEmail, setNewExtEmail] = useState("");
-  const [newExtKind, setNewExtKind] = useState<"freelancer" | "partner">("freelancer");
+  const [newExtKind, setNewExtKind] = useState<string>("freelancer");
   const loadExternalContacts = async () => {
     try {
       const r = await fetch("/api/external-contacts", { credentials: "include" });
@@ -1084,13 +1084,17 @@ Thanks,`;
                     className="h-9 text-sm"
                   />
                 </div>
-                <div className="min-w-[140px]">
+                <div className="min-w-[160px]">
                   <Label className="text-xs mb-1 block">Type</Label>
-                  <Select value={newExtKind} onValueChange={v => setNewExtKind(v as "freelancer" | "partner")}>
+                  <Select value={newExtKind} onValueChange={v => setNewExtKind(v)}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="freelancer">Freelancer</SelectItem>
                       <SelectItem value="partner">Partner</SelectItem>
+                      <SelectItem value="manager">Manager</SelectItem>
+                      <SelectItem value="intern">Intern</SelectItem>
+                      <SelectItem value="founder">Founder</SelectItem>
+                      <SelectItem value="advisor">Advisor</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1127,13 +1131,24 @@ Thanks,`;
                           </a>
                         </TableCell>
                         <TableCell>
-                          <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium uppercase ${
-                            c.kind === "partner"
-                              ? "bg-violet-100 text-violet-800"
-                              : "bg-blue-100 text-blue-800"
-                          }`}>
-                            {c.kind}
-                          </span>
+                          {(() => {
+                            // Per-kind badge colour. Unknown kinds fall
+                            // back to neutral grey so any custom value
+                            // typed by the user still renders cleanly.
+                            const cls =
+                              c.kind === "partner"    ? "bg-violet-100 text-violet-800" :
+                              c.kind === "freelancer" ? "bg-blue-100 text-blue-800" :
+                              c.kind === "manager"    ? "bg-emerald-100 text-emerald-800" :
+                              c.kind === "intern"     ? "bg-amber-100 text-amber-800" :
+                              c.kind === "founder"    ? "bg-rose-100 text-rose-800" :
+                              c.kind === "advisor"    ? "bg-cyan-100 text-cyan-800" :
+                                                        "bg-muted text-muted-foreground";
+                            return (
+                              <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium uppercase ${cls}`}>
+                                {c.kind}
+                              </span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-right">
                           <button
