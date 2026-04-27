@@ -1595,16 +1595,25 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
   };
 
   const onSubmit = async (data: EmployeeInput) => {
+    // In-flight guard — prevents the manual Save button from racing the
+    // debounced auto-save. If a save is already in progress, drop this
+    // call (the next form change will queue a fresh debounce).
+    if (saveState === "saving") return;
     setSaveState("saving");
     try {
       const prevGross = employee.current_gross_fixed_year;
       const prevRole = employee.current_role_code;
       const grossChanged = prevGross !== data.current_gross_fixed_year;
       const roleChanged = prevRole !== data.current_role_code;
+      const isAutoSave = (data as any).__autoSave === true;
 
       await updateEmployee(employee.id, data);
 
-      if (grossChanged || roleChanged) {
+      // Only WRITE a salary_history row on EXPLICIT saves. Auto-saves
+      // fire every 1.5s of typing and would otherwise pollute the chart
+      // with one row per pause as the user enters a new gross figure.
+      // The user clicks Save once to commit a real promotion / raise.
+      if ((grossChanged || roleChanged) && !isAutoSave) {
         const note = roleChanged && grossChanged
           ? `Promotion to ${data.current_role_code}`
           : roleChanged

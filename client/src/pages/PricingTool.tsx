@@ -314,6 +314,16 @@ function clientPrefix(name: string): string {
   return (name || "CLI").replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toUpperCase().padEnd(3, "X");
 }
 
+// Project naming convention: 3 capital letters (the client prefix derived
+// from clientPrefix) + 2 digits (the sequence number). The revision letter
+// (A / B / C / D) lives in a separate column and is appended only at
+// display time. Validates manually-typed project names so legacy 4-letter
+// prefixes like "SCHA01" don't slip back in.
+const PROJECT_NAME_RE = /^[A-Z]{3}\d{2}$/;
+function isValidProjectName(name: string | null | undefined): boolean {
+  return !!name && PROJECT_NAME_RE.test(name.trim());
+}
+
 // ── Benchmark helpers ─────────────────────────────────────────────────────────
 
 // Maps admin region codes → country names / aliases that belong to that region.
@@ -1184,6 +1194,14 @@ export default function PricingTool() {
       toast({ title: "Project name is required", variant: "destructive" });
       return;
     }
+    if (!isValidProjectName(historyForm.project_name)) {
+      toast({
+        title: "Project name must be 3 letters + 2 digits",
+        description: `Got "${historyForm.project_name}". Expected format: ABC01.`,
+        variant: "destructive",
+      });
+      return;
+    }
     if (!historyForm.weekly_price) {
       toast({ title: "Weekly price is required", variant: "destructive" });
       return;
@@ -2043,6 +2061,14 @@ export default function PricingTool() {
 
   const handleSave = async (status: "draft" | "final") => {
     if (!form.project_name.trim()) { toast({ title: "Project name is required", variant: "destructive" }); return; }
+    if (!isValidProjectName(form.project_name)) {
+      toast({
+        title: "Project name must be 3 letters + 2 digits",
+        description: `Got "${form.project_name}". Expected format: ABC01 (revision letter is separate).`,
+        variant: "destructive",
+      });
+      return;
+    }
     if (!form.region) { toast({ title: "Region is required", variant: "destructive" }); return; }
     if (!form.duration_weeks) { toast({ title: "Duration is required", variant: "destructive" }); return; }
     setSaving(true);

@@ -759,6 +759,25 @@ export async function seedDatabase() {
   // The schema column ALTERs above remain (they're idempotent and
   // structurally required); only the project-specific INSERTs and
   // UPDATEs are removed.
+  //
+  // One-time rename: legacy 'SCHA01' row violates the 3-letter prefix
+  // convention (project_name = 3 capital letters + 2 digits). Rename to
+  // 'SCH01' if a row with that name exists and 'SCH01' isn't already
+  // taken. Idempotent — does nothing on subsequent boots.
+  try {
+    await db.execute(sql`
+      UPDATE pricing_cases SET project_name = 'SCH01'
+      WHERE project_name = 'SCHA01'
+        AND NOT EXISTS (SELECT 1 FROM pricing_cases WHERE project_name = 'SCH01')
+    `);
+    await db.execute(sql`
+      UPDATE pricing_proposals SET project_name = 'SCH01'
+      WHERE project_name = 'SCHA01'
+        AND NOT EXISTS (SELECT 1 FROM pricing_proposals WHERE project_name = 'SCH01')
+    `);
+  } catch (e) {
+    console.error("Failed to rename SCHA01 → SCH01:", e);
+  }
 
   // ── Retroactive Past-Projects backfill ─────────────────────────────
   // Any pricing_case with status='final' that is missing a corresponding
