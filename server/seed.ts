@@ -1234,6 +1234,38 @@ Run with: node eendigo_template.js',
       AND (onboarding_ratings IS NULL OR onboarding_ratings = '[]'::jsonb)
   `);
 
+  // ── Brief runs + events (live cascade visualisation) ──────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS brief_runs (
+      id               SERIAL PRIMARY KEY,
+      trigger          TEXT NOT NULL DEFAULT 'ceo brief',
+      status           TEXT NOT NULL DEFAULT 'running',
+      started_at       TEXT NOT NULL,
+      completed_at     TEXT,
+      final_summary    TEXT,
+      proposals_count  INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS brief_events (
+      id          SERIAL PRIMARY KEY,
+      run_id      INTEGER NOT NULL,
+      role_key    TEXT NOT NULL,
+      event_type  TEXT NOT NULL,
+      summary     TEXT NOT NULL,
+      payload     JSONB,
+      created_at  TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS brief_events_run_idx ON brief_events(run_id, created_at)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS brief_runs_running_idx ON brief_runs(started_at DESC) WHERE status = 'running'`);
+  // Auto-fail any "running" runs older than 30 minutes — likely a Claude
+  // session crashed mid-cascade. Idempotent on every boot.
+  await db.execute(sql`
+    UPDATE brief_runs SET status = 'failed', completed_at = ${new Date().toISOString()}
+    WHERE status = 'running' AND started_at < (NOW() - INTERVAL '30 minutes')::text
+  `);
+
   // ── Agent Knowledge ──────────────────────────────────────────────────
   // Per-role memory. Each role-skill reads all status='active' rows for
   // its role_key on every run.

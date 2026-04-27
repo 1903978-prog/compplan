@@ -961,6 +961,31 @@ export const knowledgeFiles = pgTable("knowledge_files", {
   uploaded_at: text("uploaded_at").notNull(),
 });
 
+// ── Brief runs (live cascade visualisation) ─────────────────────────────────
+// When the user types "ceo brief", the skill POSTs a new brief_run, then
+// emits brief_events as the cascade unfolds (CEO → DRs → their DRs).
+// /exec/brief-stream polls these tables every 2s and renders the timeline
+// live so the user can watch the org "think" in real time.
+export const briefRuns = pgTable("brief_runs", {
+  id: serial("id").primaryKey(),
+  trigger: text("trigger").notNull().default("ceo brief"),       // what the user typed
+  status: text("status").notNull().default("running"),           // running | completed | failed
+  started_at: text("started_at").notNull(),
+  completed_at: text("completed_at"),
+  final_summary: text("final_summary"),                          // CEO synthesis
+  proposals_count: integer("proposals_count").notNull().default(0),
+});
+
+export const briefEvents = pgTable("brief_events", {
+  id: serial("id").primaryKey(),
+  run_id: integer("run_id").notNull(),
+  role_key: text("role_key").notNull(),                          // emitting role
+  event_type: text("event_type").notNull(),                      // started | searching | gathering | drafting | posted | completed | escalated | failed
+  summary: text("summary").notNull(),                             // one-line headline
+  payload: jsonb("payload").$type<Record<string, unknown>>(),    // optional structured detail (links, source titles, etc.)
+  created_at: text("created_at").notNull(),
+});
+
 // ── Agent Knowledge ─────────────────────────────────────────────────────────
 // Per-role memory: every note, instruction, insight, or context the user
 // (or another agent) has explicitly given to a specific role. The CEO and

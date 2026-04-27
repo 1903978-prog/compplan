@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -270,6 +270,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
+  });
+
+  // ── Brief runs (live cascade) ──────────────────────────────────────
+  app.get("/api/brief-runs", requireAuth, async (req, res) => {
+    try {
+      const limit = Math.max(1, Math.min(50, parseInt((req.query.limit as string) ?? "20")));
+      const rows = await db.select().from(briefRuns).orderBy(desc(briefRuns.started_at)).limit(limit);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/brief-runs/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const runs = await db.select().from(briefRuns).where(eq(briefRuns.id, id));
+      if (runs.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      const events = await db.select().from(briefEvents).where(eq(briefEvents.run_id, id)).orderBy(briefEvents.created_at);
+      res.json({ run: runs[0], events });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/brief-runs", requireAuth, async (req, res) => {
+    try {
+      const trigger = String((req.body as any)?.trigger ?? "ceo brief").slice(0, 80);
+      const now = new Date().toISOString();
+      const inserted = await db.insert(briefRuns).values({ trigger, status: "running", started_at: now } as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/brief-runs/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, any>;
+      const update: any = {};
+      if (typeof b.status === "string" && ["running", "completed", "failed"].includes(b.status)) {
+        update.status = b.status;
+        if (b.status !== "running") update.completed_at = new Date().toISOString();
+      }
+      if (typeof b.final_summary === "string") update.final_summary = b.final_summary.slice(0, 4000);
+      if (typeof b.proposals_count === "number") update.proposals_count = b.proposals_count;
+      const rows = await db.update(briefRuns).set(update).where(eq(briefRuns.id, id)).returning();
+      if (rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/brief-runs/:id/events", requireAuth, async (req, res) => {
+    try {
+      const run_id = safeInt(req.params.id);
+      const b = req.body as Record<string, any>;
+      const role_key = String(b.role_key ?? "").trim().slice(0, 60);
+      const event_type = String(b.event_type ?? "").trim().slice(0, 30);
+      const summary = String(b.summary ?? "").trim().slice(0, 500);
+      if (!role_key || !event_type || !summary) { res.status(400).json({ message: "role_key + event_type + summary required" }); return; }
+      const inserted = await db.insert(briefEvents).values({
+        run_id, role_key, event_type, summary,
+        payload: (b.payload && typeof b.payload === "object") ? b.payload : null,
+        created_at: new Date().toISOString(),
+      } as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
   // ── Agent Knowledge ───────────────────────────────────────────────────

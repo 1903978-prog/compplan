@@ -34,6 +34,7 @@ import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
+import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
 import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -306,6 +307,7 @@ function Navigation() {
                   { href: "/exec", label: "Dashboard", icon: Activity },
                   { href: "/exec/org-chart", label: "Org Chart", icon: Network },
                   { href: "/exec/staffing", label: "Staffing Gantt", icon: CalendarDays },
+                  { href: "/exec/brief-stream", label: "Brief Stream", icon: Activity },
                 ]}
               />
               <NavDropdown
@@ -459,6 +461,7 @@ function Router() {
       <Route path="/exec" component={ExecDashboard} />
       <Route path="/exec/org-chart" component={OrgChart} />
       <Route path="/exec/staffing" component={StaffingGantt} />
+      <Route path="/exec/brief-stream" component={BriefStream} />
       <Route path="/bd" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />
