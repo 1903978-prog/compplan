@@ -817,6 +817,20 @@ export async function seedDatabase() {
   // falls back to the default short/medium/long curve when null.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS case_timelines JSONB`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS proposal_options_count INTEGER NOT NULL DEFAULT 3`);
+  // Org agents — agent vs human kind + email for human roles
+  await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'agent'`);
+  await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS email TEXT`);
+  await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS dotted_parent_role_keys JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  // Pre-set the CFO ↔ Sales matrix per co-CEO direction: CFO primarily under
+  // CEO (solid), dotted-line to Sales because CFO does contracts/invoicing/
+  // expense-reports for sales engagements. Idempotent — only adds 'sales-
+  // director' to dotted_parent_role_keys if not already present.
+  await db.execute(sql`
+    UPDATE org_agents
+    SET dotted_parent_role_keys = '["sales-director"]'::jsonb
+    WHERE role_key = 'cfo'
+      AND NOT (dotted_parent_role_keys @> '["sales-director"]'::jsonb)
+  `);
   // Revision letter appended to project_name in the UI (A / B / C / D).
   // Lets a case track its proposal revision count without renaming.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS revision_letter TEXT DEFAULT 'A'`);
@@ -1366,6 +1380,54 @@ Sign warmly.`},
     WHERE NOT EXISTS (
       SELECT 1 FROM agent_knowledge
       WHERE role_key = 'sales-director' AND title = 'Eendigo Sales Playbook (set by co-CEO)'
+    )
+  `);
+  // Seed CFO cash-management protocol
+  await db.execute(sql`
+    INSERT INTO agent_knowledge (role_key, title, content, source, tags, status, created_at)
+    SELECT 'cfo',
+           'Cash management protocol — payroll + freelancer payouts',
+           ${`Cash protocol set by co-CEO:
+
+ACCOUNTS the company holds:
+• Wise LM
+• Wise SQ1   ← salaries paid out from here
+• Wise LLC   ← freelancer fees paid out from here (default; co-CEO can override "from LLC")
+• Revolut
+
+WEEKLY CASH-FORECAST CYCLE
+1 week before any scheduled payout:
+1. Ask co-CEO for the current cash balance in: Wise LM, Wise SQ1, Wise LLC, Revolut.
+2. Compute the upcoming week's outflows:
+   • Salaries (employees) → Wise SQ1
+   • Freelancer fees → Wise LLC (default) OR Wise SQ1 (if co-CEO explicitly says "from SQ1")
+3. Compare projected balance after outflows vs zero plus a safety buffer.
+4. Recommend the EXACT amount to top up into Wise SQ1 and/or Wise LLC, sourcing from Wise LM or Revolut.
+5. Surface the recommendation to co-CEO as an agent_proposal with:
+   - category="ar" (or new "cash" if you've added it)
+   - priority="p1" if the gap would put any account near zero, p2 otherwise
+   - action_required = "Approve transfer of €X from <source> to <dest> by <date>"
+
+WHAT TO ASK CO-CEO
+"Cash check — please confirm balances:
+  Wise LM: €___
+  Wise SQ1: €___
+  Wise LLC: €___
+  Revolut: €___
+Next payouts due in 7 days:
+  Salaries: €___ (out of Wise SQ1)
+  Freelancers: €___ (out of Wise LLC, unless told otherwise)
+Should I assume default routing or any override this week?"
+
+ESCALATION
+If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.`},
+           'user',
+           '["cash","payroll","freelancers","accounts","wise","revolut"]'::jsonb,
+           'active',
+           ${new Date().toISOString()}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM agent_knowledge
+      WHERE role_key = 'cfo' AND title = 'Cash management protocol — payroll + freelancer payouts'
     )
   `);
 

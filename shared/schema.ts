@@ -1044,9 +1044,22 @@ export const orgAgents = pgTable("org_agents", {
   id: serial("id").primaryKey(),
   role_key: text("role_key").notNull().unique(),     // "ceo", "cfo", "sales-director", "marketing-manager", "pricing-director", "hiring-manager", "coo"
   role_name: text("role_name").notNull(),            // human label, e.g. "Chief Financial Officer"
-  parent_role_key: text("parent_role_key"),          // null for CEO
+  parent_role_key: text("parent_role_key"),          // null for CEO; primary "solid line" boss
+  // dotted_parent_role_keys: secondary "dotted line" matrix bosses. Pattern
+  // common in consulting: e.g. CFO reports primarily to CEO but dotted-line
+  // to Sales Director because CFO produces contracts + invoicing for sales
+  // engagements. Empty by default. UI renders as dashed lines distinct from
+  // the solid primary-line.
+  dotted_parent_role_keys: jsonb("dotted_parent_role_keys").$type<string[]>().notNull().default([]),
   person_name: text("person_name"),                  // optional human owner (e.g. "Adrian")
   status: text("status").notNull().default("active"),// "active" | "onboarding" | "vacant" | "fired"
+  // kind: "agent" = AI role-skill produces briefs/proposals; "human" = real
+  // person we coordinate with (e.g. an external freelancer or partner). Email
+  // is the primary touchpoint for human roles. Default "agent" preserves
+  // existing rows. UI shows a different badge + an "Email instructions" link
+  // for human roles.
+  kind: text("kind").notNull().default("agent"),
+  email: text("email"),
   goals: jsonb("goals").$type<string[]>().notNull().default([]),
   okrs: jsonb("okrs").$type<{ objective: string; key_results: string[] }[]>().notNull().default([]),
   tasks_10d: jsonb("tasks_10d").$type<{

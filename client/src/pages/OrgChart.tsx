@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Archive } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Archive, User, Bot, Mail } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -22,8 +22,11 @@ interface OrgRole {
   role_key: string;
   role_name: string;
   parent_role_key: string | null;
+  dotted_parent_role_keys?: string[];
   person_name: string | null;
   status: "active" | "onboarding" | "vacant" | "fired";
+  kind?: "agent" | "human";
+  email?: string | null;
   goals: string[];
   okrs: OkrItem[];
   tasks_10d: TaskItem[];
@@ -112,6 +115,39 @@ export default function OrgChart() {
   const [knowledgeDraftTitle, setKnowledgeDraftTitle] = useState("");
   const [knowledgeDraftContent, setKnowledgeDraftContent] = useState("");
   const [showFullLog, setShowFullLog] = useState(false);
+  const [showAddRole, setShowAddRole] = useState(false);
+  const [newRole, setNewRole] = useState({
+    role_name: "",
+    person_name: "",
+    parent_role_key: "ceo",
+    kind: "agent" as "agent" | "human",
+    email: "",
+  });
+
+  const createRole = async () => {
+    if (!newRole.role_name.trim()) return;
+    const r = await fetch("/api/org-chart", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        role_name: newRole.role_name.trim(),
+        person_name: newRole.person_name.trim() || null,
+        parent_role_key: newRole.parent_role_key,
+        kind: newRole.kind,
+        email: newRole.email.trim() || null,
+      }),
+    });
+    if (r.ok) {
+      const role = await r.json();
+      setRoles(prev => [...prev, role]);
+      setShowAddRole(false);
+      setNewRole({ role_name: "", person_name: "", parent_role_key: "ceo", kind: "agent", email: "" });
+      toast({ title: "Role added" });
+    } else {
+      const body = await r.json().catch(() => ({}));
+      toast({ title: "Failed to add role", description: body.message ?? "Unknown error", variant: "destructive" });
+    }
+  };
 
   const refreshProposals = () => {
     fetch("/api/agent-proposals?status=pending", { credentials: "include" })
@@ -222,15 +258,84 @@ export default function OrgChart() {
 
   return (
     <div className="container mx-auto py-6 max-w-7xl">
-      <div className="flex items-center gap-3 mb-6">
-        <Network className="w-7 h-7 text-primary" />
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Org Chart</h1>
-          <p className="text-sm text-muted-foreground">
-            Each role's ambition, OKRs, and the tasks they plan to execute in the next 10 days. Click any card for the full task list.
-          </p>
+      <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Network className="w-7 h-7 text-primary" />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Org Chart</h1>
+            <p className="text-sm text-muted-foreground">
+              <Bot className="w-3 h-3 inline" /> AI agent · <User className="w-3 h-3 inline" /> human · solid line = primary boss · dotted line = matrix.
+            </p>
+          </div>
         </div>
+        <Button size="sm" onClick={() => setShowAddRole(true)}>
+          <Plus className="w-4 h-4 mr-1" /> Add role
+        </Button>
       </div>
+
+      {/* ── Add-role popup ───────────────────────────────────────── */}
+      <Dialog open={showAddRole} onOpenChange={(o) => !o && setShowAddRole(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add a new role</DialogTitle>
+            <DialogDescription>Agent = AI role-skill produces briefs. Human = real person you coordinate via email.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 mt-2 text-sm">
+            <div>
+              <label className="text-xs font-semibold">Role name *</label>
+              <input type="text" value={newRole.role_name}
+                onChange={e => setNewRole(r => ({ ...r, role_name: e.target.value }))}
+                placeholder="e.g. Senior Recruiter, Office Manager"
+                className="w-full h-8 mt-1 px-2 text-sm border rounded bg-background" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold">Person name (optional)</label>
+              <input type="text" value={newRole.person_name}
+                onChange={e => setNewRole(r => ({ ...r, person_name: e.target.value }))}
+                placeholder="e.g. Cosmin"
+                className="w-full h-8 mt-1 px-2 text-sm border rounded bg-background" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-semibold">Kind</label>
+                <select value={newRole.kind}
+                  onChange={e => setNewRole(r => ({ ...r, kind: e.target.value as any }))}
+                  className="w-full h-8 mt-1 px-2 text-sm border rounded bg-background">
+                  <option value="agent">Agent (AI)</option>
+                  <option value="human">Human</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold">Reports to *</label>
+                <select value={newRole.parent_role_key}
+                  onChange={e => setNewRole(r => ({ ...r, parent_role_key: e.target.value }))}
+                  className="w-full h-8 mt-1 px-2 text-sm border rounded bg-background">
+                  {roles.sort((a, b) => a.sort_order - b.sort_order).map(r => (
+                    <option key={r.role_key} value={r.role_key}>
+                      {r.role_name}{r.person_name ? ` (${r.person_name})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {newRole.kind === "human" && (
+              <div>
+                <label className="text-xs font-semibold">Email (for sending instructions)</label>
+                <input type="email" value={newRole.email}
+                  onChange={e => setNewRole(r => ({ ...r, email: e.target.value }))}
+                  placeholder="cosmin@example.com"
+                  className="w-full h-8 mt-1 px-2 text-sm border rounded bg-background" />
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setShowAddRole(false)}>Cancel</Button>
+            <Button onClick={createRole} disabled={!newRole.role_name.trim()}>
+              <Plus className="w-4 h-4 mr-1" /> Create
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* CEO row */}
       {ceo && (
@@ -511,11 +616,37 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Kind icon: bot for AI agents, person for humans */}
+              {role.kind === "human" ? (
+                <span title="Human role — coordinate via email" className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950/40 shrink-0">
+                  <User className="w-3 h-3" />
+                </span>
+              ) : (
+                <span title="AI agent role — produces briefs/proposals via skill" className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-950/40 shrink-0">
+                  <Bot className="w-3 h-3" />
+                </span>
+              )}
               <h3 className="font-semibold text-sm leading-tight truncate">{role.role_name}</h3>
               {statusBadge(role.status)}
             </div>
             {role.person_name && (
               <p className="text-xs text-muted-foreground mt-0.5 truncate">{role.person_name}</p>
+            )}
+            {/* Dotted-line bosses (matrix). Solid line = parent_role_key already
+                rendered by the tree layout. */}
+            {role.dotted_parent_role_keys && role.dotted_parent_role_keys.length > 0 && (
+              <p className="text-[10px] text-muted-foreground/80 mt-0.5 italic truncate">
+                — also dotted-line to: {role.dotted_parent_role_keys.join(", ")}
+              </p>
+            )}
+            {role.kind === "human" && role.email && (
+              <a
+                href={`mailto:${role.email}?subject=Eendigo — instructions`}
+                onClick={e => e.stopPropagation()}
+                className="text-[10px] text-primary hover:underline mt-0.5 inline-flex items-center gap-1"
+              >
+                <Mail className="w-2.5 h-2.5" /> {role.email}
+              </a>
             )}
           </div>
           <Button

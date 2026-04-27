@@ -72,6 +72,10 @@ interface PricingCase {
   risk_flags?: string[] | null;           // regulatory / timing / team / reputation
   problem_statement?: string | null;      // what the project actually solves
   expected_impact_eur?: number | null;    // expected € impact on client's P&L
+  // proposal_options_count: 1 = single-option mode (only Option 1 rendered),
+  // 3 = full 3-option mode. Hidden options keep their state in case_timelines
+  // so toggling back is lossless.
+  proposal_options_count?: number;
 }
 
 const fmt = (n: number) => "€" + Math.round(n).toLocaleString("it-IT");
@@ -532,6 +536,7 @@ function emptyCase(): PricingCase {
     incumbent_advisor: null, geographic_scope: "multi", value_driver: null,
     differentiation: null, risk_flags: null, problem_statement: null,
     expected_impact_eur: null,
+    proposal_options_count: 3,
   };
 }
 
@@ -5442,7 +5447,11 @@ export default function PricingTool() {
                         // Pricing Cases LIST page can compute the same Option-2
                         // weekly target without duplicating logic. See
                         // computeOptionColumn there.
-                        const cols = timelines.map(t => computeOptionColumn(t, grossWk, caseDiscounts));
+                        // Honor the proposal_options_count toggle: render only the
+                        // first N options. Hidden columns' state is preserved in
+                        // caseTimelines so toggling back to 3 is lossless.
+                        const visibleTimelines = (form.proposal_options_count ?? 3) === 1 ? timelines.slice(0, 1) : timelines;
+                        const cols = visibleTimelines.map(t => computeOptionColumn(t, grossWk, caseDiscounts));
                         // Discount rows shown = union of rows across columns
                         // (same structure since all cols use same discounts).
                         const rowDefs = cols[0].breakdown;
@@ -5451,6 +5460,23 @@ export default function PricingTool() {
                             <div className="bg-[#1A6571] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 flex items-center justify-between">
                               <span>Commercial Proposal — project fees by option</span>
                               <div className="flex items-center gap-2">
+                                {/* Option-count toggle: 1 = single quote (some
+                                    proposals don't need 3 options); 3 = full
+                                    3-option layout. Hidden options keep their
+                                    state in caseTimelines so toggling back is
+                                    lossless. */}
+                                <div className="flex items-center bg-white/10 rounded overflow-hidden text-[10px]">
+                                  <button
+                                    type="button"
+                                    onClick={() => setForm(f => ({ ...f, proposal_options_count: 1 }))}
+                                    className={`px-2 py-0.5 ${(form.proposal_options_count ?? 3) === 1 ? "bg-white text-[#1A6571] font-bold" : "text-white/80 hover:bg-white/10"}`}
+                                  >1 option</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setForm(f => ({ ...f, proposal_options_count: 3 }))}
+                                    className={`px-2 py-0.5 ${(form.proposal_options_count ?? 3) === 3 ? "bg-white text-[#1A6571] font-bold" : "text-white/80 hover:bg-white/10"}`}
+                                  >3 options</button>
+                                </div>
                                 <Button
                                   size="sm" variant="secondary"
                                   className="h-6 text-[10px] px-2"
@@ -5492,9 +5518,8 @@ export default function PricingTool() {
                                           onChange={e => setCaseTimelines(prev => prev.map((x, j) =>
                                             j === i ? { ...x, weeks: Math.max(1, parseInt(e.target.value) || 1) } : x
                                           ))}
-                                          disabled={isBase}
-                                          title={isBase ? "Option 1 matches the case duration — edit the case's duration to change" : undefined}
-                                          className={`h-6 w-14 text-xs text-center font-semibold ${isBase ? "opacity-60" : ""}`}
+                                          title="Editable per option. Option 1 used to be locked to case duration; now editable so projects don't have to use 12/16/20."
+                                          className="h-6 w-14 text-xs text-center font-semibold"
                                         />
                                         <span className="text-[10px] text-muted-foreground">weeks</span>
                                       </div>

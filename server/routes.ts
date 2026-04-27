@@ -231,6 +231,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/org-chart — create a new role (agent or human). Slugifies
+  // role_key from role_name if not supplied; rejects duplicate role_keys.
+  app.post("/api/org-chart", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, any>;
+      const role_name = String(b.role_name ?? "").trim().slice(0, 80);
+      if (!role_name) { res.status(400).json({ message: "role_name required" }); return; }
+      const slug = (b.role_key ? String(b.role_key) : role_name)
+        .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+      if (!slug) { res.status(400).json({ message: "role_key invalid" }); return; }
+      const existing = await db.select().from(orgAgents).where(eq(orgAgents.role_key, slug));
+      if (existing.length > 0) { res.status(409).json({ message: `role_key '${slug}' already exists` }); return; }
+      const parent_role_key = b.parent_role_key ? String(b.parent_role_key) : null;
+      if (parent_role_key) {
+        const parent = await db.select().from(orgAgents).where(eq(orgAgents.role_key, parent_role_key));
+        if (parent.length === 0) { res.status(400).json({ message: "Unknown parent_role_key" }); return; }
+      }
+      const now = new Date().toISOString();
+      const row = {
+        role_key: slug,
+        role_name,
+        parent_role_key,
+        person_name: typeof b.person_name === "string" ? b.person_name.slice(0, 80) : null,
+        status: ["active", "onboarding", "vacant", "fired"].includes(String(b.status)) ? String(b.status) : "active",
+        kind: ["agent", "human"].includes(String(b.kind)) ? String(b.kind) : "agent",
+        email: typeof b.email === "string" ? b.email.slice(0, 120) : null,
+        goals: Array.isArray(b.goals) ? (b.goals as unknown[]).slice(0, 30).map(String) : [],
+        okrs: Array.isArray(b.okrs) ? (b.okrs as unknown[]).slice(0, 10) : [],
+        tasks_10d: Array.isArray(b.tasks_10d) ? (b.tasks_10d as unknown[]).slice(0, 50) : [],
+        dotted_parent_role_keys: Array.isArray(b.dotted_parent_role_keys) ? (b.dotted_parent_role_keys as unknown[]).slice(0, 5).map(String) : [],
+        sort_order: typeof b.sort_order === "number" ? b.sort_order : 99,
+        created_at: now,
+        updated_at: now,
+      };
+      const inserted = await db.insert(orgAgents).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
   // ── Agent Knowledge ───────────────────────────────────────────────────
   // Per-role memory the user / agents have given to a role. Each role-skill
   // reads these on every run before producing a brief or decision.
@@ -407,17 +448,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Whitelist editable fields. role_key, parent_role_key, sort_order are
       // structural and shouldn't be changed via this endpoint (use a
       // dedicated migration if the org tree shape changes).
-      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d", "parent_role_key"]) {
+      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d", "parent_role_key", "kind", "email", "dotted_parent_role_keys"]) {
         if (k in req.body) allowed[k] = req.body[k];
       }
+      // Validate kind
+      if (typeof allowed.kind === "string" && !["agent", "human"].includes(allowed.kind as string)) {
+        res.status(400).json({ message: "kind must be 'agent' or 'human'" }); return;
+      }
+      // Cap dotted_parent_role_keys size
+      if (Array.isArray(allowed.dotted_parent_role_keys)) {
+        allowed.dotted_parent_role_keys = (allowed.dotted_parent_role_keys as unknown[]).slice(0, 5).map(String);
+      }
       // Sanity: parent_role_key must reference a real role (or be null for CEO).
-      // Block self-parenting so we don't break the tree render.
+      // Block self-parenting AND cycles (e.g. A→B→A would crash the tree render).
       if (typeof allowed.parent_role_key === "string") {
         const parent = await db.select().from(orgAgents).where(eq(orgAgents.role_key, allowed.parent_role_key as string));
         if (parent.length === 0) { res.status(400).json({ message: "Unknown parent_role_key" }); return; }
         const self = await db.select().from(orgAgents).where(eq(orgAgents.id, safeInt(req.params.id)));
-        if (self[0] && self[0].role_key === allowed.parent_role_key) {
+        const selfKey = self[0]?.role_key;
+        if (selfKey && selfKey === allowed.parent_role_key) {
           res.status(400).json({ message: "Role cannot report to itself" }); return;
+        }
+        // Walk up from the proposed parent through parent_role_key chain. If
+        // we ever reach selfKey, accepting this would create a cycle.
+        if (selfKey) {
+          const all = await db.select().from(orgAgents);
+          const byKey = new Map(all.map(r => [r.role_key, r]));
+          let cursor: string | null = allowed.parent_role_key as string;
+          const seen = new Set<string>();
+          let safety = 50; // hard guard against malformed data already cyclic in DB
+          while (cursor && safety-- > 0) {
+            if (cursor === selfKey) {
+              res.status(400).json({ message: `Cycle blocked — '${cursor}' would end up reporting to itself via this chain.` });
+              return;
+            }
+            if (seen.has(cursor)) break; // pre-existing cycle in data, don't infinite-loop here
+            seen.add(cursor);
+            cursor = byKey.get(cursor)?.parent_role_key ?? null;
+          }
         }
       }
       // Cap array sizes (jsonb-bomb defence).
