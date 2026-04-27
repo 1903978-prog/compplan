@@ -2,7 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, type BenchmarkRow } from "@shared/schema";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -211,6 +213,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (e) {
       console.error("[code-download] failed:", e);
       if (!res.headersSent) res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // ── Org Chart ────────────────────────────────────────────────────────
+  // Powers /exec/org-chart. Returns all roles ordered by sort_order so the
+  // CEO comes first and direct reports follow. Editable from the UI; also
+  // writable by the eendigo-ceo skill via the same endpoints (it can update
+  // tasks_10d, goals, OKRs daily).
+  app.get("/api/org-chart", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.select().from(orgAgents).orderBy(orgAgents.sort_order);
+      res.json(rows);
+    } catch (e) {
+      console.error("[org-chart] GET failed:", e);
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  app.put("/api/org-chart/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const allowed: Record<string, unknown> = {};
+      // Whitelist editable fields. role_key, parent_role_key, sort_order are
+      // structural and shouldn't be changed via this endpoint (use a
+      // dedicated migration if the org tree shape changes).
+      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d"]) {
+        if (k in req.body) allowed[k] = req.body[k];
+      }
+      // Cap array sizes (jsonb-bomb defence).
+      if (Array.isArray(allowed.goals)) allowed.goals = (allowed.goals as unknown[]).slice(0, 30);
+      if (Array.isArray(allowed.okrs)) allowed.okrs = (allowed.okrs as unknown[]).slice(0, 10);
+      if (Array.isArray(allowed.tasks_10d)) allowed.tasks_10d = (allowed.tasks_10d as unknown[]).slice(0, 50);
+      allowed.updated_at = new Date().toISOString();
+      const rows = await db.update(orgAgents).set(allowed as any).where(eq(orgAgents.id, id)).returning();
+      if (rows.length === 0) { res.status(404).json({ message: "Role not found" }); return; }
+      res.json(rows[0]);
+    } catch (e) {
+      console.error("[org-chart] PUT failed:", e);
+      res.status(500).json({ message: (e as Error).message });
     }
   });
 

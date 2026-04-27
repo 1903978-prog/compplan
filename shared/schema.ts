@@ -920,3 +920,39 @@ export const knowledgeFiles = pgTable("knowledge_files", {
   content_text: text("content_text"),
   uploaded_at: text("uploaded_at").notNull(),
 });
+
+// ── Org Chart ───────────────────────────────────────────────────────────────
+// One row per agent in the company (CEO + each direct report). Mirrors the
+// eendigo-ceo skill's state/org_chart.json so the same data is visible in
+// the app and editable by both the user and the CEO skill via the API.
+//
+// Each role has:
+//   • goals          — short bullet list of strategic priorities (the "what")
+//   • okrs           — quarterly Objectives + Key Results
+//   • tasks_10d      — concrete tasks the agent plans to execute in the
+//                       next 10 days. Updated daily (by the agent's cron run
+//                       or a CEO refresh). Each task: { id, title, due_date,
+//                       status: "todo" | "in_progress" | "done" | "blocked",
+//                       linked_url? (e.g. /pricing/cases/123) }
+//   • parent_role_key — null for CEO; "ceo" for direct reports; "coo" later
+export const orgAgents = pgTable("org_agents", {
+  id: serial("id").primaryKey(),
+  role_key: text("role_key").notNull().unique(),     // "ceo", "cfo", "sales-director", "marketing-manager", "pricing-director", "hiring-manager", "coo"
+  role_name: text("role_name").notNull(),            // human label, e.g. "Chief Financial Officer"
+  parent_role_key: text("parent_role_key"),          // null for CEO
+  person_name: text("person_name"),                  // optional human owner (e.g. "Adrian")
+  status: text("status").notNull().default("active"),// "active" | "onboarding" | "vacant" | "fired"
+  goals: jsonb("goals").$type<string[]>().notNull().default([]),
+  okrs: jsonb("okrs").$type<{ objective: string; key_results: string[] }[]>().notNull().default([]),
+  tasks_10d: jsonb("tasks_10d").$type<{
+    id: string;
+    title: string;
+    due_date: string;       // ISO YYYY-MM-DD
+    status: "todo" | "in_progress" | "done" | "blocked";
+    linked_url?: string;    // optional deep-link to compplan page
+    note?: string;
+  }[]>().notNull().default([]),
+  sort_order: integer("sort_order").notNull().default(0),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});

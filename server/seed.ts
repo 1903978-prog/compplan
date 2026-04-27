@@ -1185,6 +1185,146 @@ Run with: node eendigo_template.js',
       AND (onboarding_ratings IS NULL OR onboarding_ratings = '[]'::jsonb)
   `);
 
+  // ── Org Chart ────────────────────────────────────────────────────────
+  // Backs the /exec/org-chart page. One row per role. Mirrors the
+  // eendigo-ceo skill's state/org_chart.json semantics.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS org_agents (
+      id              SERIAL PRIMARY KEY,
+      role_key        TEXT NOT NULL UNIQUE,
+      role_name       TEXT NOT NULL,
+      parent_role_key TEXT,
+      person_name     TEXT,
+      status          TEXT NOT NULL DEFAULT 'active',
+      goals           JSONB NOT NULL DEFAULT '[]'::jsonb,
+      okrs            JSONB NOT NULL DEFAULT '[]'::jsonb,
+      tasks_10d       JSONB NOT NULL DEFAULT '[]'::jsonb,
+      sort_order      INTEGER NOT NULL DEFAULT 0,
+      created_at      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL
+    )
+  `);
+
+  // Seed initial 6-role org. Idempotent: each INSERT is gated by NOT EXISTS
+  // on role_key. Goals reflect Alessio's 2026 ambitions: hit €3M revenue,
+  // hire ≥2 partners, sell ≥1 project/month, build media presence,
+  // maintain bench capacity for 4 concurrent engagements.
+  const _orgNow = new Date().toISOString();
+  const _addDays = (n: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const _orgSeed: any[] = [
+    {
+      role_key: "ceo", role_name: "CEO", parent_role_key: null,
+      person_name: "Alessio Casati", sort_order: 0, status: "active",
+      goals: [
+        "Hit €3M revenue in 2026",
+        "Hire ≥2 new Partners by end of 2026",
+        "Sell at least 1 project per month, every month",
+        "Build media presence: 12 thought-leadership pieces / yr",
+        "Maintain bench: enough Senior+Associate+BA for 4 concurrent engagements",
+      ],
+      okrs: [
+        { objective: "€3M revenue 2026", key_results: ["≥€750k recognised by Q2 close", "≥€1.6M booked-and-invoiced by Q3", "win-rate ≥50% trailing 10 deals"] },
+        { objective: "Strengthen the Partner bench", key_results: ["2 Partner-grade hires signed", "1 ex-MBB Partner referred-in-pipeline", "Partner utilisation ≤60%"] },
+        { objective: "Always-on commercial pipeline", key_results: ["≥6 active TBDs at any time", "≥2 inbound leads/month from media+content", "0 months with zero new wins"] },
+      ],
+      tasks_10d: [
+        { id: "ceo-1", title: "Set Q2 OKRs in compplan + share with team", due_date: _addDays(2), status: "todo" },
+        { id: "ceo-2", title: "Define hiring plan: 2 Partner profiles + JDs", due_date: _addDays(5), status: "todo" },
+        { id: "ceo-3", title: "Approve Sales Director hire if pipeline >5 stalled", due_date: _addDays(7), status: "todo" },
+        { id: "ceo-4", title: "Review Q1 financials with CFO (when hired)", due_date: _addDays(10), status: "todo" },
+      ],
+    },
+    {
+      role_key: "cfo", role_name: "Chief Financial Officer", parent_role_key: "ceo",
+      person_name: null, sort_order: 1, status: "vacant",
+      goals: [
+        "Outstanding AR <€50k at end of every month",
+        "Cash runway visible 12+ weeks at all times",
+        "Monthly close packaged for CEO by working day 5",
+      ],
+      okrs: [
+        { objective: "Tight AR", key_results: ["≤10 invoices overdue >30d", "no invoices >90d overdue", "DSO <45 days trailing 90d"] },
+        { objective: "Predictable close", key_results: ["Close completed by WD-5 every month", "P&L variance commentary delivered with the close", "0 surprise reclassifications post-close"] },
+      ],
+      tasks_10d: [],
+    },
+    {
+      role_key: "sales-director", role_name: "Sales Director", parent_role_key: "ceo",
+      person_name: null, sort_order: 2, status: "vacant",
+      goals: [
+        "1+ new signed engagement per month",
+        "Pipeline coverage ≥3× quarterly target",
+        "Every prospect call → pricing case opened in compplan + tracked in BD pipeline",
+      ],
+      okrs: [
+        { objective: "Steady win cadence", key_results: ["≥1 new Won/month, every month of 2026", "win-rate ≥50% trailing 10 decided deals", "no deal stalled >14d untouched"] },
+        { objective: "Disciplined pipeline hygiene", key_results: ["Every BD deal has next-step + owner + due-date", "Lost-to-price <30% of total losses", "Pricing case opened within 24h of every prospect call"] },
+      ],
+      tasks_10d: [],
+    },
+    {
+      role_key: "marketing-manager", role_name: "Marketing Manager", parent_role_key: "ceo",
+      person_name: null, sort_order: 3, status: "vacant",
+      goals: [
+        "12 published thought-leadership pieces in 2026",
+        "≥2 inbound qualified leads / month from content+media",
+        "1 case study published per Won engagement (within 30d of close)",
+      ],
+      okrs: [
+        { objective: "Build the Eendigo brand voice", key_results: ["1 LinkedIn post/wk consistent for 26 wks", "1 long-form article/month", "1 podcast or media mention/quarter"] },
+        { objective: "Convert content into pipeline", key_results: ["≥24 inbound leads/yr from content", "≥2 leads → won in 2026", "Newsletter list 500+ by EOY"] },
+      ],
+      tasks_10d: [],
+    },
+    {
+      role_key: "pricing-director", role_name: "Pricing Director", parent_role_key: "ceo",
+      person_name: null, sort_order: 4, status: "vacant",
+      goals: [
+        "Every pricing case has 3-timeline commercial proposal + partner-fallback option",
+        "Lost-to-price <30% of total losses (tune regional bands, not global discounts)",
+        "Win-rate ≥50% on quoted deals trailing 10",
+      ],
+      okrs: [
+        { objective: "Quote discipline", key_results: ["100% of cases use 3 timelines", "100% have partner-fallback computed", "Time from case-saved → proposal-sent ≤24h"] },
+        { objective: "Pattern intelligence", key_results: ["Quarterly win/loss read by region+sector+fund delivered to CEO", "Regional multipliers reviewed once/quarter", "Rate card refreshed annually"] },
+      ],
+      tasks_10d: [],
+    },
+    {
+      role_key: "hiring-manager", role_name: "Hiring Manager", parent_role_key: "ceo",
+      person_name: "Adrian", sort_order: 5, status: "active",
+      goals: [
+        "Maintain ≥10 active candidates across stages at all times",
+        "Top scorers (weighted ≥70) reach final-round in <14 days",
+        "Bench supports 4 concurrent engagements (Senior + Associate + BA mix)",
+      ],
+      okrs: [
+        { objective: "Steady pipeline depth", key_results: ["≥10 active candidates always", "≥3 weighted-≥80 candidates in any 30d window", "0 stage with 0 movement >14d"] },
+        { objective: "Right-mix bench", key_results: ["≥2 Seniors hireable on 4-week notice", "≥3 Associates available for new project", "≥2 BAs onboarding-ready"] },
+      ],
+      tasks_10d: [
+        { id: "hm-1", title: "Review pipeline; surface top 3 scorers to CEO", due_date: _addDays(1), status: "todo" },
+        { id: "hm-2", title: "Schedule final-round for any candidate ≥75 weighted", due_date: _addDays(4), status: "todo" },
+        { id: "hm-3", title: "Draft JDs for 2 Partner profiles (per CEO)", due_date: _addDays(7), status: "todo" },
+      ],
+    },
+  ];
+  for (const a of _orgSeed) {
+    await db.execute(sql`
+      INSERT INTO org_agents (role_key, role_name, parent_role_key, person_name, status, goals, okrs, tasks_10d, sort_order, created_at, updated_at)
+      SELECT ${a.role_key}, ${a.role_name}, ${a.parent_role_key}, ${a.person_name}, ${a.status},
+             ${JSON.stringify(a.goals)}::jsonb,
+             ${JSON.stringify(a.okrs)}::jsonb,
+             ${JSON.stringify(a.tasks_10d)}::jsonb,
+             ${a.sort_order}, ${_orgNow}, ${_orgNow}
+      WHERE NOT EXISTS (SELECT 1 FROM org_agents WHERE role_key = ${a.role_key})
+    `);
+  }
+
   // Seed settings if empty
   const existingSettings = await db.select().from(appSettings);
   if (existingSettings.length === 0) {

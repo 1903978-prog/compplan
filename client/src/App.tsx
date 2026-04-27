@@ -32,8 +32,9 @@ import AdminBackup from "@/pages/AdminBackup";
 import AdminTrash from "@/pages/AdminTrash";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
+import OrgChart from "@/pages/OrgChart";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2 } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -293,19 +294,18 @@ function Navigation() {
               EENDIGO OP MODEL <span className="text-[10px] font-normal text-muted-foreground ml-1">v24Mar</span>
             </h1>
             <div className="flex items-center gap-1">
-              {/* Executive Dashboard — single-screen rollup across every
-                  core stream. Direct link (no submenu) because there's
-                  only one page under /exec — clicking the top-level item
-                  goes straight to the dashboard. */}
-              <Link
-                href="/exec"
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-accent ${
-                  location === "/exec" ? "bg-accent text-accent-foreground" : "text-muted-foreground"
-                }`}
-              >
-                <Activity className="w-4 h-4" />
-                Exec
-              </Link>
+              {/* Executive area — single-screen rollup + the org chart
+                  page that visualises CEO + direct reports, their goals,
+                  OKRs, and the tasks each plans for the next 10 days. */}
+              <NavDropdown
+                label="Exec"
+                icon={Activity}
+                basePaths={["/exec"]}
+                items={[
+                  { href: "/exec", label: "Dashboard", icon: Activity },
+                  { href: "/exec/org-chart", label: "Org Chart", icon: Network },
+                ]}
+              />
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
@@ -455,6 +455,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/exec" component={ExecDashboard} />
+      <Route path="/exec/org-chart" component={OrgChart} />
       <Route path="/bd" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />
