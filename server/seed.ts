@@ -311,6 +311,7 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS manager_name TEXT`);
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS team_members JSONB`);
   await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS last_invoice_at TEXT`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS weekly_reports JSONB`);
 
   // Time tracking tables
   await db.execute(sql`
@@ -1190,6 +1191,39 @@ Run with: node eendigo_template.js',
       AND (onboarding_ratings IS NULL OR onboarding_ratings = '[]'::jsonb)
   `);
 
+  // ── Agent Proposals ──────────────────────────────────────────────────
+  // Skills POST here when their scheduled run produces a recommendation.
+  // Rendered at the bottom of /exec/org-chart for the user to act on.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS agent_proposals (
+      id              SERIAL PRIMARY KEY,
+      role_key        TEXT NOT NULL,
+      cycle_at        TEXT NOT NULL,
+      cycle_label     TEXT,
+      priority        TEXT NOT NULL DEFAULT 'p2',
+      category        TEXT NOT NULL DEFAULT 'general',
+      summary         TEXT NOT NULL,
+      rationale       TEXT,
+      action_required TEXT,
+      links           JSONB DEFAULT '[]'::jsonb,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      decided_at      TEXT,
+      decided_note    TEXT,
+      created_at      TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_proposals_role_idx ON agent_proposals(role_key, created_at DESC)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_proposals_pending_idx ON agent_proposals(status, priority, created_at DESC) WHERE status = 'pending'`);
+  // Auto-stale on boot: anything pending >14 days gets marked 'stale' so
+  // the page doesn't accumulate forever. The agent can re-propose if the
+  // signal still holds.
+  await db.execute(sql`
+    UPDATE agent_proposals
+    SET status = 'stale'
+    WHERE status = 'pending'
+      AND created_at < (NOW() - INTERVAL '14 days')::text
+  `);
+
   // ── Org Chart ────────────────────────────────────────────────────────
   // Backs the /exec/org-chart page. One row per role. Mirrors the
   // eendigo-ceo skill's state/org_chart.json semantics.
@@ -1222,8 +1256,8 @@ Run with: node eendigo_template.js',
   };
   const _orgSeed: any[] = [
     {
-      role_key: "ceo", role_name: "CEO", parent_role_key: null,
-      person_name: "Alessio Casati", sort_order: 0, status: "active",
+      role_key: "ceo", role_name: "CEO (AI)", parent_role_key: null,
+      person_name: "Warren Buffett", sort_order: 0, status: "active",
       goals: [
         "Hit €3M revenue in 2026",
         "Hire ≥2 new Partners by end of 2026",
@@ -1245,7 +1279,7 @@ Run with: node eendigo_template.js',
     },
     {
       role_key: "cfo", role_name: "Chief Financial Officer", parent_role_key: "ceo",
-      person_name: null, sort_order: 1, status: "vacant",
+      person_name: "Mario Draghi", sort_order: 1, status: "active",
       goals: [
         "Outstanding AR <€50k at end of every month",
         "Cash runway visible 12+ weeks at all times",
@@ -1273,7 +1307,7 @@ Run with: node eendigo_template.js',
     },
     {
       role_key: "marketing-manager", role_name: "Marketing Manager", parent_role_key: "ceo",
-      person_name: null, sort_order: 3, status: "vacant",
+      person_name: "Philip Kotler", sort_order: 3, status: "active",
       goals: [
         "12 published thought-leadership pieces in 2026",
         "≥2 inbound qualified leads / month from content+media",
@@ -1300,8 +1334,42 @@ Run with: node eendigo_template.js',
       tasks_10d: [],
     },
     {
+      role_key: "coo", role_name: "COO — Tech & Operations", parent_role_key: "ceo",
+      person_name: null, sort_order: 5, status: "active",
+      goals: [
+        "Compplan app stays solid: every page loads, no 5xx, no broken flows",
+        "AI agents and skills evolve continuously — propose improvements weekly",
+        "All agent-requested code changes flow through Claude Code with co-CEO approval",
+        "Infrastructure (Render, Neon, GitHub) remains within healthy limits",
+      ],
+      okrs: [
+        { objective: "App health green", key_results: ["0 P0 bugs in trailing 7d", "≥99.5% uptime trailing 30d", "every nav route returns 200 / 401 / 503-by-design"] },
+        { objective: "Continuous improvement loop", key_results: ["≥1 improvement proposal/week posted to /exec/org-chart", "Median time from co-CEO approval → merged code ≤24h", "0 unauthorised auto-merges"] },
+        { objective: "Operational hygiene", key_results: ["Backups verified weekly", "Trash bin coverage 100% of delete endpoints", "Auth fail-closed verified each Render deploy"] },
+      ],
+      tasks_10d: [
+        { id: "coo-1", title: "App audit: walk every route + console errors", due_date: _addDays(2), status: "todo" },
+        { id: "coo-2", title: "Review last 14d agent-proposals; flag patterns to CEO", due_date: _addDays(5), status: "todo" },
+        { id: "coo-3", title: "Verify backup workflow + trash purge heartbeat live", due_date: _addDays(7), status: "todo" },
+      ],
+    },
+    {
+      role_key: "delivery-director", role_name: "Delivery Director", parent_role_key: "ceo",
+      person_name: null, sort_order: 6, status: "vacant",
+      goals: [
+        "Every ongoing project has a weekly report by EOD Monday",
+        "Project health visibility: green/amber/red status across the portfolio",
+        "Surface risks 4+ weeks before end_date so CEO can act",
+      ],
+      okrs: [
+        { objective: "On-time, on-scope delivery", key_results: ["100% projects deliver by their end_date", "≥80% projects close green", "0 surprise overruns >20% of budget"] },
+        { objective: "Health visibility", key_results: ["Weekly status logged for every active project", "Amber/red flagged with mitigation plan within 48h", "Quarterly review: top 3 delivery learnings published internally"] },
+      ],
+      tasks_10d: [],
+    },
+    {
       role_key: "hiring-manager", role_name: "Hiring Manager", parent_role_key: "ceo",
-      person_name: "Adrian", sort_order: 5, status: "active",
+      person_name: "Adrian", sort_order: 6, status: "active",
       goals: [
         "Maintain ≥10 active candidates across stages at all times",
         "Top scorers (weighted ≥70) reach final-round in <14 days",

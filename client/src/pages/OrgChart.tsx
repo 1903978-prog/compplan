@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface OkrItem { objective: string; key_results: string[] }
@@ -28,6 +28,23 @@ interface OrgRole {
   tasks_10d: TaskItem[];
   sort_order: number;
   updated_at: string;
+}
+
+interface AgentProposal {
+  id: number;
+  role_key: string;
+  cycle_at: string;
+  cycle_label: string | null;
+  priority: "p0" | "p1" | "p2";
+  category: string;
+  summary: string;
+  rationale: string | null;
+  action_required: string | null;
+  links: { label: string; url: string }[];
+  status: "pending" | "accepted" | "rejected" | "actioned" | "stale";
+  decided_at: string | null;
+  decided_note: string | null;
+  created_at: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -63,15 +80,41 @@ function daysFromNow(iso: string): number {
 export default function OrgChart() {
   const { toast } = useToast();
   const [roles, setRoles] = useState<OrgRole[]>([]);
+  const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [openRole, setOpenRole] = useState<OrgRole | null>(null);
 
-  useEffect(() => {
-    fetch("/api/org-chart", { credentials: "include" })
+  const refreshProposals = () => {
+    fetch("/api/agent-proposals?status=pending", { credentials: "include" })
       .then(r => r.ok ? r.json() : [])
-      .then((rows: OrgRole[]) => { setRoles(rows); setLoading(false); })
-      .catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
+      .then((rows: AgentProposal[]) => setProposals(rows))
+      .catch(() => { /* silent — section just hides */ });
+  };
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/org-chart", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch("/api/agent-proposals?status=pending", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([orgs, props]) => {
+      setRoles(orgs);
+      setProposals(props);
+      setLoading(false);
+    }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
   }, [toast]);
+
+  const decideProposal = async (p: AgentProposal, status: AgentProposal["status"], note?: string) => {
+    const r = await fetch(`/api/agent-proposals/${p.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, decided_note: note }),
+    });
+    if (r.ok) {
+      setProposals(prev => prev.filter(x => x.id !== p.id));
+      toast({ title: `Marked ${status}` });
+    } else {
+      toast({ title: "Failed to update", variant: "destructive" });
+    }
+  };
 
   if (loading) {
     return <div className="container mx-auto py-8 text-sm text-muted-foreground">Loading org chart…</div>;
@@ -112,6 +155,94 @@ export default function OrgChart() {
         {reports.map(r => (
           <RoleCard key={r.id} role={r} onClick={() => setOpenRole(r)} />
         ))}
+      </div>
+
+      {/* ── Proposals from your team — pending decisions ───────────── */}
+      <div className="mt-10">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-primary" />
+              Proposals from your team
+              {proposals.length > 0 && <span className="text-sm font-normal text-muted-foreground">({proposals.length} pending)</span>}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Each agent runs at 9am + 2pm and writes here when something needs your decision. They optimise different goals — Pricing wants margin, Sales wants conversion, CFO wants EBITDA, Delivery wants on-time. You resolve the tension.
+            </p>
+          </div>
+          <button
+            onClick={refreshProposals}
+            className="text-xs text-muted-foreground hover:text-foreground underline"
+          >
+            Refresh
+          </button>
+        </div>
+        {proposals.length === 0 ? (
+          <Card className="p-6 text-center text-sm text-muted-foreground italic">
+            No pending proposals. Run a brief locally (e.g. <code className="text-xs bg-muted px-1.5 py-0.5 rounded">ceo brief</code> in Claude Code) to populate.
+          </Card>
+        ) : (
+          <div className="space-y-2">
+            {proposals
+              .sort((a, b) => {
+                const pri = { p0: 0, p1: 1, p2: 2 };
+                if (pri[a.priority] !== pri[b.priority]) return pri[a.priority] - pri[b.priority];
+                return b.created_at.localeCompare(a.created_at);
+              })
+              .map(p => {
+                const role = roles.find(r => r.role_key === p.role_key);
+                const priColor = p.priority === "p0" ? "border-red-400 bg-red-50/40 dark:bg-red-950/20"
+                  : p.priority === "p1" ? "border-amber-400 bg-amber-50/40 dark:bg-amber-950/20"
+                  : "border-border";
+                return (
+                  <Card key={p.id} className={`p-3 border-l-4 ${priColor}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className="text-[10px]">{role?.role_name ?? p.role_key}</Badge>
+                          <Badge className={`text-[10px] ${
+                            p.priority === "p0" ? "bg-red-100 text-red-700 border-red-200"
+                              : p.priority === "p1" ? "bg-amber-100 text-amber-700 border-amber-200"
+                              : "bg-slate-100 text-slate-700 border-slate-200"
+                          }`}>{p.priority.toUpperCase()}</Badge>
+                          <Badge variant="secondary" className="text-[10px]">{p.category}</Badge>
+                          <span className="text-[10px] text-muted-foreground">{p.cycle_label ?? "manual"} · {fmtDate(p.created_at)}</span>
+                        </div>
+                        <div className="font-semibold text-sm mt-1">{p.summary}</div>
+                        {p.rationale && (
+                          <div className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{p.rationale}</div>
+                        )}
+                        {p.action_required && (
+                          <div className="text-xs mt-1.5">
+                            <span className="font-semibold text-primary">Action needed: </span>
+                            {p.action_required}
+                          </div>
+                        )}
+                        {p.links.length > 0 && (
+                          <div className="flex gap-2 mt-1.5">
+                            {p.links.map((l, i) => (
+                              <a key={i} href={l.url} className="text-[11px] text-primary hover:underline">→ {l.label}</a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                          onClick={() => decideProposal(p, "accepted")}
+                        ><ThumbsUp className="w-3 h-3 mr-1" /> Accept</Button>
+                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                          onClick={() => decideProposal(p, "rejected", prompt("Why reject? (optional)") ?? undefined)}
+                        ><ThumbsDown className="w-3 h-3 mr-1" /> Reject</Button>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs"
+                          onClick={() => decideProposal(p, "actioned")}
+                        ><Check className="w-3 h-3 mr-1" /> Done</Button>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+          </div>
+        )}
       </div>
 
       {/* Task popup */}

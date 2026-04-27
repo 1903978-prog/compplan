@@ -443,6 +443,19 @@ export const pricingProposals = pgTable("pricing_proposals", {
   // last_invoice_at: most recent invoice date for this engagement (YYYY-MM-DD).
   // Used to flag "needs invoice" when >30 days have passed AND project is ongoing.
   last_invoice_at: text("last_invoice_at"),
+  // weekly_reports: per-week delivery status snapshots written by the team.
+  // The Delivery Director skill reads these every Monday to compute project
+  // health (green/amber/red) and surface risks. Each entry:
+  //   { week_of: "YYYY-MM-DD", status: "green"|"amber"|"red", body: free text,
+  //     author?: string, blockers?: string[], pct_complete?: number }
+  weekly_reports: jsonb("weekly_reports").$type<{
+    week_of: string;
+    status: "green" | "amber" | "red";
+    body: string;
+    author?: string;
+    blockers?: string[];
+    pct_complete?: number;
+  }[]>(),
 });
 
 // ─── Employee Tasks (TDL) ────────────────────────────────────────────────────
@@ -932,6 +945,40 @@ export const knowledgeFiles = pgTable("knowledge_files", {
   file_size: integer("file_size").notNull().default(0),
   content_text: text("content_text"),
   uploaded_at: text("uploaded_at").notNull(),
+});
+
+// ── Agent Proposals ─────────────────────────────────────────────────────────
+// Each role-skill (CEO, CFO, Sales Director, etc.) writes structured
+// proposals here when its scheduled run produces a recommendation. The
+// /exec/org-chart page renders pending proposals at the bottom so the
+// user (acting as final decision-maker) can Accept / Reject / Comment.
+//
+// "Healthy tension" is intentional: pricing-director maximises margin,
+// sales-director maximises win-rate, CFO maximises EBITDA, marketing
+// maximises pipeline-from-content. They will frequently DISAGREE — that's
+// the design. The human resolves.
+//
+// Lifecycle:
+//   pending  → fresh, awaiting human decision
+//   accepted → user said yes; the proposing agent should action it
+//   rejected → user said no; agent shouldn't re-propose for 14d
+//   actioned → user marked it done after acting on it
+//   stale    → 14d since pending with no decision; archived
+export const agentProposals = pgTable("agent_proposals", {
+  id: serial("id").primaryKey(),
+  role_key: text("role_key").notNull(),                  // matches org_agents.role_key
+  cycle_at: text("cycle_at").notNull(),                  // ISO timestamp the agent run produced this
+  cycle_label: text("cycle_label"),                      // "9am-daily" | "2pm-daily" | "manual"
+  priority: text("priority").notNull().default("p2"),    // "p0" | "p1" | "p2"
+  category: text("category").notNull().default("general"), // "pricing" | "hiring" | "ar" | "pipeline" | "marketing" | "ops" | "general"
+  summary: text("summary").notNull(),                    // one-line headline
+  rationale: text("rationale"),                          // why — bullets of evidence
+  action_required: text("action_required"),              // what the human needs to decide / do
+  links: jsonb("links").$type<{ label: string; url: string }[]>().default([]),
+  status: text("status").notNull().default("pending"),   // pending | accepted | rejected | actioned | stale
+  decided_at: text("decided_at"),
+  decided_note: text("decided_note"),                    // free-text user comment when deciding
+  created_at: text("created_at").notNull(),
 });
 
 // ── Org Chart ───────────────────────────────────────────────────────────────

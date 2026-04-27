@@ -2,9 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -227,6 +227,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(rows);
     } catch (e) {
       console.error("[org-chart] GET failed:", e);
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // ── Agent Proposals ───────────────────────────────────────────────────
+  // Skills POST proposals here at the end of each scheduled run. The org
+  // chart page lists pending ones at the bottom for the user to act on.
+  app.get("/api/agent-proposals", requireAuth, async (req, res) => {
+    try {
+      const status = (req.query.status as string | undefined) ?? "pending";
+      const rows = status === "all"
+        ? await db.select().from(agentProposals).orderBy(desc(agentProposals.created_at))
+        : await db.select().from(agentProposals).where(eq(agentProposals.status, status)).orderBy(desc(agentProposals.created_at));
+      res.json(rows);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  app.post("/api/agent-proposals", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      // Required fields with bounds — agents shouldn't be able to dump huge
+      // walls of text into the DB.
+      const role_key = String(b.role_key ?? "").trim();
+      const summary = String(b.summary ?? "").trim().slice(0, 240);
+      if (!role_key || !summary) { res.status(400).json({ message: "role_key + summary required" }); return; }
+      const now = new Date().toISOString();
+      const row = {
+        role_key,
+        cycle_at: typeof b.cycle_at === "string" ? b.cycle_at : now,
+        cycle_label: typeof b.cycle_label === "string" ? b.cycle_label.slice(0, 40) : "manual",
+        priority: ["p0", "p1", "p2"].includes(String(b.priority)) ? String(b.priority) : "p2",
+        category: ["pricing", "hiring", "ar", "pipeline", "marketing", "ops", "delivery", "general"].includes(String(b.category)) ? String(b.category) : "general",
+        summary,
+        rationale: typeof b.rationale === "string" ? b.rationale.slice(0, 4000) : null,
+        action_required: typeof b.action_required === "string" ? b.action_required.slice(0, 1000) : null,
+        links: Array.isArray(b.links) ? (b.links as unknown[]).slice(0, 10) : [],
+        status: "pending" as const,
+        created_at: now,
+      };
+      const inserted = await db.insert(agentProposals).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  app.put("/api/agent-proposals/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const status = String(b.status ?? "");
+      if (!["pending", "accepted", "rejected", "actioned", "stale"].includes(status)) {
+        res.status(400).json({ message: "invalid status" }); return;
+      }
+      const update: any = {
+        status,
+        decided_at: new Date().toISOString(),
+      };
+      if (typeof b.decided_note === "string") update.decided_note = b.decided_note.slice(0, 1000);
+      const rows = await db.update(agentProposals).set(update).where(eq(agentProposals.id, id)).returning();
+      if (rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(rows[0]);
+    } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
   });
