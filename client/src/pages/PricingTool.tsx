@@ -3228,26 +3228,32 @@ export default function PricingTool() {
                         }
                       }
 
-                      // Resolution order:
-                      //   1. _fromOption (Net override OR genuine Gross override)
-                      //   2. LIVE canonical recompute (matches the waterfall)
-                      //   3. canonical_net_weekly stored on recommendation
-                      //   4. target_weekly (engine's raw, last resort)
-                      const centralWk = _fromOption
-                        ?? _liveCanonical
+                      // ── SINGLE RULE: Target/wk = NET1, period. ────────
+                      // Per-option Net/Gross overrides drive the Commercial
+                      // Proposal table's per-option figures (Option 1/2/3
+                      // net totals on the SOW), not the cases-list headline.
+                      // The headline IS NET1 — the engine's recommended
+                      // canonical net weekly. Mixing the two produced two
+                      // different numbers for COE03 (31,103 from Option 2
+                      // override vs 31,111 from NET1) which is exactly the
+                      // inconsistency the user flagged.
+                      //
+                      // Resolution: live canonical recompute → stored
+                      // canonical → engine target_weekly (last-resort).
+                      // No option-level overrides considered.
+                      const centralWk = _liveCanonical
                         ?? _canonical
                         ?? (c.recommendation?.target_weekly ?? 0);
-                      // Per-case telemetry. Logs which branch fired + the
-                      // candidate values for each branch so future "wrong
-                      // Target/wk" reports can be diagnosed from the browser
-                      // console without DB access.
+                      // Per-case telemetry. Logs the displayed value + each
+                      // candidate so future "wrong Target/wk" reports can be
+                      // diagnosed from the browser console without DB access.
                       // eslint-disable-next-line no-console
                       console.debug(
                         `[Target/wk] ${c.project_name}: ${centralWk} (`
-                        + `fromOption=${_fromOption ?? "null"}/${_fromOptionBranch}, `
                         + `live=${_liveCanonical ?? "null"}, `
                         + `stored=${_canonical ?? "null"}, `
-                        + `target_weekly=${c.recommendation?.target_weekly ?? "null"})`,
+                        + `target_weekly=${c.recommendation?.target_weekly ?? "null"}, `
+                        + `fromOption-IGNORED=${_fromOption ?? "null"}/${_fromOptionBranch})`,
                       );
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
