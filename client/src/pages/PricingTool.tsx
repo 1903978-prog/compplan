@@ -702,6 +702,11 @@ export default function PricingTool() {
   const [adminFeePct, setAdminFeePct] = useState(8);
   const [markingOutcome, setMarkingOutcome] = useState(false);
   const [backfillingTbd, setBackfillingTbd] = useState(false);
+  // Canonical backfill: re-saves every case so the Target/wk column on
+  // the cases LIST reflects the actual NET1 figure (not the engine's
+  // raw target_weekly). Migrates legacy cases to the new
+  // recommendation.canonical_net_weekly + canonical_gross_weekly fields.
+  const [backfillingCanonical, setBackfillingCanonical] = useState(false);
   const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
   // 3-option commercial-proposal block visibility is now driven by the
@@ -2425,6 +2430,120 @@ export default function PricingTool() {
     }
   };
 
+  // ── Backfill canonical net/gross weekly into every case ─────────
+  // For each case with a saved recommendation, replicate the live
+  // canonicalNetWeekly + canonicalGrossWeekly math (without needing to
+  // open the form) and PUT the augmented case back. After this runs,
+  // the Pricing Cases LIST Target/wk column reads the correct NET1
+  // figure from recommendation.canonical_net_weekly for every row,
+  // not just cases re-saved manually after the migration.
+  //
+  // Math here MUST stay in sync with the canonicalNetWeekly useMemo
+  // (lines ~2560 onwards). If that logic changes, mirror it here.
+  const backfillCanonicalForCases = async () => {
+    setBackfillingCanonical(true);
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    try {
+      const CANONICAL_KEYS = ["Geography", "Sector", "Ownership", "Client Size", "Client Profile", "Strategic Intent"];
+      for (const c of cases) {
+        const rec = (c as any).recommendation;
+        if (!rec || !rec.base_weekly || !Array.isArray(rec.layer_trace)) {
+          skipped++;
+          continue;
+        }
+        // 1. Replay layer trace to get post-engine running weekly
+        const traceByKey: Record<string, { value: number }> = {};
+        for (const lt of rec.layer_trace) {
+          const key = (lt.label ?? "").replace(/\s*\(.*?\)\s*$/, "").trim();
+          if (key) traceByKey[key] = lt;
+        }
+        let prevOrig = rec.base_weekly;
+        const deltas: Record<string, number> = {};
+        for (const key of CANONICAL_KEYS) {
+          const lt = traceByKey[key];
+          if (lt) { deltas[key] = lt.value - prevOrig; prevOrig = lt.value; }
+          else deltas[key] = 0;
+        }
+        let running = rec.base_weekly;
+        for (const key of CANONICAL_KEYS) {
+          const d = deltas[key] ?? 0;
+          if (Math.abs(d) >= 1) running += d;
+        }
+        // 2. Band clamp using the case's region + current benchmarks
+        const aliases = REGION_TO_COUNTRY[(c as any).region] ?? [(c as any).region];
+        const aliasSet = new Set(aliases.map((a: string) => a.toLowerCase()));
+        const weeklyRows = benchmarks.filter(b =>
+          aliasSet.has(b.country.toLowerCase())
+          && (b.parameter.toLowerCase().includes("weekly") || b.parameter.toLowerCase().includes("fee")));
+        const nonZero = weeklyRows.filter(r => r.green_low > 0 && r.green_high > 0);
+        const gLow  = nonZero.length ? Math.min(...nonZero.map(r => r.green_low))  : 0;
+        const gHigh = nonZero.length ? Math.max(...nonZero.map(r => r.green_high)) : 0;
+        if (gLow > 0 && gHigh > 0) {
+          running = Math.min(gHigh, Math.max(gLow, running));
+        }
+        // 3. Manual delta (preserve if already saved)
+        running += (typeof rec.manual_delta === "number" ? rec.manual_delta : 0);
+        // 4. Commitment discount
+        const cdiscs = ((c as any).case_discounts ?? []) as Array<{ id: string; pct: number; enabled: boolean }>;
+        const commit = cdiscs.find(d => d.id === "commitment");
+        if (commit?.enabled && commit.pct > 0) {
+          running = running * (1 - commit.pct / 100);
+        }
+        const canonicalNet = Math.round(running);
+        // 5. Canonical gross
+        const adminPct = typeof rec.admin_fee_pct === "number" ? rec.admin_fee_pct : 8;
+        let g = canonicalNet * (1 + adminPct / 100);
+        for (const d of cdiscs.filter(d => d.enabled && d.pct > 0 && d.id !== "commitment")) {
+          g /= (1 - d.pct / 100);
+        }
+        const canonicalGross = Math.round(g);
+        // 6. PUT the augmented case
+        const payload = {
+          ...c,
+          recommendation: {
+            ...rec,
+            canonical_net_weekly: canonicalNet,
+            canonical_gross_weekly: canonicalGross,
+            admin_fee_pct: adminPct,
+            // variable_fee_pct is component state only — leave whatever
+            // is already on the rec (or undefined for legacy).
+          },
+        };
+        try {
+          const r = await fetch(`/api/pricing/cases/${(c as any).id}`, {
+            method: "PUT", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (r.ok) updated++;
+          else failed++;
+        } catch {
+          failed++;
+        }
+      }
+      const parts: string[] = [];
+      if (updated > 0) parts.push(`${updated} updated`);
+      if (skipped > 0) parts.push(`${skipped} skipped (no recommendation)`);
+      if (failed > 0)  parts.push(`${failed} failed`);
+      toast({ title: "Canonical backfill done", description: parts.join(" · ") || "Nothing to do." });
+      loadAll();
+    } finally {
+      setBackfillingCanonical(false);
+    }
+  };
+
+  // How many cases still need the canonical fields backfilled.
+  const canonicalBackfillCount = (() => {
+    return cases.filter((c: any) => {
+      const r = c.recommendation;
+      if (!r || !r.base_weekly) return false;
+      // Already has the canonical field? Skip.
+      return typeof r.canonical_net_weekly !== "number";
+    }).length;
+  })();
+
   // How many cases are missing a matching proposal — drives the button
   // label so the user knows whether clicking will do anything.
   // Sum of pending changes the sync would perform: missing Final TBDs
@@ -2771,6 +2890,31 @@ export default function PricingTool() {
               ))}
             </div>
 
+            {/* Canonical-fields backfill — populates canonical_net_weekly +
+                canonical_gross_weekly + admin_fee_pct on cases that pre-date
+                the field (saved before commit 159a840). After running this
+                the Target/wk column reads accurate figures for every row,
+                not just cases re-saved manually. Idempotent — already-
+                migrated cases are skipped. */}
+            {canonicalBackfillCount > 0 && (
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-2">
+                <div className="text-xs">
+                  <span className="font-semibold text-blue-900">Backfill Target/wk</span>
+                  <span className="text-blue-700 ml-2">
+                    {canonicalBackfillCount} case{canonicalBackfillCount === 1 ? "" : "s"} need migration to the new canonical formula. Existing values get re-derived from the saved engine recommendation.
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={backfillCanonicalForCases}
+                  disabled={backfillingCanonical}
+                  variant="default"
+                >
+                  {backfillingCanonical ? "Backfilling…" : `Backfill ${canonicalBackfillCount}`}
+                </Button>
+              </div>
+            )}
+
             {/* Cases table */}
             {loading ? (
               <div className="text-center py-12 text-muted-foreground">Loading...</div>
@@ -2804,36 +2948,42 @@ export default function PricingTool() {
                   </TableHeader>
                   <TableBody>
                     {cases.map(c => {
-                      // Source of truth for Target/wk = the canonical NET
-                      // weekly the case saved. Match order:
-                      //   1. recommendation.canonical_net_weekly  ← exact value
-                      //      from the waterfall NET1 bar at save time. Honors
-                      //      manual delta + band clamp + commitment discount.
-                      //      Persisted by handleSave (post 31aaXXX).
-                      //   2. Reconstruct from case_timelines[0] (Option 1 net /
-                      //      Option 1 weeks) using the saved discount config —
-                      //      backwards compat for cases saved before 1.
-                      //   3. Engine's raw target_weekly — last-resort fallback
-                      //      for very old cases without timelines.
-                      const _canonical = c.recommendation?.canonical_net_weekly;
-                      const _opt1 = !_canonical ? (() => {
-                        const tl = (c.case_timelines ?? []) as Array<{ weeks: number; commitPct?: number; grossTotal?: number; commitAmount?: number; netTotal?: number }>;
-                        if (!tl.length || !c.recommendation?.target_weekly) return null;
+                      // Target/wk = the central column of the commercial
+                      // proposal (what the client actually sees on the SOW).
+                      //   - 3-option mode (proposal_options_count = 3, the
+                      //     default): central = Option 2 (tl[1]) = the
+                      //     middle commitment-discounted timeline.
+                      //   - Single-option mode (count = 1): central =
+                      //     Option 1 (tl[0]) = the only quote, which by
+                      //     definition equals NET1 = canonical_net_weekly.
+                      // Math: computeOptionColumn(tl[i]).netTotal / tl[i].weeks.
+                      // Reconstruct grossWk from canonical_gross_weekly when
+                      // available (post handleSave migration), else from
+                      // target_weekly + saved admin / discounts (legacy).
+                      const tl = ((c as any).case_timelines ?? []) as Array<{ weeks: number; commitPct?: number; grossTotal?: number; commitAmount?: number; netTotal?: number }>;
+                      const useThreeOptions = ((c as any).proposal_options_count ?? 3) === 3;
+                      const targetTl = useThreeOptions ? (tl[1] ?? tl[0]) : tl[0];
+                      const _fromOption = (() => {
+                        if (!targetTl || !c.recommendation?.target_weekly) return null;
                         const adminPct = c.recommendation?.admin_fee_pct ?? settings?.admin_fee_pct ?? 0;
                         const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
-                        // If we have a canonical_gross_weekly use it directly
-                        // — otherwise reconstruct from target_weekly (legacy).
                         const grossWkSaved = c.recommendation?.canonical_gross_weekly;
                         let grossWk = grossWkSaved ?? (c.recommendation.target_weekly as number) * (1 + adminPct / 100);
                         if (!grossWkSaved) {
                           const baseEnabled = discounts.filter(d => d.enabled && d.id !== "commitment" && d.pct > 0);
                           for (const d of baseEnabled) grossWk = grossWk / (1 - d.pct / 100);
                         }
-                        const col = computeOptionColumn(tl[0], grossWk, discounts);
+                        const col = computeOptionColumn(targetTl, grossWk, discounts);
                         if (!col.weeks) return null;
                         return col.netTotal / col.weeks;
-                      })() : null;
-                      const centralWk = _canonical ?? _opt1 ?? (c.recommendation?.target_weekly ?? 0);
+                      })();
+                      // Single-option mode falls back to canonical_net_weekly
+                      // (= NET1 = Option 1 net / weeks by construction).
+                      const _canonical = c.recommendation?.canonical_net_weekly;
+                      const centralWk = _fromOption
+                        ?? (!useThreeOptions ? _canonical : undefined)
+                        ?? _canonical
+                        ?? (c.recommendation?.target_weekly ?? 0);
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
                         <TableCell className="font-semibold font-mono">{displayProjectName(c.project_name, c.revision_letter)}</TableCell>
