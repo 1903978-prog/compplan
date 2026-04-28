@@ -2346,12 +2346,22 @@ export default function PricingTool() {
         ...form,
         pe_owned: form.pe_owned ? 1 : 0,
         status,
-        // Bake manualDelta into the saved recommendation jsonb so the
-        // user-typed NET1 override (or +/-500 nudges) survives reload.
-        // recommendation is recomputed from inputs on every render, so we
-        // splice manual_delta in at save time and read it back in openCase.
+        // Bake the canonical net + gross weekly into the saved
+        // recommendation jsonb so downstream views (Pricing Cases LIST
+        // Target/wk column, exec dashboards) display the SAME figure
+        // the user sees in the waterfall NET1 bar — not the engine's
+        // raw target_weekly which can differ after manual delta, band
+        // clamp, and commitment discount. Also persist manual_delta so
+        // the user-typed NET1 override survives reload.
         recommendation: recommendation
-          ? { ...recommendation, manual_delta: manualDelta }
+          ? {
+              ...recommendation,
+              manual_delta: manualDelta,
+              canonical_net_weekly: canonicalNetWeekly,
+              canonical_gross_weekly: canonicalGrossWeekly,
+              admin_fee_pct: adminFeePct,
+              variable_fee_pct: variableFeePct,
+            }
           : null,
         case_discounts: caseDiscounts,
         case_timelines: caseTimelines,
@@ -2794,26 +2804,36 @@ export default function PricingTool() {
                   </TableHeader>
                   <TableBody>
                     {cases.map(c => {
-                      // Source of truth for Target/wk = NET1 = Option 1's net /
-                      // Option 1's weeks. This is the headline figure on the
-                      // commercial proposal (the actual quoted weekly rate the
-                      // client sees), so the cases-list column matches what
-                      // the user typed/saved on the case. Falls back to the
-                      // engine's target_weekly only when no Option 1 column
-                      // can be reconstructed (no timelines or no recommendation).
-                      const _opt1 = (() => {
-                        const tl = (c.case_timelines ?? []) as Array<{ weeks: number; commitPct?: number; grossTotal?: number; commitAmount?: number }>;
+                      // Source of truth for Target/wk = the canonical NET
+                      // weekly the case saved. Match order:
+                      //   1. recommendation.canonical_net_weekly  ← exact value
+                      //      from the waterfall NET1 bar at save time. Honors
+                      //      manual delta + band clamp + commitment discount.
+                      //      Persisted by handleSave (post 31aaXXX).
+                      //   2. Reconstruct from case_timelines[0] (Option 1 net /
+                      //      Option 1 weeks) using the saved discount config —
+                      //      backwards compat for cases saved before 1.
+                      //   3. Engine's raw target_weekly — last-resort fallback
+                      //      for very old cases without timelines.
+                      const _canonical = c.recommendation?.canonical_net_weekly;
+                      const _opt1 = !_canonical ? (() => {
+                        const tl = (c.case_timelines ?? []) as Array<{ weeks: number; commitPct?: number; grossTotal?: number; commitAmount?: number; netTotal?: number }>;
                         if (!tl.length || !c.recommendation?.target_weekly) return null;
-                        const adminPct = settings?.admin_fee_pct ?? 0;
+                        const adminPct = c.recommendation?.admin_fee_pct ?? settings?.admin_fee_pct ?? 0;
                         const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
-                        const baseEnabled = discounts.filter(d => d.enabled && d.id !== "commitment" && d.pct > 0);
-                        let grossWk = (c.recommendation.target_weekly as number) * (1 + adminPct / 100);
-                        for (const d of baseEnabled) grossWk = grossWk / (1 - d.pct / 100);
+                        // If we have a canonical_gross_weekly use it directly
+                        // — otherwise reconstruct from target_weekly (legacy).
+                        const grossWkSaved = c.recommendation?.canonical_gross_weekly;
+                        let grossWk = grossWkSaved ?? (c.recommendation.target_weekly as number) * (1 + adminPct / 100);
+                        if (!grossWkSaved) {
+                          const baseEnabled = discounts.filter(d => d.enabled && d.id !== "commitment" && d.pct > 0);
+                          for (const d of baseEnabled) grossWk = grossWk / (1 - d.pct / 100);
+                        }
                         const col = computeOptionColumn(tl[0], grossWk, discounts);
                         if (!col.weeks) return null;
                         return col.netTotal / col.weeks;
-                      })();
-                      const centralWk = _opt1 ?? (c.recommendation?.target_weekly ?? 0);
+                      })() : null;
+                      const centralWk = _canonical ?? _opt1 ?? (c.recommendation?.target_weekly ?? 0);
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
                         <TableCell className="font-semibold font-mono">{displayProjectName(c.project_name, c.revision_letter)}</TableCell>
