@@ -2948,21 +2948,27 @@ export default function PricingTool() {
                   </TableHeader>
                   <TableBody>
                     {cases.map(c => {
-                      // Target/wk = the central column of the commercial
-                      // proposal (what the client actually sees on the SOW).
-                      //   - 3-option mode (proposal_options_count = 3, the
-                      //     default): central = Option 2 (tl[1]) = the
-                      //     middle commitment-discounted timeline.
-                      //   - Single-option mode (count = 1): central =
-                      //     Option 1 (tl[0]) = the only quote, which by
-                      //     definition equals NET1 = canonical_net_weekly.
-                      // Math: computeOptionColumn(tl[i]).netTotal / tl[i].weeks.
+                      // Target/wk = the option that matches THIS case's
+                      // duration_weeks. The user's mental model is "what's
+                      // the per-week rate I'm actually quoting on this case"
+                      // — which is the option whose weeks equals the case
+                      // duration. e.g. COE03A is a 5-week case with timelines
+                      // [12w, 5w, 20w]; the 5w timeline is the headline.
+                      // Falls back to:
+                      //   - 3-option mode without a duration match: tl[1]
+                      //     (Option 2, the middle commitment timeline)
+                      //   - 1-option mode without a duration match: tl[0]
+                      //   - no timelines: canonical_net_weekly / target_weekly
                       // Reconstruct grossWk from canonical_gross_weekly when
                       // available (post handleSave migration), else from
                       // target_weekly + saved admin / discounts (legacy).
                       const tl = ((c as any).case_timelines ?? []) as Array<{ weeks: number; commitPct?: number; grossTotal?: number; commitAmount?: number; netTotal?: number }>;
                       const useThreeOptions = ((c as any).proposal_options_count ?? 3) === 3;
-                      const targetTl = useThreeOptions ? (tl[1] ?? tl[0]) : tl[0];
+                      const matchByDuration = c.duration_weeks
+                        ? tl.find(t => t.weeks === c.duration_weeks)
+                        : null;
+                      const targetTl = matchByDuration
+                        ?? (useThreeOptions ? (tl[1] ?? tl[0]) : tl[0]);
                       const _fromOption = (() => {
                         if (!targetTl || !c.recommendation?.target_weekly) return null;
                         const adminPct = c.recommendation?.admin_fee_pct ?? settings?.admin_fee_pct ?? 0;
