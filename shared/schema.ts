@@ -1142,3 +1142,23 @@ export type AssetType = typeof assetTypes.$inferSelect;
 export type Asset = typeof assets.$inferSelect;
 export type InsertAssetType = typeof assetTypes.$inferInsert;
 export type InsertAsset = typeof assets.$inferInsert;
+
+// ── OKR node data (per-branch metadata for /exec/okr) ─────────────────────
+// The EBITDA Growth Driver Tree itself is a static const in OkrTree.tsx
+// (35 nodes, 5 levels). This table stores per-node EDITABLE data: the
+// goals/objectives the user wants to track on that branch, KPIs with
+// targets + current values, additional dependency edges (cross-branch),
+// and override owners (in case the static map's ownersRoleKeys is wrong).
+// Keyed by node_id ("A1", "B1", "D1", …) so the tree structure can change
+// without breaking the relations.
+export const okrNodeData = pgTable("okr_node_data", {
+  id: serial("id").primaryKey(),
+  node_id: text("node_id").notNull().unique(),
+  objectives: jsonb("objectives").$type<{ text: string; target?: string | null }[]>().notNull().default([]),
+  kpis: jsonb("kpis").$type<{ name: string; target?: string | null; current?: string | null; unit?: string | null }[]>().notNull().default([]),
+  depending_node_ids: jsonb("depending_node_ids").$type<string[]>().notNull().default([]),
+  owner_override_role_keys: jsonb("owner_override_role_keys").$type<string[] | null>().default(null),
+  notes: text("notes"),
+  updated_at: text("updated_at").notNull(),
+});
+export type OkrNodeData = typeof okrNodeData.$inferSelect;

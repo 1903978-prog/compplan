@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -562,6 +562,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("[org-chart] PUT failed:", e);
       res.status(500).json({ message: (e as Error).message });
     }
+  });
+
+  // ── OKR node data (per-branch metadata for /exec/okr) ──────────────────
+  app.get("/api/okr-nodes", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.select().from(okrNodeData);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.put("/api/okr-nodes/:nodeId", requireAuth, async (req, res) => {
+    try {
+      const node_id = String(req.params.nodeId).trim();
+      if (!node_id) { res.status(400).json({ message: "node_id required" }); return; }
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const now = new Date().toISOString();
+      const row: Record<string, unknown> = {
+        node_id,
+        updated_at: now,
+      };
+      if (Array.isArray(b.objectives))         row.objectives = (b.objectives as unknown[]).slice(0, 30);
+      if (Array.isArray(b.kpis))               row.kpis = (b.kpis as unknown[]).slice(0, 30);
+      if (Array.isArray(b.depending_node_ids)) row.depending_node_ids = (b.depending_node_ids as unknown[]).filter(x => typeof x === "string").slice(0, 50);
+      if (Array.isArray(b.owner_override_role_keys) || b.owner_override_role_keys === null) row.owner_override_role_keys = b.owner_override_role_keys as any;
+      if (typeof b.notes === "string" || b.notes === null) row.notes = b.notes as string | null;
+
+      // Upsert by node_id
+      const existing = await db.select().from(okrNodeData).where(eq(okrNodeData.node_id, node_id));
+      if (existing.length > 0) {
+        const updated = await db.update(okrNodeData).set(row as any).where(eq(okrNodeData.node_id, node_id)).returning();
+        res.json(updated[0]);
+      } else {
+        // Default arrays for fields not provided on first insert.
+        if (!Array.isArray(row.objectives))         row.objectives = [];
+        if (!Array.isArray(row.kpis))               row.kpis = [];
+        if (!Array.isArray(row.depending_node_ids)) row.depending_node_ids = [];
+        const inserted = await db.insert(okrNodeData).values(row as any).returning();
+        res.status(201).json(inserted[0]);
+      }
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
   app.get("/api/trash", requireAuth, async (_req, res) => {

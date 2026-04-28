@@ -1825,6 +1825,20 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     console.warn("[seed] TBD canonical refresh failed (non-fatal):", (e as Error).message);
   }
 
+  // ── OKR node data (per-branch editable metadata for /exec/okr) ──────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS okr_node_data (
+      id SERIAL PRIMARY KEY,
+      node_id TEXT NOT NULL UNIQUE,
+      objectives JSONB NOT NULL DEFAULT '[]',
+      kpis JSONB NOT NULL DEFAULT '[]',
+      depending_node_ids JSONB NOT NULL DEFAULT '[]',
+      owner_override_role_keys JSONB,
+      notes TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // ── Assets registry (laptops, software licenses, …) ─────────────────────
   // Two tables: asset_types (admin-managed taxonomy) + assets (assignments).
   // Boot-time idempotent migration + initial seed of PC + ThinkCell types

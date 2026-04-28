@@ -102,21 +102,30 @@ export default function StaffingGantt() {
     setAssignSubmitting(false);
   }
 
-  // Open projects = won (no end_date OR end_date >= today) OR pending.
+  // Open projects in the dropdown = anything that ISN'T a closed loss AND
+  // either (a) has its date span overlapping the 16-week look-ahead, OR
+  // (b) is still pending pipeline (no firm dates yet but actively sold).
+  // The previous "won + future end_date" filter was too strict and hid
+  // ongoing engagements like SAN03 that are mid-flight (start in the
+  // past, end in the past or near future) from the assign dialog.
+  // weekStart is computed below in render — we re-derive it here so the
+  // memo doesn't depend on it.
+  const dropdownWeekStart = useMemo(() => startOfWeekMonday(new Date()), []);
   const openProjects = useMemo(() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
     return proposals
       .filter(p => {
         if (p.outcome === "lost") return false;
         if (p.outcome === "pending") return true;
-        if (p.outcome === "won") {
-          const e = parseISODateOrNull(p.end_date);
-          return !e || e.getTime() >= today.getTime();
-        }
+        // Won (or any non-lost outcome) — show if it overlaps the horizon
+        // OR has at least one assignee already (so the user can edit the
+        // current allocation even if dates are stale).
+        const span = projectWeeks(p, dropdownWeekStart);
+        if (span !== null) return true;
+        if (p.manager_name || (p.team_members ?? []).length > 0) return true;
         return false;
       })
       .sort((a, b) => (a.project_name || "").localeCompare(b.project_name || ""));
-  }, [proposals]);
+  }, [proposals, dropdownWeekStart]);
 
   async function submitAssign() {
     if (!assignFor || !assignProjectId) {
@@ -208,9 +217,19 @@ export default function StaffingGantt() {
   // Build the full set of people we want to display:
   //  - every Eendigo employee (always shown so we can see who has slack)
   //  - every manager_name + team_members[].name on a relevant proposal
+  // Back-office / non-billable role codes — these people don't get staffed
+  // on engagements so they shouldn't clutter the Gantt rows. Currently:
+  // ADMIN (Cosmin et al.). Extendable as new non-billable roles appear.
+  const NON_BILLABLE_ROLE_CODES = new Set(["ADMIN", "BACKOFFICE", "BO", "FINANCE", "OPS"]);
+  const isBackOffice = (e: Employee): boolean => {
+    const code = (e.current_role_code ?? "").trim().toUpperCase();
+    return NON_BILLABLE_ROLE_CODES.has(code);
+  };
+
   const people = useMemo(() => {
     const out = new Map<string, { name: string; role?: string }>();
     for (const e of employees) {
+      if (isBackOffice(e)) continue; // skip Cosmin (ADMIN) + future back-office hires
       out.set(e.name.trim().toLowerCase(), { name: e.name, role: e.current_role_code ?? undefined });
     }
     for (const p of proposals) {

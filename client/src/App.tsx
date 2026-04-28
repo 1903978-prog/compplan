@@ -309,18 +309,18 @@ function Navigation() {
                   { href: "/exec", label: "Dashboard", icon: Activity },
                   { href: "/exec/org-chart", label: "Org Chart", icon: Network },
                   { href: "/exec/okr", label: "OKR", icon: Target },
-                  { href: "/exec/staffing", label: "Staffing Gantt", icon: CalendarDays },
                   { href: "/exec/brief-stream", label: "Brief Stream", icon: Activity },
                 ]}
               />
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
-                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker"]}
+                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker", "/exec/staffing"]}
                 items={[
                   { href: "/", label: "Dashboard", icon: LayoutDashboard },
                   { href: "/employees", label: "Employees", icon: Users },
                   { href: "/roles", label: "Role Grid", icon: Grid3X3 },
+                  { href: "/exec/staffing", label: "Staffing Gantt", icon: CalendarDays },
                   { href: "/days-off", label: "Days Off", icon: CalendarDays },
                   { href: "/time-tracker", label: "Time Tracker", icon: Timer },
                   { href: "/settings", label: "Settings", icon: SettingsIcon },
