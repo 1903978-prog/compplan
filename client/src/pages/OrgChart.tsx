@@ -256,6 +256,117 @@ export default function OrgChart() {
     }
   };
 
+  // Save edited goals / OKRs back to the role. Used by the dialog's
+  // inline-editable Goals + OKRs sections.
+  const saveRoleFields = async (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs">>) => {
+    const r = await fetch(`/api/org-chart/${role.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (r.ok) {
+      const updated = await r.json();
+      setRoles(prev => prev.map(x => x.id === updated.id ? updated : x));
+      if (openRole?.id === updated.id) setOpenRole(updated);
+    } else {
+      toast({ title: "Failed to save", variant: "destructive" });
+    }
+  };
+
+  // ── Cascade goals + OKRs from a role to its direct reports based on
+  // topic keywords. Each goal / OKR objective is matched against a
+  // role-keyword map (CFO=finance, Sales=pipeline, etc.) and, when
+  // matched, prepended to that DR's goals (with a "[Cascaded from <CEO>]"
+  // marker so the user can see provenance and remove it later if wrong).
+  // No matches → goes to all DRs as a generic broadcast.
+  const cascadeToReports = async (role: OrgRole) => {
+    // Topic → role_key keyword map. First match wins per goal/OKR.
+    // Each entry: list of keyword regexes that target this role.
+    const ROUTING: Array<{ role_key: string; rx: RegExp }> = [
+      { role_key: "cfo",                 rx: /\b(finance|cash|AR|EBITDA|margin|cost|invoic|DSO|runway|budget|spend|revenue|GM|gross\s*margin|P&L)\b/i },
+      { role_key: "sales-director",      rx: /\b(sales|pipeline|lead|deal|conversion|win[-\s]?rate|TBD|outbound|prospect|BD|close|funnel)\b/i },
+      { role_key: "marketing-manager",   rx: /\b(media|content|brand|PR|press|article|SEO|LinkedIn|Substack|Medium|thought[-\s]?leadership|inbound|EVP)\b/i },
+      { role_key: "pricing-director",    rx: /\b(pricing|discount|rebate|fee|rate|proposal|win-loss|elasticit|target\s*price)\b/i },
+      { role_key: "hiring-manager",      rx: /\b(hire|recruit|headcount|partner|onboarding|churn|attrition|EVP|comp|salary|CHRO)\b/i },
+      { role_key: "delivery-director",   rx: /\b(deliver|quality|team|utilization|EM|engagement|NPS|weekly\s*report|on[-\s]?time)\b/i },
+      { role_key: "coo",                 rx: /\b(automation|AI|skills|tool|IT|ops|process|admin|internal|compplan|dashboard)\b/i },
+    ];
+
+    const drs = roles.filter(r => r.parent_role_key === role.role_key);
+    if (drs.length === 0) {
+      toast({ title: "No direct reports to cascade to", variant: "destructive" });
+      return;
+    }
+
+    // Build per-DR queues of goals + okrs to add.
+    const queues: Record<string, { goals: string[]; okrs: { objective: string; key_results: string[] }[] }> = {};
+    const ensureQ = (k: string) => (queues[k] ||= { goals: [], okrs: [] });
+
+    const matchOrFallback = (text: string): string[] => {
+      const matched: string[] = [];
+      for (const rt of ROUTING) {
+        if (rt.rx.test(text)) {
+          // Only cascade to DRs that actually exist on this team.
+          if (drs.some(d => d.role_key === rt.role_key)) matched.push(rt.role_key);
+        }
+      }
+      return matched;
+    };
+
+    const cascadeMarker = `[Cascaded from ${role.role_name}${role.person_name ? ` · ${role.person_name}` : ""}] `;
+
+    // Goals: route each by keyword. Unrouted ones fan out to all DRs as
+    // generic context (better than dropping them).
+    for (const g of role.goals) {
+      const targets = matchOrFallback(g);
+      if (targets.length === 0) {
+        for (const d of drs) ensureQ(d.role_key).goals.push(`${cascadeMarker}${g}`);
+      } else {
+        for (const k of targets) ensureQ(k).goals.push(`${cascadeMarker}${g}`);
+      }
+    }
+    // OKRs: same routing on the objective text.
+    for (const o of role.okrs) {
+      const targets = matchOrFallback(o.objective);
+      const cascadedOkr = {
+        objective: `${cascadeMarker}${o.objective}`,
+        key_results: o.key_results,
+      };
+      if (targets.length === 0) {
+        for (const d of drs) ensureQ(d.role_key).okrs.push(cascadedOkr);
+      } else {
+        for (const k of targets) ensureQ(k).okrs.push(cascadedOkr);
+      }
+    }
+
+    // Apply: for each DR, PUT updated goals + okrs (prepending the
+    // cascaded items so they're visible at the top, and skipping
+    // duplicates on re-cascade by exact-string match).
+    let touched = 0;
+    for (const dr of drs) {
+      const q = queues[dr.role_key];
+      if (!q || (q.goals.length === 0 && q.okrs.length === 0)) continue;
+      const existingGoalsSet = new Set(dr.goals);
+      const existingObjSet   = new Set(dr.okrs.map(o => o.objective));
+      const newGoals = [...q.goals.filter(g => !existingGoalsSet.has(g)), ...dr.goals];
+      const newOkrs  = [...q.okrs.filter(o => !existingObjSet.has(o.objective)), ...dr.okrs];
+      const r = await fetch(`/api/org-chart/${dr.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goals: newGoals, okrs: newOkrs }),
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        setRoles(prev => prev.map(x => x.id === updated.id ? updated : x));
+        touched++;
+      }
+    }
+    toast({
+      title: `Cascaded to ${touched} direct report${touched === 1 ? "" : "s"}`,
+      description: "Each goal/OKR was routed by topic keyword (finance → CFO, sales → Sales Director, etc.). Items without a clear match went to all DRs.",
+    });
+  };
+
   return (
     <div className="container mx-auto py-6 max-w-7xl">
       <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
@@ -570,6 +681,8 @@ export default function OrgChart() {
         knowledge={openRole ? knowledge.filter(k => k.role_key === openRole.role_key) : []}
         allRoles={roles}
         onUpdateReportsTo={updateReportsTo}
+        onSaveFields={saveRoleFields}
+        onCascade={cascadeToReports}
         onClose={() => setOpenRole(null)}
         onAddKnowledgeFromDialog={() => { if (openRole) setAddKnowledgeForRole(openRole); }}
         onArchiveKnowledge={archiveKnowledge}
@@ -709,6 +822,8 @@ function RoleDetailDialog({
   knowledge,
   allRoles,
   onUpdateReportsTo,
+  onSaveFields,
+  onCascade,
   onClose,
   onAddKnowledgeFromDialog,
   onArchiveKnowledge,
@@ -718,6 +833,8 @@ function RoleDetailDialog({
   knowledge: KnowledgeNote[];
   allRoles: OrgRole[];
   onUpdateReportsTo: (role: OrgRole, newParent: string | null) => Promise<void>;
+  onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs">>) => Promise<void>;
+  onCascade: (role: OrgRole) => Promise<void>;
   onClose: () => void;
   onAddKnowledgeFromDialog: () => void;
   onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
@@ -804,40 +921,112 @@ function RoleDetailDialog({
           )}
         </section>
 
-        {/* Goals */}
-        {role.goals.length > 0 && (
-          <section className="mt-4">
-            <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+        {/* Goals — editable. One textarea per goal, +Add button at the
+            bottom, ✕ to remove. Saves on blur via onSaveFields. */}
+        <section className="mt-4">
+          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+            <h4 className="font-semibold text-sm flex items-center gap-2">
               <Target className="w-4 h-4 text-primary" /> Goals
+              <span className="text-xs font-normal text-muted-foreground">({role.goals.length})</span>
             </h4>
-            <ul className="text-sm space-y-1 pl-1">
-              {role.goals.map((g, i) => (
-                <li key={i} className="leading-snug">• {g}</li>
-              ))}
-            </ul>
-          </section>
-        )}
+            {/* Cascade button — pushes goals + OKRs to direct reports
+                routed by topic keyword (finance→CFO, sales→Sales, etc.) */}
+            {allRoles.some(r => r.parent_role_key === role.role_key) && (
+              <Button
+                size="sm" variant="outline" className="h-7 text-xs"
+                onClick={() => onCascade(role)}
+                title="Cascade goals + OKRs to direct reports, routed by topic keyword"
+              >
+                <Sparkles className="w-3 h-3 mr-1" /> Cascade to DRs
+              </Button>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            {role.goals.map((g, i) => (
+              <div key={i} className="flex gap-1 items-start">
+                <span className="text-muted-foreground pt-2">•</span>
+                <textarea
+                  defaultValue={g}
+                  rows={Math.max(1, Math.ceil(g.length / 80))}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v === g) return;
+                    const next = v ? role.goals.map((x, j) => j === i ? v : x) : role.goals.filter((_, j) => j !== i);
+                    void onSaveFields(role, { goals: next });
+                  }}
+                  className="flex-1 text-sm leading-snug resize-y border-b border-transparent focus:border-primary outline-none bg-transparent py-1"
+                />
+                <button
+                  onClick={() => void onSaveFields(role, { goals: role.goals.filter((_, j) => j !== i) })}
+                  className="text-muted-foreground hover:text-destructive p-1"
+                  title="Remove goal"
+                >×</button>
+              </div>
+            ))}
+            <Button
+              size="sm" variant="ghost" className="h-7 text-xs"
+              onClick={() => void onSaveFields(role, { goals: [...role.goals, "New goal"] })}
+            >
+              <Plus className="w-3 h-3 mr-1" /> Add goal
+            </Button>
+          </div>
+        </section>
 
-        {/* OKRs */}
-        {role.okrs.length > 0 && (
-          <section className="mt-5">
-            <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+        {/* OKRs — editable. Each objective is a textarea; KRs are one per
+            line in their own textarea. ✕ removes the OKR. */}
+        <section className="mt-5">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-semibold text-sm flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-primary" /> OKRs
+              <span className="text-xs font-normal text-muted-foreground">({role.okrs.length})</span>
             </h4>
-            <div className="space-y-3">
-              {role.okrs.map((o, i) => (
-                <div key={i} className="border-l-2 border-primary/30 pl-3 py-1">
-                  <div className="font-medium text-sm">{i + 1}. {o.objective}</div>
-                  <ul className="text-xs text-muted-foreground space-y-0.5 mt-1">
-                    {o.key_results.map((kr, j) => (
-                      <li key={j}>– {kr}</li>
-                    ))}
-                  </ul>
+          </div>
+          <div className="space-y-3">
+            {role.okrs.map((o, i) => (
+              <div key={i} className="border-l-2 border-primary/30 pl-3 py-1 group">
+                <div className="flex items-start gap-1">
+                  <span className="text-sm font-medium pt-1 shrink-0">{i + 1}.</span>
+                  <textarea
+                    defaultValue={o.objective}
+                    rows={Math.max(1, Math.ceil(o.objective.length / 70))}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v === o.objective) return;
+                      const next = role.okrs.map((x, j) => j === i ? { ...x, objective: v } : x);
+                      void onSaveFields(role, { okrs: next });
+                    }}
+                    className="flex-1 text-sm font-medium resize-y border-b border-transparent focus:border-primary outline-none bg-transparent"
+                  />
+                  <button
+                    onClick={() => void onSaveFields(role, { okrs: role.okrs.filter((_, j) => j !== i) })}
+                    className="text-muted-foreground hover:text-destructive p-0.5 opacity-0 group-hover:opacity-100"
+                    title="Remove OKR"
+                  >×</button>
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
+                <textarea
+                  defaultValue={o.key_results.join("\n")}
+                  rows={Math.max(2, o.key_results.length)}
+                  onBlur={(e) => {
+                    const krs = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
+                    if (krs.join("\n") === o.key_results.join("\n")) return;
+                    const next = role.okrs.map((x, j) => j === i ? { ...x, key_results: krs } : x);
+                    void onSaveFields(role, { okrs: next });
+                  }}
+                  placeholder="One key result per line"
+                  className="w-full text-xs text-muted-foreground space-y-0.5 mt-1 resize-y border-b border-transparent focus:border-primary outline-none bg-transparent"
+                />
+              </div>
+            ))}
+            <Button
+              size="sm" variant="ghost" className="h-7 text-xs"
+              onClick={() => void onSaveFields(role, {
+                okrs: [...role.okrs, { objective: "New objective", key_results: ["KR 1"] }],
+              })}
+            >
+              <Plus className="w-3 h-3 mr-1" /> Add OKR
+            </Button>
+          </div>
+        </section>
 
         {/* Tasks 10d */}
         <section className="mt-5">
