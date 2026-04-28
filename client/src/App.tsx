@@ -32,6 +32,7 @@ import AdminBackup from "@/pages/AdminBackup";
 import AdminTrash from "@/pages/AdminTrash";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
+import OkrTree from "@/pages/OkrTree";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
@@ -306,6 +307,7 @@ function Navigation() {
                 items={[
                   { href: "/exec", label: "Dashboard", icon: Activity },
                   { href: "/exec/org-chart", label: "Org Chart", icon: Network },
+                  { href: "/exec/okr", label: "OKR", icon: Target },
                   { href: "/exec/staffing", label: "Staffing Gantt", icon: CalendarDays },
                   { href: "/exec/brief-stream", label: "Brief Stream", icon: Activity },
                 ]}
@@ -460,6 +462,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/exec" component={ExecDashboard} />
       <Route path="/exec/org-chart" component={OrgChart} />
+      <Route path="/exec/okr" component={OkrTree} />
       <Route path="/exec/staffing" component={StaffingGantt} />
       <Route path="/exec/brief-stream" component={BriefStream} />
       <Route path="/bd" component={BusinessDevelopment} />
