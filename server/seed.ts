@@ -1723,6 +1723,108 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     console.log("Settings seeded");
   }
 
+  // ── Backfill TBD proposal weekly_price + total_fee from canonical NET1 ──
+  // The rule: every TBD's weekly_price = NET1 (case's canonical_net_weekly
+  // OR live-recomputed). total_fee = weekly_price × duration_weeks. Boot-time
+  // migration ensures Exec dashboard / Past Projects / Pricing Tool list all
+  // converge on the same two numbers. Only touches outcome='pending' rows
+  // — Won/Lost are user-decided, never altered.
+  try {
+    const { rows: cases } = (await db.execute(sql`
+      SELECT id, project_name, region, recommendation, duration_weeks
+      FROM pricing_cases
+      WHERE status = 'final'
+    `)) as unknown as { rows: Array<{ id: number; project_name: string | null; region: string | null; recommendation: any; duration_weeks: number | null }> };
+
+    const settingsRows = (await db.execute(sql`
+      SELECT country_benchmarks FROM pricing_settings LIMIT 1
+    `)) as unknown as { rows: Array<{ country_benchmarks: any }> };
+    const benchmarks: Array<{ country: string; parameter: string; green_low: number; green_high: number }> =
+      Array.isArray(settingsRows.rows[0]?.country_benchmarks)
+        ? settingsRows.rows[0].country_benchmarks
+        : [];
+
+    const REGION_TO_COUNTRY_BOOT: Record<string, string[]> = {
+      "DACH": ["DE", "AT", "CH"], "Nordics": ["SE", "NO", "DK", "FI"],
+      "UK": ["UK", "GB"], "FR": ["FR"], "IT": ["IT"], "US": ["US"],
+      "Asia": ["JP", "CN", "SG", "HK", "KR", "IN"],
+      "Middle East": ["AE", "SA", "QA"],
+      "Other EU": ["NL", "BE", "ES", "PT", "PL", "IE", "GR", "AT"],
+    };
+    const computeCanonical = (caseRow: { region: string | null; recommendation: any }): number => {
+      const rec = caseRow.recommendation;
+      if (!rec) return 0;
+      const stored = Number(rec.canonical_net_weekly);
+      if (isFinite(stored) && stored > 0) return Math.round(stored);
+      const trace = Array.isArray(rec.layer_trace) ? rec.layer_trace : [];
+      const base = Number(rec.base_weekly ?? rec.target_weekly ?? 0);
+      if (!base) return 0;
+      const KEYS = ["Geography", "Sector", "Ownership", "Client Size", "Client Profile", "Strategic Intent"];
+      const traceByKey: Record<string, { value: number }> = {};
+      for (const lt of trace) {
+        const key = String(lt.label ?? "").replace(/\s*\(.*?\)\s*$/, "").trim();
+        if (key) traceByKey[key] = lt;
+      }
+      const deltas: Record<string, number> = {};
+      let prevOrig = base;
+      for (const k of KEYS) {
+        const lt = traceByKey[k];
+        if (lt) { deltas[k] = lt.value - prevOrig; prevOrig = lt.value; }
+        else deltas[k] = 0;
+      }
+      let running = base;
+      for (const k of KEYS) {
+        const d = deltas[k] ?? 0;
+        if (Math.abs(d) >= 1) running += d;
+      }
+      const aliases = REGION_TO_COUNTRY_BOOT[caseRow.region ?? ""] ?? [caseRow.region ?? ""];
+      const aliasSet = new Set(aliases.map(a => (a ?? "").toLowerCase()));
+      const weeklyRows = benchmarks.filter(b =>
+        aliasSet.has((b.country ?? "").toLowerCase()) &&
+        ((String(b.parameter ?? "").toLowerCase().includes("weekly")) ||
+         (String(b.parameter ?? "").toLowerCase().includes("fee")))
+      );
+      const nz = weeklyRows.filter(r => r.green_low > 0 && r.green_high > 0);
+      const gLow  = nz.length ? Math.min(...nz.map(r => r.green_low))  : 0;
+      const gHigh = nz.length ? Math.max(...nz.map(r => r.green_high)) : 0;
+      if (gLow > 0 && gHigh > 0) {
+        running = Math.min(gHigh, Math.max(gLow, running));
+      }
+      running += Number(rec.manual_delta ?? 0);
+      const result = Math.round(running);
+      if (result > 0) return result;
+      const tw = Number(rec.target_weekly ?? 0);
+      return tw > 0 ? Math.round(tw) : 0;
+    };
+
+    let touched = 0;
+    for (const c of cases ?? []) {
+      const weeklyNet = computeCanonical(c);
+      if (weeklyNet <= 0) continue;
+      const dur = Number(c.duration_weeks ?? 0);
+      if (dur <= 0) continue;
+      const totalFee = weeklyNet * dur;
+      const lower = (c.project_name ?? "").trim().toLowerCase();
+      if (!lower) continue;
+      const upd = await db.execute(sql`
+        UPDATE pricing_proposals
+        SET weekly_price = ${weeklyNet},
+            total_fee   = ${totalFee},
+            duration_weeks = ${dur}
+        WHERE outcome = 'pending'
+          AND LOWER(TRIM(project_name)) = ${lower}
+          AND (weekly_price IS DISTINCT FROM ${weeklyNet}
+               OR total_fee IS DISTINCT FROM ${totalFee})
+      `);
+      // Drizzle's neon driver returns rowCount; fall through silently if not.
+      const count = (upd as any)?.rowCount ?? 0;
+      if (count > 0) touched += count;
+    }
+    if (touched > 0) console.log(`[seed] Refreshed weekly_price/total_fee on ${touched} pending TBD proposal(s) from canonical NET1.`);
+  } catch (e) {
+    console.warn("[seed] TBD canonical refresh failed (non-fatal):", (e as Error).message);
+  }
+
   // ── Assets registry (laptops, software licenses, …) ─────────────────────
   // Two tables: asset_types (admin-managed taxonomy) + assets (assignments).
   // Boot-time idempotent migration + initial seed of PC + ThinkCell types

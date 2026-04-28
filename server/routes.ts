@@ -1018,6 +1018,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return b;
   }
 
+  // ── REGION → COUNTRY aliases (server side, mirrors client constant) ───
+  // Required to merge benchmark green-band corridors when computing the
+  // canonical clamp for a multi-country region (DACH = DE+AT+CH, …).
+  const REGION_TO_COUNTRY_SERVER: Record<string, string[]> = {
+    "DACH": ["DE", "AT", "CH"],
+    "Nordics": ["SE", "NO", "DK", "FI"],
+    "UK": ["UK", "GB"],
+    "FR": ["FR"],
+    "IT": ["IT"],
+    "US": ["US"],
+    "Asia": ["JP", "CN", "SG", "HK", "KR", "IN"],
+    "Middle East": ["AE", "SA", "QA"],
+    "Other EU": ["NL", "BE", "ES", "PT", "PL", "IE", "GR", "AT"],
+  };
+
+  /**
+   * Server-side canonical NET1 weekly for a pricing case. Mirrors the
+   * client-side _liveCanonical in PricingTool.tsx so the TBD proposal's
+   * weekly_price matches the cases-list Target/wk column exactly.
+   *
+   * Resolution: stored canonical → live recompute (layer_trace + clamp +
+   * manual_delta) → target_weekly. NO commit applied — the headline is
+   * pre-commit, same as the cases list.
+   */
+  function computeCanonicalNetWeekly(
+    caseRow: { region?: string | null; recommendation?: any },
+    benchmarks: Array<{ country: string; parameter: string; green_low: number; green_high: number }>,
+  ): number {
+    const rec = caseRow.recommendation;
+    if (!rec) return 0;
+    // Stored canonical is the cheap path — use it if present and sensible.
+    const stored = Number(rec.canonical_net_weekly);
+    if (isFinite(stored) && stored > 0) return Math.round(stored);
+
+    // Live recompute path.
+    const trace = Array.isArray(rec.layer_trace) ? rec.layer_trace : [];
+    const base = Number(rec.base_weekly ?? rec.target_weekly ?? 0);
+    if (!base) return 0;
+    const KEYS = ["Geography", "Sector", "Ownership", "Client Size", "Client Profile", "Strategic Intent"];
+    const traceByKey: Record<string, { value: number }> = {};
+    for (const lt of trace) {
+      const key = String(lt.label ?? "").replace(/\s*\(.*?\)\s*$/, "").trim();
+      if (key) traceByKey[key] = lt;
+    }
+    const deltas: Record<string, number> = {};
+    let prevOrig = base;
+    for (const k of KEYS) {
+      const lt = traceByKey[k];
+      if (lt) { deltas[k] = lt.value - prevOrig; prevOrig = lt.value; }
+      else deltas[k] = 0;
+    }
+    let running = base;
+    for (const k of KEYS) {
+      const d = deltas[k] ?? 0;
+      if (Math.abs(d) >= 1) running += d;
+    }
+    // Band clamp (merge corridors across all countries in the region).
+    const region = String(caseRow.region ?? "");
+    const aliases = REGION_TO_COUNTRY_SERVER[region] ?? [region];
+    const aliasSet = new Set(aliases.map(a => (a ?? "").toLowerCase()));
+    const weeklyRows = benchmarks.filter(b =>
+      aliasSet.has((b.country ?? "").toLowerCase()) &&
+      ((String(b.parameter ?? "").toLowerCase().includes("weekly")) ||
+       (String(b.parameter ?? "").toLowerCase().includes("fee")))
+    );
+    const nz = weeklyRows.filter(r => r.green_low > 0 && r.green_high > 0);
+    const gLow  = nz.length ? Math.min(...nz.map(r => r.green_low))  : 0;
+    const gHigh = nz.length ? Math.max(...nz.map(r => r.green_high)) : 0;
+    if (gLow > 0 && gHigh > 0) {
+      running = Math.min(gHigh, Math.max(gLow, running));
+    }
+    running += Number(rec.manual_delta ?? 0);
+    const result = Math.round(running);
+    if (result > 0) return result;
+    // Last-resort fallback to engine's raw target_weekly.
+    const tw = Number(rec.target_weekly ?? 0);
+    return tw > 0 ? Math.round(tw) : 0;
+  }
+
   // Server-side guarantee: when a pricing_case is saved with status='final'
   // and no matching pricing_proposal row exists, insert a pending TBD row
   // so the case appears in Past Projects atomically with the save. Replaces
@@ -1030,14 +1109,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!name) return;
     const all = await storage.getPricingProposals();
     const lower = name.toLowerCase();
-    // weekly_price = engine's recommended NET1 weekly (target_weekly). This
-    // matches the headline figure in the Pricing Waterfall + the cases-list
-    // Target/wk column. Previously stored target_weekly × 1.08 which baked
-    // in admin and confused the user.
-    const targetWeekly = Number(caseRow.recommendation?.target_weekly ?? 0);
+    // ── THE RULE (single source of truth across Exec / Past Projects /
+    //    Pricing Tool list): a TBD's headline figures are exactly TWO
+    //    numbers — weekly_price = NET1 (canonical net weekly) and
+    //    total_fee = weekly_price × duration_weeks. Nothing else.
+    //
+    //    Resolution order for NET1 (mirrors PricingTool's cases-list):
+    //      1. recommendation.canonical_net_weekly  (handleSave persists this)
+    //      2. live recompute from layer_trace + base + manual_delta + band
+    //      3. recommendation.target_weekly         (last-resort engine raw)
+    const settings = await storage.getPricingSettings();
+    const benchmarks = (settings?.country_benchmarks ?? []) as Array<{ country: string; parameter: string; green_low: number; green_high: number }>;
+    const weeklyNet = computeCanonicalNetWeekly(caseRow, benchmarks);
     const dur = Number(caseRow.duration_weeks ?? 0);
-    const weeklyNet = targetWeekly > 0 ? Math.round(targetWeekly) : 0;
-    const totalFee = targetWeekly > 0 && dur > 0 ? Math.round(targetWeekly * dur) : 0;
+    const totalFee = weeklyNet > 0 && dur > 0 ? Math.round(weeklyNet * dur) : 0;
 
     // If a pending TBD already exists, refresh its weekly_price + total_fee
     // so a re-saved case (with updated recommendation) doesn't leave a stale
