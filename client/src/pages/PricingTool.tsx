@@ -2534,26 +2534,36 @@ export default function PricingTool() {
     let failed = 0;
     try {
       const CANONICAL_KEYS = ["Geography", "Sector", "Ownership", "Client Size", "Client Profile", "Strategic Intent"];
+      const failures: string[] = [];
       for (const c of cases) {
         const rec = (c as any).recommendation;
-        if (!rec || !rec.base_weekly || !Array.isArray(rec.layer_trace)) {
+        // Skip only when there is NOTHING to compute from. base_weekly is
+        // enough — if layer_trace is missing or empty, deltas default to 0
+        // and we still produce a sensible canonical = base + clamp + manual.
+        // Previous strict check ate every legacy case that had a non-array
+        // layer_trace and explained the "3 still need migration" loop.
+        if (!rec || (!rec.base_weekly && !rec.target_weekly)) {
           skipped++;
           continue;
         }
-        // 1. Replay layer trace to get post-engine running weekly
+        // 1. Replay layer trace to get post-engine running weekly. Fall back
+        //    to target_weekly when base_weekly + layer_trace is absent — the
+        //    engine's recommendation is at least a starting point.
         const traceByKey: Record<string, { value: number }> = {};
-        for (const lt of rec.layer_trace) {
+        const trace = Array.isArray(rec.layer_trace) ? rec.layer_trace : [];
+        for (const lt of trace) {
           const key = (lt.label ?? "").replace(/\s*\(.*?\)\s*$/, "").trim();
           if (key) traceByKey[key] = lt;
         }
-        let prevOrig = rec.base_weekly;
+        const baseWeekly = rec.base_weekly ?? rec.target_weekly ?? 0;
+        let prevOrig = baseWeekly;
         const deltas: Record<string, number> = {};
         for (const key of CANONICAL_KEYS) {
           const lt = traceByKey[key];
           if (lt) { deltas[key] = lt.value - prevOrig; prevOrig = lt.value; }
           else deltas[key] = 0;
         }
-        let running = rec.base_weekly;
+        let running = baseWeekly;
         for (const key of CANONICAL_KEYS) {
           const d = deltas[key] ?? 0;
           if (Math.abs(d) >= 1) running += d;
@@ -2586,16 +2596,20 @@ export default function PricingTool() {
           g /= (1 - d.pct / 100);
         }
         const canonicalGross = Math.round(g);
-        // 6. PUT the augmented case
+        // 6. PUT a MINIMAL payload — only the field we want to update.
+        //    Spreading ...c was the silent-failure cause: server-managed
+        //    fields like updated_at / created_at would fail Zod validation
+        //    and the entire PUT 400'd → toast just said "X failed" with no
+        //    detail. PUT is partial in the schema, so {recommendation,
+        //    project_name} is enough; project_name is the only required
+        //    field on the schema (line 383 of schema.ts).
         const payload = {
-          ...c,
+          project_name: (c as any).project_name,
           recommendation: {
             ...rec,
             canonical_net_weekly: canonicalNet,
             canonical_gross_weekly: canonicalGross,
             admin_fee_pct: adminPct,
-            // variable_fee_pct is component state only — leave whatever
-            // is already on the rec (or undefined for legacy).
           },
         };
         try {
@@ -2604,17 +2618,27 @@ export default function PricingTool() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
-          if (r.ok) updated++;
-          else failed++;
-        } catch {
+          if (r.ok) {
+            updated++;
+          } else {
+            failed++;
+            const errText = await r.text().catch(() => `HTTP ${r.status}`);
+            failures.push(`${(c as any).project_name ?? c.id}: ${errText.slice(0, 120)}`);
+          }
+        } catch (e: any) {
           failed++;
+          failures.push(`${(c as any).project_name ?? c.id}: ${e?.message ?? "network error"}`);
         }
       }
       const parts: string[] = [];
       if (updated > 0) parts.push(`${updated} updated`);
       if (skipped > 0) parts.push(`${skipped} skipped (no recommendation)`);
       if (failed > 0)  parts.push(`${failed} failed`);
-      toast({ title: "Canonical backfill done", description: parts.join(" · ") || "Nothing to do." });
+      toast({
+        title: failed > 0 ? "Canonical backfill — partial" : "Canonical backfill done",
+        description: (parts.join(" · ") || "Nothing to do.") + (failures.length > 0 ? `\n${failures.join("\n")}` : ""),
+        variant: failed > 0 ? "destructive" : undefined,
+      });
       loadAll();
     } finally {
       setBackfillingCanonical(false);
@@ -3079,29 +3103,35 @@ export default function PricingTool() {
                       //       that path leaves admin baked in (inflating the
                       //       result by ≈ 1+admin) because computeOptionColumn
                       //       doesn't strip admin downstream.
+                      const _canonical = c.recommendation?.canonical_net_weekly;
                       const _fromOption = (() => {
-                        if (!targetTl || !c.recommendation?.target_weekly) return null;
-                        // (1) Net override
+                        if (!targetTl) return null;
+                        // (1) Net override on the matching timeline wins
                         if (typeof targetTl.netTotal === "number" && targetTl.netTotal > 0 && targetTl.weeks > 0) {
                           return targetTl.netTotal / targetTl.weeks;
                         }
                         // (2) Gross override → run through the discount stack
                         if (typeof targetTl.grossTotal === "number" && targetTl.grossTotal > 0) {
                           const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
-                          // grossWk arg is unused when grossTotal is overridden
-                          // — pass 0 to make that explicit.
                           const col = computeOptionColumn(targetTl, 0, discounts);
                           if (!col.weeks) return null;
                           return col.netTotal / col.weeks;
                         }
-                        // (3) No overrides → engine's target_weekly = NET1.
-                        return c.recommendation.target_weekly as number;
+                        return null;
                       })();
-                      // Single-option mode falls back to canonical_net_weekly
-                      // (= NET1 = Option 1 net / weeks by construction).
-                      const _canonical = c.recommendation?.canonical_net_weekly;
+                      // Resolution order:
+                      //   1. Net/Gross override on the matching timeline (the
+                      //      figure the user pinned on the SOW).
+                      //   2. canonical_net_weekly (= NET1 from the waterfall,
+                      //      computed at save time or by the backfill button).
+                      //      THIS is what most cases hit; for COE03 it's
+                      //      ~€31.111 = the actual Option 2 net / weeks the
+                      //      client sees on the proposal.
+                      //   3. target_weekly (engine's raw recommendation, pre
+                      //      manual delta + band clamp). Only used as a
+                      //      desperate fallback for cases with no canonical
+                      //      field saved yet.
                       const centralWk = _fromOption
-                        ?? (!useThreeOptions ? _canonical : undefined)
                         ?? _canonical
                         ?? (c.recommendation?.target_weekly ?? 0);
                       return (
