@@ -543,18 +543,25 @@ function emptyCase(): PricingCase {
 }
 
 function OutcomeBadge({ outcome, end_date }: { outcome: string; end_date?: string | null }) {
-  if (outcome === "won")  return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>;
-  if (outcome === "lost") return <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>;
-  // "pending" is the stored value; surface as one of TWO labels:
-  //   - "Open"  → engagement has a future end_date (signed verbally /
-  //              start date set / actively running) but not yet marked Won.
-  //   - "TBD"   → no end_date yet (still in negotiation), or end_date
-  //              already in the past (overdue close).
-  // This is purely a display-time derivation — the DB still stores 'pending'
-  // so the existing handleSave / sync-tbd-with-final-cases logic keeps working.
+  // Display-time derivation. DB still stores 'won' / 'lost' / 'pending' —
+  // this only affects the badge label so handleSave + sync-tbd logic keeps
+  // working unchanged. Four states surfaced:
+  //   - "Open"     → outcome=won AND end_date is in the future (project
+  //                  signed and still running — must not be confused with
+  //                  closed wins for revenue / win-rate stats).
+  //   - "Won"      → outcome=won AND end_date in the past (or no end_date).
+  //   - "Lost"     → outcome=lost.
+  //   - "Open"     → outcome=pending AND end_date in the future (verbally
+  //                  signed, awaiting paperwork).
+  //   - "TBD"      → outcome=pending AND no end_date / past end_date.
   const today = new Date().toISOString().slice(0, 10);
-  const isOpen = !!end_date && end_date > today;
-  if (isOpen) return <Badge className="bg-blue-100 text-blue-700 border-blue-200">Open</Badge>;
+  const futureEnd = !!end_date && end_date > today;
+  if (outcome === "won") {
+    if (futureEnd) return <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-xs">Open</Badge>;
+    return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>;
+  }
+  if (outcome === "lost") return <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>;
+  if (futureEnd) return <Badge className="bg-blue-100 text-blue-700 border-blue-200">Open</Badge>;
   return <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">TBD</Badge>;
 }
 
@@ -2969,19 +2976,46 @@ export default function PricingTool() {
                         : null;
                       const targetTl = matchByDuration
                         ?? (useThreeOptions ? (tl[1] ?? tl[0]) : tl[0]);
+                      // ── NET1 / Target/wk derivation, audited ──────────
+                      // Definition: NET1 = the per-week NET price the client
+                      // sees on the matching-duration option of the proposal.
+                      //
+                      // Three branches, in order:
+                      //
+                      //   (1) User pinned an explicit Net override on the
+                      //       matching timeline (case_timelines[i].netTotal):
+                      //       → return netTotal / weeks. This is the contract
+                      //         number, period.
+                      //
+                      //   (2) User pinned a Gross override (no Net override):
+                      //       → run computeOptionColumn(targetTl, grossWk, …)
+                      //         which applies the discount stack and commit.
+                      //         grossWk doesn't matter here because grossTotal
+                      //         override wins inside computeOptionColumn.
+                      //
+                      //   (3) No overrides → return canonical_net_weekly
+                      //       (a.k.a. target_weekly = NET1 from the engine).
+                      //       We do NOT roundtrip through grossWk × discounts:
+                      //       that path leaves admin baked in (inflating the
+                      //       result by ≈ 1+admin) because computeOptionColumn
+                      //       doesn't strip admin downstream.
                       const _fromOption = (() => {
                         if (!targetTl || !c.recommendation?.target_weekly) return null;
-                        const adminPct = c.recommendation?.admin_fee_pct ?? settings?.admin_fee_pct ?? 0;
-                        const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
-                        const grossWkSaved = c.recommendation?.canonical_gross_weekly;
-                        let grossWk = grossWkSaved ?? (c.recommendation.target_weekly as number) * (1 + adminPct / 100);
-                        if (!grossWkSaved) {
-                          const baseEnabled = discounts.filter(d => d.enabled && d.id !== "commitment" && d.pct > 0);
-                          for (const d of baseEnabled) grossWk = grossWk / (1 - d.pct / 100);
+                        // (1) Net override
+                        if (typeof targetTl.netTotal === "number" && targetTl.netTotal > 0 && targetTl.weeks > 0) {
+                          return targetTl.netTotal / targetTl.weeks;
                         }
-                        const col = computeOptionColumn(targetTl, grossWk, discounts);
-                        if (!col.weeks) return null;
-                        return col.netTotal / col.weeks;
+                        // (2) Gross override → run through the discount stack
+                        if (typeof targetTl.grossTotal === "number" && targetTl.grossTotal > 0) {
+                          const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
+                          // grossWk arg is unused when grossTotal is overridden
+                          // — pass 0 to make that explicit.
+                          const col = computeOptionColumn(targetTl, 0, discounts);
+                          if (!col.weeks) return null;
+                          return col.netTotal / col.weeks;
+                        }
+                        // (3) No overrides → engine's target_weekly = NET1.
+                        return c.recommendation.target_weekly as number;
                       })();
                       // Single-option mode falls back to canonical_net_weekly
                       // (= NET1 = Option 1 net / weeks by construction).

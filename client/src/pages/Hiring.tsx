@@ -43,6 +43,18 @@ const STAGES = [
     dot: "bg-emerald-400",
   },
   {
+    // Back-up = strong candidate held in reserve. They've passed enough
+    // gates to be a viable hire but we don't have a slot for them right
+    // now. Keep their data + don't let sync overwrite them. Distinct from
+    // "Out" (rejected) and from "Make offer" (active offer in flight).
+    id: "back_up",
+    label: "Back-up",
+    color: "bg-slate-50 border-slate-300",
+    header: "bg-slate-500",
+    badge: "bg-slate-100 text-slate-700",
+    dot: "bg-slate-400",
+  },
+  {
     // Combined offer-out + hired stage. Once a candidate has a written offer
     // they stay here until the outcome is known; accepted = stays here,
     // declined = moved to "Out". Keeps the column count tight.
@@ -892,7 +904,24 @@ export default function Hiring() {
                     <div className="flex items-center gap-1.5">
                       <Info className="w-3.5 h-3.5 text-muted-foreground" />
                       <span className="text-muted-foreground">Stage:</span>
-                      <span className="font-semibold">{stageObj?.label ?? c.stage}</span>
+                      {/* Inline stage dropdown — picking a new stage moves
+                          the candidate immediately AND locks them (sync_locked=1)
+                          so the next Eendigo import doesn't undo the move. */}
+                      <select
+                        value={c.stage}
+                        onChange={async (e) => {
+                          const next = e.target.value;
+                          if (next === c.stage) return;
+                          await updateCandidate(c.id, { stage: next, sync_locked: 1 });
+                          const lbl = STAGES.find(s => s.id === next)?.label ?? next;
+                          toast({ title: `Moved ${c.name} to ${lbl}` });
+                        }}
+                        className="h-7 text-xs rounded border px-1.5 bg-background font-semibold"
+                      >
+                        {STAGES.map(s => (
+                          <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
                       {TERMINAL_STAGES.has(c.stage) && (
                         <span className="text-[9px] text-red-600 font-bold uppercase ml-1">terminal — sync skips</span>
                       )}
