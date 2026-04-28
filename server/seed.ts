@@ -1722,4 +1722,105 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     });
     console.log("Settings seeded");
   }
+
+  // ── Assets registry (laptops, software licenses, …) ─────────────────────
+  // Two tables: asset_types (admin-managed taxonomy) + assets (assignments).
+  // Boot-time idempotent migration + initial seed of PC + ThinkCell types
+  // and the live asset list provided by the co-CEO. Re-running this on every
+  // boot is a no-op once the tables + seed rows exist.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS asset_types (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      has_license_key INTEGER NOT NULL DEFAULT 0,
+      identifier_hint TEXT,
+      details_hint TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS assets (
+      id SERIAL PRIMARY KEY,
+      asset_type TEXT NOT NULL,
+      identifier TEXT,
+      details TEXT,
+      employee_id TEXT,
+      status TEXT NOT NULL DEFAULT 'in_use',
+      license_key TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS assets_emp_idx ON assets(employee_id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS assets_type_idx ON assets(asset_type)`);
+
+  // Seed the two starter types — only inserts if missing (no overwrite of
+  // user-edited rows).
+  const _assetNow = new Date().toISOString();
+  await db.execute(sql`
+    INSERT INTO asset_types (name, has_license_key, identifier_hint, details_hint, created_at)
+    VALUES
+      ('PC',        0, 'e.g. LAP05', 'e.g. Lenovo V15 G4 IRU, 83A1S01100', ${_assetNow}),
+      ('ThinkCell', 1, NULL, 'PowerPoint plug-in license', ${_assetNow})
+    ON CONFLICT (name) DO NOTHING
+  `);
+
+  // Resolve employee IDs for the seed assets. We match by case-insensitive
+  // first-name substring against the employees table; if no row matches,
+  // employee_id is left NULL and the asset shows as "Unassigned" in the UI
+  // (still preserves the data — the user can assign later).
+  type EmpRow = { id: string; name: string };
+  const empRows = (await db.execute(sql`SELECT id, name FROM employees`)) as unknown as { rows: EmpRow[] };
+  const empByFirstName = new Map<string, string>();
+  for (const e of empRows.rows ?? []) {
+    const first = (e.name ?? "").trim().split(/\s+/)[0]?.toLowerCase();
+    if (first && !empByFirstName.has(first)) empByFirstName.set(first, e.id);
+  }
+  const lookup = (firstName: string): string | null =>
+    empByFirstName.get(firstName.toLowerCase()) ?? null;
+
+  // Seed assets — idempotent on (asset_type, identifier) for hardware OR
+  // (asset_type, employee_id, license_key) for software. Use a uniqueness
+  // probe before each insert so rerunning doesn't duplicate.
+  const THINKCELL_KEY = "ZEZD7-UDH3E-4LCKY-SK7H4-PSHF7";
+  const seedAssets: Array<{
+    asset_type: string;
+    identifier: string | null;
+    details: string | null;
+    employee_id: string | null;
+    status: string;
+    license_key: string | null;
+    notes: string | null;
+  }> = [
+    // Defne — PCs
+    { asset_type: "PC", identifier: "LAP02", details: "Lenovo IdeaPad 3 15ITL6", employee_id: lookup("defne"), status: "in_use",     license_key: null, notes: null },
+    { asset_type: "PC", identifier: "LAP03", details: "Dell",                     employee_id: lookup("defne"), status: "out_of_use", license_key: null, notes: null },
+    // Malika — PCs
+    { asset_type: "PC", identifier: "LAP01", details: "HP ENVY 13-ba1xx",                 employee_id: lookup("malika"), status: "out_of_use", license_key: null, notes: null },
+    { asset_type: "PC", identifier: "LAP05", details: "Lenovo V15 G4 IRU, 83A1S01100",    employee_id: lookup("malika"), status: "in_use",     license_key: null, notes: null },
+    // Edoardo — PC
+    { asset_type: "PC", identifier: "LAP04", details: "Lenovo V15 G4 IRU, 83A1S01100",    employee_id: lookup("edoardo"), status: "in_use",     license_key: null, notes: null },
+    // ThinkCell licenses (same key across all four)
+    { asset_type: "ThinkCell", identifier: null, details: "ThinkCell PowerPoint plug-in", employee_id: lookup("defne"),       status: "in_use", license_key: THINKCELL_KEY, notes: "Shared license key" },
+    { asset_type: "ThinkCell", identifier: null, details: "ThinkCell PowerPoint plug-in", employee_id: lookup("edoardo"),     status: "in_use", license_key: THINKCELL_KEY, notes: "Shared license key" },
+    { asset_type: "ThinkCell", identifier: null, details: "ThinkCell PowerPoint plug-in", employee_id: lookup("malika"),      status: "in_use", license_key: THINKCELL_KEY, notes: "Shared license key" },
+    { asset_type: "ThinkCell", identifier: null, details: "ThinkCell PowerPoint plug-in", employee_id: lookup("alessandro"),  status: "in_use", license_key: THINKCELL_KEY, notes: "Shared license key" },
+  ];
+  for (const a of seedAssets) {
+    if (a.asset_type === "PC" && a.identifier) {
+      // Skip if a PC with this identifier already exists — even if assignment changed,
+      // we don't want the seed to overwrite live data.
+      const existing = await db.execute(sql`SELECT id FROM assets WHERE asset_type = 'PC' AND identifier = ${a.identifier} LIMIT 1`);
+      if ((existing as unknown as { rows: unknown[] }).rows.length > 0) continue;
+    } else if (a.asset_type === "ThinkCell" && a.employee_id && a.license_key) {
+      // Skip if this employee already has a ThinkCell row with the same key.
+      const existing = await db.execute(sql`SELECT id FROM assets WHERE asset_type = 'ThinkCell' AND employee_id = ${a.employee_id} AND license_key = ${a.license_key} LIMIT 1`);
+      if ((existing as unknown as { rows: unknown[] }).rows.length > 0) continue;
+    }
+    await db.execute(sql`
+      INSERT INTO assets (asset_type, identifier, details, employee_id, status, license_key, notes, created_at, updated_at)
+      VALUES (${a.asset_type}, ${a.identifier}, ${a.details}, ${a.employee_id}, ${a.status}, ${a.license_key}, ${a.notes}, ${_assetNow}, ${_assetNow})
+    `);
+  }
 }

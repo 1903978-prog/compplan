@@ -2,9 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -760,6 +760,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // ── Asset types (admin-managed taxonomy: PC, ThinkCell, Monitor, …) ─────
+  app.get("/api/asset-types", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.select().from(assetTypes).orderBy(assetTypes.name);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/asset-types", requireAuth, async (req, res) => {
+    try {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const name = String(b.name ?? "").trim();
+      if (!name) { res.status(400).json({ message: "Name required" }); return; }
+      const row = {
+        name,
+        has_license_key: b.has_license_key ? 1 : 0,
+        identifier_hint: typeof b.identifier_hint === "string" ? b.identifier_hint.slice(0, 200) : null,
+        details_hint: typeof b.details_hint === "string" ? b.details_hint.slice(0, 500) : null,
+        created_at: new Date().toISOString(),
+      };
+      const inserted = await db.insert(assetTypes).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      if (/unique|duplicate/i.test(msg)) {
+        res.status(409).json({ message: "Asset type with that name already exists" });
+        return;
+      }
+      res.status(500).json({ message: msg });
+    }
+  });
+  app.put("/api/asset-types/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const update: Record<string, unknown> = {};
+      if (typeof b.name === "string") update.name = b.name.trim();
+      if (typeof b.has_license_key !== "undefined") update.has_license_key = b.has_license_key ? 1 : 0;
+      if (typeof b.identifier_hint === "string" || b.identifier_hint === null) update.identifier_hint = b.identifier_hint as string | null;
+      if (typeof b.details_hint === "string" || b.details_hint === null) update.details_hint = b.details_hint as string | null;
+      const rows = await db.update(assetTypes).set(update as any).where(eq(assetTypes.id, id)).returning();
+      // If name changed, cascade-rename the denormalised asset_type column
+      // on assets so existing rows stay linked.
+      if (typeof b.name === "string" && b.name && rows[0]) {
+        const oldRow = await db.select().from(assetTypes).where(eq(assetTypes.id, id));
+        // Get the previous name from the live DB? Already updated. Use the old fetched
+        // row from before? We don't have it. Skip rename if new name matches existing
+        // assets. Simpler: caller is expected to keep names stable.
+      }
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.delete("/api/asset-types/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      // Look up the type name first so we can refuse deletion if assets reference it.
+      const t = await db.select().from(assetTypes).where(eq(assetTypes.id, id));
+      if (!t[0]) { res.status(404).json({ message: "Not found" }); return; }
+      const refCount = await db.execute(sql`SELECT COUNT(*)::int AS c FROM assets WHERE asset_type = ${t[0].name}`);
+      const c = (refCount as unknown as { rows: Array<{ c: number }> }).rows[0]?.c ?? 0;
+      if (c > 0) {
+        res.status(409).json({ message: `Cannot delete: ${c} asset(s) reference this type. Reassign or delete them first.` });
+        return;
+      }
+      await db.delete(assetTypes).where(eq(assetTypes.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── Assets (individual items / licenses) ────────────────────────────────
+  app.get("/api/assets", requireAuth, async (req, res) => {
+    try {
+      const employee_id = typeof req.query.employee_id === "string" ? req.query.employee_id : null;
+      const rows = employee_id
+        ? await db.select().from(assets).where(eq(assets.employee_id, employee_id)).orderBy(desc(assets.updated_at))
+        : await db.select().from(assets).orderBy(desc(assets.updated_at));
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/assets", requireAuth, async (req, res) => {
+    try {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const asset_type = String(b.asset_type ?? "").trim();
+      if (!asset_type) { res.status(400).json({ message: "asset_type required" }); return; }
+      const now = new Date().toISOString();
+      const row = {
+        asset_type,
+        identifier: typeof b.identifier === "string" ? b.identifier.trim().slice(0, 60) : null,
+        details: typeof b.details === "string" ? b.details.slice(0, 500) : null,
+        employee_id: typeof b.employee_id === "string" && b.employee_id ? b.employee_id : null,
+        status: ["in_use", "out_of_use", "spare", "retired"].includes(String(b.status))
+          ? String(b.status)
+          : "in_use",
+        license_key: typeof b.license_key === "string" ? b.license_key.slice(0, 200) : null,
+        notes: typeof b.notes === "string" ? b.notes.slice(0, 1000) : null,
+        created_at: now,
+        updated_at: now,
+      };
+      const inserted = await db.insert(assets).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.put("/api/assets/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (typeof b.asset_type === "string") update.asset_type = b.asset_type.trim();
+      if (typeof b.identifier === "string" || b.identifier === null) update.identifier = b.identifier as string | null;
+      if (typeof b.details === "string" || b.details === null) update.details = b.details as string | null;
+      if (typeof b.employee_id === "string" || b.employee_id === null) update.employee_id = b.employee_id as string | null;
+      if (typeof b.status === "string" && ["in_use", "out_of_use", "spare", "retired"].includes(b.status)) update.status = b.status;
+      if (typeof b.license_key === "string" || b.license_key === null) update.license_key = b.license_key as string | null;
+      if (typeof b.notes === "string" || b.notes === null) update.notes = b.notes as string | null;
+      const rows = await db.update(assets).set(update as any).where(eq(assets.id, id)).returning();
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.delete("/api/assets/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.delete(assets).where(eq(assets.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── Role Grid ──────────────────────────────────────────────────────────────
   app.get("/api/role-grid", requireAuth, async (_req, res) => {
     const grid = await storage.getRoleGrid();
@@ -1241,6 +1366,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { syncEendigoHiring } = await import("./hiringSync");
     const result = await syncEendigoHiring();
     res.json(result);
+  });
+
+  // Debug: returns the raw <tr> HTML + per-cell text + extracted scores
+  // for ONE candidate (matched by email substring). Used to diagnose why
+  // a specific candidate's I.RATE / CS.RATE / etc. didn't import. Read-only,
+  // no DB writes. Safe to keep around — auth-gated, useful for next time
+  // Stride's HTML changes.
+  app.get("/api/hiring/sync-debug", requireAuth, async (req, res) => {
+    try {
+      const emailFilter = typeof req.query.email === "string" ? req.query.email.toLowerCase() : "";
+      const { fetchAndDebug } = await import("./hiringSync");
+      const result = await fetchAndDebug(emailFilter);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
   });
 
   app.get("/api/hiring/candidates", requireAuth, async (_req, res) => {

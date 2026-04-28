@@ -33,6 +33,7 @@ import AdminTrash from "@/pages/AdminTrash";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
 import OkrTree from "@/pages/OkrTree";
+import AdminAssets from "@/pages/AdminAssets";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
@@ -380,6 +381,7 @@ function Navigation() {
                 basePaths={["/admin"]}
                 items={[
                   { href: "/admin", label: "Cybersecurity", icon: Shield },
+                  { href: "/admin/assets", label: "Asset Types", icon: Layers },
                   { href: "/admin/trash", label: "Trash Bin", icon: Trash2 },
                   { href: "/admin/backup", label: "Backup & Restore", icon: Database },
                   { href: "/admin/ai-models", label: "AI Models", icon: Cpu },
@@ -485,6 +487,7 @@ function Router() {
       <Route path="/admin" component={AppAdmin} />
       <Route path="/admin/backup" component={AdminBackup} />
       <Route path="/admin/trash" component={AdminTrash} />
+      <Route path="/admin/assets" component={AdminAssets} />
       <Route path="/admin/ai-models" component={AdminAIModels} />
       <Route path="/admin/theme" component={AdminTheme} />
       <Route path="/hiring/scores" component={CandidateScores} />

@@ -297,19 +297,49 @@ function parseCandidates(html: string): RawCandidate[] {
     //   0 Status | 1 Name | 2 CV | 3 Date | 4 Logic | 5 Verbal | 6 Excel
     //   7 P1 | 8 P2 | 9 TG✓ | 10 TG | 11 I.Owner | 12 I.Sched | 13 I.Rate
     //   14 CS.Own | 15 CS.Sch | 16 CS.Rate | 17 CS LM
-    const cells = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)]
-      .map(m => stripTags(m[1]));
+    // Keep BOTH the raw HTML (so we can dig out value="..." / data-* attrs
+    // on child <input>/<button> elements) and the stripped text (for plain
+    // label cells like I.OWNER).
+    const rawCells = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)]
+      .map(m => m[1] ?? "");
+    const cells = rawCells.map(h => stripTags(h));
 
     const cellAt = (i: number) => (cells[i] ?? "").trim();
 
-    // Pull a numeric score out of a cell ("60.0" or "60.0%" → "60.0%").
-    // Returning empty string for blanks keeps buildInfo concise.
-    const numCell = (i: number): string => {
-      const raw = cellAt(i);
+    // Pull a numeric score out of a cell. Looks at THREE sources in order:
+    //   (a) the rendered text after stripTags ("51 Notes" → "51")
+    //   (b) any value="..." attr on a child <input> ("<input value=\"67\">")
+    //   (c) any data-rate / data-score / data-value attr on a child element
+    // Sources (b) + (c) catch cells that render as editable form inputs
+    // rather than read-only text — which is how Stride displays I.RATE +
+    // CS.RATE on candidates whose ratings are still being edited (Briccoli
+    // is the canonical reproduction case). Without these fallbacks the
+    // parser silently returned "" for those cells.
+    //
+    // Strategy: prefer the highest-signal source, but cap at 0-100 since
+    // ratings are pct or 0-100 numeric. If multiple match, the FIRST sane
+    // value wins.
+    const numCellFromHtml = (i: number): string => {
+      const cellHtml = (rawCells[i] ?? "");
+      // (b) <input value="67"> — common after Stride re-renders the cell as editable
+      const inputMatch = cellHtml.match(/<input\b[^>]*\bvalue\s*=\s*["']?([\d.]+)["']?/i);
+      if (inputMatch) {
+        const n = parseFloat(inputMatch[1]);
+        if (isFinite(n) && n >= 0 && n <= 1000) return `${inputMatch[1]}%`;
+      }
+      // (c) data-rate / data-score / data-value="67" on any child
+      const dataMatch = cellHtml.match(/\bdata-(?:rate|score|value)\s*=\s*["']([\d.]+)["']/i);
+      if (dataMatch) {
+        const n = parseFloat(dataMatch[1]);
+        if (isFinite(n) && n >= 0 && n <= 1000) return `${dataMatch[1]}%`;
+      }
+      // (a) plain text fallback — same as before
+      const raw = stripTags(cellHtml);
       if (!raw) return "";
       const m = raw.match(/(\d+\.?\d*)/);
       return m ? `${m[1]}%` : "";
     };
+    const numCell = (i: number): string => numCellFromHtml(i);
 
     const excel    = numCell(6);
     const pres1    = numCell(7);
@@ -546,4 +576,88 @@ export async function syncEendigoHiring(): Promise<{ synced: number; created: nu
   }
 
   return { synced: parsed.length, created, updated, skipped };
+}
+
+/**
+ * Diagnostic helper — fetch the dashboard, find rows whose email contains
+ * the given substring, and return a verbose dump of the row HTML + all
+ * cells (raw + stripped) + extracted score columns. The aim is to tell us
+ * EXACTLY where the parser is missing data on a specific candidate without
+ * having to ship test cases. Read-only.
+ */
+export async function fetchAndDebug(emailSubstring: string): Promise<{
+  rows: Array<{
+    email: string;
+    name: string;
+    pipeline: string;
+    cellsRaw: string[];
+    cellsText: string[];
+    parsed: RawCandidate;
+    extracted: ReturnType<typeof extractScoreColumns>;
+  }>;
+  totalRows: number;
+  matchedRows: number;
+  error?: string;
+}> {
+  let html: string;
+  try {
+    html = await loginAndFetchDashboard();
+  } catch (err: any) {
+    return { rows: [], totalRows: 0, matchedRows: 0, error: String(err.message ?? err) };
+  }
+  // Re-do the same parsing the main sync does, but keep the raw cell HTML
+  // alongside the stripped text + the extracted score columns. We open up
+  // parseCandidates' internals here rather than re-implementing them so we
+  // catch the same bugs the live import does.
+  const namedTbody = html.match(/<tbody[^>]*id=["']candidateTable["'][^>]*>([\s\S]*?)<\/tbody>/i);
+  let tbodyContent: string;
+  if (namedTbody) tbodyContent = namedTbody[1];
+  else {
+    const tbodies = [...html.matchAll(/<tbody[^>]*>([\s\S]*?)<\/tbody>/gi)];
+    if (!tbodies.length) return { rows: [], totalRows: 0, matchedRows: 0, error: "No <tbody> found" };
+    tbodyContent = tbodies.reduce((a, b) => (a[1].length >= b[1].length ? a : b))[1];
+  }
+
+  const rowMatches = [...tbodyContent.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)];
+  const out: Array<{
+    email: string;
+    name: string;
+    pipeline: string;
+    cellsRaw: string[];
+    cellsText: string[];
+    parsed: RawCandidate;
+    extracted: ReturnType<typeof extractScoreColumns>;
+  }> = [];
+
+  // Parse every row using the SAME logic as parseCandidates so the debug
+  // dump shows what the live importer would do. Then filter by email.
+  const allParsed = parseCandidates(html);
+  const byEmail = new Map(allParsed.map(c => [c.email.toLowerCase(), c]));
+
+  for (const match of rowMatches) {
+    const openTag = match[1] || "";
+    const rowHtml = match[2] || "";
+    const email = attr(openTag, "data-email");
+    if (!email) continue;
+    if (emailSubstring && !email.toLowerCase().includes(emailSubstring)) continue;
+
+    const pipeline = attr(openTag, "data-pipeline") || attr(openTag, "data-stage");
+    const name = attr(openTag, "data-fullname") || attr(openTag, "data-name") || "";
+
+    const rawCells = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1] ?? "");
+    const cellsText = rawCells.map(stripTags);
+
+    const parsedCand = byEmail.get(email.toLowerCase());
+    if (!parsedCand) continue;
+    out.push({
+      email,
+      name,
+      pipeline,
+      cellsRaw: rawCells,
+      cellsText,
+      parsed: parsedCand,
+      extracted: extractScoreColumns(parsedCand),
+    });
+  }
+  return { rows: out, totalRows: rowMatches.length, matchedRows: out.length };
 }

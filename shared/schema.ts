@@ -1099,3 +1099,46 @@ export const orgAgents = pgTable("org_agents", {
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
+
+// ── Company assets (laptops, software licenses, monitors, phones, …) ───────
+// Two-table design:
+//   asset_types  — admin-managed list of categories (PC, ThinkCell, …).
+//                  Has a flag for whether the type carries a license_key
+//                  (software) so the UI shows the right input.
+//   assets       — individual asset rows. Each can be assigned to one
+//                  employee and has a status (in_use / out_of_use / spare /
+//                  retired). Software-license rows can share the same
+//                  license_key across multiple assignments (e.g. a single
+//                  ThinkCell key shared by 4 people = 4 rows w/ same key).
+export const assetTypes = pgTable("asset_types", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),                     // "PC", "ThinkCell"
+  has_license_key: integer("has_license_key").notNull().default(0), // 1 = software, 0 = hardware
+  // Optional template hint shown to the user when adding a new asset of
+  // this type ("e.g. LAP05 / Lenovo V15 G4 IRU"). Free text.
+  identifier_hint: text("identifier_hint"),
+  details_hint: text("details_hint"),
+  created_at: text("created_at").notNull(),
+});
+
+export const assets = pgTable("assets", {
+  id: serial("id").primaryKey(),
+  // Denormalised type name (matches asset_types.name) for resilience —
+  // avoids a JOIN on every list call. Updated if type is renamed.
+  asset_type: text("asset_type").notNull(),
+  identifier: text("identifier"),                            // "LAP02"
+  details: text("details"),                                  // "Lenovo IdeaPad 3 15ITL6"
+  employee_id: text("employee_id"),                          // FK to employees.id (string)
+  status: text("status").notNull().default("in_use"),        // "in_use" | "out_of_use" | "spare" | "retired"
+  license_key: text("license_key"),                          // software only
+  notes: text("notes"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
+export const insertAssetTypeSchema = createInsertSchema(assetTypes).omit({ id: true, created_at: true });
+export const insertAssetSchema = createInsertSchema(assets).omit({ id: true, created_at: true, updated_at: true });
+export type AssetType = typeof assetTypes.$inferSelect;
+export type Asset = typeof assets.$inferSelect;
+export type InsertAssetType = typeof assetTypes.$inferInsert;
+export type InsertAsset = typeof assets.$inferInsert;

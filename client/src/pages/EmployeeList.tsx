@@ -3,6 +3,7 @@ import { useStore } from "@/hooks/use-store";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -2862,6 +2863,11 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
           </div>
         </Card>
 
+        {/* Assets — laptops, software licenses, monitors, phones, …
+            Lives outside the main edit form (separate API + own state) so
+            adding/removing an asset doesn't dirty the employee form. */}
+        <EmployeeAssetsSection employeeId={employee.id} />
+
         {/* Save + Delete buttons */}
         <div className="flex justify-between items-center pt-4 border-t">
           <Button type="button" variant="destructive" onClick={handleDetailDelete}>
@@ -2875,6 +2881,213 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
         </div>
       </form>
     </div>
+  );
+}
+
+// ── Per-employee assets table ──────────────────────────────────────────────
+// Lists every asset assigned to this employee, with inline status toggle +
+// quick-add form at the bottom. Pulls types from /api/asset-types so the
+// admin-managed taxonomy is the single source of truth.
+function EmployeeAssetsSection({ employeeId }: { employeeId: string }) {
+  const { toast } = useToast();
+  const [types, setTypes] = useState<Array<{ id: number; name: string; has_license_key: number; identifier_hint: string | null; details_hint: string | null }>>([]);
+  const [items, setItems] = useState<Array<{ id: number; asset_type: string; identifier: string | null; details: string | null; status: string; license_key: string | null; notes: string | null }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  // New-asset form
+  const [newType, setNewType] = useState("");
+  const [newId, setNewId] = useState("");
+  const [newDetails, setNewDetails] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [newStatus, setNewStatus] = useState<"in_use" | "out_of_use" | "spare" | "retired">("in_use");
+  const [adding, setAdding] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [tRes, aRes] = await Promise.all([
+        fetch("/api/asset-types", { credentials: "include" }),
+        fetch(`/api/assets?employee_id=${encodeURIComponent(employeeId)}`, { credentials: "include" }),
+      ]);
+      const t = await tRes.json();
+      const a = await aRes.json();
+      setTypes(Array.isArray(t) ? t : []);
+      setItems(Array.isArray(a) ? a : []);
+      if (Array.isArray(t) && t.length > 0 && !newType) setNewType(t[0].name);
+    } catch {
+      toast({ title: "Failed to load assets", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { void load(); }, [employeeId]);
+
+  const selectedType = types.find(t => t.name === newType);
+
+  async function addAsset() {
+    if (!newType) { toast({ title: "Pick a type", variant: "destructive" }); return; }
+    setAdding(true);
+    try {
+      const r = await fetch("/api/assets", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asset_type: newType,
+          identifier: newId.trim() || null,
+          details: newDetails.trim() || null,
+          employee_id: employeeId,
+          status: newStatus,
+          license_key: newKey.trim() || null,
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setNewId(""); setNewDetails(""); setNewKey(""); setNewStatus("in_use");
+      toast({ title: `Added ${newType}` });
+      await load();
+    } catch (e) {
+      toast({ title: "Failed to add", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function patchAsset(id: number, patch: Partial<{ status: string; identifier: string | null; details: string | null; license_key: string | null; employee_id: string | null; notes: string | null }>) {
+    setItems(prev => prev.map(x => x.id === id ? { ...x, ...patch } as any : x));
+    try {
+      await fetch(`/api/assets/${id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+    } catch {
+      toast({ title: "Save failed", variant: "destructive" });
+      await load();
+    }
+  }
+  async function deleteAsset(id: number) {
+    if (!confirm("Delete this asset row?")) return;
+    try {
+      await fetch(`/api/assets/${id}`, { method: "DELETE", credentials: "include" });
+      await load();
+    } catch {
+      toast({ title: "Delete failed", variant: "destructive" });
+    }
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold uppercase tracking-wide">Assets ({items.length})</h3>
+        <a href="/admin/assets" className="text-[10px] text-primary hover:underline">Manage types ↗</a>
+      </div>
+      {loading ? (
+        <div className="text-xs text-muted-foreground italic">Loading…</div>
+      ) : items.length === 0 ? (
+        <div className="text-xs text-muted-foreground italic">No assets assigned yet. Add one below.</div>
+      ) : (
+        <div className="space-y-1.5">
+          {items.map(a => (
+            <div key={a.id} className="flex items-center gap-2 border rounded p-2 bg-card text-xs flex-wrap">
+              <Badge variant="outline" className="font-semibold text-[10px]">{a.asset_type}</Badge>
+              {a.identifier && (
+                <input
+                  defaultValue={a.identifier}
+                  onBlur={(e) => patchAsset(a.id, { identifier: e.target.value || null })}
+                  className="font-mono font-bold w-20 bg-transparent border-b border-transparent focus:border-primary outline-none"
+                />
+              )}
+              <input
+                defaultValue={a.details ?? ""}
+                onBlur={(e) => patchAsset(a.id, { details: e.target.value || null })}
+                placeholder="(no details)"
+                className="flex-1 min-w-[120px] bg-transparent border-b border-transparent focus:border-primary outline-none"
+              />
+              {a.license_key !== null && (
+                <input
+                  defaultValue={a.license_key ?? ""}
+                  onBlur={(e) => patchAsset(a.id, { license_key: e.target.value || null })}
+                  placeholder="(license key)"
+                  className="font-mono w-44 bg-transparent border-b border-transparent focus:border-primary outline-none"
+                />
+              )}
+              <select
+                value={a.status}
+                onChange={(e) => patchAsset(a.id, { status: e.target.value })}
+                className={`text-[10px] rounded px-1.5 py-0.5 border ${
+                  a.status === "in_use" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : a.status === "out_of_use" ? "bg-red-50 text-red-700 border-red-200"
+                  : a.status === "spare" ? "bg-amber-50 text-amber-700 border-amber-200"
+                  : "bg-slate-50 text-slate-700 border-slate-200"
+                }`}
+              >
+                <option value="in_use">In use</option>
+                <option value="out_of_use">Out of use</option>
+                <option value="spare">Spare</option>
+                <option value="retired">Retired</option>
+              </select>
+              <button
+                onClick={() => deleteAsset(a.id)}
+                className="text-muted-foreground hover:text-destructive p-1"
+                title="Delete asset"
+              ><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add-asset row */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="text-[10px] font-semibold uppercase text-muted-foreground">Add asset</div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <select
+            value={newType}
+            onChange={(e) => setNewType(e.target.value)}
+            className="text-xs h-8 rounded border px-2 bg-background"
+          >
+            {types.length === 0 && <option value="">— no types defined —</option>}
+            {types.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+          </select>
+          <input
+            value={newId}
+            onChange={(e) => setNewId(e.target.value)}
+            placeholder={selectedType?.identifier_hint ?? "Identifier (optional)"}
+            className="text-xs h-8 rounded border px-2 bg-background w-28"
+          />
+          <input
+            value={newDetails}
+            onChange={(e) => setNewDetails(e.target.value)}
+            placeholder={selectedType?.details_hint ?? "Details"}
+            className="text-xs h-8 rounded border px-2 bg-background flex-1 min-w-[180px]"
+          />
+          {selectedType?.has_license_key === 1 && (
+            <input
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value)}
+              placeholder="License key"
+              className="text-xs h-8 rounded border px-2 bg-background font-mono w-44"
+            />
+          )}
+          <select
+            value={newStatus}
+            onChange={(e) => setNewStatus(e.target.value as any)}
+            className="text-xs h-8 rounded border px-2 bg-background"
+          >
+            <option value="in_use">In use</option>
+            <option value="out_of_use">Out of use</option>
+            <option value="spare">Spare</option>
+            <option value="retired">Retired</option>
+          </select>
+          <Button size="sm" type="button" onClick={addAsset} disabled={adding || !newType}>
+            {adding ? "Adding…" : "Add"}
+          </Button>
+        </div>
+        {types.length === 0 && (
+          <p className="text-[10px] text-muted-foreground italic">
+            No types yet — go to <a href="/admin/assets" className="text-primary hover:underline">Admin → Asset Types</a> to add some.
+          </p>
+        )}
+      </div>
+    </Card>
   );
 }
 

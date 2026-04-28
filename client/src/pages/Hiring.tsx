@@ -249,6 +249,19 @@ interface Candidate {
   external_id?: string;
   sync_locked?: number;
   created_at: string;
+  // Structured score columns populated by /api/hiring/sync. Surfaced on
+  // the card + detail dialog so the user can see TestGorilla sub-scores
+  // and call ratings without parsing the legacy info blob. cs_lm is text
+  // because it can be a partner verdict ("Strong" / "Pass") rather than
+  // a number.
+  logic_pct?: number | null;
+  verbal_pct?: number | null;
+  excel_pct?: number | null;
+  p1_pct?: number | null;
+  p2_pct?: number | null;
+  intro_rate_pct?: number | null;
+  cs_rate_pct?: number | null;
+  cs_lm?: string | null;
 }
 
 // ─── Candidate card ──────────────────────────────────────────────────────────
@@ -348,6 +361,48 @@ function CandidateCard({
             </button>
           </div>
         </div>
+
+        {/* Structured score strip — reads the imported columns directly,
+            colour-graded (red <40, amber 40-70, green ≥70). Rendered
+            ABOVE the legacy info-blob CS LM block so the user sees the
+            authoritative columns first. Only renders rows that have at
+            least one number — keeps the card compact for unrated candidates. */}
+        {(() => {
+          const c = candidate;
+          const cells: Array<{ label: string; value: number | string | null | undefined; isPct?: boolean; isText?: boolean }> = [
+            { label: "Logic",  value: c.logic_pct,        isPct: true },
+            { label: "Verbal", value: c.verbal_pct,       isPct: true },
+            { label: "Excel",  value: c.excel_pct,        isPct: true },
+            { label: "P1",     value: c.p1_pct,           isPct: true },
+            { label: "P2",     value: c.p2_pct,           isPct: true },
+            { label: "I.Rate", value: c.intro_rate_pct,   isPct: true },
+            { label: "CS.Rate",value: c.cs_rate_pct,      isPct: true },
+            { label: "CS-LM",  value: c.cs_lm,            isText: true },
+          ];
+          const nonEmpty = cells.filter(x => x.value !== null && x.value !== undefined && x.value !== "");
+          if (nonEmpty.length === 0) return null;
+          const tone = (n: number) => n >= 70 ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+            : n >= 40 ? "bg-amber-100 text-amber-800 border-amber-200"
+            : "bg-red-100 text-red-800 border-red-200";
+          return (
+            <div className="flex flex-wrap gap-1">
+              {nonEmpty.map(x => {
+                const isNum = typeof x.value === "number";
+                const cls = isNum ? tone(x.value as number) : "bg-slate-100 text-slate-700 border-slate-200";
+                const display = isNum ? `${(x.value as number).toFixed(0)}` : String(x.value);
+                return (
+                  <span
+                    key={x.label}
+                    className={`text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded border ${cls}`}
+                    title={`${x.label}: ${display}${x.isPct ? "%" : ""}`}
+                  >
+                    {x.label} {display}{x.isPct ? "%" : ""}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* CS LM — partner's case-study rating, if the scraper got it.
             Rendered as a prominent colour-coded badge so the user can

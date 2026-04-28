@@ -3119,20 +3119,78 @@ export default function PricingTool() {
                         }
                         return null;
                       })();
+                      // Live recompute of canonical_net_weekly from saved data.
+                      // Mirrors PricingTool's canonicalNetWeekly useMemo so cases
+                      // saved BEFORE handleSave started persisting that field
+                      // still display the correct NET1 (= what the live waterfall
+                      // shows). This makes the column self-healing — the user
+                      // doesn't need to click "Backfill canonical fields" or
+                      // re-open every case to fix display.
+                      const _liveCanonical = (() => {
+                        const rec = c.recommendation;
+                        if (!rec) return null;
+                        const trace = Array.isArray(rec.layer_trace) ? rec.layer_trace : [];
+                        const base = rec.base_weekly ?? rec.target_weekly ?? 0;
+                        if (!base) return null;
+                        const KEYS = ["Geography", "Sector", "Ownership", "Client Size", "Client Profile", "Strategic Intent"];
+                        const traceByKey: Record<string, { value: number }> = {};
+                        for (const lt of trace) {
+                          const key = ((lt.label ?? "") as string).replace(/\s*\(.*?\)\s*$/, "").trim();
+                          if (key) traceByKey[key] = lt;
+                        }
+                        const deltas: Record<string, number> = {};
+                        let prevOrig = base;
+                        for (const k of KEYS) {
+                          const lt = traceByKey[k];
+                          if (lt) { deltas[k] = lt.value - prevOrig; prevOrig = lt.value; }
+                          else deltas[k] = 0;
+                        }
+                        let running = base;
+                        for (const k of KEYS) {
+                          const d = deltas[k] ?? 0;
+                          if (Math.abs(d) >= 1) running += d;
+                        }
+                        // Clamp to green band (merge corridors across all
+                        // countries in the region — same as canonicalNetWeekly).
+                        const aliases = REGION_TO_COUNTRY[(c as any).region as string] ?? [(c as any).region as string];
+                        const aliasSet = new Set(aliases.map(a => (a ?? "").toLowerCase()));
+                        const weeklyRows = (benchmarks ?? []).filter((b: any) =>
+                          aliasSet.has((b.country ?? "").toLowerCase()) &&
+                          (((b.parameter ?? "").toLowerCase().includes("weekly")) ||
+                           ((b.parameter ?? "").toLowerCase().includes("fee")))
+                        );
+                        const nz = weeklyRows.filter((r: any) => r.green_low > 0 && r.green_high > 0);
+                        const gLow  = nz.length ? Math.min(...nz.map((r: any) => r.green_low))  : 0;
+                        const gHigh = nz.length ? Math.max(...nz.map((r: any) => r.green_high)) : 0;
+                        if (gLow > 0 && gHigh > 0) {
+                          running = Math.min(gHigh, Math.max(gLow, running));
+                        }
+                        // Manual delta (user-typed override on NET1)
+                        running += rec.manual_delta ?? 0;
+                        // P7 commitment (only applied if the case_discounts row
+                        // is enabled — same rule as canonicalNetWeekly).
+                        const cd = (c as any).case_discounts ?? [];
+                        const commit = cd.find((d: any) => d.id === "commitment");
+                        if (commit?.enabled && commit.pct > 0) {
+                          running = running * (1 - commit.pct / 100);
+                        }
+                        const result = Math.round(running);
+                        return result > 0 ? result : null;
+                      })();
                       // Resolution order:
                       //   1. Net/Gross override on the matching timeline (the
                       //      figure the user pinned on the SOW).
-                      //   2. canonical_net_weekly (= NET1 from the waterfall,
-                      //      computed at save time or by the backfill button).
-                      //      THIS is what most cases hit; for COE03 it's
-                      //      ~€31.111 = the actual Option 2 net / weeks the
-                      //      client sees on the proposal.
-                      //   3. target_weekly (engine's raw recommendation, pre
-                      //      manual delta + band clamp). Only used as a
-                      //      desperate fallback for cases with no canonical
-                      //      field saved yet.
+                      //   2. canonical_net_weekly stored on the recommendation
+                      //      (handleSave persists it; backfill repopulates it).
+                      //   3. LIVE canonical recompute from saved layer_trace +
+                      //      base_weekly + manual_delta + region + benchmarks
+                      //      + caseDiscounts. Catches every case that pre-dates
+                      //      handleSave's canonical_net_weekly write.
+                      //   4. target_weekly (engine's raw recommendation, pre
+                      //      manual delta + band clamp). Last-resort fallback.
                       const centralWk = _fromOption
                         ?? _canonical
+                        ?? _liveCanonical
                         ?? (c.recommendation?.target_weekly ?? 0);
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
