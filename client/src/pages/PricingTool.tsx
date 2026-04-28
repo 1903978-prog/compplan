@@ -682,10 +682,11 @@ export default function PricingTool() {
   const [backfillingTbd, setBackfillingTbd] = useState(false);
   const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
-  // 3-option commercial-proposal block is hidden by default — shown only when
-  // the user toggles it on. The block already supports per-option weeks +
-  // commitment-discount selection; the toggle just gates visibility.
-  const [showThreeOptions, setShowThreeOptions] = useState(false);
+  // 3-option commercial-proposal block visibility is now driven by the
+  // persisted form.proposal_options_count (1 = hidden / single quote,
+  // 3 = visible / three-option layout). No separate showThreeOptions
+  // state — the toggle outside the panel sets count directly so the
+  // proposal text generator and panel render always agree.
   const [teamPreset, setTeamPreset] = useState<string>("1+2");
   const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
   const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
@@ -3079,6 +3080,7 @@ export default function PricingTool() {
                         {sortHeader("weekly_price", "Weekly price")}
                         {sortHeader("total_fee", "Total fee (k€)")}
                         {sortHeader("outcome", "Outcome")}
+                        {sortHeader("end_date", "End date")}
                         <TableHead className="w-24">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -3136,6 +3138,19 @@ export default function PricingTool() {
                                 : p.outcome === "lost"
                                 ? <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>
                                 : <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">TBD</Badge>}
+                            </TableCell>
+                            {/* Inline End Date — quick edit without opening
+                                the row's full form. Saved via patchProposalInline.
+                                When set + future + outcome=won → row appears
+                                in Exec → Ongoing Projects + drives the
+                                /exec/staffing Gantt block end. */}
+                            <TableCell onClick={e => e.stopPropagation()}>
+                              <Input
+                                type="date"
+                                value={p.end_date ?? ""}
+                                onChange={e => patchProposalInline(p.id!, { end_date: e.target.value || null })}
+                                className="h-7 text-xs px-1 w-32"
+                              />
                             </TableCell>
                             <TableCell onClick={e => e.stopPropagation()}>
                               <div className="flex gap-1 items-center">
@@ -5084,42 +5099,29 @@ export default function PricingTool() {
                               {manualDelta > 0 ? "+" : ""}{fmt(manualDelta)} adj
                             </text>
                           )}
-                          {/* NET1 figure is editable in place. Typing a new
-                              value back-solves manualDelta so the rest of the
+                          {/* NET1 figure is editable in place via click prompt.
+                              Renders as plain SVG <text> for perfect alignment
+                              with the other bar labels. Click → window.prompt
+                              → back-solve manualDelta so the rest of the
                               pricing engine (band clamp, persistence, totals)
                               keeps working unchanged. baseNet1 = recommendedNwf
                               - manualDelta is the raw post-P1-P7 value before
                               the manual nudge. */}
-                          <foreignObject x={x - 6} y={y - 16} width={barW + 12} height={15}>
-                            <input
-                              type="text"
-                              defaultValue={fmt(recommendedNwf)}
-                              key={`net1-${recommendedNwf}`}
-                              onBlur={(e) => {
-                                const parsed = parseInt((e.target.value || "").replace(/[^\d-]/g, ""), 10);
-                                if (!Number.isFinite(parsed) || parsed <= 0) {
-                                  e.target.value = fmt(recommendedNwf);
-                                  return;
-                                }
-                                const baseNet1 = recommendedNwf - manualDelta;
-                                setManualDelta(parsed - baseNet1);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                                if (e.key === "Escape") {
-                                  (e.target as HTMLInputElement).value = fmt(recommendedNwf);
-                                  (e.target as HTMLInputElement).blur();
-                                }
-                              }}
-                              title="Click to set NET1 directly. Back-solves the manual price adjustment."
-                              style={{
-                                width: "100%", height: "14px", textAlign: "center",
-                                fontSize: "9px", fontWeight: "bold", color: "#166534",
-                                background: "transparent", border: "none", outline: "none",
-                                padding: 0, fontFamily: "inherit", cursor: "text",
-                              }}
-                            />
-                          </foreignObject>
+                          <text
+                            x={x + barW/2} y={y - 3} textAnchor="middle"
+                            fontSize="9" fill="#166534" fontWeight="bold"
+                            style={{ cursor: "pointer" }}
+                            onClick={() => {
+                              const next = window.prompt("Set NET1 weekly (€):", String(recommendedNwf));
+                              if (next == null) return;
+                              const parsed = parseInt(next.replace(/[^\d-]/g, ""), 10);
+                              if (!Number.isFinite(parsed) || parsed <= 0) return;
+                              const baseNet1 = recommendedNwf - manualDelta;
+                              setManualDelta(parsed - baseNet1);
+                            }}
+                          >
+                            {fmt(recommendedNwf)}
+                          </text>
                           <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8.5" fill="#166534" fontWeight="700">NET1</text>
                           <text x={x + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalNet1)}</text>
                         </>;
@@ -5213,38 +5215,27 @@ export default function PricingTool() {
                             </>
                           )}
 
-                          {/* GROSSV total bar — editable */}
+                          {/* GROSSV total bar — editable via click prompt.
+                              Same approach as NET1: plain SVG <text> for
+                              consistent rendering, click → prompt → back-solve
+                              variableFeePct. Avoids the foreignObject right-
+                              edge clipping when GROSSV is the rightmost bar. */}
                           <line x1={(variableFeePct > 0 ? x1 + barW : xOf(bi2 - 1) + barW)} y1={yOf(grossVVal)} x2={x2} y2={yOf(grossVVal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x2} y={y2} width={barW} height={h2} fill="#86efac" rx="2" />
-                          <foreignObject x={x2 - 6} y={y2 - 15} width={barW + 12} height={14}>
-                            <input
-                              type="text"
-                              defaultValue={fmt(grossVVal)}
-                              key={`grossv-${grossVVal}`}
-                              onBlur={(e) => {
-                                const parsed = parseInt((e.target.value || "").replace(/[^\d-]/g, ""), 10);
-                                if (!Number.isFinite(parsed) || parsed <= 0) {
-                                  e.target.value = fmt(grossVVal);
-                                  return;
-                                }
-                                onCommitGrossV(parsed);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                                if (e.key === "Escape") {
-                                  (e.target as HTMLInputElement).value = fmt(grossVVal);
-                                  (e.target as HTMLInputElement).blur();
-                                }
-                              }}
-                              title="Click to set GROSSV directly. Back-solves the variable fee %."
-                              style={{
-                                width: "100%", height: "13px", textAlign: "center",
-                                fontSize: "8px", fontWeight: "bold", color: "#166534",
-                                background: "transparent", border: "none", outline: "none",
-                                padding: 0, fontFamily: "inherit", cursor: "text",
-                              }}
-                            />
-                          </foreignObject>
+                          <text
+                            x={x2 + barW/2} y={y2 - 3} textAnchor="middle"
+                            fontSize="8" fill="#166534" fontWeight="bold"
+                            style={{ cursor: "pointer" }}
+                            onClick={() => {
+                              const next = window.prompt("Set GROSSV weekly (€):", String(grossVVal));
+                              if (next == null) return;
+                              const parsed = parseInt(next.replace(/[^\d-]/g, ""), 10);
+                              if (!Number.isFinite(parsed) || parsed <= 0) return;
+                              onCommitGrossV(parsed);
+                            }}
+                          >
+                            {fmt(grossVVal)}
+                          </text>
                           <text x={x2 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="600">GROSSV</text>
                           <text x={x2 + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalGrossV)}</text>
                         </>;
@@ -5654,23 +5645,33 @@ export default function PricingTool() {
                         );
                       })()}
 
-                      {/* Toggle for the 3-option commercial proposal block.
-                          Hidden by default — most cases ship as a single
-                          quote and the 3-option layout is noise. When ON,
-                          the block below renders and the user can pick weeks
-                          + commitment % per option. */}
+                      {/* Commercial-proposal MODE toggle. Drives the persisted
+                          form.proposal_options_count (1 = single quote,
+                          3 = three-option commitment-discount layout). This
+                          is the single source of truth: it controls (a) the
+                          visibility of the option-config panel below AND
+                          (b) which paragraph variant the proposal text
+                          generator emits (3-option block vs single-option).
+                          Lives OUTSIDE the panel so it stays reachable
+                          when single-option mode hides the panel. */}
                       <div className="flex items-center justify-between border rounded-lg px-3 py-1.5 bg-muted/20">
                         <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                          3-option commercial proposal
+                          Commercial proposal
                         </span>
-                        <Button
-                          size="sm"
-                          variant={showThreeOptions ? "default" : "outline"}
-                          className="h-6 text-[10px] px-2"
-                          onClick={() => setShowThreeOptions(v => !v)}
-                        >
-                          {showThreeOptions ? "Hide" : "Show"}
-                        </Button>
+                        <div className="flex items-center bg-background rounded overflow-hidden text-[10px] border">
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, proposal_options_count: 1 }))}
+                            className={`px-2.5 py-0.5 transition-colors ${(form.proposal_options_count ?? 3) === 1 ? "bg-[#1A6571] text-white font-bold" : "text-muted-foreground hover:bg-muted"}`}
+                            title="Single-option proposal — default for most deals"
+                          >Single option</button>
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, proposal_options_count: 3 }))}
+                            className={`px-2.5 py-0.5 transition-colors ${(form.proposal_options_count ?? 3) === 3 ? "bg-[#1A6571] text-white font-bold" : "text-muted-foreground hover:bg-muted"}`}
+                            title="3 alternative timelines with commitment discounts"
+                          >3 alternatives</button>
+                        </div>
                       </div>
 
                       {/* ── Commercial Proposal — three timeline options ──
@@ -5685,7 +5686,7 @@ export default function PricingTool() {
                           Print button opens a standalone formatted page and
                           triggers the native print dialog ("Save as PDF"
                           destination for PDF output). */}
-                      {showThreeOptions && (() => {
+                      {(form.proposal_options_count ?? 3) === 3 && (() => {
                         const timelines = caseTimelines;
                         // Math now lives in client/src/lib/proposalOptions.ts so the
                         // Pricing Cases LIST page can compute the same Option-2
@@ -5704,23 +5705,11 @@ export default function PricingTool() {
                             <div className="bg-[#1A6571] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 flex items-center justify-between">
                               <span>Commercial Proposal — project fees by option</span>
                               <div className="flex items-center gap-2">
-                                {/* Option-count toggle: 1 = single quote (some
-                                    proposals don't need 3 options); 3 = full
-                                    3-option layout. Hidden options keep their
-                                    state in caseTimelines so toggling back is
-                                    lossless. */}
-                                <div className="flex items-center bg-white/10 rounded overflow-hidden text-[10px]">
-                                  <button
-                                    type="button"
-                                    onClick={() => setForm(f => ({ ...f, proposal_options_count: 1 }))}
-                                    className={`px-2 py-0.5 ${(form.proposal_options_count ?? 3) === 1 ? "bg-white text-[#1A6571] font-bold" : "text-white/80 hover:bg-white/10"}`}
-                                  >1 option</button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setForm(f => ({ ...f, proposal_options_count: 3 }))}
-                                    className={`px-2 py-0.5 ${(form.proposal_options_count ?? 3) === 3 ? "bg-white text-[#1A6571] font-bold" : "text-white/80 hover:bg-white/10"}`}
-                                  >3 options</button>
-                                </div>
+                                {/* Mode toggle moved OUTSIDE this panel
+                                    so it stays reachable when the panel is
+                                    hidden in single-option mode. The outer
+                                    "Single option / 3 alternatives" toggle
+                                    now drives proposal_options_count. */}
                                 <Button
                                   size="sm" variant="secondary"
                                   className="h-6 text-[10px] px-2"
