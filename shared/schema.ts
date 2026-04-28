@@ -323,7 +323,7 @@ export const pricingCases = pgTable("pricing_cases", {
   // per-option numbers when the engine's derived values don't match
   // the client-facing slide (e.g. mid-project rate reset, or compound-
   // on-post-discount commit math). Null = use engine default.
-  case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number; note?: string }[] | null>(),
+  case_timelines: jsonb("case_timelines").$type<{ weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number; netTotal?: number; note?: string }[] | null>(),
   // proposal_options_count: how many of the case_timelines columns to render
   // in the Commercial Proposal block. 1 = single-option mode (hides Options
   // 2 & 3); 3 = full 3-option mode (default). State for hidden options is

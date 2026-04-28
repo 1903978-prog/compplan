@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign, Plus, ArrowLeft, Trash2, TrendingUp, TrendingDown,
@@ -681,6 +682,19 @@ export default function PricingTool() {
   const [showHistoryForm, setShowHistoryForm] = useState(false);
   const [showEditProposalForm, setShowEditProposalForm] = useState(false);
   const [savingProposal, setSavingProposal] = useState(false);
+  // Employees roster — loaded alongside proposals in loadAll. Drives the
+  // Manager + Associate dropdowns in the team-picker dialog. Each entry:
+  // { id, name, current_role_code }. Falls back to an empty list if the
+  // /api/employees endpoint is unreachable (auth/503) — the team picker
+  // then shows an empty dropdown with a hint to check the connection.
+  const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>([]);
+  // Which proposal row is currently having its team edited (Past Projects
+  // → click "Pick team" / current roster button → opens the dialog).
+  // Null = dialog closed. Holds a draft so dialog edits don't mutate the
+  // underlying list until Save.
+  const [teamEditFor, setTeamEditFor] = useState<PricingProposal | null>(null);
+  const [teamDraftManager, setTeamDraftManager] = useState<string>("");
+  const [teamDraftAssociates, setTeamDraftAssociates] = useState<Array<{ role: string; name: string }>>([]);
   const [propSort, setPropSort] = useState<{ field: string; dir: "asc" | "desc" }>({ field: "proposal_date", dir: "desc" });
   const [disabledBars, setDisabledBars] = useState<Set<string>>(new Set());
   const [waterfallDuration, setWaterfallDuration] = useState<number | null>(null);
@@ -827,6 +841,18 @@ export default function PricingTool() {
       errors.cases = err.message ?? "Failed to load pricing cases";
       console.error("[PricingTool] cases load failed:", err);
       // IMPORTANT: do not call setCases here — keep whatever is already in state.
+    }
+
+    // Employees — best-effort. Used by the team-picker dialog on Past
+    // Projects rows. If unreachable the picker shows an empty list with
+    // a hint; doesn't block the rest of the page.
+    try {
+      const eData = await loadOne<any[]>("/api/employees");
+      setEmployees(Array.isArray(eData)
+        ? eData.map(e => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
+        : []);
+    } catch (err: any) {
+      console.warn("[PricingTool] employees load failed (team-picker will be empty):", err);
     }
 
     // Proposals — preserve previous on failure, do NOT reset to []
@@ -2768,16 +2794,26 @@ export default function PricingTool() {
                   </TableHeader>
                   <TableBody>
                     {cases.map(c => {
-                      // Source of truth for Target/wk = the engine's recommended
-                      // NET1 weekly (recommendation.target_weekly). This matches
-                      // the headline figure in the Pricing Waterfall (NET1 =
-                      // post-Pi adjustments, before discount stack). Per-option
-                      // pinned grossTotal overrides are deliberately NOT used
-                      // here — they answer a different question ("what we
-                      // committed for option X") that diverges from "what's the
-                      // recommended weekly". Use centralOptionWeekly elsewhere
-                      // when the option-level number is what's needed.
-                      const centralWk = c.recommendation?.target_weekly ?? 0;
+                      // Source of truth for Target/wk = NET1 = Option 1's net /
+                      // Option 1's weeks. This is the headline figure on the
+                      // commercial proposal (the actual quoted weekly rate the
+                      // client sees), so the cases-list column matches what
+                      // the user typed/saved on the case. Falls back to the
+                      // engine's target_weekly only when no Option 1 column
+                      // can be reconstructed (no timelines or no recommendation).
+                      const _opt1 = (() => {
+                        const tl = (c.case_timelines ?? []) as Array<{ weeks: number; commitPct?: number; grossTotal?: number; commitAmount?: number }>;
+                        if (!tl.length || !c.recommendation?.target_weekly) return null;
+                        const adminPct = settings?.admin_fee_pct ?? 0;
+                        const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
+                        const baseEnabled = discounts.filter(d => d.enabled && d.id !== "commitment" && d.pct > 0);
+                        let grossWk = (c.recommendation.target_weekly as number) * (1 + adminPct / 100);
+                        for (const d of baseEnabled) grossWk = grossWk / (1 - d.pct / 100);
+                        const col = computeOptionColumn(tl[0], grossWk, discounts);
+                        if (!col.weeks) return null;
+                        return col.netTotal / col.weeks;
+                      })();
+                      const centralWk = _opt1 ?? (c.recommendation?.target_weekly ?? 0);
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
                         <TableCell className="font-semibold font-mono">{displayProjectName(c.project_name, c.revision_letter)}</TableCell>
@@ -4145,15 +4181,30 @@ export default function PricingTool() {
                                   backgroundColor: outcomeColor,
                                 }}
                               />
-                              {/* Outcome label inside bar */}
-                              <div className="absolute inset-0 flex items-center pl-2 text-[9px] font-semibold text-white/95 mix-blend-difference">
+                              {/* Region + outcome label on the LEFT of the bar */}
+                              <div className="absolute left-0 inset-y-0 flex items-center pl-2 text-[9px] font-semibold text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]">
                                 {r.region}
-                                <span className="ml-1 opacity-80">
+                                <span className="ml-1 opacity-90">
                                   · {r.outcome === "won" ? "won" : r.outcome === "lost" ? "lost" : "pending"}
                                 </span>
                               </div>
+                              {/* Fee figure on the RIGHT EDGE of the filled
+                                  portion of the bar. drop-shadow keeps it
+                                  legible regardless of bar/background colour
+                                  combination — works on green, red, slate,
+                                  light, and dark themes. */}
+                              <div
+                                className="absolute inset-y-0 flex items-center text-[10px] font-mono font-bold text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.7)] tabular-nums whitespace-nowrap"
+                                style={{
+                                  left: `${Math.min(Math.max(pct, 6), 100) - 0.5}%`,
+                                  transform: "translateX(-100%)",
+                                  paddingRight: "6px",
+                                }}
+                              >
+                                {r.feeK.toLocaleString("it-IT")} k€
+                              </div>
                             </div>
-                            {/* Value */}
+                            {/* Value (kept outside the bar too, for narrow rows) */}
                             <div className="w-20 text-right font-mono font-semibold tabular-nums">
                               {r.feeK.toLocaleString("it-IT")}<span className="text-muted-foreground font-normal"> k€</span>
                             </div>
@@ -5865,14 +5916,56 @@ export default function PricingTool() {
                                   })}
                                 </div>
                               ))}
-                              {/* Net total row */}
+                              {/* Net total row — EDITABLE. The user can pin
+                                  a negotiated round-figure (e.g. €150.000 on a
+                                  €152.314 computed net) and that override is
+                                  persisted to case_timelines[i].netTotal so it
+                                  survives reload + flows into the proposal text.
+                                  Click ✕ to restore the computed value. */}
                               <div className="grid gap-2 items-center pt-1" style={{ gridTemplateColumns: `160px repeat(${cols.length}, 1fr)` }}>
                                 <div className="text-xs font-bold text-white bg-[#5B7E7E] rounded px-2 py-1.5 text-right">Net total price</div>
-                                {cols.map((c, i) => (
-                                  <div key={i} className="text-sm text-center font-mono font-bold border-2 border-emerald-500 rounded px-2 py-1.5 bg-emerald-50 text-emerald-900">
-                                    {fmtC(c.netTotal)}
-                                  </div>
-                                ))}
+                                {cols.map((c, i) => {
+                                  const isNetOverride = c.hasNetOverride;
+                                  return (
+                                    <div key={i} className="flex items-center gap-1">
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        step="100"
+                                        value={c.netTotal}
+                                        onChange={e => {
+                                          const raw = e.target.value;
+                                          const n = parseFloat(raw);
+                                          setCaseTimelines(prev => prev.map((x, j) =>
+                                            j === i
+                                              ? (raw === "" || !isFinite(n) || n <= 0
+                                                  ? { ...x, netTotal: undefined }
+                                                  : { ...x, netTotal: Math.round(n) })
+                                              : x,
+                                          ));
+                                        }}
+                                        title={isNetOverride
+                                          ? "Manual override — click ✕ to restore the computed Net (Gross − discounts)"
+                                          : "Computed = Gross × (1−discounts). Type a new number to pin the Net total."}
+                                        className={`text-sm text-center font-mono font-bold h-9 border-2 ${
+                                          isNetOverride
+                                            ? "border-amber-500 bg-amber-50 text-amber-900"
+                                            : "border-emerald-500 bg-emerald-50 text-emerald-900"
+                                        }`}
+                                      />
+                                      {isNetOverride && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCaseTimelines(prev => prev.map((x, j) =>
+                                            j === i ? { ...x, netTotal: undefined } : x,
+                                          ))}
+                                          className="text-[10px] text-muted-foreground hover:text-destructive px-1"
+                                          title="Restore computed value"
+                                        >✕</button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                               <div className="text-[9px] text-muted-foreground italic pt-1 border-t">
                                 Based on Gross weekly rate of {fmtC(grossWk)} (Net {fmtC(netWk)}/wk + {adminFeePct}% admin). Same weekly price across all three options — commitment discount rewards longer engagements.
@@ -6129,7 +6222,7 @@ export default function PricingTool() {
                     //   non-commit discounts applied COMPOUND in order
                     //   commit = override if set, else pct × gross (flat)
                     //   net = running - commit_amount
-                    const computeOption = (t: { weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number }) => {
+                    const computeOption = (t: { weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number; netTotal?: number }) => {
                       const weeks = t.weeks;
                       const commitPct = t.commitPct;
                       const gross = typeof t.grossTotal === "number" && t.grossTotal > 0
@@ -6146,11 +6239,19 @@ export default function PricingTool() {
                         ? Math.round(t.commitAmount)
                         : (commitPct > 0 ? Math.round(gross * commitPct / 100) : 0);
                       running = running - commitAmt;
+                      // User-pinned Net override (typed in the Commercial
+                      // Proposal block's Net total row) wins over the computed
+                      // gross−discounts−commit value. The proposal text emits
+                      // this override as the headline Net total price.
+                      const netComputed = Math.round(running);
+                      const netFinal = typeof t.netTotal === "number" && t.netTotal > 0
+                        ? Math.round(t.netTotal)
+                        : netComputed;
                       return {
                         weeks,
                         commitPct,
                         gross,
-                        net: Math.round(running),
+                        net: netFinal,
                         oneOffAmt: perDisc["oneoff"] ?? 0,
                         promptAmt: perDisc["prompt_payment"] ?? 0,
                         rebateAmt: perDisc["rebate"] ?? 0,
@@ -6165,17 +6266,20 @@ export default function PricingTool() {
                     const opt2 = computeOption(tl[1] ?? { weeks: dur + 4, commitPct: 5 });
                     const opt3 = computeOption(tl[2] ?? { weeks: dur + 8, commitPct: 7 });
 
-                    // A deal gets the 3-option narrative when the user has
-                    // (a) explicitly kept proposal_options_count = 3 (the
-                    // 1/3 toggle in the Commercial Proposal block), AND
-                    // (b) actually configured non-default / non-zero
-                    // commitment percentages on at least one option.
-                    // When the user toggled to 1-option mode, fall through
-                    // to the NO_COMMITMENT_BLOCK single-paragraph variant
-                    // — the contract should reflect what was offered, not
-                    // a stale 3-option boilerplate.
+                    // A deal gets the 3-option narrative ONLY when ALL of:
+                    //   (a) proposal_options_count = 3 (the 1/3 toggle).
+                    //       When the user toggled to 1, single-option text
+                    //       wins no matter what's in case_timelines.
+                    //   (b) caseTimelines actually has ≥2 USER-DEFINED rows
+                    //       (we look at the original caseTimelines, not the
+                    //       padded `tl`, so a 1-row case never gets padded
+                    //       up to a 3-option contract).
+                    //   (c) at least one option differs from the case duration
+                    //       / has a non-zero commit — otherwise all three
+                    //       "options" would read identically.
+                    const userTimelinesCount = (caseTimelines ?? []).length;
                     const hasThreeOptions = (form.proposal_options_count ?? 3) === 3
-                      && tl.length >= 2
+                      && userTimelinesCount >= 2
                       && tl.some(t => (t.commitPct ?? 0) > 0 || t.weeks !== dur);
 
                     // Build variable map for all replacements
@@ -6191,11 +6295,16 @@ export default function PricingTool() {
                       FUND_NAME: form.fund_name || "", ADMIN_PCT: String(adminFeePct),
                       VARIABLE_PCT: String(variableFeePct), CURRENCY: cur.code,
                       INVOICES_COUNT: String(invoiceCount), INVOICE_AMOUNT: fmtP(invoiceAmount),
-                      // New structured variables
-                      ENGAGEMENT_DURATION_WEEKS: String(dur),
+                      // New structured variables.
+                      // In 1-option (NO_COMMITMENT_BLOCK) mode mirror Option 1
+                      // from the Commercial Proposal table — that's the
+                      // headline the client sees, contract text must match
+                      // 1:1 (incl. any user-pinned net override). In 3-option
+                      // mode the engine duration / gross are the right numbers.
+                      ENGAGEMENT_DURATION_WEEKS: String(hasThreeOptions ? dur : opt1.weeks),
                       TEAM_SIZE: String(teamCount),
                       TEAM_COMPOSITION: teamRoles,
-                      STANDARD_PROFESSIONAL_FEES: fmtP(headlineGross),
+                      STANDARD_PROFESSIONAL_FEES: fmtP(hasThreeOptions ? headlineGross : opt1.net),
                       PROMPT_PAYMENT_DISCOUNT_PERCENT: promptPct > 0 ? String(promptPct) : "",
                       PROMPT_PAYMENT_DISCOUNT_AMOUNT: promptPct > 0 ? fmtP(promptAmt) : "",
                       ONE_OFF_DISCOUNT_PERCENT: oneOffPct > 0 ? String(oneOffPct) : "",

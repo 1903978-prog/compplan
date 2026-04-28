@@ -15,6 +15,11 @@ export type Timeline = {
   commitPct: number;
   grossTotal?: number;
   commitAmount?: number;
+  /** User-typed net override. When set + > 0 it takes precedence over the
+   *  computed gross-minus-discounts net so the displayed Net total price
+   *  matches whatever number the user pinned (e.g. a negotiated round-figure
+   *  on the contract). Persisted in case_timelines. */
+  netTotal?: number;
   note?: string;
 };
 
@@ -26,6 +31,7 @@ export type ColumnResult = {
   grossTotal: number;
   netTotal: number;
   hasGrossOverride: boolean;
+  hasNetOverride: boolean;
   breakdown: { id: string; name: string; pct: number; amount: number }[];
   note?: string;
 };
@@ -66,13 +72,20 @@ export function computeOptionColumn(
     ? Math.round(t.commitAmount)
     : (commitPct > 0 ? Math.round(grossTotal * commitPct / 100) : 0);
   breakdown.push({ id: "commitment", name: "Additional commitment discount", pct: commitPct, amount: commitAmt });
-  const netTotal = Math.round(running - commitAmt);
+  const computedNet = Math.round(running - commitAmt);
+  // Net override wins over the computed value when present + positive. The
+  // discount-stack rows above are still shown so the user can see WHERE the
+  // override is shifting things (Δ = override − computed); the proposal text
+  // emits the override as the headline Net total price.
+  const hasNetOverride = typeof t.netTotal === "number" && t.netTotal > 0;
+  const netTotal = hasNetOverride ? Math.round(t.netTotal as number) : computedNet;
   return {
     weeks,
     commitPct,
     grossTotal,
     netTotal,
     hasGrossOverride: typeof t.grossTotal === "number" && t.grossTotal > 0,
+    hasNetOverride,
     breakdown,
     note: t.note,
   };
