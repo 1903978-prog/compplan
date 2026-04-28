@@ -3143,18 +3143,52 @@ export default function PricingTool() {
                             <TableCell className="text-xs">{p.project_type ? <Badge variant="outline" className="text-xs capitalize">{p.project_type}</Badge> : "—"}</TableCell>
                             <TableCell className="text-sm">{p.duration_weeks ? `${p.duration_weeks}w` : "—"}</TableCell>
                             <TableCell onClick={e => e.stopPropagation()}>
-                              <Select
-                                value={String(p.team_size ?? 1)}
-                                onValueChange={v => patchProposalInline(p.id!, { team_size: Number(v) })}
-                              >
-                                <SelectTrigger className="h-7 w-16 text-xs px-2"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="0.5">0.5</SelectItem>
-                                  <SelectItem value="1">1</SelectItem>
-                                  <SelectItem value="1.5">1.5</SelectItem>
-                                  <SelectItem value="2">2</SelectItem>
-                                </SelectContent>
-                              </Select>
+                              {/* Team picker — opens the dialog with manager
+                                  + associates dropdowns. Visual states:
+                                  - destructive (red) + AlertTriangle when
+                                    proposal is "open" (pending + future
+                                    end_date) AND no manager assigned.
+                                    Required only for open engagements.
+                                  - secondary (filled) when a manager is set
+                                    — shows "<First> +N" pill.
+                                  - outline ("Pick team") otherwise.
+                                  team_size still drives the engine elsewhere
+                                  but is now derived from the picker count
+                                  on save (1 + associate count). */}
+                              {(() => {
+                                const today = new Date().toISOString().slice(0, 10);
+                                const isOpen = p.outcome === "pending" && !!p.end_date && p.end_date > today;
+                                const assoc = (p.team_members ?? []).filter(m => m.name && m.name.trim());
+                                const mgr = (p.manager_name ?? "").trim();
+                                const missing = isOpen && !mgr;
+                                return (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={missing ? "destructive" : (mgr ? "secondary" : "outline")}
+                                    className="h-7 text-[10px] px-2 max-w-[160px] truncate"
+                                    onClick={() => {
+                                      setTeamEditFor(p);
+                                      setTeamDraftManager(mgr);
+                                      setTeamDraftAssociates(assoc.length > 0
+                                        ? assoc.map(m => ({ role: m.role || "Associate", name: m.name }))
+                                        : []);
+                                    }}
+                                    title={missing
+                                      ? "Open engagement — manager assignment required. Click to pick team."
+                                      : mgr
+                                        ? `Manager: ${mgr}${assoc.length > 0 ? ` + ${assoc.length} associate${assoc.length === 1 ? "" : "s"}` : ""}`
+                                        : "Click to pick the engagement team"}
+                                  >
+                                    {missing && <AlertTriangle className="w-3 h-3 mr-1 shrink-0" />}
+                                    <span className="truncate">
+                                      {mgr
+                                        ? `${mgr.split(" ")[0]}${assoc.length > 0 ? ` +${assoc.length}` : ""}`
+                                        : "Pick team"}
+                                    </span>
+                                  </Button>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
                             <TableCell className="font-semibold text-sm font-mono">
@@ -6813,6 +6847,161 @@ export default function PricingTool() {
             </Button>
           </div>
       </div>
+
+      {/* ── Team picker Dialog ────────────────────────────────────────
+          Triggered by clicking the Team cell on a Past Projects row.
+          Manager is required when the proposal is "Open" (pending +
+          future end_date); enforced via the destructive-state Save
+          button. Associates are optional, free-add. Saves via
+          patchProposalInline so the row updates without a full reload.
+          team_size is auto-recomputed = 1 (manager) + #associates so
+          the existing engine + Pricing Cases list stays consistent. */}
+      <Dialog open={teamEditFor !== null} onOpenChange={(open) => { if (!open) setTeamEditFor(null); }}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>
+              Pick team — {teamEditFor?.project_name ?? ""}
+              {teamEditFor && (() => {
+                const today = new Date().toISOString().slice(0, 10);
+                const isOpen = teamEditFor.outcome === "pending"
+                  && !!teamEditFor.end_date && teamEditFor.end_date > today;
+                return isOpen
+                  ? <Badge className="ml-2 bg-blue-100 text-blue-700 border-blue-200 text-[10px]">Open</Badge>
+                  : null;
+              })()}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Open engagements need at least 1 manager. Associates are optional — add as many as you need.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Manager — required for open engagements */}
+            <div className="space-y-1">
+              <Label className="text-xs flex items-center gap-1.5">
+                Manager (EM)
+                <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={teamDraftManager || "__none__"}
+                onValueChange={(v) => setTeamDraftManager(v === "__none__" ? "" : v)}
+              >
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Select manager…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— none —</SelectItem>
+                  {employees.length === 0 && (
+                    <div className="px-2 py-3 text-[11px] text-muted-foreground italic">
+                      No employees loaded. Check connection or visit /employees.
+                    </div>
+                  )}
+                  {employees.map(e => (
+                    <SelectItem key={e.id} value={e.name}>
+                      {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Associates — optional, multi-add */}
+            <div className="space-y-1">
+              <Label className="text-xs">Associates (optional)</Label>
+              <div className="space-y-1.5">
+                {teamDraftAssociates.length === 0 && (
+                  <div className="text-[11px] text-muted-foreground italic px-1">
+                    No associates yet. Click below to add.
+                  </div>
+                )}
+                {teamDraftAssociates.map((a, i) => (
+                  <div key={i} className="flex gap-1.5 items-center">
+                    <Select
+                      value={a.name || "__none__"}
+                      onValueChange={(v) => setTeamDraftAssociates(prev =>
+                        prev.map((x, j) => j === i
+                          ? { ...x, name: v === "__none__" ? "" : v }
+                          : x))}
+                    >
+                      <SelectTrigger className="h-8 text-sm flex-1">
+                        <SelectValue placeholder="Select associate…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— none —</SelectItem>
+                        {employees.map(e => (
+                          <SelectItem key={e.id} value={e.name}>
+                            {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="text"
+                      value={a.role}
+                      onChange={(e) => setTeamDraftAssociates(prev =>
+                        prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+                      placeholder="Role"
+                      className="h-8 text-sm w-24"
+                    />
+                    <Button
+                      type="button" size="sm" variant="ghost"
+                      className="h-8 px-2"
+                      onClick={() => setTeamDraftAssociates(prev => prev.filter((_, j) => j !== i))}
+                      title="Remove this associate"
+                    ><X className="w-3.5 h-3.5" /></Button>
+                  </div>
+                ))}
+                <Button
+                  type="button" size="sm" variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setTeamDraftAssociates(prev => [...prev, { role: "ASC", name: "" }])}
+                >+ Add associate</Button>
+              </div>
+            </div>
+
+            {/* Hint when open + no manager */}
+            {teamEditFor && (() => {
+              const today = new Date().toISOString().slice(0, 10);
+              const isOpen = teamEditFor.outcome === "pending"
+                && !!teamEditFor.end_date && teamEditFor.end_date > today;
+              if (isOpen && !teamDraftManager) {
+                return (
+                  <div className="flex items-start gap-2 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
+                    <span>This engagement is <b>Open</b> (running, end-date in future). Pick a manager before saving.</span>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setTeamEditFor(null)}>Cancel</Button>
+            <Button
+              onClick={async () => {
+                if (!teamEditFor?.id) return;
+                const today = new Date().toISOString().slice(0, 10);
+                const isOpen = teamEditFor.outcome === "pending"
+                  && !!teamEditFor.end_date && teamEditFor.end_date > today;
+                if (isOpen && !teamDraftManager) {
+                  toast({ title: "Manager required for Open engagements", variant: "destructive" });
+                  return;
+                }
+                const cleanedAssociates = teamDraftAssociates.filter(a => a.name && a.name.trim());
+                await patchProposalInline(teamEditFor.id, {
+                  manager_name: teamDraftManager || null,
+                  team_members: cleanedAssociates,
+                  // Keep team_size in sync: 1 manager (if set) + N associates.
+                  // If no manager, fall back to associates count or 1.
+                  team_size: (teamDraftManager ? 1 : 0) + cleanedAssociates.length || 1,
+                } as any);
+                setTeamEditFor(null);
+              }}
+            >Save team</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
