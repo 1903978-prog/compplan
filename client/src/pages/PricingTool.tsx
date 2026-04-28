@@ -1532,55 +1532,135 @@ export default function PricingTool() {
             </div>
           </div>
         )}
-        {/* Manager — the EM running the engagement day-to-day */}
+        {/* Manager — the EM running the engagement day-to-day.
+            Hybrid input: dropdown of all employees (the common case) +
+            "Other (type below)" mode for external partners / freelancers
+            who aren't in /employees. The stored value is always a free
+            string so existing rows + non-employee names round-trip. */}
         <div className="space-y-1">
           <Label className="text-xs">Manager (EM)</Label>
-          <Input
-            type="text"
-            value={historyForm.manager_name ?? ""}
-            onChange={e => setHistoryForm(f => ({ ...f, manager_name: e.target.value || null }))}
-            className="h-8 text-sm"
-            placeholder="e.g. Marco Rossi"
-          />
+          {(() => {
+            const managerInList = !!historyForm.manager_name
+              && employees.some(e => e.name === historyForm.manager_name);
+            const isCustom = !!historyForm.manager_name && !managerInList;
+            return (
+              <div className="space-y-1">
+                <Select
+                  value={
+                    !historyForm.manager_name ? "__none__"
+                    : isCustom ? "__other__"
+                    : historyForm.manager_name
+                  }
+                  onValueChange={(v) => {
+                    if (v === "__none__") setHistoryForm(f => ({ ...f, manager_name: null }));
+                    else if (v === "__other__") setHistoryForm(f => ({ ...f, manager_name: f.manager_name || "" }));
+                    else setHistoryForm(f => ({ ...f, manager_name: v }));
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick employee…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— none —</SelectItem>
+                    {employees.length === 0 && (
+                      <div className="px-2 py-2 text-[11px] text-muted-foreground italic">
+                        No employees loaded — add them in /employees.
+                      </div>
+                    )}
+                    {employees.map(e => (
+                      <SelectItem key={e.id} value={e.name}>
+                        {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__other__">— Other (type a name) —</SelectItem>
+                  </SelectContent>
+                </Select>
+                {isCustom && (
+                  <Input
+                    type="text"
+                    value={historyForm.manager_name ?? ""}
+                    onChange={e => setHistoryForm(f => ({ ...f, manager_name: e.target.value || null }))}
+                    className="h-7 text-xs"
+                    placeholder="Custom name (e.g. external partner)"
+                  />
+                )}
+              </div>
+            );
+          })()}
         </div>
-        {/* Team members — Partner + ASCs + BAs etc. Free-text role + name. */}
+        {/* Team members — dropdown of employees + free-text role label.
+            Same hybrid pattern as Manager: pick from /employees OR type
+            a custom name (for external partners / freelancers / one-off
+            ASCs not yet in the HR roster). Role stays free-text since
+            it's a project-level label (Partner / Senior ASC / BA) not
+            an employee attribute. */}
         <div className="space-y-1 sm:col-span-2 lg:col-span-3">
           <Label className="text-xs">Team members (beyond manager)</Label>
           <div className="space-y-1">
-            {(historyForm.team_members ?? []).map((m, i) => (
-              <div key={i} className="flex gap-1 items-center">
-                <Input
-                  type="text"
-                  value={m.role}
-                  onChange={e => setHistoryForm(f => {
-                    const next = [...(f.team_members ?? [])];
-                    next[i] = { ...next[i], role: e.target.value };
-                    return { ...f, team_members: next };
-                  })}
-                  className="h-7 text-xs w-32"
-                  placeholder="Role (e.g. Partner)"
-                />
-                <Input
-                  type="text"
-                  value={m.name}
-                  onChange={e => setHistoryForm(f => {
-                    const next = [...(f.team_members ?? [])];
-                    next[i] = { ...next[i], name: e.target.value };
-                    return { ...f, team_members: next };
-                  })}
-                  className="h-7 text-xs flex-1"
-                  placeholder="Name"
-                />
-                <Button
-                  type="button" size="sm" variant="ghost"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => setHistoryForm(f => ({
-                    ...f,
-                    team_members: (f.team_members ?? []).filter((_, j) => j !== i),
-                  }))}
-                >×</Button>
-              </div>
-            ))}
+            {(historyForm.team_members ?? []).map((m, i) => {
+              const inList = !!m.name && employees.some(e => e.name === m.name);
+              const isCustom = !!m.name && !inList;
+              return (
+                <div key={i} className="flex gap-1 items-center">
+                  <Input
+                    type="text"
+                    value={m.role}
+                    onChange={e => setHistoryForm(f => {
+                      const next = [...(f.team_members ?? [])];
+                      next[i] = { ...next[i], role: e.target.value };
+                      return { ...f, team_members: next };
+                    })}
+                    className="h-7 text-xs w-28"
+                    placeholder="Role (e.g. Partner)"
+                  />
+                  <Select
+                    value={
+                      !m.name ? "__none__"
+                      : isCustom ? "__other__"
+                      : m.name
+                    }
+                    onValueChange={(v) => setHistoryForm(f => {
+                      const next = [...(f.team_members ?? [])];
+                      next[i] = {
+                        ...next[i],
+                        name: v === "__none__" ? "" : v === "__other__" ? (next[i].name || "") : v,
+                      };
+                      return { ...f, team_members: next };
+                    })}
+                  >
+                    <SelectTrigger className="h-7 text-xs flex-1"><SelectValue placeholder="Pick employee…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— none —</SelectItem>
+                      {employees.map(e => (
+                        <SelectItem key={e.id} value={e.name}>
+                          {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="__other__">— Other (type a name) —</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {isCustom && (
+                    <Input
+                      type="text"
+                      value={m.name}
+                      onChange={e => setHistoryForm(f => {
+                        const next = [...(f.team_members ?? [])];
+                        next[i] = { ...next[i], name: e.target.value };
+                        return { ...f, team_members: next };
+                      })}
+                      className="h-7 text-xs flex-1"
+                      placeholder="Custom name"
+                    />
+                  )}
+                  <Button
+                    type="button" size="sm" variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setHistoryForm(f => ({
+                      ...f,
+                      team_members: (f.team_members ?? []).filter((_, j) => j !== i),
+                    }))}
+                  >×</Button>
+                </div>
+              );
+            })}
             <Button
               type="button" size="sm" variant="outline"
               className="h-7 text-xs"
