@@ -1162,3 +1162,112 @@ export const okrNodeData = pgTable("okr_node_data", {
   updated_at: text("updated_at").notNull(),
 });
 export type OkrNodeData = typeof okrNodeData.$inferSelect;
+
+// ─── PHASE 1 — Agentic Org Foundation ───────────────────────────────────────
+// Parallel "agentic operating layer" tables. Coexists with the existing
+// org_agents / agent_proposals / agent_knowledge tables — those drive the
+// Org Chart visualisation; THESE tables drive the daily-cycle business
+// operating loop (3 ideas + 3 actions per agent, approvals, conflicts,
+// executive log) per the Phase-1 blueprint.
+//
+// Naming convention: every Phase-1 table is added under this section so the
+// agentic-org module stays easy to find. NO existing table is mutated —
+// the two systems can be reconciled in a later phase.
+
+export const agents = pgTable("agents", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  mission: text("mission"),
+  boss_id: integer("boss_id"),                                     // self-FK; null = top (Livio)
+  status: text("status").notNull().default("active"),              // active | paused | retired
+  app_sections_assigned: text("app_sections_assigned"),
+  decision_rights_autonomous: text("decision_rights_autonomous"),
+  decision_rights_boss: text("decision_rights_boss"),
+  decision_rights_ceo: text("decision_rights_ceo"),
+  decision_rights_livio: text("decision_rights_livio"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
+export const objectives = pgTable("objectives", {
+  id: serial("id").primaryKey(),
+  agent_id: integer("agent_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  target_date: text("target_date"),
+  status: text("status").notNull().default("open"),                // open | done | dropped
+  created_at: text("created_at").notNull(),
+});
+
+export const keyResults = pgTable("key_results", {
+  id: serial("id").primaryKey(),
+  objective_id: integer("objective_id").notNull(),
+  title: text("title").notNull(),
+  target_value: text("target_value"),
+  current_value: text("current_value"),
+  unit: text("unit"),
+  created_at: text("created_at").notNull(),
+});
+
+export const ideas = pgTable("ideas", {
+  id: serial("id").primaryKey(),
+  agent_id: integer("agent_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  okr_link: integer("okr_link"),                                   // FK → objectives.id (nullable)
+  impact_score: integer("impact_score"),
+  effort_score: integer("effort_score"),
+  risk_score: integer("risk_score"),
+  total_score: integer("total_score"),
+  status: text("status").notNull().default("proposed"),            // proposed | approved | rejected | postponed | executed
+  created_at: text("created_at").notNull(),
+});
+
+export const tasks = pgTable("tasks", {
+  id: serial("id").primaryKey(),
+  agent_id: integer("agent_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  deadline: text("deadline"),
+  priority: integer("priority").notNull().default(50),             // 0-100; higher = more urgent
+  status: text("status").notNull().default("open"),                // open | in_progress | done | blocked
+  approval_level: text("approval_level").notNull().default("autonomous"),  // autonomous | boss | ceo | livio
+  approval_status: text("approval_status").notNull().default("not_required"), // not_required | pending | approved | rejected
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
+export const executiveLog = pgTable("executive_log", {
+  id: serial("id").primaryKey(),
+  timestamp: text("timestamp").notNull(),
+  agent_id: integer("agent_id"),                                   // nullable — system events
+  event_type: text("event_type").notNull(),
+  // event_type vocabulary (free text but UI filters from this list):
+  //   idea_generated | action_proposed | task_created | approval_requested |
+  //   approval_granted | approval_rejected | conflict_detected |
+  //   prompt_generated | output_imported | decision_logged |
+  //   coffee_break | exec_committee_called
+  payload: jsonb("payload"),
+  created_at: text("created_at").notNull(),
+});
+
+export const conflicts = pgTable("conflicts", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  agents_involved: text("agents_involved"),                        // free text or comma-separated names
+  okrs_affected: text("okrs_affected"),
+  severity: text("severity"),                                      // low | medium | high
+  ceo_recommendation: text("ceo_recommendation"),
+  livio_decision: text("livio_decision"),
+  status: text("status").notNull().default("open"),                // open | escalated | resolved
+  created_at: text("created_at").notNull(),
+  resolved_at: text("resolved_at"),
+});
+
+export type Agent      = typeof agents.$inferSelect;
+export type Objective  = typeof objectives.$inferSelect;
+export type KeyResult  = typeof keyResults.$inferSelect;
+export type Idea       = typeof ideas.$inferSelect;
+export type Task       = typeof tasks.$inferSelect;
+export type LogEntry   = typeof executiveLog.$inferSelect;
+export type Conflict   = typeof conflicts.$inferSelect;

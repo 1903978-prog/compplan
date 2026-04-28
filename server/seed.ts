@@ -1825,6 +1825,137 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     console.warn("[seed] TBD canonical refresh failed (non-fatal):", (e as Error).message);
   }
 
+  // ── PHASE 1 — Agentic Org Foundation ───────────────────────────────────
+  // 7 tables (agents / objectives / key_results / ideas / tasks /
+  // executive_log / conflicts). All idempotent; coexist with the existing
+  // org_agents stack (no replacement, no breakage).
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS agents (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      mission TEXT,
+      boss_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'active',
+      app_sections_assigned TEXT,
+      decision_rights_autonomous TEXT,
+      decision_rights_boss TEXT,
+      decision_rights_ceo TEXT,
+      decision_rights_livio TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS objectives (
+      id SERIAL PRIMARY KEY,
+      agent_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      target_date TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS key_results (
+      id SERIAL PRIMARY KEY,
+      objective_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      target_value TEXT,
+      current_value TEXT,
+      unit TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS ideas (
+      id SERIAL PRIMARY KEY,
+      agent_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      okr_link INTEGER,
+      impact_score INTEGER,
+      effort_score INTEGER,
+      risk_score INTEGER,
+      total_score INTEGER,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id SERIAL PRIMARY KEY,
+      agent_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      deadline TEXT,
+      priority INTEGER NOT NULL DEFAULT 50,
+      status TEXT NOT NULL DEFAULT 'open',
+      approval_level TEXT NOT NULL DEFAULT 'autonomous',
+      approval_status TEXT NOT NULL DEFAULT 'not_required',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS executive_log (
+      id SERIAL PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      agent_id INTEGER,
+      event_type TEXT NOT NULL,
+      payload JSONB,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS executive_log_ts_idx ON executive_log(timestamp DESC)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS executive_log_agent_idx ON executive_log(agent_id, timestamp DESC)`);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS conflicts (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      agents_involved TEXT,
+      okrs_affected TEXT,
+      severity TEXT,
+      ceo_recommendation TEXT,
+      livio_decision TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    )
+  `);
+
+  // Seed the 8 starter agents only when the table is empty. Boss IDs are
+  // resolved via a follow-up UPDATE so order doesn't matter.
+  const _agentCount = (await db.execute(sql`SELECT COUNT(*)::int AS c FROM agents`)) as unknown as { rows: Array<{ c: number }> };
+  if ((_agentCount.rows[0]?.c ?? 0) === 0) {
+    const _agentNow = new Date().toISOString();
+    const seedAgents = [
+      { name: "CEO",              boss_name: null,  mission: "Synthesise, prioritise, propose decisions to Livio." },
+      { name: "COO",              boss_name: "CEO", mission: "Run the operating system: RACI, app-section mapping, agent registry, skills factory." },
+      { name: "SVP Sales / BD",   boss_name: "CEO", mission: "Own pipeline + proposal pipeline + outbound cadence to ICP." },
+      { name: "CFO",              boss_name: "CEO", mission: "Own cash, AR, margins, pricing discipline, financial discipline." },
+      { name: "CHRO",             boss_name: "CEO", mission: "Own hiring, retention, capacity planning, agent readiness." },
+      { name: "CMO",              boss_name: "CEO", mission: "Own media exposure, content production, inbound demand." },
+      { name: "CKO",              boss_name: "CEO", mission: "Own knowledge reuse, KM library, proposal library, case-study reuse." },
+      { name: "Delivery Officer", boss_name: "CEO", mission: "Own delivery quality, NPS, project health, weekly reports." },
+    ];
+    for (const a of seedAgents) {
+      await db.execute(sql`
+        INSERT INTO agents (name, mission, status, created_at, updated_at)
+        VALUES (${a.name}, ${a.mission}, 'active', ${_agentNow}, ${_agentNow})
+      `);
+    }
+    // Wire boss_id by name resolution.
+    for (const a of seedAgents) {
+      if (!a.boss_name) continue;
+      await db.execute(sql`
+        UPDATE agents SET boss_id = (SELECT id FROM agents WHERE name = ${a.boss_name} LIMIT 1)
+        WHERE name = ${a.name} AND boss_id IS NULL
+      `);
+    }
+    console.log("[seed] Seeded 8 starter agents (Phase 1 agentic org).");
+  }
+
   // ── OKR node data (per-branch editable metadata for /exec/okr) ──────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS okr_node_data (

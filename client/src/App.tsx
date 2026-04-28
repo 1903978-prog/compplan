@@ -34,6 +34,12 @@ import KnowledgeCenter from "@/pages/KnowledgeCenter";
 import ExecDashboard from "@/pages/ExecDashboard";
 import OkrTree from "@/pages/OkrTree";
 import AdminAssets from "@/pages/AdminAssets";
+import AgenticHome    from "@/pages/agentic-org/AgenticHome";
+import AgentRegistry  from "@/pages/agentic-org/AgentRegistry";
+import AgentDetail    from "@/pages/agentic-org/AgentDetail";
+import AgenticExec    from "@/pages/agentic-org/Executive";
+import Approvals      from "@/pages/agentic-org/Approvals";
+import Logs           from "@/pages/agentic-org/Logs";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
@@ -312,6 +318,19 @@ function Navigation() {
                   { href: "/exec/brief-stream", label: "Brief Stream", icon: Activity },
                 ]}
               />
+              {/* Phase 1 — agentic operating layer */}
+              <NavDropdown
+                label="Agentic"
+                icon={Cpu}
+                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs"]}
+                items={[
+                  { href: "/agentic",   label: "Dashboard",        icon: Cpu },
+                  { href: "/agents",    label: "Agent Registry",   icon: Users },
+                  { href: "/executive", label: "Executive OKR",    icon: Target },
+                  { href: "/approvals", label: "Approval Center",  icon: Shield },
+                  { href: "/logs",      label: "Executive Log",    icon: BookOpen },
+                ]}
+              />
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
@@ -467,6 +486,13 @@ function Router() {
       <Route path="/exec/okr" component={OkrTree} />
       <Route path="/exec/staffing" component={StaffingGantt} />
       <Route path="/exec/brief-stream" component={BriefStream} />
+      {/* Phase 1 — agentic operating layer */}
+      <Route path="/agentic" component={AgenticHome} />
+      <Route path="/agents" component={AgentRegistry} />
+      <Route path="/agents/:id" component={AgentDetail} />
+      <Route path="/executive" component={AgenticExec} />
+      <Route path="/approvals" component={Approvals} />
+      <Route path="/logs" component={Logs} />
       <Route path="/bd" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />

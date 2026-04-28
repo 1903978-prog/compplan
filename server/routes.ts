@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -5070,6 +5070,382 @@ RULES:
     if (!res.headersSent) {
       res.status(status).json({ error: err.message || "Internal server error" });
     }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // PHASE 1 — Agentic Org Foundation API endpoints
+  // CRUD over agents / objectives / key_results / ideas / tasks +
+  // executive_log + conflicts. No AI calls, just data plumbing — the
+  // reasoning happens in Cowork; this server is the memory + workflow
+  // bridge.
+  // ════════════════════════════════════════════════════════════════════════
+
+  function nowIso() { return new Date().toISOString(); }
+  async function logEvent(event_type: string, agent_id: number | null, payload: any) {
+    try {
+      await db.insert(executiveLog).values({
+        timestamp: nowIso(),
+        agent_id,
+        event_type,
+        payload,
+        created_at: nowIso(),
+      } as any);
+    } catch (e) {
+      console.error("[executive_log] insert failed:", e);
+    }
+  }
+
+  // ── /api/agentic/agents ─────────────────────────────────────────────────
+  app.get("/api/agentic/agents", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.select().from(agentsTable).orderBy(agentsTable.id);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/agents/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, id));
+      if (!rows[0]) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/agentic/agents", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.name) { res.status(400).json({ message: "name required" }); return; }
+      const row = {
+        name: String(b.name).trim(),
+        mission: typeof b.mission === "string" ? b.mission : null,
+        boss_id: typeof b.boss_id === "number" ? b.boss_id : null,
+        status: typeof b.status === "string" ? b.status : "active",
+        app_sections_assigned: typeof b.app_sections_assigned === "string" ? b.app_sections_assigned : null,
+        decision_rights_autonomous: typeof b.decision_rights_autonomous === "string" ? b.decision_rights_autonomous : null,
+        decision_rights_boss: typeof b.decision_rights_boss === "string" ? b.decision_rights_boss : null,
+        decision_rights_ceo: typeof b.decision_rights_ceo === "string" ? b.decision_rights_ceo : null,
+        decision_rights_livio: typeof b.decision_rights_livio === "string" ? b.decision_rights_livio : null,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      const inserted = await db.insert(agentsTable).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/agentic/agents/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: Record<string, unknown> = { updated_at: nowIso() };
+      const fields = ["name", "mission", "status", "app_sections_assigned",
+        "decision_rights_autonomous", "decision_rights_boss",
+        "decision_rights_ceo", "decision_rights_livio"];
+      for (const f of fields) {
+        if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
+      }
+      if (typeof b.boss_id === "number" || b.boss_id === null) update.boss_id = b.boss_id;
+      const rows = await db.update(agentsTable).set(update as any).where(eq(agentsTable.id, id)).returning();
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.delete("/api/agentic/agents/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.delete(agentsTable).where(eq(agentsTable.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── /api/agentic/objectives + /key-results ──────────────────────────────
+  app.get("/api/agentic/objectives", requireAuth, async (req, res) => {
+    try {
+      const agent_id = req.query.agent_id ? safeInt(String(req.query.agent_id)) : null;
+      const rows = agent_id
+        ? await db.select().from(objectivesTable).where(eq(objectivesTable.agent_id, agent_id)).orderBy(objectivesTable.id)
+        : await db.select().from(objectivesTable).orderBy(objectivesTable.id);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/agentic/objectives", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.title || typeof b.agent_id !== "number") { res.status(400).json({ message: "title + agent_id required" }); return; }
+      const row = {
+        agent_id: b.agent_id,
+        title: String(b.title).trim(),
+        description: typeof b.description === "string" ? b.description : null,
+        target_date: typeof b.target_date === "string" ? b.target_date : null,
+        status: typeof b.status === "string" ? b.status : "open",
+        created_at: nowIso(),
+      };
+      const inserted = await db.insert(objectivesTable).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.put("/api/agentic/objectives/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: Record<string, unknown> = {};
+      for (const f of ["title", "description", "target_date", "status"]) {
+        if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
+      }
+      const rows = await db.update(objectivesTable).set(update as any).where(eq(objectivesTable.id, id)).returning();
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.delete("/api/agentic/objectives/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.delete(objectivesTable).where(eq(objectivesTable.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/key-results", requireAuth, async (req, res) => {
+    try {
+      const objective_id = req.query.objective_id ? safeInt(String(req.query.objective_id)) : null;
+      const rows = objective_id
+        ? await db.select().from(keyResultsTable).where(eq(keyResultsTable.objective_id, objective_id)).orderBy(keyResultsTable.id)
+        : await db.select().from(keyResultsTable).orderBy(keyResultsTable.id);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/agentic/key-results", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.title || typeof b.objective_id !== "number") { res.status(400).json({ message: "title + objective_id required" }); return; }
+      const row = {
+        objective_id: b.objective_id,
+        title: String(b.title).trim(),
+        target_value: typeof b.target_value === "string" ? b.target_value : null,
+        current_value: typeof b.current_value === "string" ? b.current_value : null,
+        unit: typeof b.unit === "string" ? b.unit : null,
+        created_at: nowIso(),
+      };
+      const inserted = await db.insert(keyResultsTable).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.put("/api/agentic/key-results/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: Record<string, unknown> = {};
+      for (const f of ["title", "target_value", "current_value", "unit"]) {
+        if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
+      }
+      const rows = await db.update(keyResultsTable).set(update as any).where(eq(keyResultsTable.id, id)).returning();
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.delete("/api/agentic/key-results/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.delete(keyResultsTable).where(eq(keyResultsTable.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── /api/agentic/ideas ──────────────────────────────────────────────────
+  app.get("/api/agentic/ideas", requireAuth, async (req, res) => {
+    try {
+      const agent_id = req.query.agent_id ? safeInt(String(req.query.agent_id)) : null;
+      const rows = agent_id
+        ? await db.select().from(ideasTable).where(eq(ideasTable.agent_id, agent_id)).orderBy(desc(ideasTable.created_at))
+        : await db.select().from(ideasTable).orderBy(desc(ideasTable.created_at));
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/agentic/ideas", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.title || typeof b.agent_id !== "number") { res.status(400).json({ message: "title + agent_id required" }); return; }
+      const impact = typeof b.impact_score === "number" ? b.impact_score : null;
+      const effort = typeof b.effort_score === "number" ? b.effort_score : null;
+      const risk   = typeof b.risk_score === "number"   ? b.risk_score   : null;
+      // Total = impact - effort/2 - risk/2 (clamped 0-100). Cheap heuristic.
+      const total  = (impact != null) ? Math.max(0, Math.min(100, Math.round(impact - (effort ?? 0) / 2 - (risk ?? 0) / 2))) : null;
+      const row = {
+        agent_id: b.agent_id,
+        title: String(b.title).trim(),
+        description: typeof b.description === "string" ? b.description : null,
+        okr_link: typeof b.okr_link === "number" ? b.okr_link : null,
+        impact_score: impact, effort_score: effort, risk_score: risk, total_score: total,
+        status: typeof b.status === "string" ? b.status : "proposed",
+        created_at: nowIso(),
+      };
+      const inserted = await db.insert(ideasTable).values(row as any).returning();
+      await logEvent("idea_generated", b.agent_id as number, { idea_id: inserted[0].id, title: row.title });
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.put("/api/agentic/ideas/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: Record<string, unknown> = {};
+      for (const f of ["title", "description", "status"]) {
+        if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
+      }
+      for (const f of ["okr_link", "impact_score", "effort_score", "risk_score", "total_score"]) {
+        if (typeof b[f] === "number" || b[f] === null) update[f] = b[f];
+      }
+      const rows = await db.update(ideasTable).set(update as any).where(eq(ideasTable.id, id)).returning();
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.delete("/api/agentic/ideas/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.delete(ideasTable).where(eq(ideasTable.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── /api/agentic/tasks ──────────────────────────────────────────────────
+  app.get("/api/agentic/tasks", requireAuth, async (req, res) => {
+    try {
+      const agent_id = req.query.agent_id ? safeInt(String(req.query.agent_id)) : null;
+      const approval_status = typeof req.query.approval_status === "string" ? req.query.approval_status : null;
+      let q = db.select().from(tasksTable).$dynamic();
+      if (agent_id != null && approval_status) {
+        q = q.where(and(eq(tasksTable.agent_id, agent_id), eq(tasksTable.approval_status, approval_status)));
+      } else if (agent_id != null) {
+        q = q.where(eq(tasksTable.agent_id, agent_id));
+      } else if (approval_status) {
+        q = q.where(eq(tasksTable.approval_status, approval_status));
+      }
+      const rows = await q.orderBy(desc(tasksTable.created_at));
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/agentic/tasks", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.title || typeof b.agent_id !== "number") { res.status(400).json({ message: "title + agent_id required" }); return; }
+      const approval_level = ["autonomous", "boss", "ceo", "livio"].includes(String(b.approval_level)) ? String(b.approval_level) : "autonomous";
+      const row = {
+        agent_id: b.agent_id,
+        title: String(b.title).trim(),
+        description: typeof b.description === "string" ? b.description : null,
+        deadline: typeof b.deadline === "string" ? b.deadline : null,
+        priority: typeof b.priority === "number" ? b.priority : 50,
+        status: typeof b.status === "string" ? b.status : "open",
+        approval_level,
+        approval_status: approval_level === "autonomous" ? "not_required" : "pending",
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      const inserted = await db.insert(tasksTable).values(row as any).returning();
+      await logEvent("task_created", b.agent_id as number, { task_id: inserted[0].id, title: row.title, approval_level });
+      if (approval_level !== "autonomous") {
+        await logEvent("approval_requested", b.agent_id as number, { task_id: inserted[0].id, level: approval_level });
+      }
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.put("/api/agentic/tasks/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: Record<string, unknown> = { updated_at: nowIso() };
+      for (const f of ["title", "description", "deadline", "status", "approval_level", "approval_status"]) {
+        if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
+      }
+      if (typeof b.priority === "number") update.priority = b.priority;
+      const rows = await db.update(tasksTable).set(update as any).where(eq(tasksTable.id, id)).returning();
+      // Log approval state transitions.
+      if (typeof b.approval_status === "string" && rows[0]) {
+        if (b.approval_status === "approved") await logEvent("approval_granted", rows[0].agent_id, { task_id: id });
+        if (b.approval_status === "rejected") await logEvent("approval_rejected", rows[0].agent_id, { task_id: id });
+      }
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.delete("/api/agentic/tasks/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.delete(tasksTable).where(eq(tasksTable.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── /api/agentic/log ────────────────────────────────────────────────────
+  app.get("/api/agentic/log", requireAuth, async (req, res) => {
+    try {
+      const agent_id = req.query.agent_id ? safeInt(String(req.query.agent_id)) : null;
+      const event_type = typeof req.query.event_type === "string" ? req.query.event_type : null;
+      let q = db.select().from(executiveLog).$dynamic();
+      if (agent_id != null && event_type) {
+        q = q.where(and(eq(executiveLog.agent_id, agent_id), eq(executiveLog.event_type, event_type)));
+      } else if (agent_id != null) {
+        q = q.where(eq(executiveLog.agent_id, agent_id));
+      } else if (event_type) {
+        q = q.where(eq(executiveLog.event_type, event_type));
+      }
+      const rows = await q.orderBy(desc(executiveLog.timestamp)).limit(500);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/agentic/log", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.event_type) { res.status(400).json({ message: "event_type required" }); return; }
+      const row = {
+        timestamp: nowIso(),
+        agent_id: typeof b.agent_id === "number" ? b.agent_id : null,
+        event_type: String(b.event_type),
+        payload: b.payload ?? null,
+        created_at: nowIso(),
+      };
+      const inserted = await db.insert(executiveLog).values(row as any).returning();
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── /api/agentic/conflicts ──────────────────────────────────────────────
+  app.get("/api/agentic/conflicts", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.select().from(conflictsTable).orderBy(desc(conflictsTable.created_at));
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.post("/api/agentic/conflicts", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.title) { res.status(400).json({ message: "title required" }); return; }
+      const row = {
+        title: String(b.title).trim(),
+        agents_involved: typeof b.agents_involved === "string" ? b.agents_involved : null,
+        okrs_affected: typeof b.okrs_affected === "string" ? b.okrs_affected : null,
+        severity: typeof b.severity === "string" ? b.severity : null,
+        ceo_recommendation: typeof b.ceo_recommendation === "string" ? b.ceo_recommendation : null,
+        livio_decision: typeof b.livio_decision === "string" ? b.livio_decision : null,
+        status: typeof b.status === "string" ? b.status : "open",
+        created_at: nowIso(),
+        resolved_at: null as string | null,
+      };
+      const inserted = await db.insert(conflictsTable).values(row as any).returning();
+      await logEvent("conflict_detected", null, { conflict_id: inserted[0].id, title: row.title });
+      res.status(201).json(inserted[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+  app.put("/api/agentic/conflicts/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: Record<string, unknown> = {};
+      for (const f of ["title", "agents_involved", "okrs_affected", "severity",
+                       "ceo_recommendation", "livio_decision", "status", "resolved_at"]) {
+        if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
+      }
+      const rows = await db.update(conflictsTable).set(update as any).where(eq(conflictsTable.id, id)).returning();
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
   return httpServer;
