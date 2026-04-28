@@ -6013,15 +6013,14 @@ export default function PricingTool() {
                 })()}
 
                   {/* RIGHT COLUMN: Past-Projects Benchmark.
-                      Progressive OR-matching: include any proposal that
-                      matches AT LEAST ONE of {client, shareholder/fund,
-                      country-or-region}. Each dimension scored 1 point;
-                      results sorted by overlap score desc, then date desc.
-                      Country falls back to region when either side is null
-                      so Italy-vs-IT mismatches don't drop matches.
-                      Match column shows colored dots indicating which
-                      dimensions hit (C=Client / S=Shareholder / R=Region).
-                      Empty state only when NO dimension is set. */}
+                      THREE INDEPENDENT SECTIONS — one per dimension. Each
+                      section runs its own filter and shows its own list +
+                      average. A project that matches multiple dimensions
+                      will appear in multiple sections — that's intentional
+                      ("show all Coesia past projects AND all Italy past
+                      projects"). Sections are skipped when their dimension
+                      isn't set on the form OR has no matches.
+                      Geo section uses country if set, falls back to region. */}
                   {(() => {
                     const norm = (s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : "");
                     const clientLc  = norm(form.client_name);
@@ -6030,75 +6029,86 @@ export default function PricingTool() {
                     const regionLc  = norm(form.region);
                     const anyKeySet = !!(clientLc || fundLc || countryLc || regionLc);
 
-                    type Scored = { p: PricingProposal; mClient: boolean; mFund: boolean; mGeo: boolean; score: number };
-                    const scored: Scored[] = anyKeySet
-                      ? analysisProposals
-                          .filter(p => p.id !== form.id) // exclude the case being edited
-                          .map(p => {
-                            const pClientLc  = norm(p.client_name);
-                            const pFundLc    = norm(p.fund_name);
-                            const pCountryLc = norm(p.country);
-                            const pRegionLc  = norm(p.region);
-                            const mClient = !!clientLc  && pClientLc === clientLc;
-                            const mFund   = !!fundLc    && pFundLc   === fundLc;
-                            // Geo match: country preferred, fall back to region on either side
-                            const mGeo =
-                              (!!countryLc && pCountryLc === countryLc) ||
-                              (!!regionLc  && pRegionLc  === regionLc)  ||
-                              (!!countryLc && !pCountryLc && pRegionLc === countryLc) ||
-                              (!!regionLc  && !pRegionLc  && pCountryLc === regionLc);
-                            const score = (mClient ? 1 : 0) + (mFund ? 1 : 0) + (mGeo ? 1 : 0);
-                            return { p, mClient, mFund, mGeo, score };
-                          })
-                          .filter(s => s.score > 0
-                            && (s.p.total_fee != null || s.p.weekly_price > 0))
-                          .sort((a, b) => {
-                            if (b.score !== a.score) return b.score - a.score;
-                            return (b.p.proposal_date ?? "").localeCompare(a.p.proposal_date ?? "");
-                          })
+                    const filterByClient = (clientLc)
+                      ? analysisProposals.filter(p => p.id !== form.id
+                          && norm(p.client_name) === clientLc
+                          && (p.total_fee != null || p.weekly_price > 0))
+                        .sort((a, b) => (b.proposal_date ?? "").localeCompare(a.proposal_date ?? ""))
+                      : [];
+                    const filterByFund = (fundLc)
+                      ? analysisProposals.filter(p => p.id !== form.id
+                          && norm(p.fund_name) === fundLc
+                          && (p.total_fee != null || p.weekly_price > 0))
+                        .sort((a, b) => (b.proposal_date ?? "").localeCompare(a.proposal_date ?? ""))
+                      : [];
+                    const filterByGeo = (countryLc || regionLc)
+                      ? analysisProposals.filter(p => {
+                          if (p.id === form.id) return false;
+                          if (!(p.total_fee != null || p.weekly_price > 0)) return false;
+                          const pCountryLc = norm(p.country);
+                          const pRegionLc  = norm(p.region);
+                          return (
+                            (!!countryLc && pCountryLc === countryLc) ||
+                            (!!regionLc  && pRegionLc  === regionLc)  ||
+                            (!!countryLc && !pCountryLc && pRegionLc === countryLc) ||
+                            (!!regionLc  && !pRegionLc  && pCountryLc === regionLc)
+                          );
+                        })
+                        .sort((a, b) => (b.proposal_date ?? "").localeCompare(a.proposal_date ?? ""))
                       : [];
 
-                    const totalFees = scored.map(s =>
-                      s.p.total_fee ?? Math.round(s.p.weekly_price * (s.p.duration_weeks ?? 0)),
-                    );
-                    const weeklyFees = scored.map(s => s.p.weekly_price);
-                    const avgTotal  = totalFees.length  > 0 ? totalFees.reduce((a, v) => a + v, 0) / totalFees.length   : 0;
-                    const avgWeekly = weeklyFees.length > 0 ? weeklyFees.reduce((a, v) => a + v, 0) / weeklyFees.length : 0;
-                    const matchLabel = scored.length === 1 ? "match" : "matches";
+                    const sections: Array<{
+                      key: string;
+                      label: string;
+                      items: PricingProposal[];
+                      headerColor: string;
+                      bgColor: string;
+                      avgRowColor: string;
+                    }> = [
+                      { key: "client", label: `Same client — ${form.client_name || "—"}`,
+                        items: filterByClient,
+                        headerColor: "bg-blue-700",     bgColor: "bg-blue-50/30",
+                        avgRowColor: "bg-blue-100/60" },
+                      { key: "fund",   label: `Same shareholder — ${form.fund_name || "—"}`,
+                        items: filterByFund,
+                        headerColor: "bg-purple-700",   bgColor: "bg-purple-50/30",
+                        avgRowColor: "bg-purple-100/60" },
+                      { key: "geo",    label: `Same geo — ${form.country || form.region || "—"}`,
+                        items: filterByGeo,
+                        headerColor: "bg-emerald-700", bgColor: "bg-emerald-50/30",
+                        avgRowColor: "bg-emerald-100/60" },
+                    ].filter(s => {
+                      // Only show sections whose dimension is set on the form.
+                      if (s.key === "client" && !clientLc) return false;
+                      if (s.key === "fund"   && !fundLc)   return false;
+                      if (s.key === "geo"    && !countryLc && !regionLc) return false;
+                      return true;
+                    });
 
-                    // Active-dimensions caption (e.g. "client + region")
-                    const activeDims = [
-                      clientLc  && "client",
-                      fundLc    && "shareholder",
-                      (countryLc || regionLc) && "geo",
-                    ].filter(Boolean).join(" + ") || "—";
+                    const renderSection = (s: typeof sections[number]) => {
+                      const totalFees = s.items.map(p =>
+                        p.total_fee ?? Math.round(p.weekly_price * (p.duration_weeks ?? 0)));
+                      const weeklyFees = s.items.map(p => p.weekly_price);
+                      const avgTotal  = totalFees.length  > 0 ? totalFees.reduce((a, v) => a + v, 0) / totalFees.length   : 0;
+                      const avgWeekly = weeklyFees.length > 0 ? weeklyFees.reduce((a, v) => a + v, 0) / weeklyFees.length : 0;
 
-                    return (
-                      <div className="rounded-lg border border-blue-200 bg-blue-50/30 overflow-hidden">
-                        <div className="bg-[#1A6571] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 flex items-center justify-between">
-                          <span>Past Projects — comparable references</span>
-                          <span className="font-normal normal-case text-white/70 text-[10px]">
-                            {scored.length} {matchLabel} · matching: {activeDims}
-                          </span>
-                        </div>
-
-                        {!anyKeySet ? (
-                          <div className="p-3 text-[11px] text-muted-foreground italic">
-                            Set <span className="font-semibold text-foreground">client</span>,{" "}
-                            <span className="font-semibold text-foreground">shareholder (fund)</span>, or{" "}
-                            <span className="font-semibold text-foreground">country / region</span> on the case to see comparable past projects.
+                      return (
+                        <div key={s.key} className={`rounded-lg border overflow-hidden ${s.bgColor}`}>
+                          <div className={`${s.headerColor} text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 flex items-center justify-between`}>
+                            <span className="truncate">{s.label}</span>
+                            <span className="font-normal normal-case text-white/80 text-[10px] shrink-0 ml-2">
+                              {s.items.length} {s.items.length === 1 ? "match" : "matches"}
+                            </span>
                           </div>
-                        ) : scored.length === 0 ? (
-                          <div className="p-3 text-[11px] text-muted-foreground italic">
-                            No prior project matches <span className="font-semibold text-foreground">{[form.client_name, form.fund_name, form.country || form.region].filter(Boolean).join(" / ")}</span>. This is the first.
-                          </div>
-                        ) : (
-                          <>
+                          {s.items.length === 0 ? (
+                            <div className="p-2.5 text-[11px] text-muted-foreground italic">
+                              No prior project on this dimension.
+                            </div>
+                          ) : (
                             <Table>
                               <TableHeader>
-                                <TableRow className="bg-muted/30">
+                                <TableRow className="bg-muted/20">
                                   <TableHead className="text-[9px] py-1.5">Code</TableHead>
-                                  <TableHead className="text-[9px] py-1.5 text-center">Match</TableHead>
                                   <TableHead className="text-[9px] py-1.5 text-center">Year</TableHead>
                                   <TableHead className="text-[9px] py-1.5 text-center">Wks</TableHead>
                                   <TableHead className="text-[9px] py-1.5 text-right">Net Fees</TableHead>
@@ -6106,20 +6116,12 @@ export default function PricingTool() {
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
-                                {scored.map((s, i) => {
-                                  const p = s.p;
+                                {s.items.map((p, i) => {
                                   const totalFee = p.total_fee ?? Math.round(p.weekly_price * (p.duration_weeks ?? 0));
                                   const year = (p.proposal_date ?? "").slice(0, 4) || "—";
                                   return (
                                     <TableRow key={p.id ?? i}>
                                       <TableCell className="text-[11px] font-semibold py-1">{p.project_name}</TableCell>
-                                      <TableCell className="text-center py-1">
-                                        <span className="inline-flex gap-0.5 items-center" title={`${s.mClient ? "Client " : ""}${s.mFund ? "Shareholder " : ""}${s.mGeo ? "Geo" : ""}`.trim() || "—"}>
-                                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${s.mClient ? "bg-blue-600" : "bg-blue-200/40"}`} title="Client" />
-                                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${s.mFund   ? "bg-purple-600" : "bg-purple-200/40"}`} title="Shareholder (fund)" />
-                                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${s.mGeo    ? "bg-emerald-600" : "bg-emerald-200/40"}`} title="Country / region" />
-                                        </span>
-                                      </TableCell>
                                       <TableCell className="text-[11px] text-center py-1 text-muted-foreground">{year}</TableCell>
                                       <TableCell className="text-[11px] text-center py-1">{p.duration_weeks ?? "—"}</TableCell>
                                       <TableCell className="text-[11px] text-right py-1 font-mono font-semibold text-emerald-700">{fmtC(totalFee)}</TableCell>
@@ -6127,23 +6129,41 @@ export default function PricingTool() {
                                     </TableRow>
                                   );
                                 })}
-                                <TableRow className="bg-blue-100/50 border-t-2 border-blue-300">
-                                  <TableCell className="text-[10px] font-bold uppercase tracking-wide text-blue-900 py-1.5" colSpan={4}>
-                                    Average ({scored.length})
+                                <TableRow className={`${s.avgRowColor} border-t-2`}>
+                                  <TableCell className="text-[10px] font-bold uppercase tracking-wide py-1.5" colSpan={3}>
+                                    Avg ({s.items.length})
                                   </TableCell>
-                                  <TableCell className="text-[11px] text-right py-1.5 font-mono font-bold text-blue-900">{fmtC(avgTotal)}</TableCell>
-                                  <TableCell className="text-[11px] text-right py-1.5 font-mono font-bold text-blue-900">{fmtC(avgWeekly)}</TableCell>
+                                  <TableCell className="text-[11px] text-right py-1.5 font-mono font-bold">{fmtC(avgTotal)}</TableCell>
+                                  <TableCell className="text-[11px] text-right py-1.5 font-mono font-bold">{fmtC(avgWeekly)}</TableCell>
                                 </TableRow>
                               </TableBody>
                             </Table>
-                            <div className="px-3 py-1.5 text-[9px] text-muted-foreground border-t bg-white/60 flex items-center gap-3 flex-wrap">
-                              <span>Reference only — not blended into the recommendation.</span>
-                              <span className="flex items-center gap-1"><span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-600" />Client</span>
-                              <span className="flex items-center gap-1"><span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-600" />Shareholder</span>
-                              <span className="flex items-center gap-1"><span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-600" />Geo</span>
-                            </div>
-                          </>
-                        )}
+                          )}
+                        </div>
+                      );
+                    };
+
+                    if (!anyKeySet) {
+                      return (
+                        <div className="rounded-lg border border-blue-200 bg-blue-50/30 overflow-hidden">
+                          <div className="bg-[#1A6571] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5">
+                            Past Projects — comparable references
+                          </div>
+                          <div className="p-3 text-[11px] text-muted-foreground italic">
+                            Set <span className="font-semibold text-foreground">client</span>,{" "}
+                            <span className="font-semibold text-foreground">shareholder (fund)</span>, or{" "}
+                            <span className="font-semibold text-foreground">country / region</span> on the case to see comparable past projects.
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        {sections.map(renderSection)}
+                        <div className="text-[9px] text-muted-foreground italic px-1">
+                          Reference only — not blended into the recommendation. A project may appear in multiple sections.
+                        </div>
                       </div>
                     );
                   })()}
