@@ -494,14 +494,25 @@ function KanbanColumn({
 
   return (
     <div className={`flex flex-col rounded-xl border-2 ${stage.color} min-h-[500px] w-64 shrink-0`}>
-      {/* Header */}
-      <div className={`${stage.header} rounded-t-[9px] px-3 py-2.5 flex items-center justify-between`}>
-        <div className="flex items-center gap-2">
-          <span className="text-white font-semibold text-sm">{stage.label}</span>
+      {/* Header — label + count badge + inline + button to add a candidate
+          directly into this stage. The previous toolbar row (one button per
+          stage) is gone; this in-header + replaces it. */}
+      <div className={`${stage.header} rounded-t-[9px] px-3 py-2.5 flex items-center justify-between gap-2`}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-white font-semibold text-sm truncate">{stage.label}</span>
         </div>
-        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white`}>
-          {candidates.length}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white">
+            {candidates.length}
+          </span>
+          <button
+            onClick={() => onAdd(stage.id)}
+            className="rounded-full p-1 hover:bg-white/25 transition-colors text-white"
+            title={`Add candidate to ${stage.label}`}
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Cards */}
@@ -745,20 +756,14 @@ export default function Hiring() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex gap-1">
-            {STAGES.map(s => (
-              <Button key={s.id} variant="outline" size="sm" className="text-xs h-8" onClick={() => addCandidate(s.id)}>
-                <Plus className="w-3 h-3 mr-1" /> {s.label}
-              </Button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 pl-2 border-l">
-            {lastSync && <span className="text-xs text-muted-foreground">Last import: {lastSync}</span>}
-            <Button size="sm" onClick={importFromEendigo} disabled={syncing} className="h-8">
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Importing…" : "Import from Eendigo"}
-            </Button>
-          </div>
+          {/* Per-stage add buttons removed — each kanban column header has
+              its own + now (less header clutter, action lives where the
+              candidate will land). */}
+          {lastSync && <span className="text-xs text-muted-foreground">Last import: {lastSync}</span>}
+          <Button size="sm" onClick={importFromEendigo} disabled={syncing} className="h-8">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Importing…" : "Import from Eendigo"}
+          </Button>
         </div>
       </div>
 
