@@ -4739,15 +4739,22 @@ export default function PricingTool() {
   // ── FORM VIEW ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      {/* Form header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => setView("list")}
-          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded">
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div>
-          <h1 className="text-xl font-bold">{form.id ? "Edit Pricing Case" : "New Pricing Case"}</h1>
-          <p className="text-sm text-muted-foreground">Fill in the details — pricing recommendation updates live</p>
+      {/* Form header — sticky so the back arrow + title stay visible while
+          the user scrolls through the long edit form. top-0 sits flush
+          against the top of the scroll container; bg + subtle border keep
+          the content underneath legible as it slides past. z-30 stays
+          below the global app nav (which has its own sticky/fixed layer)
+          but above any inline cards. */}
+      <div className="sticky top-0 z-30 -mx-4 px-4 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setView("list")}
+            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h1 className="text-xl font-bold">{form.id ? "Edit Pricing Case" : "New Pricing Case"}</h1>
+            <p className="text-sm text-muted-foreground">Fill in the details — pricing recommendation updates live</p>
+          </div>
         </div>
       </div>
 
