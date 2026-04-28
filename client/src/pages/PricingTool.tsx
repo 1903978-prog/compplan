@@ -3126,6 +3126,21 @@ export default function PricingTool() {
                       // shows). This makes the column self-healing — the user
                       // doesn't need to click "Backfill canonical fields" or
                       // re-open every case to fix display.
+                      // ── LIVE canonical recompute (definitive source) ────
+                      // Mirrors the case editor's canonicalNetWeekly useMemo
+                      // EXACTLY for P1-P6 + band clamp + manual_delta.
+                      // Difference: NO COMMIT. The list shows the headline
+                      // pre-commit NET1 (what the proposal quotes as the
+                      // recommended weekly fee). Commit is a per-option
+                      // adjustment that lives in the Commercial Proposal
+                      // table, not in the cases-list summary.
+                      //
+                      // Why live FIRST (ahead of stored canonical):
+                      // a stored canonical_net_weekly persisted at an old
+                      // save can be stale (different benchmarks, different
+                      // commit rule, old engine version). The live recompute
+                      // uses CURRENT benchmarks + saved layer_trace and is
+                      // therefore the trustworthy figure to display today.
                       const _liveCanonical = (() => {
                         const rec = c.recommendation;
                         if (!rec) return null;
@@ -3167,30 +3182,31 @@ export default function PricingTool() {
                         }
                         // Manual delta (user-typed override on NET1)
                         running += rec.manual_delta ?? 0;
-                        // P7 commitment (only applied if the case_discounts row
-                        // is enabled — same rule as canonicalNetWeekly).
-                        const cd = (c as any).case_discounts ?? [];
-                        const commit = cd.find((d: any) => d.id === "commitment");
-                        if (commit?.enabled && commit.pct > 0) {
-                          running = running * (1 - commit.pct / 100);
-                        }
+                        // INTENTIONALLY NO COMMIT — see header comment.
                         const result = Math.round(running);
+                        // Diagnostic: log when the live recompute disagrees
+                        // with stored canonical so future "Target/wk wrong"
+                        // bugs can be debugged from the browser console.
+                        const stored = (rec as any).canonical_net_weekly;
+                        if (typeof stored === "number" && Math.abs(stored - result) > 100) {
+                          // eslint-disable-next-line no-console
+                          console.debug(`[Target/wk] ${c.project_name}: live=${result} stored=${stored} target_weekly=${rec.target_weekly} base=${base} manual_delta=${rec.manual_delta ?? 0} band=[${gLow},${gHigh}]`);
+                        }
                         return result > 0 ? result : null;
                       })();
-                      // Resolution order:
-                      //   1. Net/Gross override on the matching timeline (the
-                      //      figure the user pinned on the SOW).
-                      //   2. canonical_net_weekly stored on the recommendation
-                      //      (handleSave persists it; backfill repopulates it).
-                      //   3. LIVE canonical recompute from saved layer_trace +
-                      //      base_weekly + manual_delta + region + benchmarks
-                      //      + caseDiscounts. Catches every case that pre-dates
-                      //      handleSave's canonical_net_weekly write.
-                      //   4. target_weekly (engine's raw recommendation, pre
-                      //      manual delta + band clamp). Last-resort fallback.
+                      // Resolution order — LIVE recompute beats stored
+                      // canonical because the latter can be stale (saved
+                      // before benchmark changes / commit rule changes /
+                      // engine fixes). Stored canonical is now only a
+                      // fallback for the rare case where live recompute
+                      // returns null (no recommendation at all).
+                      //   1. Net/Gross override on the matching timeline
+                      //   2. LIVE canonical recompute (NEW: was #3)
+                      //   3. canonical_net_weekly stored on recommendation
+                      //   4. target_weekly (engine's raw, last resort)
                       const centralWk = _fromOption
-                        ?? _canonical
                         ?? _liveCanonical
+                        ?? _canonical
                         ?? (c.recommendation?.target_weekly ?? 0);
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
