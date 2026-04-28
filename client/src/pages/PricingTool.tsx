@@ -3104,21 +3104,17 @@ export default function PricingTool() {
                       //       result by ≈ 1+admin) because computeOptionColumn
                       //       doesn't strip admin downstream.
                       const _canonical = c.recommendation?.canonical_net_weekly;
-                      const _fromOption = (() => {
-                        if (!targetTl) return null;
-                        // (1) Net override on the matching timeline wins
-                        if (typeof targetTl.netTotal === "number" && targetTl.netTotal > 0 && targetTl.weeks > 0) {
-                          return targetTl.netTotal / targetTl.weeks;
-                        }
-                        // (2) Gross override → run through the discount stack
-                        if (typeof targetTl.grossTotal === "number" && targetTl.grossTotal > 0) {
-                          const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
-                          const col = computeOptionColumn(targetTl, 0, discounts);
-                          if (!col.weeks) return null;
-                          return col.netTotal / col.weeks;
-                        }
-                        return null;
-                      })();
+                      // ── _fromOption (placeholder, computed AFTER _liveCanonical) ──
+                      // We need the engine's canonical grossWk to detect
+                      // auto-pinned grossTotal overrides (the Commercial
+                      // Proposal Gross input pre-fills with the computed
+                      // value; users sometimes "Save" without realising
+                      // they've now pinned the override). When the saved
+                      // grossTotal matches the engine's computed gross
+                      // within 2%, we treat it as NO override and let
+                      // _liveCanonical produce the right number.
+                      let _fromOption: number | null = null;
+                      let _fromOptionBranch: string = "none";
                       // Live recompute of canonical_net_weekly from saved data.
                       // Mirrors PricingTool's canonicalNetWeekly useMemo so cases
                       // saved BEFORE handleSave started persisting that field
@@ -3194,20 +3190,65 @@ export default function PricingTool() {
                         }
                         return result > 0 ? result : null;
                       })();
-                      // Resolution order — LIVE recompute beats stored
-                      // canonical because the latter can be stale (saved
-                      // before benchmark changes / commit rule changes /
-                      // engine fixes). Stored canonical is now only a
-                      // fallback for the rare case where live recompute
-                      // returns null (no recommendation at all).
-                      //   1. Net/Gross override on the matching timeline
-                      //   2. LIVE canonical recompute (NEW: was #3)
+
+                      // Now compute _fromOption with engine-baseline awareness.
+                      // Net override (branch 1) ALWAYS wins. Gross override
+                      // (branch 2) wins ONLY when the saved value differs
+                      // from the engine's computed gross by > 2% — otherwise
+                      // we treat it as auto-pinned (the gross input pre-fills
+                      // with the engine value) and let _liveCanonical run.
+                      if (targetTl) {
+                        if (typeof targetTl.netTotal === "number" && targetTl.netTotal > 0 && targetTl.weeks > 0) {
+                          _fromOption = targetTl.netTotal / targetTl.weeks;
+                          _fromOptionBranch = "net-override";
+                        } else if (typeof targetTl.grossTotal === "number" && targetTl.grossTotal > 0 && _liveCanonical) {
+                          // Compute engine's reference gross_total for this
+                          // option from _liveCanonical + admin + discounts.
+                          // If saved gross is within 2% of engine reference,
+                          // it's an auto-pin, not a deliberate override.
+                          const adminPct = c.recommendation?.admin_fee_pct ?? settings?.admin_fee_pct ?? 0;
+                          const discounts = (c.case_discounts ?? []) as Array<{ id: string; name: string; pct: number; enabled: boolean }>;
+                          let engineGrossWk = _liveCanonical * (1 + adminPct / 100);
+                          for (const d of discounts.filter((d: any) => d.enabled && d.id !== "commitment" && d.pct > 0)) {
+                            engineGrossWk = engineGrossWk / (1 - d.pct / 100);
+                          }
+                          const engineGrossTotal = engineGrossWk * targetTl.weeks;
+                          const drift = engineGrossTotal > 0 ? Math.abs(targetTl.grossTotal - engineGrossTotal) / engineGrossTotal : 1;
+                          if (drift > 0.02) {
+                            // Genuine override — different from what engine
+                            // would derive. Honor it.
+                            const col = computeOptionColumn(targetTl, 0, discounts);
+                            if (col.weeks) {
+                              _fromOption = col.netTotal / col.weeks;
+                              _fromOptionBranch = `gross-override(drift=${(drift * 100).toFixed(1)}%)`;
+                            }
+                          } else {
+                            _fromOptionBranch = `gross-auto-pinned(drift=${(drift * 100).toFixed(1)}%)`;
+                          }
+                        }
+                      }
+
+                      // Resolution order:
+                      //   1. _fromOption (Net override OR genuine Gross override)
+                      //   2. LIVE canonical recompute (matches the waterfall)
                       //   3. canonical_net_weekly stored on recommendation
                       //   4. target_weekly (engine's raw, last resort)
                       const centralWk = _fromOption
                         ?? _liveCanonical
                         ?? _canonical
                         ?? (c.recommendation?.target_weekly ?? 0);
+                      // Per-case telemetry. Logs which branch fired + the
+                      // candidate values for each branch so future "wrong
+                      // Target/wk" reports can be diagnosed from the browser
+                      // console without DB access.
+                      // eslint-disable-next-line no-console
+                      console.debug(
+                        `[Target/wk] ${c.project_name}: ${centralWk} (`
+                        + `fromOption=${_fromOption ?? "null"}/${_fromOptionBranch}, `
+                        + `live=${_liveCanonical ?? "null"}, `
+                        + `stored=${_canonical ?? "null"}, `
+                        + `target_weekly=${c.recommendation?.target_weekly ?? "null"})`,
+                      );
                       return (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
                         <TableCell className="font-semibold font-mono">{displayProjectName(c.project_name, c.revision_letter)}</TableCell>
