@@ -541,12 +541,20 @@ function emptyCase(): PricingCase {
   };
 }
 
-function OutcomeBadge({ outcome }: { outcome: string }) {
-  if (outcome === "won") return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Won</Badge>;
-  if (outcome === "lost") return <Badge className="bg-red-100 text-red-700 border-red-200">Lost</Badge>;
-  // "pending" is the stored value; UI label is "TBD" until the user marks
-  // the case Won or Lost (see handleSave auto-creation below).
-  return <Badge className="bg-amber-100 text-amber-700 border-amber-200">TBD</Badge>;
+function OutcomeBadge({ outcome, end_date }: { outcome: string; end_date?: string | null }) {
+  if (outcome === "won")  return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>;
+  if (outcome === "lost") return <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>;
+  // "pending" is the stored value; surface as one of TWO labels:
+  //   - "Open"  → engagement has a future end_date (signed verbally /
+  //              start date set / actively running) but not yet marked Won.
+  //   - "TBD"   → no end_date yet (still in negotiation), or end_date
+  //              already in the past (overdue close).
+  // This is purely a display-time derivation — the DB still stores 'pending'
+  // so the existing handleSave / sync-tbd-with-final-cases logic keeps working.
+  const today = new Date().toISOString().slice(0, 10);
+  const isOpen = !!end_date && end_date > today;
+  if (isOpen) return <Badge className="bg-blue-100 text-blue-700 border-blue-200">Open</Badge>;
+  return <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">TBD</Badge>;
 }
 
 function PostureBadge({ posture }: { posture: string }) {
@@ -3133,11 +3141,7 @@ export default function PricingTool() {
                                 : "—"}
                             </TableCell>
                             <TableCell>
-                              {p.outcome === "won"
-                                ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
-                                : p.outcome === "lost"
-                                ? <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>
-                                : <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">TBD</Badge>}
+                              <OutcomeBadge outcome={p.outcome} end_date={p.end_date} />
                             </TableCell>
                             {/* Inline End Date — quick edit without opening
                                 the row's full form. Saved via patchProposalInline.
