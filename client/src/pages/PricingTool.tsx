@@ -676,12 +676,16 @@ export default function PricingTool() {
   const [propSort, setPropSort] = useState<{ field: string; dir: "asc" | "desc" }>({ field: "proposal_date", dir: "desc" });
   const [disabledBars, setDisabledBars] = useState<Set<string>>(new Set());
   const [waterfallDuration, setWaterfallDuration] = useState<number | null>(null);
-  const [variableFeePct, setVariableFeePct] = useState(10);
+  const [variableFeePct, setVariableFeePct] = useState(0);
   const [adminFeePct, setAdminFeePct] = useState(8);
   const [markingOutcome, setMarkingOutcome] = useState(false);
   const [backfillingTbd, setBackfillingTbd] = useState(false);
   const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
+  // 3-option commercial-proposal block is hidden by default — shown only when
+  // the user toggles it on. The block already supports per-option weeks +
+  // commitment-discount selection; the toggle just gates visibility.
+  const [showThreeOptions, setShowThreeOptions] = useState(false);
   const [teamPreset, setTeamPreset] = useState<string>("1+2");
   const [benchmarks, setBenchmarks] = useState<CountryBenchmarkRow[]>([]);
   const [benchmarksLocal, setBenchmarksLocal] = useState<CountryBenchmarkRow[]>([]);
@@ -4715,15 +4719,23 @@ export default function PricingTool() {
                     {manualDelta !== 0 && <button onClick={() => setManualDelta(0)} className="text-[9px] text-muted-foreground hover:text-foreground underline ml-1 shrink-0">reset</button>}
                   </div>
                 </div>
-                {/* Variable fee */}
+                {/* Variable fee — free input (0-100%, .1 step) so the
+                    back-solve from an edited GROSSV figure can land on any
+                    percent, not just the old {0,10,20,30,40,50} preset. */}
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase font-semibold text-muted-foreground">Variable fee</Label>
-                  <Select value={String(variableFeePct)} onValueChange={v => setVariableFeePct(Number(v))}>
-                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {[0, 10, 20, 30, 40, 50].map(p => <SelectItem key={p} value={String(p)}>{p}%</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      type="number" min="0" max="100" step="0.1"
+                      value={variableFeePct}
+                      onChange={e => {
+                        const n = parseFloat(e.target.value);
+                        setVariableFeePct(Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0);
+                      }}
+                      className="h-8 text-sm pr-6"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">%</span>
+                  </div>
                 </div>
                 {/* Admin fees */}
                 <div className="space-y-1">
@@ -5054,7 +5066,42 @@ export default function PricingTool() {
                               {manualDelta > 0 ? "+" : ""}{fmt(manualDelta)} adj
                             </text>
                           )}
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="9" fill="#166534" fontWeight="bold">{fmt(recommendedNwf)}</text>
+                          {/* NET1 figure is editable in place. Typing a new
+                              value back-solves manualDelta so the rest of the
+                              pricing engine (band clamp, persistence, totals)
+                              keeps working unchanged. baseNet1 = recommendedNwf
+                              - manualDelta is the raw post-P1-P7 value before
+                              the manual nudge. */}
+                          <foreignObject x={x - 6} y={y - 16} width={barW + 12} height={15}>
+                            <input
+                              type="text"
+                              defaultValue={fmt(recommendedNwf)}
+                              key={`net1-${recommendedNwf}`}
+                              onBlur={(e) => {
+                                const parsed = parseInt((e.target.value || "").replace(/[^\d-]/g, ""), 10);
+                                if (!Number.isFinite(parsed) || parsed <= 0) {
+                                  e.target.value = fmt(recommendedNwf);
+                                  return;
+                                }
+                                const baseNet1 = recommendedNwf - manualDelta;
+                                setManualDelta(parsed - baseNet1);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                if (e.key === "Escape") {
+                                  (e.target as HTMLInputElement).value = fmt(recommendedNwf);
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                              title="Click to set NET1 directly. Back-solves the manual price adjustment."
+                              style={{
+                                width: "100%", height: "14px", textAlign: "center",
+                                fontSize: "9px", fontWeight: "bold", color: "#166534",
+                                background: "transparent", border: "none", outline: "none",
+                                padding: 0, fontFamily: "inherit", cursor: "text",
+                              }}
+                            />
+                          </foreignObject>
                           <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8.5" fill="#166534" fontWeight="700">NET1</text>
                           <text x={x + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalNet1)}</text>
                         </>;
@@ -5095,36 +5142,85 @@ export default function PricingTool() {
                         </>;
                       })()}
 
-                      {/* Variable fee delta bar + GROSSV total bar */}
-                      {hasMarkups && variableFeePct > 0 && (() => {
-                        const grossVVal = Math.round(grossWeeklyWaterfall * (1 + variableFeePct / 100));
+                      {/* Variable fee delta bar + GROSSV total bar.
+                          GROSSV bar always renders when there are markups so
+                          the figure stays editable even at variableFeePct=0
+                          (user can type a higher number to back-solve the var
+                          fee). The Var Fee delta bar only renders when var
+                          fee > 0 — at 0 there's nothing to show. */}
+                      {hasMarkups && (() => {
+                        const grossVVal = variableFeePct > 0
+                          ? Math.round(grossWeeklyWaterfall * (1 + variableFeePct / 100))
+                          : grossWeeklyWaterfall;
                         const varDelta = grossVVal - grossWeeklyWaterfall;
                         const totalGrossV = grossVVal * effectiveDuration;
 
-                        // Bar 1: Variable fee delta (dark green, shows +€X)
+                        // Bar 1: Variable fee delta (dark green, shows +€X) — only when > 0
                         const bi1 = bars.length + 3 + markupBars.length;
                         const x1 = xOf(bi1);
-                        const y1 = yOf(grossWeeklyWaterfall + varDelta);
-                        const h1 = Math.max(2, hOf(grossWeeklyWaterfall, grossWeeklyWaterfall + varDelta));
+                        const y1 = yOf(grossWeeklyWaterfall + Math.max(0, varDelta));
+                        const h1 = Math.max(2, hOf(grossWeeklyWaterfall, grossWeeklyWaterfall + Math.max(0, varDelta)));
 
-                        // Bar 2: GROSSV total (light green)
-                        const bi2 = bi1 + 1;
+                        // Bar 2: GROSSV total (light green) — always shown when hasMarkups
+                        const bi2 = variableFeePct > 0 ? bi1 + 1 : bi1;
                         const x2 = xOf(bi2);
                         const y2 = yOf(grossVVal);
                         const h2 = hOf(minV, grossVVal);
 
-                        return <>
-                          {/* Var fee delta bar */}
-                          <line x1={xOf(bi1 - 1) + barW} y1={yOf(grossWeeklyWaterfall)} x2={x1} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x1} y={y1} width={barW} height={h1} fill="#166534" rx="2" opacity="0.7" />
-                          <text x={x1 + barW/2} y={y1 - 9} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">+{fmt(varDelta)}</text>
-                          <text x={x1 + barW/2} y={y1 - 2} textAnchor="middle" fontSize="7" fill="#94a3b8">+{variableFeePct}%</text>
-                          <text x={x1 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#64748b">Var. Fee</text>
+                        // Back-solve handler: typing a new GROSSV updates
+                        // variableFeePct so (GROSS1 × (1 + var%)) == new value.
+                        // Clamped to [0, 100] — no negative variable fee.
+                        const onCommitGrossV = (newVal: number) => {
+                          if (!Number.isFinite(newVal) || newVal <= 0 || grossWeeklyWaterfall <= 0) return;
+                          const pct = ((newVal / grossWeeklyWaterfall) - 1) * 100;
+                          const clamped = Math.max(0, Math.min(100, Math.round(pct * 10) / 10));
+                          setVariableFeePct(clamped);
+                        };
 
-                          {/* GROSSV total bar */}
-                          <line x1={x1 + barW} y1={yOf(grossVVal)} x2={x2} y2={yOf(grossVVal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                        return <>
+                          {variableFeePct > 0 && (
+                            <>
+                              {/* Var fee delta bar */}
+                              <line x1={xOf(bi1 - 1) + barW} y1={yOf(grossWeeklyWaterfall)} x2={x1} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
+                              <rect x={x1} y={y1} width={barW} height={h1} fill="#166534" rx="2" opacity="0.7" />
+                              <text x={x1 + barW/2} y={y1 - 9} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">+{fmt(varDelta)}</text>
+                              <text x={x1 + barW/2} y={y1 - 2} textAnchor="middle" fontSize="7" fill="#94a3b8">+{variableFeePct}%</text>
+                              <text x={x1 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#64748b">Var. Fee</text>
+                            </>
+                          )}
+
+                          {/* GROSSV total bar — editable */}
+                          <line x1={(variableFeePct > 0 ? x1 + barW : xOf(bi2 - 1) + barW)} y1={yOf(grossVVal)} x2={x2} y2={yOf(grossVVal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
                           <rect x={x2} y={y2} width={barW} height={h2} fill="#86efac" rx="2" />
-                          <text x={x2 + barW/2} y={y2 - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(grossVVal)}</text>
+                          <foreignObject x={x2 - 6} y={y2 - 15} width={barW + 12} height={14}>
+                            <input
+                              type="text"
+                              defaultValue={fmt(grossVVal)}
+                              key={`grossv-${grossVVal}`}
+                              onBlur={(e) => {
+                                const parsed = parseInt((e.target.value || "").replace(/[^\d-]/g, ""), 10);
+                                if (!Number.isFinite(parsed) || parsed <= 0) {
+                                  e.target.value = fmt(grossVVal);
+                                  return;
+                                }
+                                onCommitGrossV(parsed);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                if (e.key === "Escape") {
+                                  (e.target as HTMLInputElement).value = fmt(grossVVal);
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                              title="Click to set GROSSV directly. Back-solves the variable fee %."
+                              style={{
+                                width: "100%", height: "13px", textAlign: "center",
+                                fontSize: "8px", fontWeight: "bold", color: "#166534",
+                                background: "transparent", border: "none", outline: "none",
+                                padding: 0, fontFamily: "inherit", cursor: "text",
+                              }}
+                            />
+                          </foreignObject>
                           <text x={x2 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="600">GROSSV</text>
                           <text x={x2 + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalGrossV)}</text>
                         </>;
@@ -5363,6 +5459,13 @@ export default function PricingTool() {
               <div className="border rounded-lg p-4 bg-muted/10 space-y-4">
                 <div className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Fee Summary</div>
 
+                {/* 2-column layout: Fee tables on the left, Past-Projects
+                    Benchmark on the right. Restored after the Apr-13
+                    "Major pricing UI overhaul" (8aac77d) wiped the original
+                    Historical Intelligence card. Filter is stricter now:
+                    SAME client AND SAME shareholder (fund_name) AND SAME
+                    country — single combined table, with averages. */}
+                <div className="grid grid-cols-1 lg:grid-cols-[3fr,2fr] gap-4 items-start">
                 {/* Fee summary tables */}
                 {(() => {
                   // Net = recommended weekly (what we communicate to client)
@@ -5525,6 +5628,125 @@ export default function PricingTool() {
                         );
                       })()}
 
+                {/* RIGHT COLUMN: Past-Projects Benchmark.
+                    Filter: same client_name AND same fund_name AND same
+                    country (case-insensitive trim, all three must match).
+                    Columns: project code, year, weeks, net fees, net/wk.
+                    Footer averages over the matched set. Empty state when
+                    no field matches or no proposal qualifies. */}
+                {(() => {
+                  const norm = (s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : "");
+                  const clientLc = norm(form.client_name);
+                  const fundLc = norm(form.fund_name);
+                  const countryLc = norm(form.country);
+                  const missingKeys = [
+                    !clientLc && "client",
+                    !fundLc && "shareholder (fund)",
+                    !countryLc && "country",
+                  ].filter(Boolean) as string[];
+
+                  const matches = (clientLc && fundLc && countryLc)
+                    ? analysisProposals.filter(p =>
+                        norm(p.client_name) === clientLc
+                        && norm(p.fund_name) === fundLc
+                        && norm(p.country) === countryLc
+                        && (p.total_fee != null || p.weekly_price > 0))
+                      .sort((a, b) => (b.proposal_date ?? "").localeCompare(a.proposal_date ?? ""))
+                    : [];
+
+                  const totalFees = matches.map(p =>
+                    p.total_fee ?? Math.round(p.weekly_price * (p.duration_weeks ?? 0)),
+                  );
+                  const weeklyFees = matches.map(p => p.weekly_price);
+                  const avgTotal = totalFees.length > 0
+                    ? totalFees.reduce((s, v) => s + v, 0) / totalFees.length
+                    : 0;
+                  const avgWeekly = weeklyFees.length > 0
+                    ? weeklyFees.reduce((s, v) => s + v, 0) / weeklyFees.length
+                    : 0;
+
+                  return (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50/30 overflow-hidden">
+                      <div className="bg-[#1A6571] text-white text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 flex items-center justify-between">
+                        <span>Past Projects — same client · shareholder · country</span>
+                        <span className="font-normal normal-case text-white/70 text-[10px]">
+                          {matches.length} match{matches.length === 1 ? "" : "es"}
+                        </span>
+                      </div>
+
+                      {missingKeys.length > 0 ? (
+                        <div className="p-3 text-[11px] text-muted-foreground italic">
+                          Set <span className="font-semibold text-foreground">{missingKeys.join(", ")}</span> on the case to see comparable past projects.
+                        </div>
+                      ) : matches.length === 0 ? (
+                        <div className="p-3 text-[11px] text-muted-foreground italic">
+                          No prior project for <span className="font-semibold text-foreground">{form.client_name}</span> under <span className="font-semibold text-foreground">{form.fund_name}</span> in <span className="font-semibold text-foreground">{form.country}</span>. This is the first.
+                        </div>
+                      ) : (
+                        <>
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/30">
+                                <TableHead className="text-[9px] py-1.5">Code</TableHead>
+                                <TableHead className="text-[9px] py-1.5 text-center">Year</TableHead>
+                                <TableHead className="text-[9px] py-1.5 text-center">Weeks</TableHead>
+                                <TableHead className="text-[9px] py-1.5 text-right">Net Fees</TableHead>
+                                <TableHead className="text-[9px] py-1.5 text-right">Net /wk</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {matches.map((p, i) => {
+                                const totalFee = p.total_fee ?? Math.round(p.weekly_price * (p.duration_weeks ?? 0));
+                                const year = (p.proposal_date ?? "").slice(0, 4) || "—";
+                                return (
+                                  <TableRow key={p.id ?? i}>
+                                    <TableCell className="text-[11px] font-semibold py-1">{p.project_name}</TableCell>
+                                    <TableCell className="text-[11px] text-center py-1 text-muted-foreground">{year}</TableCell>
+                                    <TableCell className="text-[11px] text-center py-1">{p.duration_weeks ?? "—"}</TableCell>
+                                    <TableCell className="text-[11px] text-right py-1 font-mono font-semibold text-emerald-700">{fmtC(totalFee)}</TableCell>
+                                    <TableCell className="text-[11px] text-right py-1 font-mono text-emerald-600">{fmtC(p.weekly_price)}</TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                              {/* Average row — visually distinct */}
+                              <TableRow className="bg-blue-100/50 border-t-2 border-blue-300">
+                                <TableCell className="text-[10px] font-bold uppercase tracking-wide text-blue-900 py-1.5" colSpan={3}>
+                                  Average ({matches.length})
+                                </TableCell>
+                                <TableCell className="text-[11px] text-right py-1.5 font-mono font-bold text-blue-900">{fmtC(avgTotal)}</TableCell>
+                                <TableCell className="text-[11px] text-right py-1.5 font-mono font-bold text-blue-900">{fmtC(avgWeekly)}</TableCell>
+                              </TableRow>
+                            </TableBody>
+                          </Table>
+                          <div className="px-3 py-1.5 text-[9px] text-muted-foreground border-t bg-white/60">
+                            Reference only — not blended into the recommendation. Use as a sanity check vs. what we have charged this account before.
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+                </div>{/* end 2-column grid */}
+
+                      {/* Toggle for the 3-option commercial proposal block.
+                          Hidden by default — most cases ship as a single
+                          quote and the 3-option layout is noise. When ON,
+                          the block below renders and the user can pick weeks
+                          + commitment % per option. */}
+                      <div className="flex items-center justify-between border rounded-lg px-3 py-1.5 bg-muted/20">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                          3-option commercial proposal
+                        </span>
+                        <Button
+                          size="sm"
+                          variant={showThreeOptions ? "default" : "outline"}
+                          className="h-6 text-[10px] px-2"
+                          onClick={() => setShowThreeOptions(v => !v)}
+                        >
+                          {showThreeOptions ? "Hide" : "Show"}
+                        </Button>
+                      </div>
+
                       {/* ── Commercial Proposal — three timeline options ──
                           The "12/16/20 weeks" comparison block the client
                           sees in the proposal deck. Same weekly price, three
@@ -5537,7 +5759,7 @@ export default function PricingTool() {
                           Print button opens a standalone formatted page and
                           triggers the native print dialog ("Save as PDF"
                           destination for PDF output). */}
-                      {(() => {
+                      {showThreeOptions && (() => {
                         const timelines = caseTimelines;
                         // Math now lives in client/src/lib/proposalOptions.ts so the
                         // Pricing Cases LIST page can compute the same Option-2
