@@ -940,7 +940,10 @@ export default function PricingTool() {
       staffing: c.staffing ?? [],
     });
     setWaterfallDuration(null); // reset so it reads from form.duration_weeks
-    setManualDelta(0);
+    // Restore the saved NET1 manual override (typed-in figure or +/-500 nudge).
+    // Stored in recommendation.manual_delta at save time; defaults to 0 for
+    // older cases that pre-date editable NET1.
+    setManualDelta(typeof c.recommendation?.manual_delta === "number" ? c.recommendation.manual_delta : 0);
     setView("form");
     if (c.case_discounts?.length) {
       // Ensure saved cases that pre-date the commitment discount get the new
@@ -2308,7 +2311,13 @@ export default function PricingTool() {
         ...form,
         pe_owned: form.pe_owned ? 1 : 0,
         status,
-        recommendation: recommendation ?? null,
+        // Bake manualDelta into the saved recommendation jsonb so the
+        // user-typed NET1 override (or +/-500 nudges) survives reload.
+        // recommendation is recomputed from inputs on every render, so we
+        // splice manual_delta in at save time and read it back in openCase.
+        recommendation: recommendation
+          ? { ...recommendation, manual_delta: manualDelta }
+          : null,
         case_discounts: caseDiscounts,
         case_timelines: caseTimelines,
       };
@@ -4944,8 +4953,17 @@ export default function PricingTool() {
             // Layout: base + layers + NET1 + markups + (GROSS1?) + (VarFee + GROSSV if variable>0 & markups)
             // Manual price adjustment (manualDelta) is folded directly INTO NET1 and overrides the band clamp.
             // It is NOT rendered as a separate bar — it becomes the new NET1 value.
-            const hasGrossV = hasMarkups && variableFeePct > 0;
-            const totalBarCount = 1 + bars.length + 1 + markupBars.length + (hasMarkups ? 1 : 0) + (hasGrossV ? 2 : 0);
+            // GROSSV bar now always renders when hasMarkups (so the figure
+            // stays editable even at var fee = 0). The variable-fee delta
+            // bar only renders when var fee > 0 — at 0 there's nothing to
+            // show. Slot count must reflect both, otherwise GROSSV's xOf()
+            // exceeds the chart width and the figure renders off-screen.
+            const hasGrossV = hasMarkups;
+            const hasVarFeeDelta = hasMarkups && variableFeePct > 0;
+            const totalBarCount = 1 + bars.length + 1 + markupBars.length
+              + (hasMarkups ? 1 : 0)        // GROSS1
+              + (hasGrossV ? 1 : 0)         // GROSSV (always when hasMarkups)
+              + (hasVarFeeDelta ? 1 : 0);   // Var. Fee delta bar (only when > 0)
             const W = 900; const H = 260;
             const TH = 16; // toggle row height at top
             const chartBot = H - 22; const chartTop = TH + 12;
@@ -5155,13 +5173,19 @@ export default function PricingTool() {
                         const varDelta = grossVVal - grossWeeklyWaterfall;
                         const totalGrossV = grossVVal * effectiveDuration;
 
-                        // Bar 1: Variable fee delta (dark green, shows +€X) — only when > 0
-                        const bi1 = bars.length + 3 + markupBars.length;
+                        // Slot bookkeeping: GROSS1 sits at bars.length+2+markupBars.length.
+                        // When var fee > 0 we render Var-Fee delta bar at +1 then
+                        // GROSSV at +2. When var fee = 0 we skip the delta bar
+                        // and render GROSSV at +1.
+                        const grossOneSlot = bars.length + 2 + markupBars.length;
+                        const bi1 = grossOneSlot + 1;                       // Var-Fee delta slot
                         const x1 = xOf(bi1);
                         const y1 = yOf(grossWeeklyWaterfall + Math.max(0, varDelta));
                         const h1 = Math.max(2, hOf(grossWeeklyWaterfall, grossWeeklyWaterfall + Math.max(0, varDelta)));
 
-                        // Bar 2: GROSSV total (light green) — always shown when hasMarkups
+                        // GROSSV always shown when hasMarkups; sits one slot
+                        // past Var-Fee delta when present, otherwise directly
+                        // after GROSS1.
                         const bi2 = variableFeePct > 0 ? bi1 + 1 : bi1;
                         const x2 = xOf(bi2);
                         const y2 = yOf(grossVVal);
@@ -6149,10 +6173,16 @@ export default function PricingTool() {
                     const opt3 = computeOption(tl[2] ?? { weeks: dur + 8, commitPct: 7 });
 
                     // A deal gets the 3-option narrative when the user has
-                    // actually configured non-default / non-zero commitment
-                    // percentages on at least one option. Otherwise the
-                    // single-option fallback paragraph is used.
-                    const hasThreeOptions = tl.length >= 2
+                    // (a) explicitly kept proposal_options_count = 3 (the
+                    // 1/3 toggle in the Commercial Proposal block), AND
+                    // (b) actually configured non-default / non-zero
+                    // commitment percentages on at least one option.
+                    // When the user toggled to 1-option mode, fall through
+                    // to the NO_COMMITMENT_BLOCK single-paragraph variant
+                    // — the contract should reflect what was offered, not
+                    // a stale 3-option boilerplate.
+                    const hasThreeOptions = (form.proposal_options_count ?? 3) === 3
+                      && tl.length >= 2
                       && tl.some(t => (t.commitPct ?? 0) > 0 || t.weeks !== dur);
 
                     // Build variable map for all replacements
