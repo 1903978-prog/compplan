@@ -236,8 +236,14 @@ export default function OrgChart() {
   // Build a tree from parent_role_key. Direct reports of CEO render in row 2.
   // Roles that report to a non-CEO role (e.g. Pricing → CFO) render beneath
   // their parent in row 3+. Use a recursive helper.
+  // Special governance/peer roles render side-by-side with CEO, NOT in
+  // the standard directReports row.
+  const PEER_ROLE_RX = /^(president|founder|chairman|board)$/i;
+  const isPeerRole = (key: string) => PEER_ROLE_RX.test(key);
   const childrenOf = (key: string): OrgRole[] =>
-    roles.filter(r => r.parent_role_key === key).sort((a, b) => a.sort_order - b.sort_order);
+    roles
+      .filter(r => r.parent_role_key === key && !isPeerRole(r.role_key))
+      .sort((a, b) => a.sort_order - b.sort_order);
   const directReports = ceo ? childrenOf(ceo.role_key) : [];
 
   const updateReportsTo = async (role: OrgRole, newParent: string | null) => {
@@ -448,17 +454,47 @@ export default function OrgChart() {
         </DialogContent>
       </Dialog>
 
-      {/* CEO row */}
-      {ceo && (
-        <div className="flex justify-center mb-3">
-          <RoleCard
-            role={ceo} highlight
-            knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
-            onClick={() => setOpenRole(ceo)}
-            onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
-          />
-        </div>
-      )}
+      {/* CEO row — President (if exists) renders to the LEFT of CEO with a
+          solid horizontal connector. President is identified by role_key
+          ("president" / "founder" / "chairman" / "board"). It's a peer of
+          CEO conceptually, not a subordinate, so we render it side-by-side
+          rather than above. The connector is a solid line — no L-bend —
+          to signal "horizontal authority/governance" relationship. */}
+      {ceo && (() => {
+        const president = roles.find(r => /^(president|founder|chairman|board)$/i.test(r.role_key));
+        if (!president) {
+          return (
+            <div className="flex justify-center mb-3">
+              <RoleCard
+                role={ceo} highlight
+                knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
+                onClick={() => setOpenRole(ceo)}
+                onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
+              />
+            </div>
+          );
+        }
+        return (
+          <div className="flex justify-center mb-3">
+            <div className="flex items-center gap-0">
+              <RoleCard
+                role={president} highlight
+                knowledgeCount={knowledge.filter(k => k.role_key === president.role_key).length}
+                onClick={() => setOpenRole(president)}
+                onAddKnowledge={() => setAddKnowledgeForRole(president)}
+              />
+              {/* Solid horizontal connector — peer relationship */}
+              <div className="h-0.5 w-12 bg-foreground/60" />
+              <RoleCard
+                role={ceo} highlight
+                knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
+                onClick={() => setOpenRole(ceo)}
+                onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
+              />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Direct reports row + connector lines */}
       {ceo && directReports.length > 0 && (
@@ -773,34 +809,17 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
           </Button>
         </div>
 
-        {role.goals.length > 0 && (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
-              <Target className="w-3 h-3" /> Goals
-            </div>
-            <ul className="text-xs space-y-0.5">
-              {role.goals.slice(0, highlight ? 5 : 3).map((g, i) => (
-                <li key={i} className="leading-snug">• {g}</li>
-              ))}
-              {!highlight && role.goals.length > 3 && (
-                <li className="text-[10px] text-muted-foreground italic">+{role.goals.length - 3} more</li>
-              )}
-            </ul>
-          </div>
-        )}
-
-        {role.okrs.length > 0 && (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
-              <Sparkles className="w-3 h-3" /> OKRs ({role.okrs.length})
-            </div>
-            <ul className="text-[11px] space-y-0.5">
-              {role.okrs.slice(0, highlight ? 3 : 2).map((o, i) => (
-                <li key={i} className="font-medium leading-snug">{i + 1}. {o.objective}</li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {/* Goals + OKRs are intentionally HIDDEN on the tile — they live in
+            the role detail dialog (click the card to open it). Tiles stay
+            compact + scannable; the card shows only counters + status. */}
+        <div className="flex items-center gap-3 pt-1 text-[10px] text-muted-foreground">
+          {role.goals.length > 0 && (
+            <span className="flex items-center gap-1"><Target className="w-3 h-3" /> {role.goals.length}</span>
+          )}
+          {role.okrs.length > 0 && (
+            <span className="flex items-center gap-1"><Sparkles className="w-3 h-3" /> {role.okrs.length}</span>
+          )}
+        </div>
 
         <div className="flex items-center justify-between pt-2 border-t text-[11px]">
           <div className="flex items-center gap-1 text-muted-foreground">
@@ -883,42 +902,55 @@ function RoleDetailDialog({
           </section>
         )}
 
-        {/* Knowledge / instructions */}
+        {/* + Add direct report — quick-create a role under THIS one without
+            leaving the dialog. Uses the same /api/org-chart POST as the
+            page-level Add Role button, with parent_role_key pre-set. */}
+        <section className="mt-3">
+          <Button
+            size="sm" variant="outline" className="h-7 text-xs"
+            onClick={() => {
+              const name = prompt(`New direct report under ${role.role_name} — role title (e.g. "VP Sales"):`)?.trim();
+              if (!name) return;
+              const personName = prompt("Person's name (leave blank if unfilled):")?.trim() ?? "";
+              const kind = (confirm("Is this an AI agent? (Cancel = human)") ? "agent" : "human");
+              fetch("/api/org-chart", {
+                method: "POST", credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  role_name: name,
+                  person_name: personName || null,
+                  parent_role_key: role.role_key,
+                  kind,
+                  status: "active",
+                }),
+              }).then(async r => {
+                if (!r.ok) {
+                  const e = await r.json().catch(() => ({}));
+                  alert(`Failed: ${e.message ?? r.status}`);
+                  return;
+                }
+                // The parent component owns the roles state — easiest
+                // way to refresh is a hard reload of the page since we
+                // don't have a setter prop here.
+                window.location.reload();
+              });
+            }}
+          >
+            <UserPlus className="w-3.5 h-3.5 mr-1" /> Add direct report under {role.role_name}
+          </Button>
+        </section>
+
+        {/* Knowledge / instructions — COLLAPSIBLE-BY-TITLE.
+            Each note shows just the title + metadata; click the row to
+            expand the body. Click again to collapse. + Add (paste) and
+            📎 Upload (file → server-side text extraction) buttons. */}
         <section className="mt-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="font-semibold text-sm flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-primary" />
-              Knowledge / instructions
-              <span className="text-xs font-normal text-muted-foreground">({knowledge.length})</span>
-            </h4>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onAddKnowledgeFromDialog}>
-              <Plus className="w-3 h-3 mr-1" /> Add
-            </Button>
-          </div>
-          {knowledge.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic px-1">
-              No knowledge yet. Click "Add" to paste instructions, playbooks, or context this role should always remember.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {knowledge.map(n => (
-                <div key={n.id} className="border rounded p-2 bg-muted/20 text-xs">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <div className="flex items-center gap-2 flex-wrap min-w-0">
-                      {n.title && <span className="font-semibold truncate">{n.title}</span>}
-                      <Badge variant="outline" className="text-[9px] py-0 h-4">{n.source}</Badge>
-                      <span className="text-[10px] text-muted-foreground">{fmtDate(n.created_at)}</span>
-                    </div>
-                    <Button size="sm" variant="ghost" className="h-6 px-1.5"
-                      onClick={() => onArchiveKnowledge(n)}
-                      title="Archive (kept in log)"
-                    ><Archive className="w-3 h-3" /></Button>
-                  </div>
-                  <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed">{n.content}</pre>
-                </div>
-              ))}
-            </div>
-          )}
+          <KnowledgeBlock
+            knowledge={knowledge}
+            roleKey={role.role_key}
+            onAddKnowledgeFromDialog={onAddKnowledgeFromDialog}
+            onArchiveKnowledge={onArchiveKnowledge}
+          />
         </section>
 
         {/* Goals — editable. One textarea per goal, +Add button at the
@@ -1082,5 +1114,155 @@ function RoleDetailDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Knowledge block: collapsed-by-title list + add (paste) + upload (file).
+// Clicking a row toggles the body. The first paste creates a new agent
+// _knowledge row via POST /api/agent-knowledge; uploads go through
+// /api/agent-knowledge/upload which extracts text server-side from
+// .txt / .md / .pdf / .pptx / .docx and stores it in the same table.
+//
+// Persistence model the user asked about: documents land in this table
+// → loaded on every brief / agent run as part of the role's prompt.
+// LLMs don't fine-tune; "learning" = same context every time.
+function KnowledgeBlock({
+  knowledge,
+  roleKey,
+  onAddKnowledgeFromDialog,
+  onArchiveKnowledge,
+}: {
+  knowledge: KnowledgeNote[];
+  roleKey: string;
+  onAddKnowledgeFromDialog: () => void;
+  onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
+}) {
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  function toggle(id: number) {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("role_key", roleKey);
+      const r = await fetch("/api/agent-knowledge/upload", {
+        method: "POST", credentials: "include",
+        body: fd,
+      });
+      if (!r.ok) {
+        const errBody = await r.json().catch(() => ({}));
+        throw new Error(errBody.message ?? `HTTP ${r.status}`);
+      }
+      // Hard reload so parent re-fetches knowledge list.
+      window.location.reload();
+    } catch (err) {
+      setUploadError((err as Error).message);
+      setUploading(false);
+    } finally {
+      e.target.value = ""; // allow re-upload of the same file
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        <h4 className="font-semibold text-sm flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-primary" />
+          Knowledge / instructions
+          <span className="text-xs font-normal text-muted-foreground">({knowledge.length})</span>
+        </h4>
+        <div className="flex items-center gap-1">
+          {/* Upload — accepts text + Office docs; server extracts text. */}
+          <label className="cursor-pointer">
+            <input
+              type="file"
+              className="hidden"
+              accept=".txt,.md,.pdf,.docx,.pptx,.csv"
+              onChange={handleFile}
+              disabled={uploading}
+            />
+            <span className="inline-flex items-center gap-1 h-7 px-2 text-xs rounded border border-input bg-background hover:bg-accent">
+              {uploading ? "Uploading…" : <><Plus className="w-3 h-3" /> Upload doc</>}
+            </span>
+          </label>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onAddKnowledgeFromDialog}>
+            <Plus className="w-3 h-3 mr-1" /> Paste text
+          </Button>
+        </div>
+      </div>
+
+      {uploadError && (
+        <p className="text-[10px] text-destructive italic mb-2">Upload failed: {uploadError}</p>
+      )}
+
+      {knowledge.length === 0 ? (
+        <p className="text-xs text-muted-foreground italic px-1">
+          No knowledge yet. <strong>Paste text</strong> for instructions / playbooks, or <strong>Upload doc</strong> for PDFs / PPTX / DOCX / TXT — text is extracted server-side and persisted so the agent reads it on every run.
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {knowledge.map(n => {
+            const isOpen = expandedIds.has(n.id);
+            return (
+              <div key={n.id} className="border rounded bg-muted/20 text-xs overflow-hidden">
+                {/* Title row — click to toggle body. */}
+                <button
+                  type="button"
+                  onClick={() => toggle(n.id)}
+                  className="w-full flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-muted/40 text-left"
+                >
+                  <div className="flex items-center gap-2 flex-wrap min-w-0">
+                    <span className="text-muted-foreground shrink-0">{isOpen ? "▾" : "▸"}</span>
+                    <span className="font-semibold truncate">{n.title || "(untitled)"}</span>
+                    <Badge variant="outline" className="text-[9px] py-0 h-4 shrink-0">{n.source}</Badge>
+                    <span className="text-[10px] text-muted-foreground shrink-0">{fmtDate(n.created_at)}</span>
+                  </div>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => { e.stopPropagation(); void onArchiveKnowledge(n); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void onArchiveKnowledge(n); } }}
+                    className="cursor-pointer text-muted-foreground hover:text-foreground p-1 shrink-0"
+                    title="Archive (kept in log)"
+                  ><Archive className="w-3 h-3" /></span>
+                </button>
+                {/* Body — only when expanded. */}
+                {isOpen && (
+                  <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed px-2 pb-2 border-t">
+                    {n.content}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Persistence note — answers the user's question: how does an LLM
+          agent's "learning" persist? Documents stored here are loaded on
+          every brief run as context. There is NO fine-tuning — the agent
+          re-reads this every time. Limit: total tokens per role × every
+          brief. ~50-100 pages per role is the practical ceiling before
+          context-window compression kicks in. */}
+      {knowledge.length > 0 && (
+        <p className="text-[10px] text-muted-foreground italic mt-2">
+          Persistence: every paste / upload is stored in <code>agent_knowledge</code> and re-read by the agent on every run. No fine-tuning happens — the agent reads this same text every time it wakes.
+        </p>
+      )}
+    </div>
   );
 }

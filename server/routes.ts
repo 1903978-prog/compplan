@@ -379,6 +379,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Multipart file upload → extract text → store in agent_knowledge.
+  // Accepts the file as raw body (matching the existing proposal-attachment
+  // pattern), with role_key + filename in headers. Text formats are read
+  // as UTF-8; binary formats (PDF / PPTX / DOCX) get a placeholder note
+  // so the role's brief still surfaces "this document was uploaded but
+  // text wasn't extracted" — the user can re-upload with paste-text once
+  // they convert. Adding pdf-parse / mammoth / jszip later turns the
+  // placeholder into real extracted text.
+  app.post("/api/agent-knowledge/upload",
+    requireAuth,
+    (req, _res, next) => {
+      const ct = req.headers["content-type"] || "";
+      // Multipart parser would be ideal — but to avoid pulling multer in,
+      // we use the same raw-body trick the proposals attachment route uses,
+      // and ask the client to send the file body directly with role_key +
+      // filename in custom headers.
+      if (!ct.includes("application/json")) {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => { (req as any).rawBody = Buffer.concat(chunks); next(); });
+        req.on("error", next);
+      } else {
+        next();
+      }
+    },
+    async (req, res) => {
+      try {
+        // The browser FormData posts multipart/form-data — we need a
+        // tiny multipart parser since we deliberately don't depend on
+        // multer. Look for the boundary, find the file part.
+        const ct = (req.headers["content-type"] || "") as string;
+        const boundaryMatch = ct.match(/boundary=([^;]+)/);
+        if (!boundaryMatch) {
+          res.status(400).json({ message: "Missing multipart boundary" });
+          return;
+        }
+        const boundary = `--${boundaryMatch[1].trim()}`;
+        const raw: Buffer = (req as any).rawBody;
+        if (!raw || raw.length === 0) {
+          res.status(400).json({ message: "No file data received" });
+          return;
+        }
+        // Split on boundary, parse parts.
+        const text = raw.toString("binary"); // keep bytes intact
+        const parts = text.split(boundary).slice(1, -1); // strip preamble + epilogue
+        let role_key = "";
+        let filename = "uploaded.txt";
+        let mimeType = "text/plain";
+        let fileBytes: Buffer | null = null;
+        for (const part of parts) {
+          // headers / body separator is \r\n\r\n
+          const sep = part.indexOf("\r\n\r\n");
+          if (sep < 0) continue;
+          const headers = part.slice(0, sep);
+          const body    = part.slice(sep + 4, part.length - 2); // trim trailing \r\n
+          const dispMatch = headers.match(/Content-Disposition:[^\r\n]*name="([^"]+)"(?:;\s*filename="([^"]*)")?/i);
+          if (!dispMatch) continue;
+          const fieldName = dispMatch[1];
+          const fname = dispMatch[2];
+          if (fieldName === "role_key") {
+            role_key = Buffer.from(body, "binary").toString("utf-8").trim();
+          } else if (fieldName === "file") {
+            filename = fname || filename;
+            const ctMatch = headers.match(/Content-Type:\s*([^\r\n;]+)/i);
+            mimeType = ctMatch ? ctMatch[1].trim() : mimeType;
+            fileBytes = Buffer.from(body, "binary");
+          }
+        }
+        if (!role_key) { res.status(400).json({ message: "role_key field missing" }); return; }
+        if (!fileBytes) { res.status(400).json({ message: "file field missing" }); return; }
+
+        // Extract text by extension/MIME. Server-side libs aren't installed
+        // for PDF/DOCX/PPTX yet — we store a placeholder so the upload still
+        // lands in the agent's context, and the user can re-paste real text.
+        const lower = filename.toLowerCase();
+        const isText = /\.(txt|md|csv|tsv|json|log)$/i.test(lower)
+          || mimeType.startsWith("text/")
+          || mimeType === "application/json";
+        let extracted = "";
+        if (isText) {
+          extracted = fileBytes.toString("utf-8");
+          // Cap at 100k chars (~25k tokens) to avoid blowing context limits.
+          if (extracted.length > 100_000) {
+            extracted = extracted.slice(0, 100_000) + "\n\n[…truncated to 100k chars]";
+          }
+        } else {
+          extracted = `[Binary document uploaded: ${filename} (${mimeType}, ${fileBytes.length} bytes).\n`
+            + `Server-side text extraction for this format is not yet enabled.\n`
+            + `For now, copy/paste the relevant text from the document into a new "Paste text" knowledge note so the agent can read it.\n`
+            + `Tracked here so the role brief still notes the upload.]`;
+        }
+
+        const row = {
+          role_key,
+          content: extracted.slice(0, 12000),
+          title: filename.slice(0, 200),
+          source: "document" as const,
+          tags: [],
+          status: "active" as const,
+          created_by_role: null as string | null,
+          created_at: new Date().toISOString(),
+        };
+        const inserted = await db.insert(agentKnowledge).values(row as any).returning();
+        res.status(201).json(inserted[0]);
+      } catch (e) {
+        console.error("[agent-knowledge/upload]", e);
+        res.status(500).json({ message: (e as Error).message });
+      }
+    },
+  );
+
   app.put("/api/agent-knowledge/:id", requireAuth, async (req, res) => {
     try {
       const id = safeInt(req.params.id);
