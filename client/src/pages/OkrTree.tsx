@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, UserPlus, AlertTriangle, ChevronRight, ChevronDown, Bot, User } from "lucide-react";
+import { Target, UserPlus, AlertTriangle, Bot, User } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 // ── EBITDA Growth Driver Tree ────────────────────────────────────────────────
@@ -11,19 +11,11 @@ import { useToast } from "@/hooks/use-toast";
 // When NO existing role fits a branch, set ownersRoleKeys = [] AND populate
 // hireSuggestion — the page renders a red "Hire suggested" callout the CEO
 // can act on.
-//
-// Agent assignment principle: each branch points to the role whose objective
-// function most directly drives that node. A node can have 1 primary owner
-// + N supporting owners (we list primary first; UI badges them in colour).
-//
-// To rewire ownership: edit the TREE constant below + push. The org chart
-// still drives goals/OKRs/tasks — this page is a structural map of WHO
-// works on WHAT to grow EBITDA, not an OKR replacement.
 
 interface OkrNode {
   id: string;
   label: string;
-  ownersRoleKeys: string[];                                // [] = nobody → hire
+  ownersRoleKeys: string[];
   hireSuggestion?: { roleName: string; rationale: string };
   children?: OkrNode[];
 }
@@ -45,20 +37,20 @@ const TREE: OkrNode = {
               id: "D2", label: "Increase media exposure",
               ownersRoleKeys: ["marketing-manager"],
               children: [
-                { id: "E1", label: "LinkedIn",          ownersRoleKeys: ["marketing-manager"] },
-                { id: "E2", label: "Website",           ownersRoleKeys: ["marketing-manager"] },
-                { id: "E3", label: "Medium / Substack", ownersRoleKeys: ["marketing-manager"] },
+                { id: "E1", label: "LinkedIn",            ownersRoleKeys: ["marketing-manager"] },
+                { id: "E2", label: "Website",             ownersRoleKeys: ["marketing-manager"] },
+                { id: "E3", label: "Medium / Substack",   ownersRoleKeys: ["marketing-manager"] },
                 { id: "E4", label: "PR / press releases", ownersRoleKeys: ["marketing-manager"] },
-                { id: "E5", label: "Articles in press", ownersRoleKeys: ["marketing-manager"] },
-                { id: "E6", label: "Top-tier mentions", ownersRoleKeys: ["marketing-manager"] },
+                { id: "E5", label: "Articles in press",   ownersRoleKeys: ["marketing-manager"] },
+                { id: "E6", label: "Top-tier mentions",   ownersRoleKeys: ["marketing-manager"] },
               ],
             },
             {
               id: "D3", label: "Send more cold emails",
-              ownersRoleKeys: [],     // no SDR / outbound lead today
+              ownersRoleKeys: [],
               hireSuggestion: {
                 roleName: "SDR Lead (Outbound)",
-                rationale: "Sales Director is consumed by proposal + close work. A dedicated SDR Lead owns outbound volume, ICP list-building, sequencing, and the send-cadence — frees Sales Director to focus on conversion + close.",
+                rationale: "Sales Director is consumed by proposal + close work. A dedicated SDR Lead owns outbound volume, ICP list-building, sequencing, and the send-cadence.",
               },
               children: [
                 { id: "E7", label: "More ICP volume",    ownersRoleKeys: [], hireSuggestion: { roleName: "SDR Lead (Outbound)", rationale: "Owns ICP list growth + targeting." } },
@@ -71,7 +63,7 @@ const TREE: OkrNode = {
               ownersRoleKeys: [],
               hireSuggestion: {
                 roleName: "Head of Partnerships",
-                rationale: "Channel partners (PE funds, complementary firms, ex-MBB Partners) compound outbound 3-5×. Today nobody owns the partnership pipeline — CEO does it ad-hoc. Hire when ≥3 active partners need management.",
+                rationale: "Channel partners (PE funds, complementary firms, ex-MBB Partners) compound outbound 3-5×. Today nobody owns the partnership pipeline.",
               },
             },
           ],
@@ -116,18 +108,12 @@ const TREE: OkrNode = {
         {
           id: "C4", label: "Increase upsell",
           ownersRoleKeys: [],
-          hireSuggestion: {
-            roleName: "Head of Accounts",
-            rationale: "Upsell on existing engagements is a Delivery Director side-hustle today — nobody owns 'expand the SOW' as a primary KPI. Head of Accounts owns NRR, expansion bookings, and the cross-sell motion across the won-portfolio.",
-          },
+          hireSuggestion: { roleName: "Head of Accounts", rationale: "Owns NRR, expansion bookings, and the cross-sell motion across the won-portfolio." },
         },
         {
           id: "C5", label: "Increase cross-sell",
           ownersRoleKeys: [],
-          hireSuggestion: {
-            roleName: "Head of Accounts",
-            rationale: "Same role as upsell — bundle them under one accountable owner.",
-          },
+          hireSuggestion: { roleName: "Head of Accounts", rationale: "Same role as upsell — bundle them under one accountable owner." },
         },
         { id: "C6", label: "Improve NPS",                ownersRoleKeys: ["delivery-director"] },
         { id: "C7", label: "Institutionalize accounts",  ownersRoleKeys: ["delivery-director", "ceo"] },
@@ -141,8 +127,8 @@ const TREE: OkrNode = {
           id: "C8", label: "Ensure capacity",
           ownersRoleKeys: ["hiring-manager"],
           children: [
-            { id: "D9",  label: "Hiring process",    ownersRoleKeys: ["hiring-manager"] },
-            { id: "D10", label: "Attractive EVP",    ownersRoleKeys: ["hiring-manager", "marketing-manager"] },
+            { id: "D9",  label: "Hiring process",     ownersRoleKeys: ["hiring-manager"] },
+            { id: "D10", label: "Attractive EVP",     ownersRoleKeys: ["hiring-manager", "marketing-manager"] },
             { id: "D11", label: "Competitive salary", ownersRoleKeys: ["hiring-manager", "cfo"] },
             { id: "D12", label: "Anticipate churn",   ownersRoleKeys: ["hiring-manager"] },
           ],
@@ -161,7 +147,6 @@ const TREE: OkrNode = {
   ],
 };
 
-// ── Render ────────────────────────────────────────────────────────────────
 type OrgAgent = {
   id: number;
   role_key: string;
@@ -171,24 +156,39 @@ type OrgAgent = {
   kind: "agent" | "human";
 };
 
-function flattenIds(n: OkrNode, acc: string[] = []): string[] {
-  acc.push(n.id);
-  for (const c of n.children ?? []) flattenIds(c, acc);
-  return acc;
+// ── Tier styling per ID prefix (matches the slide's colour ramp) ────────────
+//   A → dark teal (root)
+//   B → cyan, bold
+//   C → light cyan
+//   D → outlined slate
+//   E → outlined slate, smaller
+function tierStyle(depth: number): string {
+  switch (depth) {
+    case 0: return "bg-[#0E5365] text-white border-[#0E5365] font-bold";
+    case 1: return "bg-[#1A6571] text-white border-[#1A6571] font-semibold";
+    case 2: return "bg-[#3FB6C5]/20 text-[#0E5365] border-[#3FB6C5] font-semibold";
+    case 3: return "bg-white text-[#1A6571] border-[#3FB6C5]";
+    case 4: return "bg-white text-slate-700 border-slate-300 text-[11px]";
+    default: return "bg-white text-slate-700 border-slate-300 text-[11px]";
+  }
+}
+
+// Approximate box width per tier — enough for the longest label at that level.
+function tierWidth(depth: number): number {
+  switch (depth) {
+    case 0: return 110;
+    case 1: return 200;
+    case 2: return 200;
+    case 3: return 220;
+    case 4: return 200;
+    default: return 200;
+  }
 }
 
 export default function OkrTree() {
   const { toast } = useToast();
   const [agents, setAgents] = useState<OrgAgent[]>([]);
   const [loading, setLoading] = useState(true);
-  // Default: collapse E-level (the leafiest) so the tree is scannable;
-  // user can drill in by clicking any branch.
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const all = new Set(flattenIds(TREE));
-    // Auto-collapse E-level nodes (those whose ID starts with E)
-    for (const id of Array.from(all)) if (id.startsWith("E")) all.delete(id);
-    return all;
-  });
 
   useEffect(() => {
     fetch("/api/org-chart", { credentials: "include" })
@@ -206,8 +206,6 @@ export default function OkrTree() {
     return m;
   }, [agents]);
 
-  // List all distinct hire suggestions in the tree (deduped by roleName)
-  // for the summary card at the top.
   const hireSuggestions = useMemo(() => {
     const seen = new Map<string, { roleName: string; rationale: string; nodeIds: string[] }>();
     function walk(n: OkrNode) {
@@ -223,39 +221,26 @@ export default function OkrTree() {
     return Array.from(seen.values());
   }, []);
 
-  function toggle(id: string) {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   if (loading) {
     return <div className="container mx-auto py-8 text-sm text-muted-foreground">Loading OKR tree…</div>;
   }
 
   return (
-    <div className="container mx-auto py-6 max-w-[1400px] space-y-6">
-      {/* Header */}
+    <div className="container mx-auto py-6 max-w-[1900px] space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="flex items-start gap-3">
           <Target className="w-7 h-7 text-primary mt-1" />
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">OKR — EBITDA Growth Driver Tree</h1>
-            <p className="text-sm text-muted-foreground max-w-3xl">
-              Single root metric (Increase EBITDA) decomposed into the 4 levers, then into actionable sub-drivers down to the leaves. Each branch shows the agent(s) accountable for moving it. Branches with no owner are tagged <Badge variant="destructive" className="text-[9px] py-0 px-1.5 mx-0.5">Hire</Badge> with a suggested role.
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">EBITDA GROWTH STRATEGY</p>
+            <h1 className="text-2xl font-bold tracking-tight">Eendigo EBITDA Growth Driver Tree</h1>
+            <p className="text-sm text-muted-foreground max-w-3xl mt-1">
+              Each branch shows the agent(s) accountable for moving it. Branches with no owner are tagged <Badge variant="destructive" className="text-[9px] py-0 px-1.5 mx-0.5">Hire</Badge> with a suggested role.
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setExpanded(new Set(flattenIds(TREE)))}>Expand all</Button>
-          <Button size="sm" variant="outline" onClick={() => setExpanded(new Set([TREE.id]))}>Collapse all</Button>
-        </div>
+        <Button size="sm" variant="outline" onClick={() => window.print()}>Print / PDF</Button>
       </div>
 
-      {/* Hire-suggestions summary */}
       {hireSuggestions.length > 0 && (
         <Card className="p-4 border-red-200 bg-red-50/30">
           <div className="flex items-center gap-2 mb-2">
@@ -275,128 +260,144 @@ export default function OkrTree() {
         </Card>
       )}
 
-      {/* Tree */}
-      <Card className="p-4">
-        <TreeNode node={TREE} depth={0} byKey={byKey} expanded={expanded} toggle={toggle} />
+      {/* Tree canvas — horizontal recursive layout with L-shaped connectors */}
+      <Card className="p-6 overflow-x-auto bg-white">
+        {/* Horizontal divider line under header — same teal as slide */}
+        <div className="h-px bg-[#1A6571] mb-6" />
+        <div className="inline-block min-w-full">
+          <HorizontalNode node={TREE} depth={0} byKey={byKey} />
+        </div>
       </Card>
     </div>
   );
 }
 
-// ── Recursive node renderer ────────────────────────────────────────────────
-// Indentation by depth + caret toggle. Each owner becomes a coloured badge;
-// missing-owner branches show the Hire callout inline.
+// ── Recursive horizontal renderer ───────────────────────────────────────────
+// Each node is a node-box on the left + (if children) a connector group +
+// a vertical column of child subtrees on the right. Children are rendered
+// with their own ChildArm — the collection of arms forms the L-trunk.
 
-function TreeNode({
+function HorizontalNode({
   node,
   depth,
   byKey,
-  expanded,
-  toggle,
 }: {
   node: OkrNode;
   depth: number;
   byKey: Map<string, OrgAgent>;
-  expanded: Set<string>;
-  toggle: (id: string) => void;
 }) {
   const hasChildren = (node.children?.length ?? 0) > 0;
-  const isOpen = expanded.has(node.id);
+  return (
+    <div className="flex items-center">
+      <NodeBox node={node} depth={depth} byKey={byKey} />
+      {hasChildren && (
+        <>
+          {/* Stub from parent's right edge to the trunk */}
+          <div className="w-5 h-px bg-[#3FB6C5] self-center" />
+          <div className="flex flex-col gap-2">
+            {node.children!.map((c, i, arr) => {
+              const pos: ArmPosition = arr.length === 1 ? "only"
+                : i === 0 ? "first"
+                : i === arr.length - 1 ? "last"
+                : "middle";
+              return (
+                <div key={c.id} className="flex items-stretch">
+                  <ChildArm position={pos} />
+                  <div className="self-center">
+                    <HorizontalNode node={c} depth={depth + 1} byKey={byKey} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type ArmPosition = "first" | "middle" | "last" | "only";
+
+function ChildArm({ position }: { position: ArmPosition }) {
+  // The arm is a fixed-width horizontal connector. The "trunk" is drawn
+  // as a vertical line on the LEFT of the arm; its top/bottom extent
+  // depends on whether this is the first / middle / last child.
+  return (
+    <div className="relative w-6 self-stretch flex items-center shrink-0">
+      {/* Horizontal arm at vertical center */}
+      <div className="w-full h-px bg-[#3FB6C5]" />
+      {/* Vertical trunk segment */}
+      {position !== "only" && (
+        <div
+          className="absolute left-0 w-px bg-[#3FB6C5]"
+          style={{
+            top: position === "first" ? "50%" : 0,
+            bottom: position === "last" ? "50%" : 0,
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function NodeBox({
+  node,
+  depth,
+  byKey,
+}: {
+  node: OkrNode;
+  depth: number;
+  byKey: Map<string, OrgAgent>;
+}) {
   const isMissing = node.ownersRoleKeys.length === 0;
   return (
-    <div>
-      <div
-        className={`flex items-start gap-2 py-1.5 ${depth === 0 ? "pl-0" : ""}`}
-        style={{ paddingLeft: `${depth * 20}px` }}
-      >
-        {/* Toggle */}
-        {hasChildren ? (
-          <button
-            onClick={() => toggle(node.id)}
-            className="mt-0.5 text-muted-foreground hover:text-foreground"
-            title={isOpen ? "Collapse" : "Expand"}
-          >
-            {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
+    <div
+      className={`shrink-0 rounded border-2 ${tierStyle(depth)} flex flex-col`}
+      style={{ width: `${tierWidth(depth)}px` }}
+    >
+      {/* Label */}
+      <div className="px-2.5 py-1.5 text-sm leading-tight">
+        <span className="font-mono text-[11px] opacity-70 mr-1">{node.id}</span>
+        {node.label}
+      </div>
+      {/* Owners footer — small badges so the box stays compact */}
+      <div className="px-2 pb-1.5 flex flex-wrap gap-1 border-t border-current/10 pt-1 text-[9px]">
+        {isMissing ? (
+          <Badge variant="destructive" className="text-[9px] py-0 px-1.5 flex items-center gap-0.5" title={node.hireSuggestion?.rationale}>
+            <AlertTriangle className="w-2.5 h-2.5" />
+            HIRE: {node.hireSuggestion?.roleName ?? "TBD"}
+          </Badge>
         ) : (
-          <span className="w-3.5 h-3.5 inline-block" />
-        )}
-
-        {/* Node label box — tier colour by ID prefix */}
-        <div
-          className={`px-2.5 py-1 rounded font-medium text-sm border ${
-            depth === 0
-              ? "bg-primary text-primary-foreground border-primary font-bold"
-              : depth === 1
-              ? "bg-cyan-100 text-cyan-900 border-cyan-300 font-semibold"
-              : depth === 2
-              ? "bg-cyan-50 text-cyan-900 border-cyan-200"
-              : depth === 3
-              ? "bg-slate-50 text-slate-800 border-slate-200 text-[13px]"
-              : "bg-white text-slate-700 border-slate-200 text-xs"
-          }`}
-        >
-          <span className="font-mono opacity-80 mr-1.5">{node.id}</span>
-          {node.label}
-        </div>
-
-        {/* Owners or Hire suggestion */}
-        <div className="flex flex-wrap items-center gap-1 ml-1">
-          {isMissing ? (
-            <Badge variant="destructive" className="text-[10px] flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" />
-              Hire: {node.hireSuggestion?.roleName ?? "TBD"}
-            </Badge>
-          ) : (
-            node.ownersRoleKeys.map((rk, i) => {
-              const agent = byKey.get(rk);
-              const isPrimary = i === 0;
-              if (!agent) {
-                return (
-                  <Badge key={rk} variant="outline" className="text-[10px] border-amber-400 text-amber-800 bg-amber-50">
-                    {rk} <span className="opacity-60">· not in org</span>
-                  </Badge>
-                );
-              }
-              const Icon = agent.kind === "human" ? User : Bot;
+          node.ownersRoleKeys.map((rk, i) => {
+            const agent = byKey.get(rk);
+            const isPrimary = i === 0;
+            if (!agent) {
               return (
-                <Badge
-                  key={rk}
-                  variant="outline"
-                  className={`text-[10px] flex items-center gap-1 ${
-                    isPrimary
-                      ? "border-emerald-400 text-emerald-800 bg-emerald-50"
-                      : "border-slate-300 text-slate-700 bg-slate-50"
-                  }`}
-                  title={`${agent.role_name}${agent.person_name ? ` · ${agent.person_name}` : ""}`}
-                >
-                  <Icon className="w-2.5 h-2.5" />
-                  {agent.role_name}
-                  {agent.person_name && <span className="opacity-70">· {agent.person_name.split(" ")[0]}</span>}
+                <Badge key={rk} variant="outline" className="text-[9px] py-0 px-1 border-amber-400 text-amber-800 bg-amber-50">
+                  {rk}
                 </Badge>
               );
-            })
-          )}
-        </div>
+            }
+            const Icon = agent.kind === "human" ? User : Bot;
+            const cls = depth === 0 || depth === 1
+              ? "border-white/40 text-white bg-white/10"
+              : isPrimary
+              ? "border-emerald-400 text-emerald-900 bg-emerald-50"
+              : "border-slate-300 text-slate-700 bg-slate-50";
+            return (
+              <Badge
+                key={rk}
+                variant="outline"
+                className={`text-[9px] py-0 px-1 flex items-center gap-0.5 ${cls}`}
+                title={`${agent.role_name}${agent.person_name ? ` · ${agent.person_name}` : ""}`}
+              >
+                <Icon className="w-2.5 h-2.5" />
+                {agent.role_name}
+              </Badge>
+            );
+          })
+        )}
       </div>
-
-      {/* Hire rationale tooltip-style block — only at the parent level when
-          a missing-owner branch is collapsed; expanded reveals the same
-          content at the right depth. */}
-      {isMissing && node.hireSuggestion && isOpen === false && hasChildren === false && (
-        <div className="text-[10px] text-muted-foreground italic" style={{ paddingLeft: `${depth * 20 + 30}px` }}>
-          {node.hireSuggestion.rationale}
-        </div>
-      )}
-
-      {/* Children */}
-      {hasChildren && isOpen && (
-        <div>
-          {node.children!.map(c => (
-            <TreeNode key={c.id} node={c} depth={depth + 1} byKey={byKey} expanded={expanded} toggle={toggle} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
