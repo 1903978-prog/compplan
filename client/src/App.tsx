@@ -319,18 +319,21 @@ function Navigation() {
                   { href: "/exec/brief-stream", label: "Brief Stream", icon: Activity },
                 ]}
               />
-              {/* Phase 1 — agentic operating layer */}
+              {/* AIOS — Autonomous Intelligence Operating System.
+                  Eendigo's AI-native management system: daily operating
+                  cycle, agent coordination, OKR tracking, decision proposals,
+                  and execution conversion. */}
               <NavDropdown
-                label="Agentic"
+                label="AIOS"
                 icon={Cpu}
                 basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs"]}
                 items={[
-                  { href: "/agentic",        label: "Dashboard",        icon: Cpu },
-                  { href: "/agents",         label: "Agent Registry",   icon: Users },
-                  { href: "/executive",      label: "Executive OKR",    icon: Target },
-                  { href: "/approvals",      label: "Approval Center",  icon: Shield },
-                  { href: "/agentic/skills", label: "Skills Library",   icon: Cpu },
-                  { href: "/logs",           label: "Executive Log",    icon: BookOpen },
+                  { href: "/agentic",        label: "Executive Dashboard", icon: Cpu },
+                  { href: "/agents",         label: "Agent Registry",      icon: Users },
+                  { href: "/executive",      label: "OKR Center",          icon: Target },
+                  { href: "/approvals",      label: "Decisions",           icon: Shield },
+                  { href: "/agentic/skills", label: "Skill Factory",       icon: Cpu },
+                  { href: "/logs",           label: "Decision Log",        icon: BookOpen },
                 ]}
               />
               <NavDropdown

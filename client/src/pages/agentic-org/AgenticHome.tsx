@@ -96,7 +96,22 @@ export default function AgenticHome() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ event_type: "exec_committee_called", payload: { invoked_at: new Date().toISOString() } }),
     });
-    toast({ title: "Executive Committee logged", description: "Phase 1 placeholder — Phase 2 will trigger cross-agent reasoning." });
+    toast({ title: "AIOS Executive Committee logged", description: "Cross-agent reasoning trigger — review on Decision Log." });
+  }
+
+  function runBoardMeeting() {
+    void fetch("/api/agentic/log", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_type: "decision_logged",
+        payload: { kind: "board_meeting", invoked_at: new Date().toISOString() },
+      }),
+    });
+    toast({
+      title: "AIOS Board Meeting logged",
+      description: "Monthly review trigger — strategy, hires/fires, and OKR cascades. Pair with the AIOS Decisions page.",
+    });
   }
 
   function copy(text: string) {
@@ -116,39 +131,47 @@ export default function AgenticHome() {
         <div className="flex items-center gap-3">
           <Sun className="w-7 h-7 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Agentic Operating Layer</h1>
-            <p className="text-sm text-muted-foreground">
-              Phase 1 · {agents.length} agents · {openTaskCount} open tasks · {pendingApprovals} pending approvals · {openConflicts} open conflicts
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS · AUTONOMOUS INTELLIGENCE OPERATING SYSTEM</p>
+            <h1 className="text-2xl font-bold tracking-tight">Executive Dashboard</h1>
+            <p className="text-sm text-muted-foreground italic">
+              From OKRs to execution, on autopilot.
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {agents.length} agents · {openTaskCount} open tasks · {pendingApprovals} pending decisions · {openConflicts} open conflicts
               {paused && <Badge variant="destructive" className="ml-2">Paused</Badge>}
             </p>
           </div>
         </div>
       </div>
 
-      {/* 3 big buttons */}
+      {/* AIOS control buttons — daily start, pause, exec committee, monthly board */}
       <Card className="p-4">
         <div className="flex gap-2 flex-wrap">
           <Button size="lg" onClick={generate8am} className="flex-1 min-w-[200px]" disabled={paused}>
-            <Sun className="w-5 h-5 mr-2" /> 8am at work!
+            <Sun className="w-5 h-5 mr-2" /> 8am — Start AIOS
           </Button>
-          <Button size="lg" variant={paused ? "default" : "outline"} onClick={toggleCoffee} className="flex-1 min-w-[180px]">
-            <Coffee className="w-5 h-5 mr-2" /> {paused ? "Resume agents" : "Coffee break"}
+          <Button size="lg" variant={paused ? "default" : "outline"} onClick={toggleCoffee} className="flex-1 min-w-[160px]">
+            <Coffee className="w-5 h-5 mr-2" /> {paused ? "Resume AIOS" : "Pause AIOS"}
           </Button>
-          <Button size="lg" variant="outline" onClick={callCommittee} className="flex-1 min-w-[200px]" disabled={paused}>
-            <Users className="w-5 h-5 mr-2" /> Call Executive Committee
+          <Button size="lg" variant="outline" onClick={callCommittee} className="flex-1 min-w-[220px]" disabled={paused}>
+            <Users className="w-5 h-5 mr-2" /> Call AIOS Executive Committee
+          </Button>
+          <Button size="lg" variant="outline" onClick={runBoardMeeting} className="flex-1 min-w-[200px]" disabled={paused}>
+            <Users className="w-5 h-5 mr-2" /> Run AIOS Board Meeting
           </Button>
         </div>
         <p className="text-[11px] text-muted-foreground mt-2">
-          The 8am button gathers live state into the Cowork prompt. You paste it into Claude Cowork → reasoning happens there → paste output back at <button onClick={() => navigate("/executive")} className="underline text-primary">/executive</button>.
+          <strong>Start AIOS</strong> gathers live state into the CoWork prompt — paste into Claude CoWork, reasoning happens there, paste output back at <button onClick={() => navigate("/executive")} className="underline text-primary">OKR Center</button>.
+          <strong> Executive Committee</strong> = daily cross-agent reasoning trigger. <strong>Board Meeting</strong> = monthly review (strategy / hires / OKR cascades).
         </p>
       </Card>
 
-      {/* Generated prompt */}
+      {/* Generated CoWork prompt */}
       {generated && (
         <Card className="p-4 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold flex items-center gap-2">
-              <Sparkles className="w-4 h-4" /> Cowork prompt — copy + paste
+              <Sparkles className="w-4 h-4" /> AIOS CoWork Prompt — copy + paste
             </h2>
             <Button size="sm" onClick={() => copy(generated)}>
               <Download className="w-3.5 h-3.5 mr-1" /> Copy to clipboard
@@ -158,8 +181,8 @@ export default function AgenticHome() {
         </Card>
       )}
 
-      {/* Quick links */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* AIOS quick-link tiles */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <button onClick={() => navigate("/agents")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
           <Users className="w-5 h-5 text-primary mb-1" />
           <div className="font-bold text-sm">Agent Registry</div>
@@ -167,19 +190,24 @@ export default function AgenticHome() {
         </button>
         <button onClick={() => navigate("/executive")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
           <Sparkles className="w-5 h-5 text-primary mb-1" />
-          <div className="font-bold text-sm">Executive OKR</div>
-          <div className="text-xs text-muted-foreground">prompts · RACI · paste output</div>
+          <div className="font-bold text-sm">OKR Center</div>
+          <div className="text-xs text-muted-foreground">prompts · RACI · CoWork output</div>
         </button>
         <button onClick={() => navigate("/approvals")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
           <Sparkles className="w-5 h-5 text-primary mb-1" />
-          <div className="font-bold text-sm">Approval Center</div>
+          <div className="font-bold text-sm">Decisions</div>
           <div className="text-xs text-muted-foreground">{pendingApprovals} pending</div>
+        </button>
+        <button onClick={() => navigate("/agentic/skills")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
+          <Sparkles className="w-5 h-5 text-primary mb-1" />
+          <div className="font-bold text-sm">Skill Factory</div>
+          <div className="text-xs text-muted-foreground">core + drafted skills</div>
         </button>
         <button onClick={() => navigate("/logs")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
           {openConflicts > 0
             ? <AlertTriangle className="w-5 h-5 text-red-600 mb-1" />
             : <Sparkles className="w-5 h-5 text-primary mb-1" />}
-          <div className="font-bold text-sm">Executive Log</div>
+          <div className="font-bold text-sm">Decision Log</div>
           <div className="text-xs text-muted-foreground">{openConflicts > 0 ? `${openConflicts} open conflicts` : "activity feed"}</div>
         </button>
       </div>

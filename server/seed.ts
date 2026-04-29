@@ -1688,7 +1688,7 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
       UPDATE org_agents
       SET role_key = 'cco',
           role_name = 'CCO',
-          person_name = 'Indra Nooyi',
+          person_name = 'Kate Walton',
           status = 'active',
           updated_at = ${_orgNow}
       WHERE role_key = 'sales-director'
@@ -1726,8 +1726,17 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
       UPDATE org_agents SET parent_role_key = 'cco', updated_at = ${_orgNow}
       WHERE parent_role_key = 'sales-director'
     `);
-    console.log("[seed] Merged Sales Director → CCO (Indra Nooyi); Marketing Manager now reports to CCO.");
+    console.log("[seed] Merged Sales Director → CCO (Kate Walton); Marketing Manager now reports to CCO.");
   }
+
+  // Idempotent name correction for the CCO. Earlier deploys seeded
+  // 'Indra Nooyi'; the co-CEO chose Kate Walton (J.P. Morgan CCO) as the
+  // archetype. Only fires while the old name is still present.
+  await db.execute(sql`
+    UPDATE org_agents
+    SET person_name = 'Kate Walton', updated_at = ${_orgNow}
+    WHERE role_key = 'cco' AND person_name = 'Indra Nooyi'
+  `);
 
   for (const a of _orgSeed) {
     await db.execute(sql`

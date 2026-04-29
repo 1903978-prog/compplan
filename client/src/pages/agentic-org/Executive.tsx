@@ -135,8 +135,9 @@ export default function Executive() {
       <div className="flex items-center gap-3">
         <Briefcase className="w-7 h-7 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Executive OKR</h1>
-          <p className="text-sm text-muted-foreground">Phase 1 — top-level OKRs · agent-section mapping · RACI · prompt generators</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS</p>
+          <h1 className="text-2xl font-bold tracking-tight">OKR Center</h1>
+          <p className="text-sm text-muted-foreground">Top-level OKRs · agent-section mapping · RACI · CoWork + Claude Code prompt generators · Import CoWork output</p>
         </div>
       </div>
 

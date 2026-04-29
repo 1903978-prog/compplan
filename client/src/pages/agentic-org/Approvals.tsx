@@ -64,8 +64,9 @@ export default function Approvals() {
       <div className="flex items-center gap-3">
         <ShieldCheck className="w-7 h-7 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Approval Center</h1>
-          <p className="text-sm text-muted-foreground">{tasks.length} pending · grouped by approval level</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS</p>
+          <h1 className="text-2xl font-bold tracking-tight">Decisions</h1>
+          <p className="text-sm text-muted-foreground">{tasks.length} pending · grouped by approval level — Livio · CEO · Boss</p>
         </div>
       </div>
 

@@ -62,8 +62,9 @@ export default function Logs() {
       <div className="flex items-center gap-3">
         <ScrollText className="w-7 h-7 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Executive Log</h1>
-          <p className="text-sm text-muted-foreground">{logs.length} events · {conflicts.length} conflicts</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS</p>
+          <h1 className="text-2xl font-bold tracking-tight">Decision Log</h1>
+          <p className="text-sm text-muted-foreground">{logs.length} events · {conflicts.length} conflicts · full audit trail</p>
         </div>
       </div>
 

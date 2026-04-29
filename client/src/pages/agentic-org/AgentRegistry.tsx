@@ -73,8 +73,9 @@ export default function AgentRegistry() {
         <div className="flex items-center gap-3">
           <Users className="w-7 h-7 text-primary" />
           <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS</p>
             <h1 className="text-2xl font-bold tracking-tight">Agent Registry</h1>
-            <p className="text-sm text-muted-foreground">Phase 1 — agentic operating layer · {agents.length} agents</p>
+            <p className="text-sm text-muted-foreground">{agents.length} agents · all members of the Autonomous Intelligence Operating System</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
