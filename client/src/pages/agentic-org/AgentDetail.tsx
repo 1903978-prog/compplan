@@ -19,6 +19,10 @@ interface Agent {
   skill_gaps: string | null;
   training_plan: string | null;
   readiness_scores: string | null;  // JSON string
+  // AIOS cycle fields (added for 8am cycle)
+  role_title: string | null;
+  job_description: string | null;
+  function_area: string | null;
 }
 
 const READINESS_DIMS = [
@@ -173,11 +177,46 @@ export default function AgentDetail() {
 
       {/* 1. Mission */}
       <Section title="Mission" icon={<Activity className="w-4 h-4" />}>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label className="text-[10px] uppercase font-semibold text-muted-foreground block mb-1">Role title</label>
+            <Input
+              defaultValue={agent.role_title ?? ""}
+              onBlur={(e) => void patchAgent({ role_title: e.target.value || null })}
+              placeholder="e.g. Chief Financial Officer"
+              className="h-8 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase font-semibold text-muted-foreground block mb-1">Function area</label>
+            <Input
+              defaultValue={agent.function_area ?? ""}
+              onBlur={(e) => void patchAgent({ function_area: e.target.value || null })}
+              placeholder="e.g. Finance & Accounting"
+              className="h-8 text-sm"
+            />
+          </div>
+        </div>
+        <label className="text-[10px] uppercase font-semibold text-muted-foreground block mb-1">Mission</label>
         <Textarea
           defaultValue={agent.mission ?? ""}
-          rows={3}
+          rows={2}
           onBlur={(e) => void patchAgent({ mission: e.target.value })}
           placeholder="What this agent exists to do…"
+        />
+      </Section>
+
+      {/* 1b. Job Description — read by AIOS cycle */}
+      <Section title="Job Description (AIOS)" icon={<BookOpen className="w-4 h-4" />}>
+        <p className="text-[11px] text-muted-foreground mb-2">
+          Read by the AIOS 8am cycle. Include: mandatory daily activities, KPIs, decision rights, professional behaviour, escalation rules. The richer this is, the better the agent's daily deliverables.
+        </p>
+        <Textarea
+          defaultValue={agent.job_description ?? ""}
+          rows={10}
+          onBlur={(e) => void patchAgent({ job_description: e.target.value || null })}
+          placeholder={`## Role: ${agent.name}\n\n### Mission\n...\n\n### Mandatory daily activities\n1. ...\n\n### KPIs / OKRs\n...\n\n### Decision rights\n- Autonomous: ...\n- Boss approval: ...\n\n### Escalation rules\n...`}
+          className="font-mono text-xs"
         />
       </Section>
 

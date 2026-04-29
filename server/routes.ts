@@ -5203,7 +5203,8 @@ RULES:
       const update: Record<string, unknown> = { updated_at: nowIso() };
       const fields = ["name", "mission", "status", "app_sections_assigned",
         "decision_rights_autonomous", "decision_rights_boss",
-        "decision_rights_ceo", "decision_rights_livio"];
+        "decision_rights_ceo", "decision_rights_livio",
+        "role_title", "job_description", "function_area"];
       for (const f of fields) {
         if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
       }
