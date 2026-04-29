@@ -218,6 +218,11 @@ export default function ExecDashboard() {
   // no leave-date field, so we treat every row as active.
   const hr = useMemo(() => {
     const active = employees;
+    // Consultants = billable staff only; Interns (INT) and Back Office (BO)
+    // are excluded from supply headcount and the capacity gap calculator.
+    const EXCLUDED_ROLES = new Set(["INT", "BO"]);
+    const consultants = active.filter(e => !EXCLUDED_ROLES.has(e.current_role_code ?? ""));
+
     const monthlyPayroll = active.reduce((sum, e) => {
       const gross = Number(e.current_gross_fixed_year ?? 0) / 12;
       const voucher = Number(e.meal_voucher_daily ?? 0) * 22;
@@ -237,7 +242,7 @@ export default function ExecDashboard() {
       return thisYear <= in30;
     }).length;
 
-    return { headcount: active.length, monthlyPayroll, avgSalary, birthdays };
+    return { headcount: consultants.length, monthlyPayroll, avgSalary, birthdays };
   }, [employees]);
 
   // ─── Hiring funnel ────────────────────────────────────────────────────
