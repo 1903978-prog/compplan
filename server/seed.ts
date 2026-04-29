@@ -104,7 +104,8 @@ const SEED_EMPLOYEES = [
 ];
 
 const DEFAULT_ROLE_GRID = [
-  { role_code: "ADMIN", role_name: "Admin",               next_role_code: null,  promo_years_fast: 0,    promo_years_normal: 0,    promo_years_slow: 0,    ral_min_k: 0,    ral_max_k: 0,    gross_fixed_min_month: 0,    gross_fixed_max_month: 0,    bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12, sort_order: -1 },
+  { role_code: "BO",    role_name: "Back Office",          next_role_code: null,  promo_years_fast: 0,    promo_years_normal: 0,    promo_years_slow: 0,    ral_min_k: 20,   ral_max_k: 28,   gross_fixed_min_month: 1667, gross_fixed_max_month: 2333, bonus_pct: 0,  meal_voucher_eur_per_day: 8, months_paid: 12, sort_order: -2 },
+  { role_code: "ADMIN", role_name: "Admin",                next_role_code: null,  promo_years_fast: 0,    promo_years_normal: 0,    promo_years_slow: 0,    ral_min_k: 0,    ral_max_k: 0,    gross_fixed_min_month: 0,    gross_fixed_max_month: 0,    bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12, sort_order: -1 },
   { role_code: "INT",   role_name: "Intern",               next_role_code: "BA",  promo_years_fast: 0.25, promo_years_normal: 0.5,  promo_years_slow: 0.75, ral_min_k: 10,   ral_max_k: 12,   gross_fixed_min_month: 850,  gross_fixed_max_month: 1275, bonus_pct: 0,  meal_voucher_eur_per_day: 0, months_paid: 12, sort_order: 0 },
   { role_code: "BA",  role_name: "Business Analyst",     next_role_code: "A1",  promo_years_fast: 0.75, promo_years_normal: 1.0,  promo_years_slow: 1.5,  ral_min_k: 16.3, ral_max_k: 27.3, gross_fixed_min_month: 1600, gross_fixed_max_month: 2400, bonus_pct: 0,  meal_voucher_eur_per_day: 8, months_paid: 12, sort_order: 1 },
   { role_code: "A1",  role_name: "Associate 1",          next_role_code: "A2",  promo_years_fast: 0.5,  promo_years_normal: 0.75, promo_years_slow: 1.0,  ral_min_k: 19.7, ral_max_k: 23.5, gross_fixed_min_month: 1872, gross_fixed_max_month: 2153, bonus_pct: 10, meal_voucher_eur_per_day: 8, months_paid: 12, sort_order: 2 },
@@ -1187,6 +1188,23 @@ Run with: node eendigo_template.js',
     await db.insert(roleGridEntries).values(DEFAULT_ROLE_GRID);
     console.log(`Seeded ${DEFAULT_ROLE_GRID.length} roles`);
   }
+
+  // Migration: add Back Office role if not yet in DB (idempotent).
+  await db.execute(sql`
+    INSERT INTO role_grid
+      (role_code, role_name, next_role_code,
+       promo_years_fast, promo_years_normal, promo_years_slow,
+       ral_min_k, ral_max_k,
+       gross_fixed_min_month, gross_fixed_max_month,
+       bonus_pct, meal_voucher_eur_per_day, months_paid, sort_order)
+    VALUES
+      ('BO', 'Back Office', NULL,
+       0, 0, 0,
+       20, 28,
+       1667, 2333,
+       0, 8, 12, -2)
+    ON CONFLICT (role_code) DO NOTHING
+  `);
 
   // Seed employees if empty
   const existingEmployees = await db.select().from(employees);
