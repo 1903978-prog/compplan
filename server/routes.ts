@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -712,6 +712,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json(inserted[0]);
       }
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── President → CEO direct-line endpoints ───────────────────────────
+  // Founder posts a free-text request; CEO agent picks it up on its
+  // next run, either answers directly OR drops a committee prompt the
+  // user pastes into Cowork. Status flow described in seed.ts.
+  app.get("/api/president-requests", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`
+        SELECT id, message, status, ceo_response, committee_prompt, committee_outcome,
+               created_at, responded_at, updated_at
+        FROM president_requests
+        ORDER BY created_at DESC
+        LIMIT 50
+      `);
+      res.json(r.rows);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to list" });
+    }
+  });
+
+  app.post("/api/president-requests", requireAuth, async (req, res) => {
+    try {
+      const { message } = req.body ?? {};
+      if (!message || typeof message !== "string" || !message.trim()) {
+        res.status(400).json({ message: "message required" });
+        return;
+      }
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`
+        INSERT INTO president_requests (message, status)
+        VALUES (${message.trim()}, 'pending')
+        RETURNING id, message, status, created_at, updated_at
+      `);
+      res.status(201).json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to create" });
+    }
+  });
+
+  // CEO updates a request — sets ceo_response (direct answer) OR
+  // committee_prompt (must discuss with team). Status transitions
+  // accordingly. Auth-gated; the CEO skill calls this from its run.
+  // Uses COALESCE so only fields the caller passes are touched —
+  // pass null/undefined for fields you don't want to change.
+  app.put("/api/president-requests/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { ceo_response, committee_prompt, status } = req.body ?? {};
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      // Sanitise inputs — strings only, null otherwise (preserves existing).
+      const cr = typeof ceo_response === "string" ? ceo_response : null;
+      const cp = typeof committee_prompt === "string" ? committee_prompt : null;
+      const st = typeof status === "string" ? status : null;
+      // responded_at gets set the first time a non-empty ceo_response arrives.
+      const r = await db.execute(sql`
+        UPDATE president_requests
+        SET ceo_response     = COALESCE(${cr}, ceo_response),
+            committee_prompt = COALESCE(${cp}, committee_prompt),
+            status           = COALESCE(${st}, status),
+            responded_at     = CASE
+                                 WHEN ${cr} IS NOT NULL AND LENGTH(TRIM(${cr})) > 0
+                                 THEN NOW() ELSE responded_at
+                               END,
+            updated_at       = NOW()
+        WHERE id = ${Number(id)}
+        RETURNING id, message, status, ceo_response, committee_prompt, committee_outcome,
+                  created_at, responded_at, updated_at
+      `);
+      if (r.rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to update" });
+    }
+  });
+
+  // User posts the Cowork outcome → status becomes committee_done so
+  // the CEO can finalise on its next run.
+  app.post("/api/president-requests/:id/committee-outcome", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { outcome } = req.body ?? {};
+      if (!outcome || typeof outcome !== "string" || !outcome.trim()) {
+        res.status(400).json({ message: "outcome required" });
+        return;
+      }
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`
+        UPDATE president_requests
+        SET committee_outcome = ${outcome.trim()},
+            status = 'committee_done',
+            updated_at = NOW()
+        WHERE id = ${Number(id)}
+        RETURNING id, status, committee_outcome, updated_at
+      `);
+      if (r.rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to update" });
+    }
+  });
+
+  app.delete("/api/president-requests/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`DELETE FROM president_requests WHERE id = ${Number(id)}`);
+      res.status(204).end();
+    } catch (e: any) {
+      res.status(500).json({ message: e.message ?? "Failed to delete" });
+    }
   });
 
   app.get("/api/trash", requireAuth, async (_req, res) => {
@@ -5791,6 +5908,234 @@ RULES:
         lines.push("---");
       }
       res.json({ count: queue.length, payload: lines.join("\n") });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── /api/agentic/agents/kick ────────────────────────────────────────────
+  // "Make agents start work." Marks every active agent's status='working',
+  // logs an `agents_kicked` system event + one `action_proposed` placeholder
+  // per agent so the Decision Log shows movement. The actual reasoning still
+  // happens via the Cowork prompt (8am button), but this gives Livio an
+  // explicit "go!" trigger and a status flag the UI can show.
+  app.post("/api/agentic/agents/kick", requireAuth, async (_req, res) => {
+    try {
+      const all = await db.select().from(agentsTable);
+      const active = all.filter(a => a.status !== "fired" && a.status !== "archived");
+      const now = new Date().toISOString();
+      for (const a of active) {
+        await db.update(agentsTable).set({ status: "working" } as any).where(eq(agentsTable.id, a.id));
+      }
+      await db.insert(executiveLog).values({
+        timestamp: now,
+        agent_id: null,
+        event_type: "agents_kicked",
+        payload: { count: active.length, agents: active.map(a => a.name) } as any,
+        created_at: now,
+      } as any);
+      res.json({ kicked: active.length });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── /api/agentic/president-requests ─────────────────────────────────────
+  // Direct channel from Livio (President) → CEO agent. Lifecycle:
+  //   pending → answered                      (CEO replies directly)
+  //   pending → needs_committee               (CEO escalates; prompt generated)
+  //   needs_committee → committee_done        (Livio pastes Cowork outcome)
+  //   committee_done → answered               (CEO finalises)
+  app.get("/api/agentic/president-requests", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT id, message, status, ceo_response, committee_prompt, committee_outcome,
+               created_at, responded_at, updated_at
+          FROM president_requests
+         ORDER BY created_at DESC, id DESC
+      `);
+      res.json((rows as any).rows ?? rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/agentic/president-requests", requireAuth, async (req, res) => {
+    try {
+      const { message } = req.body ?? {};
+      if (typeof message !== "string" || !message.trim()) {
+        return res.status(400).json({ message: "message is required" });
+      }
+      const inserted = await db.execute(sql`
+        INSERT INTO president_requests (message, status)
+        VALUES (${message.trim()}, 'pending')
+        RETURNING id, message, status, ceo_response, committee_prompt, committee_outcome,
+                  created_at, responded_at, updated_at
+      `);
+      const row = ((inserted as any).rows ?? inserted)[0];
+      const now = new Date().toISOString();
+      await db.insert(executiveLog).values({
+        timestamp: now,
+        agent_id: null,
+        event_type: "president_request_filed",
+        payload: { request_id: row.id, message: message.trim().slice(0, 200) } as any,
+        created_at: now,
+      } as any);
+      res.json(row);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // CEO direct reply.
+  app.post("/api/agentic/president-requests/:id/reply", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { ceo_response } = req.body ?? {};
+      if (typeof ceo_response !== "string" || !ceo_response.trim()) {
+        return res.status(400).json({ message: "ceo_response is required" });
+      }
+      const updated = await db.execute(sql`
+        UPDATE president_requests
+           SET ceo_response = ${ceo_response.trim()},
+               status       = 'answered',
+               responded_at = NOW(),
+               updated_at   = NOW()
+         WHERE id = ${id}
+        RETURNING id, message, status, ceo_response, committee_prompt, committee_outcome,
+                  created_at, responded_at, updated_at
+      `);
+      const row = ((updated as any).rows ?? updated)[0];
+      if (!row) return res.status(404).json({ message: "request not found" });
+      const now = new Date().toISOString();
+      await db.insert(executiveLog).values({
+        timestamp: now,
+        agent_id: null,
+        event_type: "president_request_answered",
+        payload: { request_id: id, mode: "direct" } as any,
+        created_at: now,
+      } as any);
+      res.json(row);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // CEO says "I need to discuss with my team" — generate a Cowork prompt
+  // dedicated to this request. Bundles live state (agents, OKRs, conflicts)
+  // + the President's message and asks the Exec Committee to produce a
+  // structured outcome (DECISION blocks the user can paste back).
+  app.post("/api/agentic/president-requests/:id/escalate", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const existing = await db.execute(sql`
+        SELECT id, message FROM president_requests WHERE id = ${id}
+      `);
+      const row0 = ((existing as any).rows ?? existing)[0];
+      if (!row0) return res.status(404).json({ message: "request not found" });
+
+      const allAgents     = await db.select().from(agentsTable);
+      const allObjectives = await db.select().from(objectivesTable);
+      const openConflicts = (await db.select().from(conflictsTable)).filter(c => c.status === "open");
+
+      const lines: string[] = [];
+      lines.push(`# Eendigo Executive Committee — President Request #${id}`);
+      lines.push("");
+      lines.push("The President has issued a direct request to the CEO. The CEO has");
+      lines.push("decided to discuss with the Exec Committee before responding. You");
+      lines.push("are the full Exec Committee. Reason as a group, then synthesise.");
+      lines.push("");
+      lines.push("## President's request");
+      lines.push("```");
+      lines.push(row0.message);
+      lines.push("```");
+      lines.push("");
+      lines.push("## Committee members");
+      for (const a of allAgents) {
+        const okrs = allObjectives.filter(o => o.agent_id === a.id).length;
+        lines.push(`- **${a.name}** (${a.status}) — ${a.mission ?? "(no mission)"} · ${okrs} objectives`);
+      }
+      lines.push("");
+      if (openConflicts.length) {
+        lines.push("## Open conflicts to weigh");
+        for (const c of openConflicts) lines.push(`- [${c.severity ?? "?"}] ${c.title}`);
+        lines.push("");
+      }
+      lines.push("## Required output");
+      lines.push("Produce the committee's synthesis in two parts:");
+      lines.push("");
+      lines.push("1. **CEO_RESPONSE_TO_PRESIDENT** — one focused paragraph the CEO will");
+      lines.push("   send back to the President. Plain prose, no bullet jargon.");
+      lines.push("2. **DECISION blocks** — any concrete actions/ideas/conflicts that");
+      lines.push("   should land in the system. Use the standard contract:");
+      lines.push("");
+      lines.push("```");
+      lines.push("DECISION_ID: 1");
+      lines.push("TYPE: action | idea | conflict");
+      lines.push("AGENT: <one of the committee names above>");
+      lines.push("TITLE: …");
+      lines.push("DESCRIPTION: …");
+      lines.push("OKR_LINK: <id or none>");
+      lines.push("DEADLINE: <YYYY-MM-DD or none>");
+      lines.push("APPROVAL_LEVEL: autonomous | ceo | livio");
+      lines.push("IMPACT: 0–100");
+      lines.push("EFFORT: 0–100");
+      lines.push("RISK:   0–100");
+      lines.push("---");
+      lines.push("```");
+
+      const prompt = lines.join("\n");
+      const updated = await db.execute(sql`
+        UPDATE president_requests
+           SET committee_prompt = ${prompt},
+               status           = 'needs_committee',
+               updated_at       = NOW()
+         WHERE id = ${id}
+        RETURNING id, message, status, ceo_response, committee_prompt, committee_outcome,
+                  created_at, responded_at, updated_at
+      `);
+      const row = ((updated as any).rows ?? updated)[0];
+      const now = new Date().toISOString();
+      await db.insert(executiveLog).values({
+        timestamp: now,
+        agent_id: null,
+        event_type: "president_request_escalated",
+        payload: { request_id: id, prompt_chars: prompt.length } as any,
+        created_at: now,
+      } as any);
+      res.json(row);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // Livio pastes the Exec Committee outcome back. We store it verbatim and
+  // mark the request committee_done. The actual idea/task/conflict rows are
+  // created on the OKR Center page by the existing /executive importer
+  // (which uses parseCoworkOutput) — we just split the CEO_RESPONSE prefix
+  // off and stash it in ceo_response if present.
+  app.post("/api/agentic/president-requests/:id/import-outcome", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { outcome } = req.body ?? {};
+      if (typeof outcome !== "string" || !outcome.trim()) {
+        return res.status(400).json({ message: "outcome is required" });
+      }
+      // Pull a CEO_RESPONSE_TO_PRESIDENT block if present.
+      let ceoLine: string | null = null;
+      const m = outcome.match(/CEO_RESPONSE_TO_PRESIDENT\s*[:\-]?\s*([\s\S]*?)(?:\n\s*(?:DECISION_ID|---|2\.)|$)/i);
+      if (m) ceoLine = m[1].trim().slice(0, 4000);
+
+      const updated = await db.execute(sql`
+        UPDATE president_requests
+           SET committee_outcome = ${outcome.trim()},
+               ceo_response      = COALESCE(${ceoLine}, ceo_response),
+               status             = 'committee_done',
+               responded_at       = NOW(),
+               updated_at         = NOW()
+         WHERE id = ${id}
+        RETURNING id, message, status, ceo_response, committee_prompt, committee_outcome,
+                  created_at, responded_at, updated_at
+      `);
+      const row = ((updated as any).rows ?? updated)[0];
+      if (!row) return res.status(404).json({ message: "request not found" });
+      const now = new Date().toISOString();
+      await db.insert(executiveLog).values({
+        timestamp: now,
+        agent_id: null,
+        event_type: "president_request_committee_done",
+        payload: { request_id: id, has_ceo_line: Boolean(ceoLine) } as any,
+        created_at: now,
+      } as any);
+      res.json(row);
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

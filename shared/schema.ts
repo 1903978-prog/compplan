@@ -1294,3 +1294,25 @@ export const coworkSkills = pgTable("cowork_skills", {
   updated_at: text("updated_at").notNull(),
 });
 export type CoworkSkill = typeof coworkSkills.$inferSelect;
+
+// ── President → CEO request channel ─────────────────────────────────────
+// Direct one-way input from Livio (acting as President) to the CEO agent.
+// Lifecycle:
+//   pending           — request just submitted, CEO hasn't replied yet
+//   answered          — CEO answered directly (ceo_response filled)
+//   needs_committee   — CEO chose to escalate; committee_prompt is generated
+//                       for Livio to paste into Cowork
+//   committee_done    — Cowork outcome pasted back; CEO can now finalise
+// Mirrors the DDL in server/seed.ts (uses TIMESTAMPTZ for date columns).
+export const presidentRequests = pgTable("president_requests", {
+  id: serial("id").primaryKey(),
+  message: text("message").notNull(),
+  status: text("status").notNull().default("pending"),
+  ceo_response: text("ceo_response"),
+  committee_prompt: text("committee_prompt"),
+  committee_outcome: text("committee_outcome"),
+  created_at: text("created_at"),
+  responded_at: text("responded_at"),
+  updated_at: text("updated_at"),
+});
+export type PresidentRequest = typeof presidentRequests.$inferSelect;

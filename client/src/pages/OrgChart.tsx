@@ -124,6 +124,100 @@ export default function OrgChart() {
     email: "",
   });
 
+  // ── President → CEO direct line ──────────────────────────────────
+  interface PresidentRequest {
+    id: number;
+    message: string;
+    status: "pending" | "needs_committee" | "committee_done" | "answered";
+    ceo_response: string | null;
+    committee_prompt: string | null;
+    committee_outcome: string | null;
+    created_at: string;
+    responded_at: string | null;
+    updated_at: string;
+  }
+  const [presidentRequests, setPresidentRequests] = useState<PresidentRequest[]>([]);
+  const [presidentDraft, setPresidentDraft] = useState("");
+  const [committeeOutcomeDraft, setCommitteeOutcomeDraft] = useState<Record<number, string>>({});
+  const [showStartAgents, setShowStartAgents] = useState(false);
+
+  const refreshPresidentRequests = async () => {
+    try {
+      const r = await fetch("/api/president-requests", { credentials: "include" });
+      if (r.ok) {
+        const d = await r.json();
+        setPresidentRequests(Array.isArray(d) ? d : []);
+      }
+    } catch { /* non-fatal */ }
+  };
+
+  const sendPresidentRequest = async () => {
+    if (!presidentDraft.trim()) return;
+    try {
+      const r = await fetch("/api/president-requests", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: presidentDraft.trim() }),
+      });
+      if (r.ok) {
+        setPresidentDraft("");
+        toast({
+          title: "Request sent to CEO",
+          description: "Run `ceo brief` in Claude Code; the CEO will pick this up and reply.",
+        });
+        refreshPresidentRequests();
+      } else {
+        toast({ title: "Failed to send", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to send", variant: "destructive" });
+    }
+  };
+
+  const submitCommitteeOutcome = async (id: number) => {
+    const outcome = (committeeOutcomeDraft[id] ?? "").trim();
+    if (!outcome) return;
+    try {
+      const r = await fetch(`/api/president-requests/${id}/committee-outcome`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome }),
+      });
+      if (r.ok) {
+        setCommitteeOutcomeDraft(d => { const next = { ...d }; delete next[id]; return next; });
+        toast({
+          title: "Committee outcome saved",
+          description: "CEO will finalise on the next `ceo brief` run.",
+        });
+        refreshPresidentRequests();
+      } else {
+        toast({ title: "Failed to save outcome", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to save outcome", variant: "destructive" });
+    }
+  };
+
+  const archivePresidentRequest = async (id: number) => {
+    if (!confirm("Archive this request?")) return;
+    try {
+      await fetch(`/api/president-requests/${id}`, { method: "DELETE", credentials: "include" });
+      refreshPresidentRequests();
+    } catch { /* non-fatal */ }
+  };
+
+  useEffect(() => { refreshPresidentRequests(); }, []);
+
+  // Copy helper for committee prompts.
+  const copyToClipboard = async (text: string, label = "Copied") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: label });
+    } catch {
+      window.prompt("Copy this text (Ctrl+C):", text);
+    }
+  };
+
   const createRole = async () => {
     if (!newRole.role_name.trim()) return;
     const r = await fetch("/api/org-chart", {
@@ -385,10 +479,58 @@ export default function OrgChart() {
             </p>
           </div>
         </div>
-        <Button size="sm" onClick={() => setShowAddRole(true)}>
-          <Plus className="w-4 h-4 mr-1" /> Add role
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setShowStartAgents(true)}>
+            <Sparkles className="w-4 h-4 mr-1" /> Start agents
+          </Button>
+          <Button size="sm" onClick={() => setShowAddRole(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Add role
+          </Button>
+        </div>
       </div>
+
+      {/* ── Start Agents popup — paste-ready commands for Claude Code ── */}
+      <Dialog open={showStartAgents} onOpenChange={(o) => !o && setShowStartAgents(false)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" /> Start agents
+            </DialogTitle>
+            <DialogDescription>
+              Agents run as Claude Code skills on your machine. Paste these commands one-by-one
+              in a Claude Code session to run each agent's brief now.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 mt-2">
+            {(() => {
+              const activeAgents = roles.filter(r => r.status === "active" && (r.kind ?? "agent") === "agent");
+              if (activeAgents.length === 0) {
+                return <p className="text-sm text-muted-foreground italic">No active agents to run.</p>;
+              }
+              return activeAgents.map(r => {
+                const cmd = r.role_key === "ceo"
+                  ? "/eendigo-ceo brief"
+                  : `/eendigo-${r.role_key.replace(/_/g, "-")} brief`;
+                return (
+                  <div key={r.id} className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-muted-foreground">{r.role_name} · {r.person_name ?? "—"}</div>
+                      <code className="text-xs font-mono bg-muted px-2 py-1 rounded block truncate">{cmd}</code>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => copyToClipboard(cmd, `Copied: ${cmd}`)}>
+                      Copy
+                    </Button>
+                  </div>
+                );
+              });
+            })()}
+            <div className="text-[11px] text-muted-foreground italic mt-3 pt-3 border-t">
+              Tip: queue them all by pasting each into a separate Claude Code session, or run a recurring
+              loop with <code className="text-[11px]">/loop 1h ceo brief</code>.
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Add-role popup ───────────────────────────────────────── */}
       <Dialog open={showAddRole} onOpenChange={(o) => !o && setShowAddRole(false)}>
@@ -640,6 +782,131 @@ export default function OrgChart() {
           </div>
         </div>
       )}
+
+      {/* ── President → CEO direct line ────────────────────────────── */}
+      <div className="mt-10">
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Mail className="w-5 h-5 text-primary" />
+            Direct line — President → CEO
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Free-text channel. The CEO either answers directly OR returns a Cowork prompt for the executive
+            committee to discuss; you paste the meeting outcome back and the CEO finalises a reply.
+          </p>
+        </div>
+
+        {/* Compose */}
+        <Card className="p-4 space-y-2">
+          <Textarea
+            placeholder="Type your request to the CEO (e.g. Should we walk from the FAS01 deal? What's the case for hiring a CFO this quarter?)"
+            value={presidentDraft}
+            onChange={e => setPresidentDraft(e.target.value)}
+            rows={3}
+            className="text-sm"
+          />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              After sending, run <code className="text-[10px] bg-muted px-1.5 py-0.5 rounded">ceo brief</code> in Claude Code so the CEO picks it up.
+            </p>
+            <Button size="sm" onClick={sendPresidentRequest} disabled={!presidentDraft.trim()}>
+              <Mail className="w-4 h-4 mr-1" /> Send to CEO
+            </Button>
+          </div>
+        </Card>
+
+        {/* Recent requests */}
+        {presidentRequests.length > 0 && (
+          <div className="mt-4 space-y-3">
+            {presidentRequests.map(req => {
+              const tone =
+                req.status === "answered"        ? "border-emerald-300 bg-emerald-50/40 dark:bg-emerald-950/20" :
+                req.status === "needs_committee" ? "border-amber-400 bg-amber-50/40 dark:bg-amber-950/20" :
+                req.status === "committee_done"  ? "border-blue-300 bg-blue-50/40 dark:bg-blue-950/20" :
+                                                   "border-border";
+              const statusLabel =
+                req.status === "answered"        ? "ANSWERED" :
+                req.status === "needs_committee" ? "NEEDS COMMITTEE" :
+                req.status === "committee_done"  ? "AWAITING CEO FINAL" :
+                                                   "PENDING CEO";
+              return (
+                <Card key={req.id} className={`p-3 border-l-4 ${tone}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge className="text-[10px]">{statusLabel}</Badge>
+                        <span className="text-[10px] text-muted-foreground">{fmtDate(req.created_at)}</span>
+                      </div>
+                      <div className="font-semibold text-sm mt-1 whitespace-pre-wrap">{req.message}</div>
+
+                      {/* CEO's direct response */}
+                      {req.ceo_response && (
+                        <div className="mt-2 p-2 rounded border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/30">
+                          <div className="text-[10px] font-semibold uppercase text-emerald-700 mb-1">CEO replied</div>
+                          <div className="text-xs whitespace-pre-wrap">{req.ceo_response}</div>
+                        </div>
+                      )}
+
+                      {/* Committee prompt — paste into Cowork */}
+                      {req.committee_prompt && req.status !== "answered" && (
+                        <div className="mt-2 p-2 rounded border border-amber-200 bg-amber-50/50 dark:bg-amber-950/30 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-[10px] font-semibold uppercase text-amber-800">CEO needs to discuss with team</div>
+                            <Button size="sm" variant="outline" className="h-6 text-[10px]"
+                              onClick={() => copyToClipboard(req.committee_prompt!, "Cowork prompt copied")}>
+                              Copy prompt for Cowork
+                            </Button>
+                          </div>
+                          <div className="text-[11px] whitespace-pre-wrap font-mono bg-background/50 p-2 rounded border max-h-48 overflow-y-auto">
+                            {req.committee_prompt}
+                          </div>
+                          {req.status === "needs_committee" && (
+                            <div className="space-y-1">
+                              <div className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                Paste committee outcome here:
+                              </div>
+                              <Textarea
+                                placeholder="Paste what Cowork produced from the exec committee discussion…"
+                                value={committeeOutcomeDraft[req.id] ?? ""}
+                                onChange={e => setCommitteeOutcomeDraft(d => ({ ...d, [req.id]: e.target.value }))}
+                                rows={3}
+                                className="text-xs"
+                              />
+                              <Button size="sm" onClick={() => submitCommitteeOutcome(req.id)}
+                                disabled={!(committeeOutcomeDraft[req.id] ?? "").trim()}>
+                                Submit outcome
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Committee outcome saved — awaiting CEO synthesis */}
+                      {req.committee_outcome && req.status === "committee_done" && (
+                        <div className="mt-2 p-2 rounded border border-blue-200 bg-blue-50/50 dark:bg-blue-950/30">
+                          <div className="text-[10px] font-semibold uppercase text-blue-800 mb-1">Committee outcome saved · awaiting CEO synthesis</div>
+                          <div className="text-xs whitespace-pre-wrap">{req.committee_outcome}</div>
+                          <p className="text-[10px] text-muted-foreground italic mt-1">
+                            Next <code className="text-[10px] bg-background px-1 rounded">ceo brief</code> run will finalise the reply.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => archivePresidentRequest(req.id)}
+                      className="shrink-0 text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
+                      title="Archive"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* ── Proposals from your team — pending decisions ───────────── */}
       <div className="mt-10">

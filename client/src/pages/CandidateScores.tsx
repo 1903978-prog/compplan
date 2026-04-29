@@ -42,19 +42,21 @@ interface Candidate {
 
 interface TestDef { id: string; label: string; short: string }
 
-// Order matters — this is the left-to-right column order in the grid.
-// Stages map to the actual hiring funnel:
-//   HSA   → screening assessment (TestGorilla Logic + Verbal composite)
-//   PPT   → PowerPoint task (TG Pres test)
-//   Excel → Excel skills test (TG Excel)
-//   TG    → TG overall composite
-//   Intro → ASC-EM intro call rating
-//   Case  → case-study rating (ASC-EM)
-//   LM    → line-manager review of the case (was "Final"; relabeled per
-//           the user's correct funnel terminology — same id 'final' for
-//           back-compat with stored manual scores).
+// Order matters — left-to-right column order in the grid.
+// Funnel-aligned tests:
+//   Logic  → TestGorilla Logic sub-score (replaces the old "HSA" column;
+//            HSA in practice was Logic + Verbal anyway, now split out)
+//   Verbal → TestGorilla Verbal sub-score
+//   PPT    → PowerPoint task / TG Pres
+//   Excel  → Excel skills test (TG Excel)
+//   TG     → TestGorilla overall composite
+//   Intro  → ASC-EM intro call rating
+//   Case   → case-study rating (ASC-EM)
+//   LM     → line-manager review of the case (id 'final' for back-compat
+//            with stored manual scores).
 const TESTS: TestDef[] = [
-  { id: "hsa",         label: "HSA",             short: "HSA"   },
+  { id: "logic",       label: "Logic",           short: "Logic" },
+  { id: "verbal",      label: "Verbal",          short: "Verbal"},
   { id: "ppt",         label: "PowerPoint task", short: "PPT"   },
   { id: "excel",       label: "Excel test",      short: "Excel" },
   { id: "testgorilla", label: "TestGorilla",     short: "TG"    },
@@ -63,11 +65,12 @@ const TESTS: TestDef[] = [
   { id: "final",       label: "LM case review",  short: "LM"    },
 ];
 
-// Weights sum to 100. HSA stays the heaviest (foundation screen);
-// LM case (line-manager partner verdict) is the strongest go/no-go
-// signal so it's elevated from 5% to 15%. Rebalanced from prior.
+// Weights sum to 100. The old HSA bucket (25%) is now split between
+// Logic (15) and Verbal (10) — Logic carries more weight per the
+// founder's stated preference for analytical rigour. LM case stays
+// the strongest go/no-go signal at 15%.
 const DEFAULT_WEIGHTS: Record<string, number> = {
-  hsa: 25, ppt: 10, excel: 10, testgorilla: 15, intro_call: 10, case_study: 15, final: 15,
+  logic: 15, verbal: 10, ppt: 10, excel: 10, testgorilla: 15, intro_call: 10, case_study: 15, final: 15,
 };
 const WEIGHTS_KEY = "candidate_score_weights_v1";
 
@@ -203,6 +206,11 @@ export default function CandidateScores() {
         const parsed = parseCandidateInfo(c.info ?? "");
         const current = c.scores ?? {};
         const patch: Record<string, number> = {};
+        const findSub = (label: string): number | null => {
+          const lower = label.toLowerCase();
+          const hit = parsed.tgScores.find(s => s.label.toLowerCase().includes(lower));
+          return hit ? Math.max(0, Math.min(100, hit.pct)) : null;
+        };
         // Only set a field if it's currently null/undefined AND we have a number
         if (current.testgorilla == null && parsed.tgOverall != null) {
           patch.testgorilla = Math.max(0, Math.min(100, parsed.tgOverall));
@@ -214,6 +222,10 @@ export default function CandidateScores() {
           const csNum = parsed.csLMScore ?? parsed.csRateScore;
           if (csNum != null) patch.case_study = Math.max(0, Math.min(100, csNum));
         }
+        // Logic / Verbal / Excel from TG sub-scores ("Logic 81.8%" lines)
+        const lg = findSub("logic"); if (lg != null && current.logic == null)   patch.logic  = lg;
+        const vb = findSub("verbal"); if (vb != null && current.verbal == null) patch.verbal = vb;
+        const ex = findSub("excel"); if (ex != null && current.excel == null)   patch.excel  = ex;
         if (Object.keys(patch).length === 0) { skipped++; continue; }
         const next = { ...current, ...patch };
         // Optimistic local update so the ranking reshuffles immediately
@@ -242,10 +254,15 @@ export default function CandidateScores() {
     for (const c of candidates) {
       const parsed = parseCandidateInfo(c.info ?? "");
       const current = c.scores ?? {};
+      const hasSub = (label: string) =>
+        parsed.tgScores.some(s => s.label.toLowerCase().includes(label));
       const wouldAdd =
         (current.testgorilla == null && parsed.tgOverall != null) ||
         (current.intro_call == null && parsed.introScore != null) ||
-        (current.case_study == null && (parsed.csLMScore != null || parsed.csRateScore != null));
+        (current.case_study == null && (parsed.csLMScore != null || parsed.csRateScore != null)) ||
+        (current.logic  == null && hasSub("logic")) ||
+        (current.verbal == null && hasSub("verbal")) ||
+        (current.excel  == null && hasSub("excel"));
       if (wouldAdd) n++;
     }
     return n;
@@ -265,6 +282,24 @@ export default function CandidateScores() {
     if (out.case_study == null) {
       const cs = parsed.csLMScore ?? parsed.csRateScore;
       if (cs != null) out.case_study = cs;
+    }
+    // Logic + Verbal + Excel come from TG sub-score lines in the
+    // parsed info blob ("Logic 81.8%", "Verbal 100.0%", "Excel 35.0%").
+    // The Eendigo admin page surfaces these per candidate; we mirror
+    // them here so the composite formula uses the real screen values.
+    const findSub = (label: string): number | null => {
+      const lower = label.toLowerCase();
+      const hit = parsed.tgScores.find(s => s.label.toLowerCase().includes(lower));
+      return hit ? Math.max(0, Math.min(100, hit.pct)) : null;
+    };
+    if (out.logic == null) {
+      const v = findSub("logic"); if (v != null) out.logic = v;
+    }
+    if (out.verbal == null) {
+      const v = findSub("verbal"); if (v != null) out.verbal = v;
+    }
+    if (out.excel == null) {
+      const v = findSub("excel"); if (v != null) out.excel = v;
     }
     return out;
   };

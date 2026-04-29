@@ -743,6 +743,31 @@ export async function seedDatabase() {
     console.error("[seed] TBD self-heal failed:", e);
   }
 
+  // ── President → CEO direct line ────────────────────────────────────
+  // Channel for the Founder/President to send free-text requests to
+  // the CEO agent. CEO either answers directly OR returns a "committee
+  // prompt" that the user pastes into Cowork; the user then pastes the
+  // committee outcome back, CEO finalises a response. Status flow:
+  //   pending → answered (direct reply)
+  //   pending → needs_committee → committee_done → answered
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS president_requests (
+      id                 SERIAL PRIMARY KEY,
+      message            TEXT NOT NULL,
+      status             TEXT NOT NULL DEFAULT 'pending',
+      ceo_response       TEXT,
+      committee_prompt   TEXT,
+      committee_outcome  TEXT,
+      created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      responded_at       TIMESTAMPTZ,
+      updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS president_requests_status_idx
+    ON president_requests(status, created_at DESC)
+  `);
+
   // ── API Cost Tracking ─────────────────────────────────────────────────────
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS api_usage_log (

@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Sun, Coffee, Users, Sparkles, Download, AlertTriangle } from "lucide-react";
+import { Sun, Coffee, Users, Sparkles, Download, AlertTriangle, Zap, Send, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   buildCoworkPrompt,
@@ -31,6 +31,29 @@ export default function AgenticHome() {
     try { return localStorage.getItem("agents_paused_v1") === "true"; } catch { return false; }
   });
 
+  // President → CEO channel
+  interface PresidentRequest {
+    id: number;
+    message: string;
+    status: "pending" | "answered" | "needs_committee" | "committee_done";
+    ceo_response: string | null;
+    committee_prompt: string | null;
+    committee_outcome: string | null;
+    created_at: string | null;
+  }
+  const [presidentRequests, setPresidentRequests] = useState<PresidentRequest[]>([]);
+  const [presidentDraft, setPresidentDraft] = useState("");
+  const [outcomeDraftBy, setOutcomeDraftBy] = useState<Record<number, string>>({});
+  const [replyDraftBy, setReplyDraftBy]     = useState<Record<number, string>>({});
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+
+  async function loadPresidentRequests() {
+    try {
+      const r = await fetch("/api/agentic/president-requests", { credentials: "include" });
+      if (r.ok) setPresidentRequests(await r.json());
+    } catch { /* non-fatal */ }
+  }
+
   async function loadAll() {
     try {
       const [a, o, i, t, c] = await Promise.all([
@@ -45,7 +68,75 @@ export default function AgenticHome() {
       toast({ title: "Failed to load agentic state", variant: "destructive" });
     }
   }
-  useEffect(() => { void loadAll(); }, []);
+  useEffect(() => { void loadAll(); void loadPresidentRequests(); }, []);
+
+  async function kickAgents() {
+    try {
+      const r = await fetch("/api/agentic/agents/kick", { method: "POST", credentials: "include" });
+      if (!r.ok) throw new Error("kick failed");
+      const j = await r.json();
+      toast({ title: `${j.kicked} agents at work`, description: "Status flipped to 'working' · event logged on Decision Log." });
+      void loadAll();
+    } catch {
+      toast({ title: "Kick failed", variant: "destructive" });
+    }
+  }
+
+  async function submitPresidentRequest() {
+    const text = presidentDraft.trim();
+    if (!text) return;
+    try {
+      const r = await fetch("/api/agentic/president-requests", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      if (!r.ok) throw new Error("submit failed");
+      setPresidentDraft("");
+      toast({ title: "Sent to CEO", description: "The CEO will reply directly or escalate to the Exec Committee." });
+      void loadPresidentRequests();
+    } catch { toast({ title: "Send failed", variant: "destructive" }); }
+  }
+
+  async function ceoReply(id: number) {
+    const text = (replyDraftBy[id] ?? "").trim();
+    if (!text) return;
+    const r = await fetch(`/api/agentic/president-requests/${id}/reply`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ceo_response: text }),
+    });
+    if (r.ok) {
+      toast({ title: "CEO reply saved" });
+      setReplyDraftBy(prev => ({ ...prev, [id]: "" }));
+      void loadPresidentRequests();
+    } else toast({ title: "Reply failed", variant: "destructive" });
+  }
+
+  async function ceoEscalate(id: number) {
+    const r = await fetch(`/api/agentic/president-requests/${id}/escalate`, {
+      method: "POST", credentials: "include",
+    });
+    if (r.ok) {
+      toast({ title: "Cowork prompt generated", description: "Copy + paste into Cowork, then paste outcome back here." });
+      void loadPresidentRequests();
+    } else toast({ title: "Escalate failed", variant: "destructive" });
+  }
+
+  async function importOutcome(id: number) {
+    const text = (outcomeDraftBy[id] ?? "").trim();
+    if (!text) return;
+    const r = await fetch(`/api/agentic/president-requests/${id}/import-outcome`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: text }),
+    });
+    if (r.ok) {
+      toast({ title: "Committee outcome saved", description: "Open OKR Center to import the DECISION blocks into the system." });
+      setOutcomeDraftBy(prev => ({ ...prev, [id]: "" }));
+      void loadPresidentRequests();
+    } else toast({ title: "Save failed", variant: "destructive" });
+  }
 
   function generate8am() {
     const today = new Date().toISOString().slice(0, 10);
@@ -150,6 +241,9 @@ export default function AgenticHome() {
           <Button size="lg" onClick={generate8am} className="flex-1 min-w-[200px]" disabled={paused}>
             <Sun className="w-5 h-5 mr-2" /> 8am — Start AIOS
           </Button>
+          <Button size="lg" onClick={kickAgents} className="flex-1 min-w-[200px] bg-emerald-600 hover:bg-emerald-700" disabled={paused}>
+            <Zap className="w-5 h-5 mr-2" /> Make agents start work
+          </Button>
           <Button size="lg" variant={paused ? "default" : "outline"} onClick={toggleCoffee} className="flex-1 min-w-[160px]">
             <Coffee className="w-5 h-5 mr-2" /> {paused ? "Resume AIOS" : "Pause AIOS"}
           </Button>
@@ -180,6 +274,148 @@ export default function AgenticHome() {
           <Textarea value={generated} readOnly rows={20} className="font-mono text-xs" />
         </Card>
       )}
+
+      {/* President → CEO direct channel */}
+      <Card className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-primary" />
+          <h2 className="text-sm font-bold">President → CEO</h2>
+          <Badge variant="outline" className="text-[10px]">{presidentRequests.filter(r => r.status === "pending" || r.status === "needs_committee").length} open</Badge>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Direct channel from you (acting as President) to the CEO agent. The CEO either replies directly, or escalates to the Exec Committee — that generates a Cowork prompt you paste into Cowork, then paste the outcome back here.
+        </p>
+        <div className="flex gap-2">
+          <Textarea
+            value={presidentDraft}
+            onChange={(e) => setPresidentDraft(e.target.value)}
+            rows={3}
+            placeholder="e.g. I want a plan to grow MRR by 30% in Q3 — focus on existing accounts."
+            className="text-xs flex-1"
+          />
+          <Button size="sm" onClick={submitPresidentRequest} disabled={!presidentDraft.trim()}>
+            <Send className="w-3.5 h-3.5 mr-1" /> Send to CEO
+          </Button>
+        </div>
+
+        {presidentRequests.length > 0 && (
+          <div className="space-y-2 mt-2">
+            {presidentRequests.map(r => {
+              const isOpen = expanded[r.id] ?? (r.status !== "answered");
+              const tone =
+                r.status === "answered"        ? "border-emerald-300 bg-emerald-50/40"
+                : r.status === "needs_committee" ? "border-amber-300 bg-amber-50/40"
+                : r.status === "committee_done"  ? "border-blue-300 bg-blue-50/40"
+                :                                  "border-slate-300 bg-slate-50/40";
+              return (
+                <div key={r.id} className={`border-2 rounded p-2 ${tone}`}>
+                  <button
+                    onClick={() => setExpanded(prev => ({ ...prev, [r.id]: !isOpen }))}
+                    className="w-full text-left flex items-center gap-2 flex-wrap"
+                  >
+                    <Badge variant="outline" className="text-[10px]">#{r.id}</Badge>
+                    <Badge variant="outline" className="text-[10px]">{r.status}</Badge>
+                    <span className="text-xs font-semibold flex-1 truncate">{r.message}</span>
+                    {r.created_at && <span className="text-[10px] text-muted-foreground">{r.created_at.slice(0, 16).replace("T", " ")}</span>}
+                  </button>
+
+                  {isOpen && (
+                    <div className="mt-2 space-y-2 text-xs">
+                      <div className="bg-background border rounded p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-1">Request</div>
+                        <div className="whitespace-pre-wrap">{r.message}</div>
+                      </div>
+
+                      {r.ceo_response && (
+                        <div className="bg-background border rounded p-2">
+                          <div className="text-[10px] uppercase tracking-wider text-emerald-700 font-bold mb-1">CEO Response</div>
+                          <div className="whitespace-pre-wrap">{r.ceo_response}</div>
+                        </div>
+                      )}
+
+                      {r.committee_prompt && (
+                        <div className="bg-background border rounded p-2 space-y-1">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] uppercase tracking-wider text-amber-700 font-bold">Cowork prompt — paste into Cowork</div>
+                            <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => copy(r.committee_prompt!)}>
+                              <Download className="w-3 h-3 mr-1" /> Copy
+                            </Button>
+                          </div>
+                          <Textarea value={r.committee_prompt} readOnly rows={6} className="font-mono text-[10px]" />
+                        </div>
+                      )}
+
+                      {r.committee_outcome && (
+                        <div className="bg-background border rounded p-2">
+                          <div className="text-[10px] uppercase tracking-wider text-blue-700 font-bold mb-1">Committee outcome (raw)</div>
+                          <Textarea value={r.committee_outcome} readOnly rows={4} className="font-mono text-[10px]" />
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            Open <button onClick={() => navigate("/executive")} className="underline text-primary">OKR Center</button> to import the DECISION blocks into the system.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Action panel — depends on status */}
+                      {r.status === "pending" && (
+                        <div className="border rounded p-2 bg-background space-y-2">
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">CEO actions</div>
+                          <Textarea
+                            value={replyDraftBy[r.id] ?? ""}
+                            onChange={(e) => setReplyDraftBy(prev => ({ ...prev, [r.id]: e.target.value }))}
+                            rows={3}
+                            placeholder="Direct CEO reply…"
+                            className="text-xs"
+                          />
+                          <div className="flex gap-2 flex-wrap">
+                            <Button size="sm" onClick={() => ceoReply(r.id)} disabled={!(replyDraftBy[r.id] ?? "").trim()}>
+                              <Send className="w-3.5 h-3.5 mr-1" /> CEO replies directly
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => ceoEscalate(r.id)}>
+                              <Users className="w-3.5 h-3.5 mr-1" /> "Need to discuss with my team"
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {r.status === "needs_committee" && (
+                        <div className="border rounded p-2 bg-background space-y-2">
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">Paste Cowork outcome</div>
+                          <Textarea
+                            value={outcomeDraftBy[r.id] ?? ""}
+                            onChange={(e) => setOutcomeDraftBy(prev => ({ ...prev, [r.id]: e.target.value }))}
+                            rows={6}
+                            placeholder={"CEO_RESPONSE_TO_PRESIDENT: …\n\nDECISION_ID: 1\nTYPE: action\n…\n---"}
+                            className="font-mono text-[10px]"
+                          />
+                          <Button size="sm" onClick={() => importOutcome(r.id)} disabled={!(outcomeDraftBy[r.id] ?? "").trim()}>
+                            <Send className="w-3.5 h-3.5 mr-1" /> Save committee outcome
+                          </Button>
+                        </div>
+                      )}
+
+                      {r.status === "committee_done" && (
+                        <div className="border rounded p-2 bg-background space-y-2">
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">Finalise CEO reply to President</div>
+                          <Textarea
+                            value={replyDraftBy[r.id] ?? r.ceo_response ?? ""}
+                            onChange={(e) => setReplyDraftBy(prev => ({ ...prev, [r.id]: e.target.value }))}
+                            rows={4}
+                            placeholder="CEO's final reply (committee-informed)…"
+                            className="text-xs"
+                          />
+                          <Button size="sm" onClick={() => ceoReply(r.id)} disabled={!(replyDraftBy[r.id] ?? "").trim()}>
+                            <Send className="w-3.5 h-3.5 mr-1" /> Mark answered
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
       {/* AIOS quick-link tiles */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
