@@ -73,6 +73,8 @@ interface PricingCase {
   risk_flags?: string[] | null;           // regulatory / timing / team / reputation
   problem_statement?: string | null;      // what the project actually solves
   expected_impact_eur?: number | null;    // expected € impact on client's P&L
+  win_probability?: number | null;        // 0-100 — Livio's estimate of winning; drives 24-week HR staffing forecast
+  start_date?: string | null;             // YYYY-MM-DD expected delivery start
   // proposal_options_count: 1 = single-option mode (only Option 1 rendered),
   // 3 = full 3-option mode. Hidden options keep their state in case_timelines
   // so toggling back is lossless.
@@ -538,6 +540,8 @@ function emptyCase(): PricingCase {
     incumbent_advisor: null, geographic_scope: "multi", value_driver: null,
     differentiation: null, risk_flags: null, problem_statement: null,
     expected_impact_eur: null,
+    win_probability: null,
+    start_date: null,
     proposal_options_count: 3,
   };
 }
@@ -4930,6 +4934,26 @@ export default function PricingTool() {
                     value={form.duration_weeks}
                     onChange={e => setForm(f => ({ ...f, duration_weeks: parseFloat(e.target.value) || 0 }))} />
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Win Probability (%)</Label>
+                  <Input
+                    type="number" min="0" max="100" step="5"
+                    value={form.win_probability ?? ""}
+                    onChange={e => setForm(f => ({ ...f, win_probability: e.target.value === "" ? null : Math.max(0, Math.min(100, +e.target.value)) }))}
+                    className="font-mono"
+                    placeholder="e.g. 60"
+                  />
+                  <div className="text-[9px] text-muted-foreground">Your estimate — drives HR 24-week staffing forecast.</div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Expected Start Date</Label>
+                  <Input
+                    type="date"
+                    value={form.start_date ?? ""}
+                    onChange={e => setForm(f => ({ ...f, start_date: e.target.value || null }))}
+                  />
+                  <div className="text-[9px] text-muted-foreground">When delivery begins — used for staffing forecast.</div>
+                </div>
                 <div className="col-span-2 space-y-1">
                   <Label className="text-xs">Notes / Context</Label>
                   <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
@@ -6533,10 +6557,32 @@ export default function PricingTool() {
                       return true;
                     });
 
+                    // ── NET1 lookup for benchmark rows ─────────────────
+                    // For any past proposal that has a backing pricing case,
+                    // use the case's canonical_net_weekly (= NET1) as the
+                    // reference price instead of the stored weekly_price.
+                    // weekly_price for manually-entered/won proposals is
+                    // total_fee ÷ weeks — not NET1. canonical_net_weekly was
+                    // explicitly computed and stored on every case save.
+                    const caseNet1Map = new Map<string, number>(
+                      cases
+                        .filter((c: any) => c.project_name && (c.recommendation?.canonical_net_weekly ?? c.recommendation?.target_weekly ?? 0) > 0)
+                        .map((c: any) => [
+                          (c.project_name as string).trim().toLowerCase(),
+                          Math.round(c.recommendation.canonical_net_weekly ?? c.recommendation.target_weekly),
+                        ])
+                    );
+                    const proposalNet1 = (p: PricingProposal): number => {
+                      const net1 = caseNet1Map.get((p.project_name ?? "").trim().toLowerCase());
+                      return net1 ?? p.weekly_price;
+                    };
+
                     const renderSection = (s: typeof sections[number]) => {
-                      const totalFees = s.items.map(p =>
-                        p.total_fee ?? Math.round(p.weekly_price * (p.duration_weeks ?? 0)));
-                      const weeklyFees = s.items.map(p => p.weekly_price);
+                      const weeklyFees = s.items.map(p => proposalNet1(p));
+                      const totalFees  = s.items.map(p => {
+                        const wk = proposalNet1(p);
+                        return Math.round(wk * (p.duration_weeks ?? 0));
+                      });
                       const avgTotal  = totalFees.length  > 0 ? totalFees.reduce((a, v) => a + v, 0) / totalFees.length   : 0;
                       const avgWeekly = weeklyFees.length > 0 ? weeklyFees.reduce((a, v) => a + v, 0) / weeklyFees.length : 0;
 
@@ -6565,15 +6611,16 @@ export default function PricingTool() {
                               </TableHeader>
                               <TableBody>
                                 {s.items.map((p, i) => {
-                                  const totalFee = p.total_fee ?? Math.round(p.weekly_price * (p.duration_weeks ?? 0));
+                                  const net1wk  = proposalNet1(p);
+                                  const net1tot = Math.round(net1wk * (p.duration_weeks ?? 0));
                                   const year = (p.proposal_date ?? "").slice(0, 4) || "—";
                                   return (
                                     <TableRow key={p.id ?? i}>
                                       <TableCell className="text-[11px] font-semibold py-1">{p.project_name}</TableCell>
                                       <TableCell className="text-[11px] text-center py-1 text-muted-foreground">{year}</TableCell>
                                       <TableCell className="text-[11px] text-center py-1">{p.duration_weeks ?? "—"}</TableCell>
-                                      <TableCell className="text-[11px] text-right py-1 font-mono font-semibold text-emerald-700">{fmtC(totalFee)}</TableCell>
-                                      <TableCell className="text-[11px] text-right py-1 font-mono text-emerald-600">{fmtC(p.weekly_price)}</TableCell>
+                                      <TableCell className="text-[11px] text-right py-1 font-mono font-semibold text-emerald-700">{fmtC(net1tot)}</TableCell>
+                                      <TableCell className="text-[11px] text-right py-1 font-mono text-emerald-600">{fmtC(net1wk)}</TableCell>
                                     </TableRow>
                                   );
                                 })}
