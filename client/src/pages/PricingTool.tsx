@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from "react";
+﻿import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -749,6 +749,11 @@ export default function PricingTool() {
   const [backfillingCanonical, setBackfillingCanonical] = useState(false);
   const [importConflicts, setImportConflicts] = useState<{ incoming: PricingProposal; existing: PricingProposal }[]>([]);
   const [manualDelta, setManualDelta] = useState(0); // manual ±500 price adjustment
+  // Anchor-price editor: clicking NET1/GROSS1/GROSSV opens this inline editor;
+  // committing back-solves manualDelta so the chosen field reaches the typed
+  // value while all discount % stay unchanged.
+  const [anchorPanel, setAnchorPanel] = useState<{ field: "net1" | "gross1" | "grossv"; draft: string } | null>(null);
+  const anchorCancelledRef = useRef(false);
   // 3-option commercial-proposal block visibility is now driven by the
   // persisted form.proposal_options_count (1 = hidden / single quote,
   // 3 = visible / three-option layout). No separate showThreeOptions
@@ -2916,6 +2921,14 @@ export default function PricingTool() {
     }
     return Math.round(g);
   }, [canonicalNetWeekly, adminFeePct, caseDiscounts]);
+
+  // GROSSV weekly = GROSS1 × (1 + variable%) — same formula as the waterfall's
+  // GROSSV bar. Used by the anchor-panel to back-solve NET1 when user edits GROSSV.
+  const canonicalGrossVWeekly = useMemo(() => {
+    return variableFeePct > 0
+      ? Math.round(canonicalGrossWeekly * (1 + variableFeePct / 100))
+      : canonicalGrossWeekly;
+  }, [canonicalGrossWeekly, variableFeePct]);
 
   // Stats for list view
   const avgTarget = cases.length
@@ -5695,26 +5708,12 @@ export default function PricingTool() {
                               {manualDelta > 0 ? "+" : ""}{fmt(manualDelta)} adj
                             </text>
                           )}
-                          {/* NET1 figure is editable in place via click prompt.
-                              Renders as plain SVG <text> for perfect alignment
-                              with the other bar labels. Click → window.prompt
-                              → back-solve manualDelta so the rest of the
-                              pricing engine (band clamp, persistence, totals)
-                              keeps working unchanged. baseNet1 = recommendedNwf
-                              - manualDelta is the raw post-P1-P7 value before
-                              the manual nudge. */}
+                          {/* NET1 — click to open the anchor-price editor below. */}
                           <text
                             x={x + barW/2} y={y - 3} textAnchor="middle"
                             fontSize="9" fill="#166534" fontWeight="bold"
                             style={{ cursor: "pointer" }}
-                            onClick={() => {
-                              const next = window.prompt("Set NET1 weekly (€):", String(recommendedNwf));
-                              if (next == null) return;
-                              const parsed = parseInt(next.replace(/[^\d-]/g, ""), 10);
-                              if (!Number.isFinite(parsed) || parsed <= 0) return;
-                              const baseNet1 = recommendedNwf - manualDelta;
-                              setManualDelta(parsed - baseNet1);
-                            }}
+                            onClick={() => setAnchorPanel({ field: "net1", draft: String(recommendedNwf) })}
                           >
                             {fmt(recommendedNwf)}
                           </text>
@@ -5751,10 +5750,18 @@ export default function PricingTool() {
                         const totalGross1 = grossWeeklyWaterfall * effectiveDuration;
                         return <>
                           <line x1={xOf(bi - 1) + barW} y1={yOf(prevEnd)} x2={x} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x} y={y} width={barW} height={h} fill="#4ade80" rx="2" />
-                          <text x={x + barW/2} y={y - 3} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">{fmt(grossWeeklyWaterfall)}</text>
-                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="600">GROSS1</text>
-                          <text x={x + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalGross1)}</text>
+                          <rect x={x} y={y} width={barW} height={h} fill="#2dd4bf" rx="2" />
+                          {/* GROSS1 — click to use as anchor price; back-solves NET1 via manualDelta */}
+                          <text
+                            x={x + barW/2} y={y - 3} textAnchor="middle"
+                            fontSize="9" fill="#0f766e" fontWeight="bold"
+                            style={{ cursor: "pointer" }}
+                            onClick={() => setAnchorPanel({ field: "gross1", draft: String(grossWeeklyWaterfall) })}
+                          >
+                            {fmt(grossWeeklyWaterfall)}
+                          </text>
+                          <text x={x + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#0f766e" fontWeight="700">GROSS1</text>
+                          <text x={x + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#0f766e">{fmt(totalGross1)}</text>
                         </>;
                       })()}
 
@@ -5789,51 +5796,33 @@ export default function PricingTool() {
                         const y2 = yOf(grossVVal);
                         const h2 = hOf(minV, grossVVal);
 
-                        // Back-solve handler: typing a new GROSSV updates
-                        // variableFeePct so (GROSS1 × (1 + var%)) == new value.
-                        // Clamped to [0, 100] — no negative variable fee.
-                        const onCommitGrossV = (newVal: number) => {
-                          if (!Number.isFinite(newVal) || newVal <= 0 || grossWeeklyWaterfall <= 0) return;
-                          const pct = ((newVal / grossWeeklyWaterfall) - 1) * 100;
-                          const clamped = Math.max(0, Math.min(100, Math.round(pct * 10) / 10));
-                          setVariableFeePct(clamped);
-                        };
-
                         return <>
                           {variableFeePct > 0 && (
                             <>
                               {/* Var fee delta bar */}
                               <line x1={xOf(bi1 - 1) + barW} y1={yOf(grossWeeklyWaterfall)} x2={x1} y2={yOf(grossWeeklyWaterfall)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                              <rect x={x1} y={y1} width={barW} height={h1} fill="#166534" rx="2" opacity="0.7" />
-                              <text x={x1 + barW/2} y={y1 - 9} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="bold">+{fmt(varDelta)}</text>
+                              <rect x={x1} y={y1} width={barW} height={h1} fill="#0891b2" rx="2" opacity="0.7" />
+                              <text x={x1 + barW/2} y={y1 - 9} textAnchor="middle" fontSize="8" fill="#0e7490" fontWeight="bold">+{fmt(varDelta)}</text>
                               <text x={x1 + barW/2} y={y1 - 2} textAnchor="middle" fontSize="7" fill="#94a3b8">+{variableFeePct}%</text>
                               <text x={x1 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="7.5" fill="#64748b">Var. Fee</text>
                             </>
                           )}
 
-                          {/* GROSSV total bar — editable via click prompt.
-                              Same approach as NET1: plain SVG <text> for
-                              consistent rendering, click → prompt → back-solve
-                              variableFeePct. Avoids the foreignObject right-
-                              edge clipping when GROSSV is the rightmost bar. */}
+                          {/* GROSSV total bar — click to open anchor-price editor.
+                              Sets GROSSV as anchor: back-solves NET1 via manualDelta
+                              keeping all discount % unchanged (variable fee included). */}
                           <line x1={(variableFeePct > 0 ? x1 + barW : xOf(bi2 - 1) + barW)} y1={yOf(grossVVal)} x2={x2} y2={yOf(grossVVal)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,2" />
-                          <rect x={x2} y={y2} width={barW} height={h2} fill="#86efac" rx="2" />
+                          <rect x={x2} y={y2} width={barW} height={h2} fill="#67e8f9" rx="2" />
                           <text
                             x={x2 + barW/2} y={y2 - 3} textAnchor="middle"
-                            fontSize="8" fill="#166534" fontWeight="bold"
+                            fontSize="9" fill="#0e7490" fontWeight="bold"
                             style={{ cursor: "pointer" }}
-                            onClick={() => {
-                              const next = window.prompt("Set GROSSV weekly (€):", String(grossVVal));
-                              if (next == null) return;
-                              const parsed = parseInt(next.replace(/[^\d-]/g, ""), 10);
-                              if (!Number.isFinite(parsed) || parsed <= 0) return;
-                              onCommitGrossV(parsed);
-                            }}
+                            onClick={() => setAnchorPanel({ field: "grossv", draft: String(grossVVal) })}
                           >
                             {fmt(grossVVal)}
                           </text>
-                          <text x={x2 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#166534" fontWeight="600">GROSSV</text>
-                          <text x={x2 + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#166534">{fmt(totalGrossV)}</text>
+                          <text x={x2 + barW/2} y={chartBot + 10} textAnchor="middle" fontSize="8" fill="#0e7490" fontWeight="700">GROSSV</text>
+                          <text x={x2 + barW/2} y={chartBot + 19} textAnchor="middle" fontSize="6.5" fill="#0e7490">{fmt(totalGrossV)}</text>
                         </>;
                       })()}
 
@@ -5852,6 +5841,107 @@ export default function PricingTool() {
                       {/* Baseline */}
                       <line x1="25" y1={chartBot} x2={W - 5} y2={chartBot} stroke="#e2e8f0" strokeWidth="0.5" />
                     </svg>
+                </div>
+
+                {/* ── Anchor Price Editor ──────────────────────────────────
+                    Opens when user clicks NET1, GROSS1 or GROSSV in the chart.
+                    Typed value becomes the anchor; manualDelta back-solves so
+                    all discount percentages stay unchanged. */}
+                {anchorPanel && (() => {
+                  const commitAnchor = () => {
+                    anchorCancelledRef.current = false;
+                    const v = parseInt(anchorPanel.draft.replace(/[^\d]/g, ""), 10);
+                    if (Number.isFinite(v) && v > 0) {
+                      const baseNet1 = canonicalNetWeekly - manualDelta;
+                      if (anchorPanel.field === "net1") {
+                        setManualDelta(v - baseNet1);
+                      } else if (anchorPanel.field === "gross1") {
+                        const mf = canonicalNetWeekly > 0 ? canonicalGrossWeekly / canonicalNetWeekly : 1;
+                        if (mf > 0) setManualDelta(Math.round(v / mf) - baseNet1);
+                      } else {
+                        const tf = canonicalNetWeekly > 0 ? canonicalGrossVWeekly / canonicalNetWeekly : 1;
+                        if (tf > 0) setManualDelta(Math.round(v / tf) - baseNet1);
+                      }
+                    }
+                    setAnchorPanel(null);
+                  };
+                  const fieldLabel = anchorPanel.field === "net1" ? "NET1" : anchorPanel.field === "gross1" ? "GROSS1" : "GROSSV";
+                  const fieldColor = anchorPanel.field === "net1" ? "emerald" : anchorPanel.field === "gross1" ? "teal" : "cyan";
+                  const borderCls = fieldColor === "emerald" ? "border-emerald-400 focus:ring-emerald-300" : fieldColor === "teal" ? "border-teal-400 focus:ring-teal-300" : "border-cyan-400 focus:ring-cyan-300";
+                  const labelCls  = fieldColor === "emerald" ? "text-emerald-700" : fieldColor === "teal" ? "text-teal-700" : "text-cyan-700";
+                  return (
+                    <div className="mt-3 flex items-center gap-3 p-3 rounded-lg bg-background border shadow-sm">
+                      <span className={`text-[10px] font-bold uppercase shrink-0 ${labelCls}`}>{fieldLabel} weekly →</span>
+                      <Input
+                        autoFocus
+                        type="text"
+                        inputMode="numeric"
+                        value={anchorPanel.draft}
+                        className={`h-8 text-sm font-mono w-32 border-2 ${borderCls}`}
+                        onChange={e => setAnchorPanel(p => p ? { ...p, draft: e.target.value } : p)}
+                        onBlur={() => { if (!anchorCancelledRef.current) commitAnchor(); else { anchorCancelledRef.current = false; setAnchorPanel(null); } }}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") { (e.currentTarget as HTMLInputElement).blur(); }
+                          if (e.key === "Escape") { anchorCancelledRef.current = true; (e.currentTarget as HTMLInputElement).blur(); }
+                        }}
+                      />
+                      <span className="text-[9px] text-muted-foreground">/wk · Enter or click away to apply · Esc to cancel</span>
+                      <span className="text-[9px] text-muted-foreground ml-auto">Discounts unchanged — only NET1 shifts</span>
+                    </div>
+                  );
+                })()}
+
+                {/* ── Price summary strip ──────────────────────────────────
+                    Shows NET1 / GROSS1 / GROSSV as colored clickable cards.
+                    Click any to set it as the anchor price. */}
+                <div className="mt-2 flex items-stretch gap-1.5">
+                  {/* NET1 */}
+                  <button
+                    className="flex-1 rounded-lg border-2 border-emerald-200 bg-emerald-50 px-3 py-2 text-left hover:border-emerald-400 hover:bg-emerald-100/60 transition-colors group"
+                    onClick={() => setAnchorPanel({ field: "net1", draft: String(canonicalNetWeekly) })}
+                  >
+                    <div className="flex items-center gap-1 mb-1">
+                      <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wide">NET1</span>
+                      <span className="text-[9px] text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5">✎</span>
+                    </div>
+                    <div className="text-sm font-mono font-bold text-emerald-800">{fmt(canonicalNetWeekly)}<span className="text-[9px] font-normal text-emerald-600 ml-0.5">/wk</span></div>
+                    <div className="text-[9px] font-mono text-emerald-600 mt-0.5">{fmt(canonicalNetWeekly * effectiveDuration)} total</div>
+                  </button>
+                  {hasMarkups && <>
+                    <div className="flex items-center text-muted-foreground/40 text-xs px-0.5 self-center">→</div>
+                    {/* GROSS1 */}
+                    <button
+                      className="flex-1 rounded-lg border-2 border-teal-200 bg-teal-50 px-3 py-2 text-left hover:border-teal-400 hover:bg-teal-100/60 transition-colors group"
+                      onClick={() => setAnchorPanel({ field: "gross1", draft: String(canonicalGrossWeekly) })}
+                    >
+                      <div className="flex items-center gap-1 mb-1">
+                        <span className="text-[9px] font-bold text-teal-700 uppercase tracking-wide">GROSS1</span>
+                        <span className="text-[9px] text-teal-400 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5">✎</span>
+                        {adminFeePct > 0 && <span className="text-[8px] text-teal-500 ml-1">+{adminFeePct}%A</span>}
+                      </div>
+                      <div className="text-sm font-mono font-bold text-teal-800">{fmt(canonicalGrossWeekly)}<span className="text-[9px] font-normal text-teal-600 ml-0.5">/wk</span></div>
+                      <div className="text-[9px] font-mono text-teal-600 mt-0.5">{fmt(canonicalGrossWeekly * effectiveDuration)} total</div>
+                    </button>
+                    <div className="flex items-center text-muted-foreground/40 text-xs px-0.5 self-center">→</div>
+                    {/* GROSSV */}
+                    <button
+                      className="flex-1 rounded-lg border-2 border-cyan-200 bg-cyan-50 px-3 py-2 text-left hover:border-cyan-400 hover:bg-cyan-100/60 transition-colors group"
+                      onClick={() => setAnchorPanel({ field: "grossv", draft: String(canonicalGrossVWeekly) })}
+                    >
+                      <div className="flex items-center gap-1 mb-1">
+                        <span className="text-[9px] font-bold text-cyan-700 uppercase tracking-wide">GROSSV</span>
+                        <span className="text-[9px] text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5">✎</span>
+                        {variableFeePct > 0 && <span className="text-[8px] text-cyan-500 ml-1">+{variableFeePct}%V</span>}
+                      </div>
+                      <div className="text-sm font-mono font-bold text-cyan-800">{fmt(canonicalGrossVWeekly)}<span className="text-[9px] font-normal text-cyan-600 ml-0.5">/wk</span></div>
+                      <div className="text-[9px] font-mono text-cyan-600 mt-0.5">{fmt(canonicalGrossVWeekly * effectiveDuration)} total</div>
+                    </button>
+                  </>}
+                  {!hasMarkups && (
+                    <div className="flex-1 flex items-center justify-center text-[9px] text-muted-foreground italic border rounded-lg">
+                      Add admin fee or discount to see GROSS1 / GROSSV
+                    </div>
+                  )}
                 </div>
               </div>
             );
