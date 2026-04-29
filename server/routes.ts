@@ -6112,7 +6112,10 @@ RULES:
   app.get("/api/agentic/brief-data/proposals", requireAuth, async (_req, res) => {
     try {
       const r = await db.execute(sql`
-        SELECT project_name, client_name, outcome, total_fee::float AS total_fee,
+        SELECT project_name, client_name, outcome,
+               weekly_price::float AS weekly_price,
+               duration_weeks::float AS duration_weeks,
+               COALESCE(weekly_price * NULLIF(duration_weeks, 0), total_fee)::float AS net_total,
                win_probability::float AS win_probability, loss_reason
           FROM pricing_proposals
          ORDER BY created_at DESC
@@ -6455,7 +6458,9 @@ RULES:
       const open = facts.recentProposals.filter(p => !p.outcome || p.outcome === "open").length;
       L.push(`Won: ${won} · Lost: ${lost} · Open: ${open}`);
       for (const p of facts.recentProposals.slice(0, 8)) {
-        const fee = eur(p.total_fee);
+        // Use net_total (weekly_price × weeks) as the canonical figure —
+        // weekly_price is kept in sync with NET1 by ensureTbdProposalForFinalCase.
+        const fee = eur((p as any).net_total ?? p.total_fee);
         const prob = p.win_probability != null ? ` · ${p.win_probability}% prob` : "";
         const loss = p.loss_reason ? ` · loss: ${p.loss_reason}` : "";
         L.push(`- ${p.project_name} (${p.client_name ?? "?"}) — ${p.outcome ?? "open"} · ${fee}${prob}${loss}`);

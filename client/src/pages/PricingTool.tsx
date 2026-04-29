@@ -815,15 +815,14 @@ export default function PricingTool() {
       const won = cp.filter(p => p.outcome === "won");
       const lost = cp.filter(p => p.outcome === "lost");
       const total = won.length + lost.length;
-      const totalFee = (p: PricingProposal) => p.weekly_price * (p.duration_weeks || 1);
       return {
         country,
         won: won.length, lost: lost.length,
         winRate: total > 0 ? won.length / total : null,
-        avgWon: won.length > 0 ? won.reduce((s, p) => s + totalFee(p), 0) / won.length : null,
-        avgLost: lost.length > 0 ? lost.reduce((s, p) => s + totalFee(p), 0) / lost.length : null,
-        avgWonWeekly: won.length > 0 ? won.reduce((s, p) => s + p.weekly_price, 0) / won.length : null,
-        avgLostWeekly: lost.length > 0 ? lost.reduce((s, p) => s + p.weekly_price, 0) / lost.length : null,
+        avgWon: won.length > 0 ? won.reduce((s, p) => s + proposalNet1Total(p), 0) / won.length : null,
+        avgLost: lost.length > 0 ? lost.reduce((s, p) => s + proposalNet1Total(p), 0) / lost.length : null,
+        avgWonWeekly: won.length > 0 ? won.reduce((s, p) => s + proposalNet1(p), 0) / won.length : null,
+        avgLostWeekly: lost.length > 0 ? lost.reduce((s, p) => s + proposalNet1(p), 0) / lost.length : null,
       };
     });
   };
@@ -4387,7 +4386,7 @@ export default function PricingTool() {
                       {countries.map(([country, cps]) => {
                         const won = cps.filter(p => p.outcome === "won");
                         const lost = cps.filter(p => p.outcome === "lost");
-                        const prices = cps.map(p => p.weekly_price);
+                        const prices = cps.map(p => proposalNet1(p));
                         const minP = Math.min(...prices);
                         const maxP = Math.max(...prices);
                         const sym = getCurrencyForRegion(cps[0].region).symbol;
@@ -4416,8 +4415,8 @@ export default function PricingTool() {
                         const sMin = Math.max(0, Math.min(...allVals) - pad);
                         const sMax = Math.max(...allVals) + pad;
                         const sRange = sMax - sMin || 1;
-                        const avgWon = won.length ? won.reduce((s, p) => s + p.weekly_price, 0) / won.length : null;
-                        const avgLost = lost.length ? lost.reduce((s, p) => s + p.weekly_price, 0) / lost.length : null;
+                        const avgWon = won.length ? won.reduce((s, p) => s + proposalNet1(p), 0) / won.length : null;
+                        const avgLost = lost.length ? lost.reduce((s, p) => s + proposalNet1(p), 0) / lost.length : null;
 
                         const W = 320, H = 100;
                         const padL = 6, padR = 6, padT = 18, padB = 18;
@@ -4591,7 +4590,7 @@ export default function PricingTool() {
               // Use every proposal with a positive total_fee, won or lost,
               // except rows explicitly excluded from analysis.
               const rows = proposals
-                .filter(p => !isExcluded(p) && p.total_fee && p.total_fee > 0)
+                .filter(p => !isExcluded(p) && proposalNet1Total(p) > 0)
                 .map(p => ({
                   id: p.id!,
                   name: p.project_name || p.client_name || `#${p.id}`,
@@ -4599,7 +4598,7 @@ export default function PricingTool() {
                   outcome: p.outcome,
                   region: proposalRegionKey(p),
                   country: p.country || "",
-                  feeK: Math.round((p.total_fee as number) / 1000),
+                  feeK: Math.round(proposalNet1Total(p) / 1000),
                 }))
                 .sort((a, b) => b.feeK - a.feeK);
 

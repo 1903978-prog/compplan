@@ -19,7 +19,7 @@ export interface ConflictLite  { id: number; title: string; severity: string | n
 
 // App-section data shapes (fetched client-side for the 8am prompt)
 export interface BdDeal        { name: string; client_name: string | null; stage: string | null; amount: number | null; probability: number | null; close_date: string | null; currency: string | null; }
-export interface ProposalLite  { project_name: string; client_name: string | null; outcome: string | null; total_fee: number | null; win_probability: number | null; loss_reason: string | null; }
+export interface ProposalLite  { project_name: string; client_name: string | null; outcome: string | null; total_fee: number | null; net_total?: number | null; weekly_price?: number | null; duration_weeks?: number | null; win_probability: number | null; loss_reason: string | null; }
 export interface InvoiceLite   { client_name: string | null; due_amount: number | null; due_date: string | null; state: string | null; currency: string | null; }
 export interface WonProjectLite{ project_name: string; client_name: string | null; status: string | null; start_date: string | null; end_date: string | null; total_amount: number | null; currency: string | null; }
 export interface HiringStage   { stage: string; count: number; }
@@ -98,7 +98,10 @@ export function buildCoworkPrompt(input: {
       lines.push(`Won: ${won} · Lost: ${lost} · Open: ${input.recentProposals.length - won - lost}`);
       for (const p of input.recentProposals.slice(0, 8)) {
         const loss = p.loss_reason ? ` · loss: ${p.loss_reason}` : "";
-        lines.push(`- ${p.project_name} (${p.client_name ?? "?"}) — ${p.outcome ?? "open"} · ${eur(p.total_fee)}${p.win_probability != null ? ` · ${p.win_probability}% prob` : ""}${loss}`);
+        // net_total = weekly_price × weeks (set by ensureTbdProposalForFinalCase = NET1 × weeks).
+        // Falls back to total_fee for legacy rows without weekly_price sync.
+        const netVal = p.net_total ?? (p.weekly_price && p.duration_weeks ? p.weekly_price * p.duration_weeks : p.total_fee);
+        lines.push(`- ${p.project_name} (${p.client_name ?? "?"}) — ${p.outcome ?? "open"} · ${eur(netVal)}${p.win_probability != null ? ` · ${p.win_probability}% prob` : ""}${loss}`);
       }
       lines.push("");
     }
