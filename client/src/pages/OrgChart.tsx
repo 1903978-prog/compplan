@@ -538,7 +538,7 @@ export default function OrgChart() {
           <div className="flex justify-center mb-3">
             {/* President is the apex — no connecting line. CEO sits alongside
                 it; the vertical line below CEO connects down to direct reports. */}
-            <div className="flex items-start gap-6">
+            <div className="flex items-start gap-3">
               <RoleCard
                 role={president} highlight
                 knowledgeCount={knowledge.filter(k => k.role_key === president.role_key).length}
@@ -565,7 +565,7 @@ export default function OrgChart() {
             {/* Horizontal busbar — spans full width of the subtrees row */}
             <div className="relative w-full">
               <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
-              <div className="flex flex-nowrap justify-center gap-6 pt-3">
+              <div className="flex flex-nowrap justify-center gap-3 pt-3">
                 {directReports.map(r => (
                   <RoleSubtree
                     key={r.id}
@@ -795,38 +795,38 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
   return (
     <Card
       onClick={onClick}
-      className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/40 w-[152px] h-[80px] overflow-hidden shrink-0 ${
+      className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/40 w-[112px] h-[58px] overflow-hidden shrink-0 ${
         highlight ? "border-2 border-primary/40 ring-2 ring-primary/10" : ""
       }`}
     >
-      <div className="p-2 flex flex-col h-full">
+      <div className="p-1.5 flex flex-col h-full">
         {/* Row 1 — kind icon · role name · knowledge btn */}
-        <div className="flex items-center gap-1 min-w-0">
+        <div className="flex items-center gap-0.5 min-w-0">
           {role.kind === "human" ? (
-            <span title="Human" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-100 text-blue-700 shrink-0">
-              <User className="w-2 h-2" />
+            <span title="Human" className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-100 text-blue-700 shrink-0">
+              <User className="w-1.5 h-1.5" />
             </span>
           ) : (
-            <span title="AI agent" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-violet-100 text-violet-700 shrink-0">
-              <Bot className="w-2 h-2" />
+            <span title="AI agent" className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-violet-100 text-violet-700 shrink-0">
+              <Bot className="w-1.5 h-1.5" />
             </span>
           )}
-          <h3 className="font-semibold text-[10px] leading-tight truncate flex-1">{role.role_name}</h3>
+          <h3 className="font-semibold text-[9px] leading-tight truncate flex-1">{role.role_name}</h3>
           <Button
             size="sm" variant="ghost"
-            className="h-4 w-4 p-0 shrink-0"
+            className="h-3.5 w-3.5 p-0 shrink-0"
             onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
             title={`Add knowledge for ${role.role_name}`}
           >
-            <BookOpen className="w-2.5 h-2.5" />
+            <BookOpen className="w-2 h-2" />
           </Button>
         </div>
 
-        {/* Row 2 — status badge + optional person name */}
-        <div className="flex items-center gap-1 mt-0.5 min-w-0">
-          {statusBadge(role.status)}
+        {/* Row 2 — non-active status badge + optional person name (hidden for peers) */}
+        <div className="flex items-center gap-0.5 mt-0.5 min-w-0">
+          {role.status !== "active" && statusBadge(role.status)}
           {!isPeer && role.person_name && (
-            <span className="text-[9px] text-muted-foreground truncate">{role.person_name}</span>
+            <span className="text-[8px] text-muted-foreground truncate">{role.person_name}</span>
           )}
         </div>
 
@@ -834,21 +834,21 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
         <div className="flex-1" />
 
         {/* Row 3 — stats */}
-        <div className="flex items-center justify-between border-t pt-1 text-[9px] text-muted-foreground">
-          <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between border-t pt-0.5 text-[8px] text-muted-foreground">
+          <div className="flex items-center gap-1">
             {role.goals.length > 0 && (
-              <span className="flex items-center gap-0.5"><Target className="w-2 h-2" />{role.goals.length}</span>
+              <span className="flex items-center gap-0.5"><Target className="w-1.5 h-1.5" />{role.goals.length}</span>
             )}
             {role.okrs.length > 0 && (
-              <span className="flex items-center gap-0.5"><Sparkles className="w-2 h-2" />{role.okrs.length}</span>
+              <span className="flex items-center gap-0.5"><Sparkles className="w-1.5 h-1.5" />{role.okrs.length}</span>
             )}
-            <span className="flex items-center gap-0.5"><ListTodo className="w-2 h-2" />{openTasks}</span>
+            <span className="flex items-center gap-0.5"><ListTodo className="w-1.5 h-1.5" />{openTasks}</span>
             {knowledgeCount > 0 && (
-              <span className="flex items-center gap-0.5"><BookOpen className="w-2 h-2" />{knowledgeCount}</span>
+              <span className="flex items-center gap-0.5"><BookOpen className="w-1.5 h-1.5" />{knowledgeCount}</span>
             )}
           </div>
           {overdue > 0 && (
-            <Badge variant="destructive" className="text-[8px] h-3.5 px-0.5">{overdue}!</Badge>
+            <Badge variant="destructive" className="text-[7px] h-3 px-0.5">{overdue}!</Badge>
           )}
         </div>
       </div>
@@ -888,7 +888,7 @@ function RoleSubtree({
           <div className="relative w-full">
             <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
             {/* Children — always on a single line, no wrapping */}
-            <div className="flex flex-nowrap justify-center gap-4 pt-3">
+            <div className="flex flex-nowrap justify-center gap-2 pt-3">
               {children.map(c => (
                 <RoleSubtree
                   key={c.id}
