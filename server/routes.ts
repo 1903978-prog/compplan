@@ -6031,5 +6031,188 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── /api/ceo-brief — public, token-protected daily brief ────────────────
+  // External tools (Cowork skills, schedulers, etc.) GET this endpoint to
+  // pull the same daily brief the "8am — Start AIOS" button generates,
+  // built fresh from live DB state on each call.
+  //
+  //   GET /api/ceo-brief                      → text/plain
+  //   GET /api/ceo-brief?format=json          → { generated_at, prompt_text, facts }
+  //
+  // Auth: header `Authorization: Bearer <CEO_BRIEF_TOKEN>` against the env
+  // var of the same name. Constant-time compare. Header missing/wrong → 401.
+  // Env var missing entirely → 503 (so we never accidentally serve open).
+  function ceoBriefAuthOk(req: any): boolean {
+    const expected = process.env.CEO_BRIEF_TOKEN ?? "";
+    if (!expected) return false;
+    const header = String(req.headers?.authorization ?? "");
+    const m = header.match(/^Bearer\s+(.+)$/i);
+    const provided = m?.[1]?.trim() ?? "";
+    if (!provided || provided.length !== expected.length) return false;
+    let mismatch = 0;
+    for (let i = 0; i < expected.length; i++) {
+      mismatch |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
+    }
+    return mismatch === 0;
+  }
+
+  // Render the same Cowork prompt as client/promptTemplates.ts:buildCoworkPrompt.
+  // Kept in sync deliberately — if you change one, change the other.
+  function renderCeoBrief(facts: {
+    date: string;
+    agents: Array<{ id: number; name: string; mission: string | null; status: string }>;
+    objectives: Array<{ id: number; agent_id: number; title: string; status: string }>;
+    openTasks: Array<{ agent_id: number; title: string; deadline: string | null; approval_status: string }>;
+    overdueTasks: Array<{ agent_id: number; title: string; deadline: string | null }>;
+    recentIdeasByAgent: Map<number, Array<{ title: string; total_score: number | null; status: string }>>;
+    openConflicts: Array<{ title: string; severity: string | null }>;
+  }): string {
+    const lines: string[] = [];
+    lines.push(`# Eendigo Daily CEO Brief — ${facts.date}`);
+    lines.push("");
+    lines.push("You are the CEO of a small consulting firm. Your direct reports (8 agents) need a daily synthesis. Below is the live state of the company.");
+    lines.push("");
+
+    lines.push("## Agents");
+    for (const a of facts.agents) {
+      const okrCount = facts.objectives.filter(o => o.agent_id === a.id).length;
+      lines.push(`- **${a.name}** (${a.status}) — ${a.mission ?? "(no mission yet)"} · ${okrCount} objectives`);
+    }
+    lines.push("");
+
+    lines.push("## Recent ideas (top 5 per agent)");
+    for (const a of facts.agents) {
+      const ideas = (facts.recentIdeasByAgent.get(a.id) ?? []).slice(0, 5);
+      if (ideas.length === 0) continue;
+      lines.push(`### ${a.name}`);
+      for (const i of ideas) lines.push(`- [${i.status}] ${i.title} (score=${i.total_score ?? "—"})`);
+    }
+    lines.push("");
+
+    lines.push("## Open tasks");
+    if (facts.openTasks.length === 0) lines.push("(none)");
+    for (const t of facts.openTasks) {
+      const agentName = facts.agents.find(a => a.id === t.agent_id)?.name ?? "?";
+      lines.push(`- [${t.approval_status}] ${agentName}: ${t.title}${t.deadline ? ` (due ${t.deadline})` : ""}`);
+    }
+    lines.push("");
+
+    if (facts.overdueTasks.length > 0) {
+      lines.push("## ⚠ Overdue tasks");
+      for (const t of facts.overdueTasks) {
+        const agentName = facts.agents.find(a => a.id === t.agent_id)?.name ?? "?";
+        lines.push(`- ${agentName}: ${t.title} (was due ${t.deadline})`);
+      }
+      lines.push("");
+    }
+
+    lines.push("## Open conflicts");
+    if (facts.openConflicts.length === 0) lines.push("(none)");
+    for (const c of facts.openConflicts) lines.push(`- [${c.severity ?? "?"}] ${c.title}`);
+    lines.push("");
+
+    lines.push("## Your mandate");
+    lines.push("For each agent, propose **3 ideas** and **3 actions** for today. Each must:");
+    lines.push("- link to one objective the agent already owns (or `none` if it's a meta-task)");
+    lines.push("- carry an explicit approval level: `autonomous` | `boss` | `ceo` | `livio`");
+    lines.push("- include impact / effort / risk on a 0-100 scale");
+    lines.push("- prioritise actions whose absence would cost EBITDA, cash, reputation, or capacity in the next 30 days");
+    lines.push("");
+    lines.push("Detect any conflicts (two agents proposing incompatible actions; resource collisions; pricing vs margin tension) and surface them as `TYPE: conflict` blocks.");
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    lines.push("Return your answer ONLY in the following format. One block per decision, separated by '---'. Do not add prose before or after.");
+    lines.push("");
+    lines.push("DECISION_ID: <unique id>");
+    lines.push("TYPE: idea | action | conflict | proposal");
+    lines.push("AGENT: <agent name>");
+    lines.push("TITLE: <short>");
+    lines.push("DESCRIPTION: <one sentence>");
+    lines.push("OKR_LINK: <objective id or 'none'>");
+    lines.push("DEADLINE: <YYYY-MM-DD or 'none'>");
+    lines.push("APPROVAL_LEVEL: autonomous | boss | ceo | livio");
+    lines.push("IMPACT: 0-100");
+    lines.push("EFFORT: 0-100");
+    lines.push("RISK: 0-100");
+    return lines.join("\n");
+  }
+
+  app.get("/api/ceo-brief", async (req, res) => {
+    if (!process.env.CEO_BRIEF_TOKEN) {
+      return res.status(503).type("text/plain").send("CEO_BRIEF_TOKEN not configured on server.");
+    }
+    if (!ceoBriefAuthOk(req)) {
+      return res.status(401).type("text/plain").send("Unauthorized.");
+    }
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const [allAgents, allObjectives, allTasks, allIdeas, allConflicts] = await Promise.all([
+        db.select().from(agentsTable).orderBy(agentsTable.id),
+        db.select().from(objectivesTable),
+        db.select().from(tasksTable),
+        db.select().from(ideasTable).orderBy(desc(ideasTable.created_at)),
+        db.select().from(conflictsTable),
+      ]);
+      const openTasks    = allTasks.filter(t => t.status === "open" || t.status === "in_progress");
+      const overdueTasks = allTasks.filter(t => t.deadline && t.deadline < today && t.status !== "done");
+      const recentByAgent = new Map<number, Array<{ title: string; total_score: number | null; status: string }>>();
+      for (const i of allIdeas) {
+        const arr = recentByAgent.get(i.agent_id) ?? [];
+        if (arr.length < 5) arr.push({ title: i.title, total_score: i.total_score, status: i.status });
+        recentByAgent.set(i.agent_id, arr);
+      }
+      const openConflicts = allConflicts.filter(c => c.status === "open");
+
+      const factsForRender = {
+        date: today,
+        agents: allAgents.map(a => ({ id: a.id, name: a.name, mission: a.mission, status: a.status })),
+        objectives: allObjectives.map(o => ({ id: o.id, agent_id: o.agent_id, title: o.title, status: o.status })),
+        openTasks: openTasks.map(t => ({ agent_id: t.agent_id, title: t.title, deadline: t.deadline, approval_status: t.approval_status })),
+        overdueTasks: overdueTasks.map(t => ({ agent_id: t.agent_id, title: t.title, deadline: t.deadline })),
+        recentIdeasByAgent: recentByAgent,
+        openConflicts: openConflicts.map(c => ({ title: c.title, severity: c.severity })),
+      };
+      const promptText = renderCeoBrief(factsForRender);
+
+      const now = new Date().toISOString();
+      // Audit-log the fetch (don't store the full prompt in payload — keep it light).
+      await db.insert(executiveLog).values({
+        timestamp: now,
+        agent_id: null,
+        event_type: "ceo_brief_fetched",
+        payload: {
+          via: "api",
+          agents: allAgents.length,
+          open_tasks: openTasks.length,
+          overdue: overdueTasks.length,
+          conflicts: openConflicts.length,
+        } as any,
+        created_at: now,
+      } as any);
+
+      if (req.query.format === "json") {
+        return res.json({
+          generated_at: now,
+          prompt_text: promptText,
+          facts: {
+            date: today,
+            agents: factsForRender.agents,
+            objectives_count: allObjectives.length,
+            open_tasks: factsForRender.openTasks,
+            overdue_tasks: factsForRender.overdueTasks,
+            recent_ideas_by_agent: Object.fromEntries(
+              Array.from(recentByAgent.entries()).map(([k, v]) => [String(k), v]),
+            ),
+            open_conflicts: factsForRender.openConflicts,
+          },
+        });
+      }
+      res.type("text/plain").send(promptText);
+    } catch (e) {
+      res.status(500).type("text/plain").send(`Error: ${(e as Error).message}`);
+    }
+  });
+
   return httpServer;
 }
