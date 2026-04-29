@@ -714,123 +714,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
-  // ── President → CEO direct-line endpoints ───────────────────────────
-  // Founder posts a free-text request; CEO agent picks it up on its
-  // next run, either answers directly OR drops a committee prompt the
-  // user pastes into Cowork. Status flow described in seed.ts.
-  app.get("/api/president-requests", requireAuth, async (_req, res) => {
-    try {
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      const r = await db.execute(sql`
-        SELECT id, message, status, ceo_response, committee_prompt, committee_outcome,
-               created_at, responded_at, updated_at
-        FROM president_requests
-        ORDER BY created_at DESC
-        LIMIT 50
-      `);
-      res.json(r.rows);
-    } catch (e: any) {
-      res.status(500).json({ message: e.message ?? "Failed to list" });
-    }
-  });
-
-  app.post("/api/president-requests", requireAuth, async (req, res) => {
-    try {
-      const { message } = req.body ?? {};
-      if (!message || typeof message !== "string" || !message.trim()) {
-        res.status(400).json({ message: "message required" });
-        return;
-      }
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      const r = await db.execute(sql`
-        INSERT INTO president_requests (message, status)
-        VALUES (${message.trim()}, 'pending')
-        RETURNING id, message, status, created_at, updated_at
-      `);
-      res.status(201).json(r.rows[0]);
-    } catch (e: any) {
-      res.status(500).json({ message: e.message ?? "Failed to create" });
-    }
-  });
-
-  // CEO updates a request — sets ceo_response (direct answer) OR
-  // committee_prompt (must discuss with team). Status transitions
-  // accordingly. Auth-gated; the CEO skill calls this from its run.
-  // Uses COALESCE so only fields the caller passes are touched —
-  // pass null/undefined for fields you don't want to change.
-  app.put("/api/president-requests/:id", requireAuth, async (req, res) => {
-    try {
-      const id = safeInt(req.params.id);
-      const { ceo_response, committee_prompt, status } = req.body ?? {};
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      // Sanitise inputs — strings only, null otherwise (preserves existing).
-      const cr = typeof ceo_response === "string" ? ceo_response : null;
-      const cp = typeof committee_prompt === "string" ? committee_prompt : null;
-      const st = typeof status === "string" ? status : null;
-      // responded_at gets set the first time a non-empty ceo_response arrives.
-      const r = await db.execute(sql`
-        UPDATE president_requests
-        SET ceo_response     = COALESCE(${cr}, ceo_response),
-            committee_prompt = COALESCE(${cp}, committee_prompt),
-            status           = COALESCE(${st}, status),
-            responded_at     = CASE
-                                 WHEN ${cr} IS NOT NULL AND LENGTH(TRIM(${cr})) > 0
-                                 THEN NOW() ELSE responded_at
-                               END,
-            updated_at       = NOW()
-        WHERE id = ${Number(id)}
-        RETURNING id, message, status, ceo_response, committee_prompt, committee_outcome,
-                  created_at, responded_at, updated_at
-      `);
-      if (r.rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
-      res.json(r.rows[0]);
-    } catch (e: any) {
-      res.status(500).json({ message: e.message ?? "Failed to update" });
-    }
-  });
-
-  // User posts the Cowork outcome → status becomes committee_done so
-  // the CEO can finalise on its next run.
-  app.post("/api/president-requests/:id/committee-outcome", requireAuth, async (req, res) => {
-    try {
-      const id = safeInt(req.params.id);
-      const { outcome } = req.body ?? {};
-      if (!outcome || typeof outcome !== "string" || !outcome.trim()) {
-        res.status(400).json({ message: "outcome required" });
-        return;
-      }
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      const r = await db.execute(sql`
-        UPDATE president_requests
-        SET committee_outcome = ${outcome.trim()},
-            status = 'committee_done',
-            updated_at = NOW()
-        WHERE id = ${Number(id)}
-        RETURNING id, status, committee_outcome, updated_at
-      `);
-      if (r.rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
-      res.json(r.rows[0]);
-    } catch (e: any) {
-      res.status(500).json({ message: e.message ?? "Failed to update" });
-    }
-  });
-
-  app.delete("/api/president-requests/:id", requireAuth, async (req, res) => {
-    try {
-      const id = safeInt(req.params.id);
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      await db.execute(sql`DELETE FROM president_requests WHERE id = ${Number(id)}`);
-      res.status(204).end();
-    } catch (e: any) {
-      res.status(500).json({ message: e.message ?? "Failed to delete" });
-    }
-  });
-
   app.get("/api/trash", requireAuth, async (_req, res) => {
     try {
       const items = await listTrash();
@@ -6136,6 +6019,15 @@ RULES:
         created_at: now,
       } as any);
       res.json(row);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // Archive (hard-delete) a president request.
+  app.delete("/api/agentic/president-requests/:id", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      await db.execute(sql`DELETE FROM president_requests WHERE id = ${id}`);
+      res.status(204).end();
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Sun, Coffee, Users, Sparkles, Download, AlertTriangle, Zap, Send, MessageSquare } from "lucide-react";
+import { Sun, Coffee, Users, Sparkles, Download, AlertTriangle, Zap, Send, MessageSquare, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   buildCoworkPrompt,
@@ -136,6 +136,11 @@ export default function AgenticHome() {
       setOutcomeDraftBy(prev => ({ ...prev, [id]: "" }));
       void loadPresidentRequests();
     } else toast({ title: "Save failed", variant: "destructive" });
+  }
+
+  async function archiveRequest(id: number) {
+    await fetch(`/api/agentic/president-requests/${id}`, { method: "DELETE", credentials: "include" });
+    void loadPresidentRequests();
   }
 
   function generate8am() {
@@ -309,15 +314,24 @@ export default function AgenticHome() {
                 :                                  "border-slate-300 bg-slate-50/40";
               return (
                 <div key={r.id} className={`border-2 rounded p-2 ${tone}`}>
-                  <button
-                    onClick={() => setExpanded(prev => ({ ...prev, [r.id]: !isOpen }))}
-                    className="w-full text-left flex items-center gap-2 flex-wrap"
-                  >
-                    <Badge variant="outline" className="text-[10px]">#{r.id}</Badge>
-                    <Badge variant="outline" className="text-[10px]">{r.status}</Badge>
-                    <span className="text-xs font-semibold flex-1 truncate">{r.message}</span>
-                    {r.created_at && <span className="text-[10px] text-muted-foreground">{r.created_at.slice(0, 16).replace("T", " ")}</span>}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setExpanded(prev => ({ ...prev, [r.id]: !isOpen }))}
+                      className="flex-1 text-left flex items-center gap-2 flex-wrap min-w-0"
+                    >
+                      <Badge variant="outline" className="text-[10px] shrink-0">#{r.id}</Badge>
+                      <Badge variant="outline" className="text-[10px] shrink-0">{r.status}</Badge>
+                      <span className="text-xs font-semibold flex-1 truncate">{r.message}</span>
+                      {r.created_at && <span className="text-[10px] text-muted-foreground shrink-0">{r.created_at.slice(0, 16).replace("T", " ")}</span>}
+                    </button>
+                    <button
+                      onClick={() => archiveRequest(r.id)}
+                      className="shrink-0 text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
+                      title="Archive"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
 
                   {isOpen && (
                     <div className="mt-2 space-y-2 text-xs">
