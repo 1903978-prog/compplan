@@ -290,7 +290,7 @@ export default function OrgChart() {
     // Each entry: list of keyword regexes that target this role.
     const ROUTING: Array<{ role_key: string; rx: RegExp }> = [
       { role_key: "cfo",                 rx: /\b(finance|cash|AR|EBITDA|margin|cost|invoic|DSO|runway|budget|spend|revenue|GM|gross\s*margin|P&L)\b/i },
-      { role_key: "sales-director",      rx: /\b(sales|pipeline|lead|deal|conversion|win[-\s]?rate|TBD|outbound|prospect|BD|close|funnel)\b/i },
+      { role_key: "cco",                 rx: /\b(sales|pipeline|lead|deal|conversion|win[-\s]?rate|TBD|outbound|prospect|BD|close|funnel|commercial|brand|content|inbound)\b/i },
       { role_key: "marketing-manager",   rx: /\b(media|content|brand|PR|press|article|SEO|LinkedIn|Substack|Medium|thought[-\s]?leadership|inbound|EVP)\b/i },
       { role_key: "pricing-director",    rx: /\b(pricing|discount|rebate|fee|rate|proposal|win-loss|elasticit|target\s*price)\b/i },
       { role_key: "hiring-manager",      rx: /\b(hire|recruit|headcount|partner|onboarding|churn|attrition|EVP|comp|salary|CHRO)\b/i },

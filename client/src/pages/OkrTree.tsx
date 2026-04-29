@@ -30,13 +30,13 @@ const TREE: OkrNode = {
   children: [
     {
       id: "B1", label: "Increase proposals sold",
-      ownersRoleKeys: ["sales-director"],
+      ownersRoleKeys: ["cco"],
       children: [
         {
           id: "C1", label: "Generate more leads",
-          ownersRoleKeys: ["marketing-manager", "sales-director"],
+          ownersRoleKeys: ["marketing-manager", "cco"],
           children: [
-            { id: "D1", label: "Reconnect past clients", ownersRoleKeys: ["sales-director"] },
+            { id: "D1", label: "Reconnect past clients", ownersRoleKeys: ["cco"] },
             {
               id: "D2", label: "Increase media exposure",
               ownersRoleKeys: ["marketing-manager"],
@@ -54,12 +54,12 @@ const TREE: OkrNode = {
               ownersRoleKeys: [],
               hireSuggestion: {
                 roleName: "SDR Lead (Outbound)",
-                rationale: "Sales Director is consumed by proposal + close work. A dedicated SDR Lead owns outbound volume, ICP list-building, sequencing, and the send-cadence.",
+                rationale: "CCO is consumed by proposal + close work. A dedicated SDR Lead owns outbound volume, ICP list-building, sequencing, and the send-cadence.",
               },
               children: [
                 { id: "E7", label: "More ICP volume",    ownersRoleKeys: [], hireSuggestion: { roleName: "SDR Lead (Outbound)", rationale: "Owns ICP list growth + targeting." } },
                 { id: "E8", label: "Better email hooks", ownersRoleKeys: ["marketing-manager"] },
-                { id: "E9", label: "Higher conversion",  ownersRoleKeys: ["sales-director"] },
+                { id: "E9", label: "Higher conversion",  ownersRoleKeys: ["cco"] },
               ],
             },
             {
@@ -74,7 +74,7 @@ const TREE: OkrNode = {
         },
         {
           id: "C2", label: "Generate more pitches",
-          ownersRoleKeys: ["sales-director"],
+          ownersRoleKeys: ["cco"],
           children: [
             {
               id: "D5", label: "Increase selling time",
@@ -89,9 +89,9 @@ const TREE: OkrNode = {
         },
         {
           id: "C3", label: "Increase conversion",
-          ownersRoleKeys: ["sales-director"],
+          ownersRoleKeys: ["cco"],
           children: [
-            { id: "D6", label: "Better proposals", ownersRoleKeys: ["sales-director", "pricing-director"] },
+            { id: "D6", label: "Better proposals", ownersRoleKeys: ["cco", "pricing-director"] },
             { id: "D7", label: "Better teams",     ownersRoleKeys: ["hiring-manager", "delivery-director"] },
             {
               id: "D8", label: "Right fees",
@@ -145,7 +145,7 @@ const TREE: OkrNode = {
       children: [
         { id: "C9",  label: "Pricing discipline",  ownersRoleKeys: ["pricing-director"] },
         { id: "C10", label: "Delivery efficiency", ownersRoleKeys: ["delivery-director"] },
-        { id: "C11", label: "Scope control",       ownersRoleKeys: ["delivery-director", "sales-director"] },
+        { id: "C11", label: "Scope control",       ownersRoleKeys: ["delivery-director", "cco"] },
       ],
     },
   ],
@@ -743,7 +743,7 @@ function ApproveHireDialog({
 }) {
   // Default parent: the closest existing owner of the first covered node's
   // ancestor chain. e.g. SDR Lead covers D3 (under C1 → B1 → A1), and
-  // C1's primary owner is sales-director — so default parent = sales-director.
+  // C1's primary owner is cco — so default parent = cco.
   const guessParent = (() => {
     for (const id of target.nodeIds) {
       let cur: OkrNode | undefined = nodeById.get(id);
@@ -754,7 +754,7 @@ function ApproveHireDialog({
       // "marketing" matching the role-name keyword, prefer it.
       const lower = target.roleName.toLowerCase();
       if (lower.includes("sdr") || lower.includes("outbound")) {
-        const sd = allRoles.find(r => r.role_key === "sales-director");
+        const sd = allRoles.find(r => r.role_key === "cco");
         if (sd) return sd.role_key;
       }
       if (lower.includes("partnership")) {

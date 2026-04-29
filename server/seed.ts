@@ -821,15 +821,15 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'agent'`);
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS email TEXT`);
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS dotted_parent_role_keys JSONB NOT NULL DEFAULT '[]'::jsonb`);
-  // Pre-set the CFO ↔ Sales matrix per co-CEO direction: CFO primarily under
-  // CEO (solid), dotted-line to Sales because CFO does contracts/invoicing/
-  // expense-reports for sales engagements. Idempotent — only adds 'sales-
-  // director' to dotted_parent_role_keys if not already present.
+  // Pre-set the CFO ↔ CCO matrix per co-CEO direction: CFO primarily under
+  // CEO (solid), dotted-line to CCO because CFO does contracts/invoicing/
+  // expense-reports for sales engagements. Idempotent — only adds 'cco'
+  // to dotted_parent_role_keys if not already present.
   await db.execute(sql`
     UPDATE org_agents
-    SET dotted_parent_role_keys = '["sales-director"]'::jsonb
+    SET dotted_parent_role_keys = '["cco"]'::jsonb
     WHERE role_key = 'cfo'
-      AND NOT (dotted_parent_role_keys @> '["sales-director"]'::jsonb)
+      AND NOT (dotted_parent_role_keys @> '["cco"]'::jsonb)
   `);
   // Revision letter appended to project_name in the UI (A / B / C / D).
   // Lets a case track its proposal revision count without renaming.
@@ -1319,11 +1319,12 @@ OKRs
       WHERE role_key = 'marketing-manager' AND title = 'Eendigo 2026 — Company goals + OKRs (set by co-CEO)'
     )
   `);
-  // Seed Sales Director playbook — Livio's accumulated best practices
-  // (negotiation tactics, follow-up emails, win/loss survey, etc.).
+  // Seed CCO playbook (formerly Sales Director — merged per co-CEO).
+  // Livio's accumulated best practices: negotiation tactics, follow-up
+  // emails, win/loss survey, etc.
   await db.execute(sql`
     INSERT INTO agent_knowledge (role_key, title, content, source, tags, status, created_at)
-    SELECT 'sales-director',
+    SELECT 'cco',
            'Eendigo Sales Playbook (set by co-CEO)',
            ${`Best practices for LM
 1. Start promo intro with negatives so they don't negotiate: salary already high, early promo, still don't check all boxes, higher increase than expected etc
@@ -1411,7 +1412,7 @@ Sign warmly.`},
            ${new Date().toISOString()}
     WHERE NOT EXISTS (
       SELECT 1 FROM agent_knowledge
-      WHERE role_key = 'sales-director' AND title = 'Eendigo Sales Playbook (set by co-CEO)'
+      WHERE role_key IN ('sales-director', 'cco') AND title = 'Eendigo Sales Playbook (set by co-CEO)'
     )
   `);
   // Seed CFO cash-management protocol
@@ -1566,8 +1567,8 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
       tasks_10d: [],
     },
     {
-      role_key: "sales-director", role_name: "Sales Director", parent_role_key: "ceo",
-      person_name: null, sort_order: 2, status: "vacant",
+      role_key: "cco", role_name: "CCO", parent_role_key: "ceo",
+      person_name: "Indra Nooyi", sort_order: 2, status: "active",
       goals: [
         "[Supports CEO €3M revenue + Sell ≥1/month goals] 1+ new signed engagement every single month of 2026",
         "[Supports CEO Always-on pipeline OKR] ≥6 active TBDs at any time; pipeline coverage ≥3× quarterly target",
@@ -1672,6 +1673,61 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     UPDATE org_agents SET role_name = 'CHRO', updated_at = ${_orgNow}
     WHERE role_key = 'hiring-manager' AND role_name = 'Hiring Manager'
   `);
+
+  // One-shot merge: Sales Director → CCO. The CCO owns sales + marketing
+  // as one commercial function (per co-CEO request). Marketing Manager
+  // becomes a direct report of CCO instead of CEO. Idempotent — runs only
+  // while the legacy 'sales-director' row exists and 'cco' doesn't.
+  // Cascade: every reference (knowledge, dotted lines, parent_role_key)
+  // is migrated atomically.
+  const _ccoExists = (await db.execute(sql`SELECT id FROM org_agents WHERE role_key = 'cco' LIMIT 1`)) as unknown as { rows: any[] };
+  const _sdExists  = (await db.execute(sql`SELECT id FROM org_agents WHERE role_key = 'sales-director' LIMIT 1`)) as unknown as { rows: any[] };
+  if ((_sdExists.rows ?? []).length > 0 && (_ccoExists.rows ?? []).length === 0) {
+    // Rename the row in-place (preserves goals/okrs/tasks/sort_order/etc.).
+    await db.execute(sql`
+      UPDATE org_agents
+      SET role_key = 'cco',
+          role_name = 'CCO',
+          person_name = 'Indra Nooyi',
+          status = 'active',
+          updated_at = ${_orgNow}
+      WHERE role_key = 'sales-director'
+    `);
+    // Reparent Marketing Manager from CEO → CCO.
+    await db.execute(sql`
+      UPDATE org_agents SET parent_role_key = 'cco', updated_at = ${_orgNow}
+      WHERE role_key = 'marketing-manager' AND parent_role_key = 'ceo'
+    `);
+    // Migrate any role that USED to dotted-line into sales-director
+    // (e.g. CFO has dotted_parent_role_keys=['sales-director']) so the
+    // matrix relationship survives the rename.
+    await db.execute(sql`
+      UPDATE org_agents
+      SET dotted_parent_role_keys = (
+        SELECT jsonb_agg(CASE WHEN x = 'sales-director' THEN 'cco'::jsonb ELSE x END)
+        FROM jsonb_array_elements(dotted_parent_role_keys) AS x
+      ),
+      updated_at = ${_orgNow}
+      WHERE dotted_parent_role_keys @> '["sales-director"]'::jsonb
+    `);
+    // Migrate agent_knowledge rows owned by sales-director.
+    await db.execute(sql`
+      UPDATE agent_knowledge SET role_key = 'cco'
+      WHERE role_key = 'sales-director'
+    `);
+    // Migrate agent_proposals.
+    await db.execute(sql`
+      UPDATE agent_proposals SET role_key = 'cco'
+      WHERE role_key = 'sales-director'
+    `);
+    // Migrate any role whose primary parent was sales-director (none today,
+    // but future-proof if a sub-role had been added).
+    await db.execute(sql`
+      UPDATE org_agents SET parent_role_key = 'cco', updated_at = ${_orgNow}
+      WHERE parent_role_key = 'sales-director'
+    `);
+    console.log("[seed] Merged Sales Director → CCO (Indra Nooyi); Marketing Manager now reports to CCO.");
+  }
 
   for (const a of _orgSeed) {
     await db.execute(sql`
