@@ -556,61 +556,24 @@ export default function OrgChart() {
         );
       })()}
 
-      {/* Direct reports row + connector lines */}
+      {/* Direct reports row + connector lines — recursive so any depth renders */}
       {ceo && directReports.length > 0 && (
-        <div className="relative">
+        <div className="relative overflow-x-auto">
           {/* Vertical line down from CEO */}
           <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-3 bg-foreground/60" />
           {/* Horizontal line spanning all reports */}
           <div className="absolute left-[5%] right-[5%] top-3 h-0.5 bg-foreground/60" />
           <div className="flex flex-wrap justify-center gap-4 pt-6 relative">
-            {directReports.map(r => {
-              const grandchildren = childrenOf(r.role_key);
-              return (
-                <div key={r.id} className="flex flex-col items-stretch relative">
-                  {/* Vertical drop from horizontal line into this card */}
-                  <div className="absolute left-1/2 -translate-x-1/2 -top-3 w-0.5 h-3 bg-foreground/60" />
-                  <RoleCard
-                    role={r}
-                    knowledgeCount={knowledge.filter(k => k.role_key === r.role_key).length}
-                    onClick={() => setOpenRole(r)}
-                    onAddKnowledge={() => setAddKnowledgeForRole(r)}
-                  />
-                  {grandchildren.length > 0 && (
-                    <div className="relative mt-3 pt-4">
-                      {/* Vertical drop from this role's card */}
-                      <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-2 bg-foreground/60" />
-                      {/* Horizontal busbar — only when ≥2 children. Spans
-                          from first child's vertical drop to last child's,
-                          which is centered relative to the parent card. */}
-                      {grandchildren.length > 1 && (
-                        <div
-                          className="absolute h-0.5 bg-foreground/60 top-2"
-                          style={{
-                            left:  `${100 / (grandchildren.length * 2)}%`,
-                            right: `${100 / (grandchildren.length * 2)}%`,
-                          }}
-                        />
-                      )}
-                      {/* Grandchildren — flex-wrap with fixed-size tiles */}
-                      <div className="flex flex-wrap justify-center gap-2 relative">
-                        {grandchildren.map(g => (
-                          <div key={g.id} className="relative">
-                            <div className="absolute left-1/2 -translate-x-1/2 -top-2 w-0.5 h-2 bg-foreground/60" />
-                            <RoleCard
-                              role={g}
-                              knowledgeCount={knowledge.filter(k => k.role_key === g.role_key).length}
-                              onClick={() => setOpenRole(g)}
-                              onAddKnowledge={() => setAddKnowledgeForRole(g)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {directReports.map(r => (
+              <RoleSubtree
+                key={r.id}
+                role={r}
+                childrenOf={childrenOf}
+                knowledge={knowledge}
+                onOpen={setOpenRole}
+                onAddKnowledge={setAddKnowledgeForRole}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -886,6 +849,59 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
         </div>
       </div>
     </Card>
+  );
+}
+
+// ── Recursive role subtree — renders a card + its children at any depth ──
+function RoleSubtree({
+  role, childrenOf, knowledge, onOpen, onAddKnowledge,
+}: {
+  role: OrgRole;
+  childrenOf: (key: string) => OrgRole[];
+  knowledge: KnowledgeNote[];
+  onOpen: (r: OrgRole) => void;
+  onAddKnowledge: (r: OrgRole) => void;
+}) {
+  const children = childrenOf(role.role_key);
+  return (
+    <div className="flex flex-col items-center relative">
+      {/* Vertical drop from the busbar above this node */}
+      <div className="absolute left-1/2 -translate-x-1/2 -top-3 w-0.5 h-3 bg-foreground/60" />
+      <RoleCard
+        role={role}
+        knowledgeCount={knowledge.filter(k => k.role_key === role.role_key).length}
+        onClick={() => onOpen(role)}
+        onAddKnowledge={() => onAddKnowledge(role)}
+      />
+      {children.length > 0 && (
+        <div className="relative mt-2 pt-3">
+          {/* Vertical line from this card down to busbar */}
+          <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-3 bg-foreground/60" />
+          {/* Horizontal busbar across children (only when ≥2) */}
+          {children.length > 1 && (
+            <div
+              className="absolute h-0.5 bg-foreground/60 top-3"
+              style={{
+                left:  `${100 / (children.length * 2)}%`,
+                right: `${100 / (children.length * 2)}%`,
+              }}
+            />
+          )}
+          <div className="flex flex-wrap justify-center gap-3 pt-3">
+            {children.map(c => (
+              <RoleSubtree
+                key={c.id}
+                role={c}
+                childrenOf={childrenOf}
+                knowledge={knowledge}
+                onOpen={onOpen}
+                onAddKnowledge={onAddKnowledge}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
