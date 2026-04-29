@@ -3957,7 +3957,7 @@ export default function PricingTool() {
                       .filter(c => benchmarksByRegion(c).filter(r => (r.parameter.toLowerCase().includes("weekly") || r.parameter.toLowerCase().includes("fee")) && r.yellow_high > 0).length === 0)
                       .map(c => {
                         const wp = wonForCountry(c);
-                        return wp.length > 0 ? (wp.reduce((s, p) => s + p.weekly_price, 0) / wp.length) * 1.1 : 0;
+                        return wp.length > 0 ? (wp.reduce((s, p) => s + proposalNet1(p), 0) / wp.length) * 1.1 : 0;
                       });
                     const weeklyScale = Math.max(
                       ...weeklyRows.map(r => r.yellow_high).filter(Boolean),
@@ -4018,7 +4018,7 @@ export default function PricingTool() {
                           const rows = benchmarksByRegion(country);
                           const wonProposals = wonForCountry(country);
                           const avgWonWeekly = wonProposals.length > 0
-                            ? wonProposals.reduce((s, p) => s + p.weekly_price, 0) / wonProposals.length
+                            ? wonProposals.reduce((s, p) => s + proposalNet1(p), 0) / wonProposals.length
                             : null;
                           const mktBench = getMarketBenchmark(country);
                           return (
@@ -5983,9 +5983,9 @@ export default function PricingTool() {
             // Check 3: Net price <= highest won price in that country/region
             const regionKey = countryToRegion(form.region) ?? form.region;
             const wonInRegion = analysisProposals.filter(p =>
-              p.outcome === "won" && p.weekly_price > 0 && (countryToRegion(proposalRegionKey(p)) ?? proposalRegionKey(p)) === regionKey
+              p.outcome === "won" && proposalNet1(p) > 0 && (countryToRegion(proposalRegionKey(p)) ?? proposalRegionKey(p)) === regionKey
             );
-            const maxWonWk = wonInRegion.length > 0 ? Math.max(...wonInRegion.map(p => p.weekly_price)) : null;
+            const maxWonWk = wonInRegion.length > 0 ? Math.max(...wonInRegion.map(p => proposalNet1(p))) : null;
             const wonPass = maxWonWk !== null && netWk <= maxWonWk;
 
             // Check 4a: Total project cost / EBITDA <= 2%
