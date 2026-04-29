@@ -3,9 +3,14 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Code, Download, Upload, Activity, Briefcase } from "lucide-react";
+import { Sparkles, Code, Upload, Briefcase, Plus, Trash2, Pencil, Check, X, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { buildClaudeCodePrompt, parseCoworkOutput, type AgentLite } from "./promptTemplates";
+
+interface RaciRow {
+  id: number; responsibility: string; accountable: string; responsible: string;
+  consulted: string; informed: string; app_section: string; approval: string;
+}
 
 export default function Executive() {
   const { toast } = useToast();
@@ -14,12 +19,50 @@ export default function Executive() {
   const [pasted, setPasted] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [lastImport, setLastImport] = useState<{ created: number; errors: number } | null>(null);
+  // RACI
+  const [raci, setRaci] = useState<RaciRow[]>([]);
+  const [raciEdit, setRaciEdit] = useState<number | null>(null);   // row id being edited
+  const [raciDraft, setRaciDraft] = useState<Partial<RaciRow>>({});
+  const [raciAdding, setRaciAdding] = useState(false);
+  const [raciNew, setRaciNew] = useState<Partial<RaciRow>>({});
 
   useEffect(() => {
-    fetch("/api/agentic/agents", { credentials: "include" })
-      .then(r => r.ok ? r.json() : [])
-      .then(setAgents);
+    fetch("/api/agentic/agents", { credentials: "include" }).then(r => r.ok ? r.json() : []).then(setAgents);
+    loadRaci();
   }, []);
+
+  async function loadRaci() {
+    const r = await fetch("/api/agentic/raci", { credentials: "include" });
+    if (r.ok) setRaci(await r.json());
+  }
+
+  async function saveRaciRow(id: number) {
+    await fetch(`/api/agentic/raci/${id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(raciDraft),
+    });
+    setRaciEdit(null);
+    void loadRaci();
+  }
+
+  async function deleteRaciRow(id: number) {
+    if (!confirm("Delete this RACI row?")) return;
+    await fetch(`/api/agentic/raci/${id}`, { method: "DELETE", credentials: "include" });
+    void loadRaci();
+  }
+
+  async function addRaciRow() {
+    if (!raciNew.responsibility?.trim()) return;
+    await fetch("/api/agentic/raci", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(raciNew),
+    });
+    setRaciNew({});
+    setRaciAdding(false);
+    void loadRaci();
+  }
 
   function generateClaudeCodePrompt() {
     const text = buildClaudeCodePrompt({
@@ -167,34 +210,85 @@ export default function Executive() {
         </div>
       </Card>
 
-      {/* RACI matrix — read-only seed; COO maintains in Phase 2 */}
+      {/* RACI matrix — live DB-backed, editable */}
       <Card className="p-4">
-        <h2 className="text-sm font-bold mb-2">RACI matrix</h2>
-        <p className="text-[10px] text-muted-foreground italic mb-3">
-          Phase 1: read-only scaffolding. The COO skill will populate this in Phase 2.
-        </p>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold">RACI matrix</h2>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setRaciAdding(true); setRaciNew({}); }}>
+            <Plus className="w-3 h-3 mr-1" /> Add row
+          </Button>
+        </div>
         <div className="overflow-x-auto">
           <table className="text-xs w-full">
             <thead>
-              <tr className="border-b">
-                <th className="text-left p-1.5">Responsibility</th>
-                <th className="text-left p-1.5">Accountable</th>
-                <th className="text-left p-1.5">Responsible</th>
-                <th className="text-left p-1.5">Consulted</th>
-                <th className="text-left p-1.5">Informed</th>
-                <th className="text-left p-1.5">Approval</th>
+              <tr className="border-b bg-muted/40">
+                {["Responsibility","Accountable","Responsible","Consulted","Informed","App section","Approval",""].map(h => (
+                  <th key={h} className="text-left p-1.5 font-semibold whitespace-nowrap">{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b"><td className="p-1.5">Daily CEO review</td><td className="p-1.5">CEO</td><td className="p-1.5">CEO</td><td className="p-1.5">COO, CFO, CHRO, CMO</td><td className="p-1.5">Livio</td><td className="p-1.5">Livio</td></tr>
-              <tr className="border-b"><td className="p-1.5">Pipeline forecast</td><td className="p-1.5">SVP Sales</td><td className="p-1.5">SVP Sales</td><td className="p-1.5">CFO, CHRO</td><td className="p-1.5">CEO</td><td className="p-1.5">CEO</td></tr>
-              <tr className="border-b"><td className="p-1.5">Hiring forecast</td><td className="p-1.5">CHRO</td><td className="p-1.5">CHRO</td><td className="p-1.5">SVP Sales, COO, CFO</td><td className="p-1.5">CEO/Livio</td><td className="p-1.5">Livio</td></tr>
-              <tr className="border-b"><td className="p-1.5">Payment reminders</td><td className="p-1.5">CFO</td><td className="p-1.5">CFO</td><td className="p-1.5">CEO if sensitive</td><td className="p-1.5">Livio if escalated</td><td className="p-1.5">CFO/Livio</td></tr>
-              <tr className="border-b"><td className="p-1.5">Content creation</td><td className="p-1.5">CMO</td><td className="p-1.5">CMO</td><td className="p-1.5">CKO</td><td className="p-1.5">CEO</td><td className="p-1.5">Livio (publish)</td></tr>
-              <tr className="border-b"><td className="p-1.5">Proposal generation</td><td className="p-1.5">SVP Sales</td><td className="p-1.5">SVP Sales</td><td className="p-1.5">CFO, CKO</td><td className="p-1.5">CEO</td><td className="p-1.5">Livio (final send)</td></tr>
-              <tr><td className="p-1.5">Agent training</td><td className="p-1.5">CHRO</td><td className="p-1.5">CHRO</td><td className="p-1.5">Boss agents</td><td className="p-1.5">CEO</td><td className="p-1.5">CHRO</td></tr>
+              {raci.map(row => {
+                const editing = raciEdit === row.id;
+                const FIELDS: (keyof RaciRow)[] = ["responsibility","accountable","responsible","consulted","informed","app_section","approval"];
+                return (
+                  <tr key={row.id} className="border-b hover:bg-muted/20">
+                    {FIELDS.map(f => (
+                      <td key={f} className="p-1 align-top">
+                        {editing ? (
+                          <input
+                            className="w-full min-w-[80px] border rounded px-1 py-0.5 text-xs bg-background"
+                            value={(raciDraft[f] ?? row[f]) as string}
+                            onChange={e => setRaciDraft(d => ({ ...d, [f]: e.target.value }))}
+                          />
+                        ) : (
+                          <span className="whitespace-pre-wrap">{row[f]}</span>
+                        )}
+                      </td>
+                    ))}
+                    <td className="p-1 whitespace-nowrap">
+                      {editing ? (
+                        <div className="flex gap-1">
+                          <button onClick={() => void saveRaciRow(row.id)} className="text-emerald-600 hover:text-emerald-800"><Check className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => setRaciEdit(null)} className="text-muted-foreground hover:text-foreground"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-1">
+                          <button onClick={() => { setRaciEdit(row.id); setRaciDraft({}); }} className="text-muted-foreground hover:text-primary"><Pencil className="w-3 h-3" /></button>
+                          <button onClick={() => void deleteRaciRow(row.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="w-3 h-3" /></button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* Add-new row */}
+              {raciAdding && (() => {
+                const FIELDS: (keyof RaciRow)[] = ["responsibility","accountable","responsible","consulted","informed","app_section","approval"];
+                return (
+                  <tr className="border-b bg-emerald-50/40">
+                    {FIELDS.map(f => (
+                      <td key={f} className="p-1">
+                        <input
+                          className="w-full min-w-[80px] border rounded px-1 py-0.5 text-xs bg-background"
+                          placeholder={f.replace(/_/g," ")}
+                          value={(raciNew[f] ?? "") as string}
+                          onChange={e => setRaciNew(d => ({ ...d, [f]: e.target.value }))}
+                        />
+                      </td>
+                    ))}
+                    <td className="p-1 whitespace-nowrap">
+                      <div className="flex gap-1">
+                        <button onClick={() => void addRaciRow()} className="text-emerald-600 hover:text-emerald-800"><Check className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => setRaciAdding(false)} className="text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
+          {raci.length === 0 && !raciAdding && <p className="text-xs text-muted-foreground italic mt-2">No RACI rows yet. Click "Add row" to start.</p>}
         </div>
       </Card>
 
@@ -215,7 +309,7 @@ export default function Executive() {
           <div className="space-y-2">
             <Textarea value={generated} readOnly rows={20} className="font-mono text-xs" />
             <Button size="sm" onClick={() => copy(generated)}>
-              <Download className="w-3.5 h-3.5 mr-1" /> Copy to clipboard
+              <Copy className="w-3.5 h-3.5 mr-1" /> Copy to clipboard
             </Button>
           </div>
         )}

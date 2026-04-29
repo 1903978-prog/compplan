@@ -2677,4 +2677,48 @@ Use sequential IDs prefixed LD-001.
       `);
     }
   }
+
+  // ── RACI Matrix ────────────────────────────────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS raci_matrix (
+      id           SERIAL PRIMARY KEY,
+      responsibility TEXT NOT NULL,
+      accountable  TEXT NOT NULL DEFAULT '',
+      responsible  TEXT NOT NULL DEFAULT '',
+      consulted    TEXT NOT NULL DEFAULT '',
+      informed     TEXT NOT NULL DEFAULT '',
+      app_section  TEXT NOT NULL DEFAULT '',
+      approval     TEXT NOT NULL DEFAULT '',
+      created_at   TEXT NOT NULL,
+      updated_at   TEXT NOT NULL
+    )
+  `);
+  // Add app_section + approval columns if upgrading from an older schema
+  await db.execute(sql`ALTER TABLE raci_matrix ADD COLUMN IF NOT EXISTS app_section TEXT NOT NULL DEFAULT ''`);
+  await db.execute(sql`ALTER TABLE raci_matrix ADD COLUMN IF NOT EXISTS approval TEXT NOT NULL DEFAULT ''`);
+
+  const raciCount = await db.execute(sql`SELECT COUNT(*) AS c FROM raci_matrix`);
+  if (Number((raciCount.rows[0] as any).c) === 0) {
+    const _now5 = new Date().toISOString();
+    const RACI_SEED = [
+      { responsibility: "Daily CEO review",    accountable: "CEO",      responsible: "CEO",      consulted: "COO, CFO, CHRO, CMO", informed: "Livio",          app_section: "Exec",        approval: "Livio" },
+      { responsibility: "Pipeline forecast",   accountable: "SVP Sales",responsible: "SVP Sales",consulted: "CFO, CHRO",           informed: "CEO",            app_section: "BD / Proposals", approval: "CEO" },
+      { responsibility: "Hiring forecast",     accountable: "CHRO",     responsible: "CHRO",     consulted: "SVP Sales, COO, CFO", informed: "CEO / Livio",    app_section: "HR / Pipeline",  approval: "Livio" },
+      { responsibility: "Payment reminders",   accountable: "CFO",      responsible: "CFO",      consulted: "CEO if sensitive",    informed: "Livio if escalated", app_section: "AR",      approval: "CFO / Livio" },
+      { responsibility: "Content creation",    accountable: "CMO",      responsible: "CMO",      consulted: "CKO",                 informed: "CEO",            app_section: "Media / KM",     approval: "Livio (publish)" },
+      { responsibility: "Proposal generation", accountable: "SVP Sales",responsible: "SVP Sales",consulted: "CFO, CKO",           informed: "CEO",            app_section: "Proposals",       approval: "Livio (final send)" },
+      { responsibility: "Agent training",      accountable: "CHRO",     responsible: "CHRO",     consulted: "Boss agents",         informed: "CEO",            app_section: "HR / L&D",       approval: "CHRO" },
+      { responsibility: "Conflict resolution", accountable: "CEO",      responsible: "CEO",      consulted: "COO, affected agents",informed: "Livio",          app_section: "Logs",           approval: "Livio if unresolved" },
+      { responsibility: "Agent OKR review",    accountable: "CEO",      responsible: "CEO",      consulted: "All agents",          informed: "Livio",          app_section: "Exec / OKRs",    approval: "Livio" },
+      { responsibility: "Pricing decisions",   accountable: "CFO",      responsible: "Pricing Agent", consulted: "SVP Sales, CEO", informed: "Livio",          app_section: "Pricing",        approval: "Livio (final)" },
+    ];
+    for (const row of RACI_SEED) {
+      const { responsibility, accountable, responsible, consulted, informed, app_section, approval } = row;
+      await db.execute(sql`
+        INSERT INTO raci_matrix (responsibility, accountable, responsible, consulted, informed, app_section, approval, created_at, updated_at)
+        VALUES (${responsibility}, ${accountable}, ${responsible}, ${consulted}, ${informed}, ${app_section}, ${approval}, ${_now5}, ${_now5})
+        ON CONFLICT DO NOTHING
+      `);
+    }
+  }
 }

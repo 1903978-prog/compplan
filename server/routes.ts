@@ -6371,6 +6371,55 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── RACI Matrix ─────────────────────────────────────────────────────────
+  app.get("/api/agentic/raci", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`SELECT * FROM raci_matrix ORDER BY id`);
+      res.json(rows.rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/agentic/raci", requireAuth, async (req, res) => {
+    try {
+      const { responsibility, accountable, responsible, consulted, informed, app_section, approval } = req.body;
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        INSERT INTO raci_matrix (responsibility, accountable, responsible, consulted, informed, app_section, approval, created_at, updated_at)
+        VALUES (${responsibility ?? ""}, ${accountable ?? ""}, ${responsible ?? ""}, ${consulted ?? ""}, ${informed ?? ""}, ${app_section ?? ""}, ${approval ?? ""}, ${now}, ${now})
+        RETURNING *
+      `);
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/agentic/raci/:id", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { responsibility, accountable, responsible, consulted, informed, app_section, approval } = req.body;
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        UPDATE raci_matrix SET
+          responsibility = COALESCE(${responsibility}, responsibility),
+          accountable    = COALESCE(${accountable}, accountable),
+          responsible    = COALESCE(${responsible}, responsible),
+          consulted      = COALESCE(${consulted}, consulted),
+          informed       = COALESCE(${informed}, informed),
+          app_section    = COALESCE(${app_section}, app_section),
+          approval       = COALESCE(${approval}, approval),
+          updated_at     = ${now}
+        WHERE id = ${id} RETURNING *
+      `);
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.delete("/api/agentic/raci/:id", requireAuth, async (req, res) => {
+    try {
+      await db.execute(sql`DELETE FROM raci_matrix WHERE id = ${Number(req.params.id)}`);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── /api/ceo-brief — public, token-protected daily brief ────────────────
   // External tools (Cowork skills, schedulers, etc.) GET this endpoint to
   // pull a comprehensive real-time brief covering ALL app sections, mapped

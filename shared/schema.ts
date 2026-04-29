@@ -1372,3 +1372,17 @@ export const excomPredefinedTasks = pgTable("excom_predefined_tasks", {
   created_at:       text("created_at").notNull(),
 });
 export type ExcomPredefinedTask = typeof excomPredefinedTasks.$inferSelect;
+
+export const raciMatrix = pgTable("raci_matrix", {
+  id:           serial("id").primaryKey(),
+  responsibility: text("responsibility").notNull(),
+  accountable:  text("accountable").notNull().default(""),
+  responsible:  text("responsible").notNull().default(""),
+  consulted:    text("consulted").notNull().default(""),
+  informed:     text("informed").notNull().default(""),
+  app_section:  text("app_section").notNull().default(""),
+  approval:     text("approval").notNull().default(""),
+  created_at:   text("created_at").notNull(),
+  updated_at:   text("updated_at").notNull(),
+});
+export type RaciRow = typeof raciMatrix.$inferSelect;
