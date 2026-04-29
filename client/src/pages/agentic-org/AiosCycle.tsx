@@ -2,10 +2,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   Sun, Coffee, Play, RefreshCw, Copy, Upload, FileText,
-  AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, Zap
+  AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, Zap,
+  History, ShieldAlert, ChevronRight, BarChart2
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -65,17 +67,20 @@ function fmt(ts?: string) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AiosCycle() {
   const { toast } = useToast();
-  const [cycle, setCycle]       = useState<AiosCycle | null>(null);
-  const [logs, setLogs]         = useState<AiosLog[]>([]);
+  const [cycle, setCycle]           = useState<AiosCycle | null>(null);
+  const [allCycles, setAllCycles]   = useState<AiosCycle[]>([]);
+  const [logs, setLogs]             = useState<AiosLog[]>([]);
   const [deliverables, setDeliverables] = useState<AiosDeliverable[]>([]);
-  const [ceoBrief, setCeoBrief] = useState<CeoBrief | null>(null);
-  const [starting, setStarting] = useState(false);
-  const [showPaste, setShowPaste] = useState(false);
+  const [ceoBrief, setCeoBrief]     = useState<CeoBrief | null>(null);
+  const [starting, setStarting]     = useState(false);
+  const [showPaste, setShowPaste]   = useState(false);
   const [pasteDraft, setPasteDraft] = useState("");
-  const [pasting, setPasting]   = useState(false);
+  const [pasting, setPasting]       = useState(false);
   const [showCoworkPrompt, setShowCoworkPrompt] = useState(false);
-  const [regening, setRegening] = useState(false);
-  const [showLogs, setShowLogs] = useState(true);
+  const [regening, setRegening]     = useState(false);
+  const [showLogs, setShowLogs]     = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
+  const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const logEndRef = useRef<HTMLDivElement>(null);
   const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastLogId = useRef(0);
@@ -84,6 +89,29 @@ export default function AiosCycle() {
   const loadLatestCycle = useCallback(async () => {
     const r = await fetch("/api/aios/cycles/latest", { credentials: "include" });
     if (r.ok) setCycle(await r.json());
+  }, []);
+
+  const loadAllCycles = useCallback(async () => {
+    const r = await fetch("/api/aios/cycles", { credentials: "include" });
+    if (r.ok) setAllCycles(await r.json());
+  }, []);
+
+  const switchToCycle = useCallback(async (c: AiosCycle) => {
+    setCycle(c);
+    setLogs([]);
+    setDeliverables([]);
+    setCeoBrief(null);
+    lastLogId.current = 0;
+    setShowHistory(false);
+    const [logs, d, b] = await Promise.all([
+      fetch(`/api/aios/cycles/${c.id}/logs`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch(`/api/aios/cycles/${c.id}/deliverables`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch(`/api/aios/cycles/${c.id}/ceo-brief`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+    ]);
+    setLogs(logs);
+    if (logs.length > 0) lastLogId.current = logs[logs.length - 1].id;
+    setDeliverables(d);
+    if (b) setCeoBrief(b);
   }, []);
 
   const loadCycleData = useCallback(async (id: number) => {
@@ -126,8 +154,9 @@ export default function AiosCycle() {
 
   useEffect(() => {
     loadLatestCycle();
+    loadAllCycles();
     return () => stopPolling();
-  }, [loadLatestCycle, stopPolling]);
+  }, [loadLatestCycle, loadAllCycles, stopPolling]);
 
   useEffect(() => {
     if (!cycle) return;
@@ -271,9 +300,61 @@ export default function AiosCycle() {
               <Button onClick={() => setShowLogs(v => !v)} variant="ghost" size="sm">
                 <FileText className="w-4 h-4 mr-1" /> {showLogs ? "Hide" : "View"} Activity Log
               </Button>
+              <Button onClick={() => { setShowHistory(v => !v); loadAllCycles(); }} variant="ghost" size="sm">
+                <History className="w-4 h-4 mr-1" /> Cycle History
+              </Button>
             </div>
           </CardContent>
         </Card>
+
+        {/* Cycle history */}
+        {showHistory && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <History className="w-4 h-4" /> Cycle History
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {allCycles.length === 0 ? (
+                <p className="text-xs text-muted-foreground p-3 italic">No cycles yet.</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      {["#","Date","Status","Agents","Insights","Ideas","Actions","CoWork Req",""].map(h => (
+                        <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allCycles.map(c => (
+                      <tr key={c.id} className={`border-b hover:bg-muted/20 ${c.id === cycle?.id ? "bg-blue-50/40" : ""}`}>
+                        <td className="px-3 py-2 font-mono text-muted-foreground">#{c.id}</td>
+                        <td className="px-3 py-2">{c.cycle_date}</td>
+                        <td className="px-3 py-2">
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${CYCLE_STATUS_BADGE[c.status] ?? "bg-slate-100 text-slate-600"}`}>
+                            {c.status.replace(/_/g, " ")}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">{c.agents_processed}</td>
+                        <td className="px-3 py-2">{c.insights_count}</td>
+                        <td className="px-3 py-2">{c.ideas_count}</td>
+                        <td className="px-3 py-2">{c.actions_count}</td>
+                        <td className="px-3 py-2">{c.cowork_requests_count}</td>
+                        <td className="px-3 py-2">
+                          <Button size="sm" variant="ghost" onClick={() => switchToCycle(c)} className="h-6 text-xs">
+                            View <ChevronRight className="w-3 h-3 ml-1" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Paste CoWork output inline */}
         {showPaste && cycle && (
@@ -335,47 +416,94 @@ export default function AiosCycle() {
           </Card>
         )}
 
-        {/* Agent progress table */}
+        {/* Agent progress table with drilldown */}
         {agentNames.length > 0 && (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Agent Progress</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <BarChart2 className="w-4 h-4" /> Agent Deliverables
+                <span className="text-[10px] text-muted-foreground font-normal ml-auto">Click an agent to expand</span>
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      {["Agent","Insights","Ideas","Actions","CoWork Requests","Status"].map(h => (
-                        <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {agentNames.map(name => {
-                      const ins  = byAgent(name, "insight");
-                      const ideas = byAgent(name, "idea");
-                      const acts = byAgent(name, "action");
-                      const cws  = byAgent(name, "cowork_request");
-                      const done = ins.length > 0 || ideas.length > 0;
-                      return (
-                        <tr key={name} className="border-b hover:bg-muted/20">
-                          <td className="px-3 py-2 font-medium">{name}</td>
-                          <td className="px-3 py-2">{ins.length}/3</td>
-                          <td className="px-3 py-2">{ideas.length}/3</td>
-                          <td className="px-3 py-2">{acts.length}/3</td>
-                          <td className="px-3 py-2">{cws.length}/3</td>
-                          <td className="px-3 py-2">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${done ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-600"}`}>
-                              {done ? "completed" : "working"}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {agentNames.map(name => {
+                const ins  = byAgent(name, "insight");
+                const ideas = byAgent(name, "idea");
+                const acts = byAgent(name, "action");
+                const cws  = byAgent(name, "cowork_request");
+                const done = ins.length > 0 || ideas.length > 0;
+                const expanded = expandedAgents.has(name);
+                return (
+                  <div key={name} className="border-b last:border-b-0">
+                    {/* Summary row */}
+                    <button
+                      onClick={() => setExpandedAgents(prev => {
+                        const s = new Set(prev);
+                        if (s.has(name)) s.delete(name); else s.add(name);
+                        return s;
+                      })}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-xs hover:bg-muted/20 text-left"
+                    >
+                      {expanded ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                      <span className="font-medium w-36 shrink-0">{name}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${done ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-600"}`}>
+                        {done ? "done" : "pending"}
+                      </span>
+                      <span className="text-muted-foreground ml-2">
+                        💡{ins.length} · 🔮{ideas.length} · ⚡{acts.length} · 🔍{cws.length}
+                      </span>
+                    </button>
+                    {/* Drilldown */}
+                    {expanded && (
+                      <div className="px-8 pb-3 space-y-2">
+                        {([ ["Insights", ins, "emerald"], ["Ideas", ideas, "blue"], ["Actions", acts, "amber"], ["CoWork Requests", cws, "purple"] ] as [string, AiosDeliverable[], string][]).map(([label, items, color]) => (
+                          items.length > 0 && (
+                            <div key={label}>
+                              <div className={`text-[10px] uppercase font-bold text-${color}-600 mb-1`}>{label}</div>
+                              {items.map(d => (
+                                <div key={d.id} className="text-xs flex gap-2 items-start py-0.5">
+                                  <span className="text-muted-foreground shrink-0">#{d.rank}</span>
+                                  <span className="flex-1">{d.title}</span>
+                                  {d.total_score != null && (
+                                    <Badge variant="outline" className="text-[10px] h-4 shrink-0">{d.total_score}</Badge>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Conflict Area */}
+        {ceoBrief && ((ceoBrief.conflicts as any[]) ?? []).length > 0 && (
+          <Card className="border-red-200 bg-red-50/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm text-red-700">
+                <ShieldAlert className="w-4 h-4" /> Conflict Area — {((ceoBrief.conflicts as any[]) ?? []).length} detected
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs">
+              {((ceoBrief.conflicts as any[]) ?? []).map((c: any, i: number) => (
+                <div key={i} className="border border-red-200 rounded p-2 bg-white/60">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold">{c.title}</span>
+                    {c.severity && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${c.severity === "high" ? "bg-red-100 text-red-700" : c.severity === "medium" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+                        {c.severity}
+                      </span>
+                    )}
+                  </div>
+                  {c.agents_involved && <div className="text-muted-foreground">Agents: {c.agents_involved}</div>}
+                  {c.description && <div className="mt-1">{c.description}</div>}
+                </div>
+              ))}
             </CardContent>
           </Card>
         )}
