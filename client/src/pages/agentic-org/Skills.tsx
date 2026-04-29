@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Cpu, Download, Upload, Sparkles, Factory, Check, ChevronDown, ChevronRight } from "lucide-react";
+import { Cpu, Download, Upload, Sparkles, Factory, Check, ChevronDown, ChevronRight, GraduationCap, Send } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Skill {
@@ -15,6 +15,10 @@ interface Skill {
 interface QueueTask {
   id: number; title: string; description: string | null; agent_id: number;
 }
+interface TrainingTicket {
+  id: number; title: string; description: string | null; agent_id: number; agent_name?: string;
+  status: string; deadline: string | null;
+}
 
 export default function Skills() {
   const { toast } = useToast();
@@ -24,18 +28,29 @@ export default function Skills() {
   const [importInput, setImportInput] = useState<string>("");
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [trainingTickets, setTrainingTickets] = useState<TrainingTicket[]>([]);
+  const [trainingDispatch, setTrainingDispatch] = useState<string>("");
+  const [ldImportInput, setLdImportInput] = useState<string>("");
 
   async function load() {
     setLoading(true);
     try {
-      const [s, q, p] = await Promise.all([
+      const [s, q, p, tasks, agents] = await Promise.all([
         fetch("/api/agentic/skills",                  { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/skills/factory-queue",    { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/skills/factory-payload",  { credentials: "include" }).then(r => r.ok ? r.json() : { payload: "", count: 0 }),
+        fetch("/api/agentic/tasks",                   { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        fetch("/api/agentic/agents",                  { credentials: "include" }).then(r => r.ok ? r.json() : []),
       ]);
       setSkills(Array.isArray(s) ? s : []);
       setQueue(Array.isArray(q) ? q : []);
       setFactoryPayload(p.payload ?? "");
+      // Training tickets = tasks whose title starts with "Training:" or "Study:"
+      const agentMap = new Map((Array.isArray(agents) ? agents : []).map((a: any) => [a.id, a.name as string]));
+      const tickets: TrainingTicket[] = (Array.isArray(tasks) ? tasks : [])
+        .filter((t: any) => /^(Training|Study):/i.test(t.title ?? "") && t.status !== "done")
+        .map((t: any) => ({ ...t, agent_name: agentMap.get(t.agent_id) ?? `Agent #${t.agent_id}` }));
+      setTrainingTickets(tickets);
     } catch {
       toast({ title: "Failed to load skills", variant: "destructive" });
     } finally {
@@ -105,6 +120,73 @@ export default function Skills() {
     } catch {
       toast({ title: "Import failed", variant: "destructive" });
     }
+  }
+
+  function buildLdDispatchPrompt() {
+    if (trainingTickets.length === 0) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const blocks = trainingTickets.map((t, i) => [
+      `TRAINING_TICKET`,
+      `TARGET_AGENT: ${t.agent_name ?? `Agent #${t.agent_id}`}`,
+      `GAP_DIMENSION: ${extractDimension(t.title)}`,
+      `GAP_DETAIL: ${t.description ?? t.title}`,
+      `SOURCE_TASK_ID: ${t.id}`,
+    ].join("\n")).join("\n---\n");
+
+    const prompt = `# L&D Training Dispatch — ${today}\n\nPaste the following training tickets into the L&D CoWork skill (Eendigo L&D Training). The skill will produce one TYPE: action block per ticket, targeted at the gap-owner agent.\n\n${blocks}`;
+    setTrainingDispatch(prompt);
+    void fetch("/api/agentic/log", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: "ld_dispatch_generated", payload: { tickets: trainingTickets.length, date: today } }),
+    });
+    toast({ title: "L&D dispatch prompt ready", description: `${trainingTickets.length} training ticket(s) — paste into L&D CoWork skill.` });
+  }
+
+  function extractDimension(title: string): string {
+    const t = title.toLowerCase();
+    if (t.includes("role") || t.includes("mission")) return "role_clarity";
+    if (t.includes("data") || t.includes("access")) return "data_access";
+    if (t.includes("skill") || t.includes("knowledge")) return "skill";
+    if (t.includes("output") || t.includes("quality")) return "output_quality";
+    if (t.includes("decision")) return "decision_discipline";
+    if (t.includes("okr") || t.includes("progress")) return "okr_progress";
+    return "skill";
+  }
+
+  async function importLdOutput() {
+    if (!ldImportInput.trim()) return;
+    // L&D output is standard DECISION_ID blocks — reuse the OKR Center importer path.
+    // We POST to /api/agentic/tasks for each TYPE: action block.
+    const blocks = ldImportInput.split(/^\s*-{3,}\s*$/m).map(b => b.trim()).filter(Boolean);
+    let created = 0;
+    const agentRes = await fetch("/api/agentic/agents", { credentials: "include" });
+    const agents: any[] = agentRes.ok ? await agentRes.json() : [];
+    const agentByName = new Map(agents.map((a: any) => [a.name.toLowerCase().trim(), a.id as number]));
+
+    for (const block of blocks) {
+      const getField = (key: string) => { const m = block.match(new RegExp(`^${key}:\\s*(.*)$`, "im")); return m ? m[1].trim() : null; };
+      const type = getField("TYPE")?.toLowerCase();
+      const agentName = getField("AGENT");
+      const title = getField("TITLE");
+      if (type !== "action" || !agentName || !title) continue;
+      const agent_id = agentByName.get(agentName.toLowerCase().trim());
+      if (!agent_id) continue;
+      await fetch("/api/agentic/tasks", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_id, title,
+          description: getField("DESCRIPTION") ?? "",
+          deadline: null,
+          approval_level: "autonomous",
+        }),
+      });
+      created++;
+    }
+    toast({ title: `L&D: ${created} study task(s) created`, description: "Assigned to the target agents — visible on their Agent Detail pages." });
+    setLdImportInput("");
+    void load();
   }
 
   const coreSkills    = skills.filter(s => s.kind === "core");
@@ -190,6 +272,60 @@ export default function Skills() {
             ))}
           </div>
         )}
+      </Card>
+
+      {/* L&D Training Dispatch */}
+      <Card className="p-4 space-y-3 border-blue-300/40">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <GraduationCap className="w-4 h-4 text-blue-600" />
+            <h2 className="text-sm font-bold">L&D Training Dispatch</h2>
+            <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700">
+              {trainingTickets.length} open ticket{trainingTickets.length === 1 ? "" : "s"}
+            </Badge>
+          </div>
+          <Button size="sm" onClick={buildLdDispatchPrompt} disabled={trainingTickets.length === 0}>
+            <GraduationCap className="w-3.5 h-3.5 mr-1" /> Generate L&D dispatch prompt
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Training tickets are tasks starting with "Training:" or "Study:" that aren't yet done (created by the CHRO skill or manually from Agent Detail pages).
+          Click <strong>Generate</strong> to build the paste-ready prompt for the <strong>Eendigo L&D Training</strong> CoWork skill (4-5pm daily window).
+        </p>
+        {trainingTickets.length > 0 && (
+          <div className="space-y-1">
+            {trainingTickets.map(t => (
+              <div key={t.id} className="text-xs flex items-center gap-2 border rounded p-2 bg-blue-50/30">
+                <Badge variant="outline" className="font-mono text-[10px] shrink-0">#{t.id}</Badge>
+                <span className="text-muted-foreground shrink-0">{t.agent_name}</span>
+                <span className="font-semibold flex-1 truncate">{t.title}</span>
+                {t.deadline && <span className="text-[10px] text-muted-foreground shrink-0">{t.deadline}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        {trainingDispatch && (
+          <div className="space-y-2">
+            <Textarea readOnly value={trainingDispatch} rows={Math.min(14, trainingDispatch.split("\n").length + 1)} className="font-mono text-xs" />
+            <Button size="sm" onClick={() => copy(trainingDispatch, "L&D dispatch")}>
+              <Download className="w-3.5 h-3.5 mr-1" /> Copy prompt
+            </Button>
+          </div>
+        )}
+        {/* Import L&D output → creates "Study:" tasks on target agents */}
+        <div className="border-t pt-3 space-y-2">
+          <p className="text-[11px] text-muted-foreground font-semibold">Step 2 — paste L&D output to create study tasks:</p>
+          <Textarea
+            value={ldImportInput}
+            onChange={(e) => setLdImportInput(e.target.value)}
+            rows={8}
+            placeholder={"DECISION_ID: LD-2026-01-01-001\nTYPE: action\nAGENT: CFO\nTITLE: Study: pricing-discipline frameworks\nDESCRIPTION: Read MECE pricing discipline reference...\n---"}
+            className="font-mono text-xs"
+          />
+          <Button size="sm" onClick={importLdOutput} disabled={!ldImportInput.trim()}>
+            <Send className="w-3.5 h-3.5 mr-1" /> Create study tasks
+          </Button>
+        </div>
       </Card>
 
       {/* Import COO output */}

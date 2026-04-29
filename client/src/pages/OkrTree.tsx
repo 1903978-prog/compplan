@@ -6,8 +6,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Target, UserPlus, AlertTriangle, Bot, User, Check, X as XIcon, Clock, Plus, Trash2, Link as LinkIcon } from "lucide-react";
+import { Target, UserPlus, AlertTriangle, Bot, User, Check, X as XIcon, Clock, Plus, Trash2, Link as LinkIcon, Lightbulb, ListTodo } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+// Maps OkrTree role_key values → AIOS agent names (agents table)
+const ROLE_KEY_TO_AIOS: Record<string, string> = {
+  "ceo":              "CEO",
+  "coo":              "COO",
+  "cco":              "SVP Sales / BD",
+  "cfo":              "CFO",
+  "chro":             "CHRO",
+  "hiring-manager":   "CHRO",
+  "delivery-director":"Delivery Officer",
+  "pricing-director": "Pricing Agent",
+  "marketing-manager":"CMO",
+  "cko":              "CKO",
+  "ld-manager":       "L&D Manager",
+};
+
+interface AgenticAgent { id: number; name: string; }
+interface AgenticIdea  { id: number; agent_id: number; title: string; description: string | null; total_score: number | null; status: string; }
+interface AgenticTask  { id: number; agent_id: number; title: string; deadline: string | null; status: string; approval_level: string | null; }
 
 // ── EBITDA Growth Driver Tree ────────────────────────────────────────────────
 // Static issue tree from the EBITDA Growth Strategy doc. Each node lists the
@@ -231,19 +250,29 @@ export default function OkrTree() {
   const [openNodeId, setOpenNodeId] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, SuggestionDecision>>(() => loadSuggestionDecisions());
   const [approveTarget, setApproveTarget] = useState<{ roleName: string; rationale: string; nodeIds: string[] } | null>(null);
+  // AIOS live data for branch views
+  const [agenticAgents, setAgenticAgents] = useState<AgenticAgent[]>([]);
+  const [agenticIdeas,  setAgenticIdeas]  = useState<AgenticIdea[]>([]);
+  const [agenticTasks,  setAgenticTasks]  = useState<AgenticTask[]>([]);
 
-  // Initial load: org-chart + okr-nodes in parallel.
+  // Initial load: org-chart + okr-nodes + agentic data in parallel.
   useEffect(() => {
     Promise.all([
-      fetch("/api/org-chart", { credentials: "include" }).then(r => r.ok ? r.json() : []),
-      fetch("/api/okr-nodes",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([orgRows, nodeRows]) => {
+      fetch("/api/org-chart",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch("/api/okr-nodes",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch("/api/agentic/agents",     { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch("/api/agentic/ideas",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch("/api/agentic/tasks",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([orgRows, nodeRows, aa, ai, at]) => {
       setAgents(Array.isArray(orgRows) ? orgRows : []);
       const map: Record<string, NodeData> = {};
       for (const row of (Array.isArray(nodeRows) ? nodeRows : []) as NodeData[]) {
         map[row.node_id] = row;
       }
       setNodeDataByKey(map);
+      setAgenticAgents(Array.isArray(aa) ? aa : []);
+      setAgenticIdeas(Array.isArray(ai) ? ai : []);
+      setAgenticTasks(Array.isArray(at) ? at : []);
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load OKR data", variant: "destructive" }); setLoading(false); });
   }, [toast]);
@@ -434,6 +463,9 @@ export default function OkrTree() {
           allNodes={allNodes}
           nodeById={nodeById}
           byKey={byKey}
+          agenticAgents={agenticAgents}
+          agenticIdeas={agenticIdeas}
+          agenticTasks={agenticTasks}
           onClose={() => setOpenNodeId(null)}
           onSave={(patch) => saveNodeData(openNode.id, patch)}
           onJumpToNode={(id) => setOpenNodeId(id)}
@@ -456,13 +488,18 @@ export default function OkrTree() {
 
 // ── Side panel — per-node objectives + KPIs + depending branches ──────────
 function NodeSidePanel({
-  node, data, allNodes, nodeById, byKey, onClose, onSave, onJumpToNode,
+  node, data, allNodes, nodeById, byKey,
+  agenticAgents, agenticIdeas, agenticTasks,
+  onClose, onSave, onJumpToNode,
 }: {
   node: OkrNode;
   data: NodeData | null;
   allNodes: OkrNode[];
   nodeById: Map<string, OkrNode>;
   byKey: Map<string, OrgAgent>;
+  agenticAgents: AgenticAgent[];
+  agenticIdeas: AgenticIdea[];
+  agenticTasks: AgenticTask[];
   onClose: () => void;
   onSave: (patch: Partial<NodeData>) => Promise<void>;
   onJumpToNode: (id: string) => void;
@@ -471,6 +508,28 @@ function NodeSidePanel({
   const kpis = data?.kpis ?? [];
   const dependingIds = data?.depending_node_ids ?? [];
   const owners = node.ownersRoleKeys.map(rk => byKey.get(rk)).filter(Boolean) as OrgAgent[];
+
+  // AIOS: resolve primary owner → agentic agent → ideas + tasks
+  const primaryRoleKey = node.ownersRoleKeys[0] ?? null;
+  const agenticName    = primaryRoleKey ? (ROLE_KEY_TO_AIOS[primaryRoleKey] ?? null) : null;
+  const agenticAgent   = agenticName ? agenticAgents.find(a => a.name.toLowerCase() === agenticName.toLowerCase()) ?? null : null;
+  const branchIdeas    = agenticAgent
+    ? agenticIdeas
+        .filter(i => i.agent_id === agenticAgent.id && i.status === "proposed")
+        .sort((a, b) => (b.total_score ?? 0) - (a.total_score ?? 0))
+        .slice(0, 3)
+    : [];
+  const branchTasks = agenticAgent
+    ? agenticTasks
+        .filter(t => t.agent_id === agenticAgent.id && (t.status === "open" || t.status === "in_progress"))
+        .sort((a, b) => {
+          if (!a.deadline && !b.deadline) return 0;
+          if (!a.deadline) return 1;
+          if (!b.deadline) return -1;
+          return a.deadline.localeCompare(b.deadline);
+        })
+        .slice(0, 3)
+    : [];
 
   return (
     <>
@@ -714,6 +773,67 @@ function NodeSidePanel({
               className="text-xs"
             />
           </section>
+
+          {/* AIOS live branch data */}
+          {agenticAgent && (
+            <section className="border-t pt-4 space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5" /> AIOS · {agenticAgent.name}
+              </h3>
+
+              {/* Top 3 ideas */}
+              <div>
+                <div className="flex items-center gap-1 mb-1.5">
+                  <Lightbulb className="w-3 h-3 text-amber-500" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Top ideas</span>
+                </div>
+                {branchIdeas.length === 0 ? (
+                  <p className="text-[11px] italic text-muted-foreground">No proposed ideas yet.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {branchIdeas.map(idea => (
+                      <div key={idea.id} className="border rounded p-2 bg-amber-50/40 space-y-0.5">
+                        <div className="text-xs font-semibold leading-snug">{idea.title}</div>
+                        {idea.description && (
+                          <p className="text-[11px] text-muted-foreground leading-snug">{idea.description}</p>
+                        )}
+                        {idea.total_score != null && (
+                          <Badge variant="outline" className="text-[9px] h-4 px-1">score {idea.total_score}</Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Top 3 open tasks */}
+              <div>
+                <div className="flex items-center gap-1 mb-1.5">
+                  <ListTodo className="w-3 h-3 text-blue-500" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Open actions</span>
+                </div>
+                {branchTasks.length === 0 ? (
+                  <p className="text-[11px] italic text-muted-foreground">No open tasks.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {branchTasks.map(task => (
+                      <div key={task.id} className="border rounded p-2 bg-blue-50/40 flex items-start justify-between gap-2">
+                        <div className="text-xs leading-snug">{task.title}</div>
+                        <div className="flex flex-col items-end gap-0.5 shrink-0">
+                          {task.deadline && (
+                            <span className="text-[9px] text-muted-foreground font-mono">{task.deadline}</span>
+                          )}
+                          {task.approval_level && (
+                            <Badge variant="outline" className="text-[9px] h-4 px-1">{task.approval_level}</Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
           {/* Tree position */}
           <section className="pt-3 border-t text-[10px] text-muted-foreground">

@@ -348,3 +348,165 @@ export function parseCoworkOutput(raw: string): ParseResult {
   }
   return { decisions, errors };
 }
+
+// ── Weekly Executive Committee prompt ────────────────────────────────────────
+// Cross-agent reasoning: each agent shares status, dependencies, conflicts,
+// and resource needs. CEO consolidates and decides what to escalate to Livio.
+
+export interface CommitteeInput {
+  date: string;
+  agents: AgentLite[];
+  objectives: ObjectiveLite[];
+  ideas: IdeaLite[];
+  tasks: TaskLite[];
+  conflicts: ConflictLite[];
+}
+
+export function buildCommitteePrompt(d: CommitteeInput): string {
+  const eur = (n: number | null) => n != null ? `€${Math.round(n).toLocaleString()}` : "—";
+
+  const agentSummary = d.agents.map(a => {
+    const objs = d.objectives.filter(o => o.agent_id === a.id);
+    const openTasks = d.tasks.filter(t => t.agent_id === a.id && (t.status === "open" || t.status === "in_progress"));
+    const pendingApprovals = d.tasks.filter(t => t.agent_id === a.id && t.approval_status === "pending");
+    const topIdeas = d.ideas.filter(i => i.agent_id === a.id && i.status === "proposed")
+      .sort((a2, b) => (b.total_score ?? 0) - (a2.total_score ?? 0)).slice(0, 3);
+    return [
+      `### ${a.name} (${a.status})`,
+      objs.length > 0 ? `Objectives: ${objs.map(o => o.title).join(" · ")}` : "No objectives set.",
+      openTasks.length > 0 ? `Open tasks (${openTasks.length}): ${openTasks.slice(0, 5).map(t => t.title).join(" · ")}` : "No open tasks.",
+      pendingApprovals.length > 0 ? `⚠️ Pending approvals: ${pendingApprovals.map(t => `${t.title} [${t.approval_level}]`).join(" · ")}` : "",
+      topIdeas.length > 0 ? `Top ideas: ${topIdeas.map(i => `${i.title} (score ${i.total_score ?? "?"} )`).join(" · ")}` : "",
+    ].filter(Boolean).join("\n");
+  }).join("\n\n");
+
+  const conflictBlock = d.conflicts.filter(c => c.status !== "resolved").length > 0
+    ? "## Open conflicts\n" + d.conflicts.filter(c => c.status !== "resolved")
+        .map(c => `- [${c.severity ?? "?"}] ${c.title} (${c.status})`).join("\n")
+    : "## Open conflicts\nNone.";
+
+  const overdueCount = d.tasks.filter(t => t.deadline && t.deadline < d.date && t.status !== "done").length;
+
+  return `# AIOS Weekly Executive Committee — ${d.date}
+
+You are running a structured weekly Executive Committee for Eendigo's AI agent organisation. Every agent briefly shares: (1) status vs their objectives, (2) main tasks in flight, (3) cross-agent dependencies or resource needs, (4) ideas they want to propose, (5) decisions they need from a boss or Livio.
+
+The CEO synthesises the inputs, detects cross-functional conflicts, identifies the 3 most important company-level decisions to make this week, and prepares a recommendation pack for Livio.
+
+## Live state summary
+Date: ${d.date}
+Agents: ${d.agents.length} | Open tasks: ${d.tasks.filter(t => t.status === "open" || t.status === "in_progress").length} | Overdue: ${overdueCount} | Pending approvals: ${d.tasks.filter(t => t.approval_status === "pending").length}
+
+## Agent status round-table
+
+${agentSummary}
+
+${conflictBlock}
+
+## Committee agenda
+1. Each agent: status on objectives, blockers, cross-agent dependencies.
+2. Resource conflicts: who needs what from whom, in which timeframe.
+3. Top 3 ideas to advance this week — selected by CEO from all agent proposals.
+4. Top 3 decisions required from Livio this week.
+5. Action assignments with deadlines and approval levels.
+
+## Output format
+Return ONLY structured blocks separated by '---'. One block per decision.
+
+DECISION_ID: WEC-${d.date}-01
+TYPE: idea | action | conflict | proposal
+AGENT: <agent name>
+TITLE: <short title>
+DESCRIPTION: <one sentence>
+OKR_LINK: <objective id or none>
+DEADLINE: <YYYY-MM-DD or none>
+APPROVAL_LEVEL: autonomous | boss | ceo | livio
+IMPACT: 0-100
+EFFORT: 0-100
+RISK: 0-100`;
+}
+
+// ── Monthly Board Meeting prompt ─────────────────────────────────────────────
+// Full monthly review: OKRs, EBITDA tree, pipeline, cash, agent performance,
+// strategic priorities. Participants: Livio + all C-suite agents.
+
+export interface BoardMeetingInput {
+  date: string;
+  agents: AgentLite[];
+  objectives: ObjectiveLite[];
+  tasks: TaskLite[];
+  conflicts: ConflictLite[];
+  ideas: IdeaLite[];
+  proposals: ProposalLite[];
+  invoices: InvoiceLite[];
+}
+
+export function buildBoardMeetingPrompt(d: BoardMeetingInput): string {
+  const openConflicts = d.conflicts.filter(c => c.status !== "resolved");
+  const pendingApprovals = d.tasks.filter(t => t.approval_status === "pending");
+  const highApprovals = pendingApprovals.filter(t => t.approval_level === "livio");
+
+  const won = d.proposals.filter(p => p.outcome === "won");
+  const lost = d.proposals.filter(p => p.outcome === "lost");
+  const tbd = d.proposals.filter(p => !p.outcome || p.outcome === "pending");
+
+  const overdue = d.invoices.filter(i => i.due_date && i.due_date < d.date && i.state !== "paid");
+
+  const agentOKRBlock = d.agents.map(a => {
+    const objs = d.objectives.filter(o => o.agent_id === a.id);
+    const doneTasks = d.tasks.filter(t => t.agent_id === a.id && t.status === "done").length;
+    const allTasks = d.tasks.filter(t => t.agent_id === a.id).length;
+    const topIdea = d.ideas.filter(i => i.agent_id === a.id && i.status === "proposed")
+      .sort((a2, b) => (b.total_score ?? 0) - (a2.total_score ?? 0))[0];
+    return `${a.name}: ${objs.length} objectives | ${doneTasks}/${allTasks} tasks done${topIdea ? ` | Top idea: "${topIdea.title}"` : ""}`;
+  }).join("\n");
+
+  return `# AIOS Monthly Board Meeting — ${d.date}
+
+You are running the monthly Board Meeting for Eendigo's AI-powered consulting firm. Participants: Livio (Chair), CEO, COO, CFO, CHRO, CMO, SVP Sales.
+
+The Board reviews: (1) company OKR progress, (2) EBITDA issue tree health, (3) pipeline and staffing, (4) cash collection, (5) agent performance, (6) major decisions requiring Livio approval, (7) strategic priorities for next month.
+
+## Company snapshot — ${d.date}
+
+**Commercial pipeline**
+- Won (last period): ${won.length} engagements
+- Lost: ${lost.length} | Pending: ${tbd.length}
+
+**Cash & AR**
+- Overdue invoices: ${overdue.length}
+
+**Agent performance**
+${agentOKRBlock}
+
+**Open conflicts requiring resolution: ${openConflicts.length}**
+${openConflicts.map(c => `- [${c.severity}] ${c.title}`).join("\n") || "None."}
+
+**Decisions requiring Livio approval: ${highApprovals.length}**
+${highApprovals.slice(0, 10).map(t => `- ${t.title} (${t.deadline ?? "no deadline"})`).join("\n") || "None."}
+
+## Board agenda
+1. OKR review: which objectives are on-track, at-risk, or failed?
+2. EBITDA issue tree: which branches are improving, which are deteriorating?
+3. Pipeline: conversion, pricing, capacity. Are we on track for revenue targets?
+4. Staffing: hiring needs, churn risk, agent re-training needs.
+5. Cash: overdue invoices, payment escalations, cash runway.
+6. Agent governance: hire/fire/merge/retrain any agents?
+7. Strategic priorities for next month: top 3 actions for the company.
+8. Approval pack: all Livio-level decisions pending.
+
+## Output format
+Return ONLY structured blocks separated by '---'. One block per decision.
+
+DECISION_ID: BM-${d.date}-01
+TYPE: idea | action | conflict | proposal
+AGENT: <agent name>
+TITLE: <short title>
+DESCRIPTION: <one sentence>
+OKR_LINK: <objective id or none>
+DEADLINE: <YYYY-MM-DD or none>
+APPROVAL_LEVEL: autonomous | boss | ceo | livio
+IMPACT: 0-100
+EFFORT: 0-100
+RISK: 0-100`;
+}

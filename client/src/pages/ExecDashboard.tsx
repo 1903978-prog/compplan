@@ -382,6 +382,101 @@ export default function ExecDashboard() {
     return { list, count: list.length, totalValue, needsInvoice };
   }, [proposals, dashNet1Map]);
 
+  // ─── Capacity gap calculator ─────────────────────────────────────────
+  // Supply = current headcount (all employees treated as billable consultants).
+  // Committed demand = active ongoing projects (each assumed min 1 consultant;
+  //   use team_members.length when populated, otherwise fall back to 1).
+  // Pipeline demand = pending proposals weighted at 50% probability × 1 consultant slot.
+  // Gap = (committed + weighted_pipeline) - supply
+  const capacity = useMemo(() => {
+    const supply = hr.headcount;
+
+    // Committed: each ongoing project with a team list uses team.length;
+    // projects with no team data default to 1 slot each.
+    const committedSlots = ongoing.list.reduce((sum, p) => {
+      const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
+      return sum + Math.max(1, teamLen);
+    }, 0);
+
+    // Pipeline weighted at default 50% probability (proposals don't carry probability).
+    const pipeline = bd.pendingList;
+    const pipelineWeightedSlots = pipeline.reduce((sum, p) => {
+      const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
+      const slots = Math.max(1, teamLen);
+      return sum + slots * 0.5; // 50% win probability
+    }, 0);
+
+    const totalDemand   = committedSlots + pipelineWeightedSlots;
+    const gap           = totalDemand - supply;
+    const utilisation   = supply > 0 ? Math.round((committedSlots / supply) * 100) : 0;
+    const gapStatus: "ok" | "tight" | "over" =
+      gap <= 0  ? "ok"    :
+      gap < 2   ? "tight" :
+                  "over";
+
+    return { supply, committedSlots, pipelineWeightedSlots, totalDemand, gap, utilisation, gapStatus };
+  }, [hr.headcount, ongoing.list, bd.pendingList]);
+
+  // ─── Attrition / churn risk per employee ─────────────────────────────
+  // Heuristics (none require external benchmarks):
+  //   • months_since_promo > 24   → "Promo overdue" signal
+  //   • performance_score < 6.5   → "Low performance" signal (risk: flight or PIP)
+  //   • tenure_months < 6         → "Onboarding — settling" signal
+  //   • no monthly_ratings entry in last 90d → "Disengaged" signal
+  // Risk level:
+  //   HIGH   = ≥2 signals OR promo_overdue + low_perf together
+  //   MEDIUM = 1 signal
+  //   LOW    = no signals
+  const churnRisk = useMemo(() => {
+    const today = new Date();
+    const todayIso = today.toISOString().slice(0, 10);
+
+    type RiskRow = {
+      id: string; name: string; role: string;
+      signals: string[]; level: "high" | "medium" | "low";
+    };
+
+    return employees.map((emp): RiskRow => {
+      const signals: string[] = [];
+
+      // 1. Months since last promotion
+      const promoDate = emp.last_promo_date
+        ? new Date(emp.last_promo_date)
+        : emp.hire_date ? new Date(emp.hire_date + "-01") : null;
+      if (promoDate && !isNaN(promoDate.getTime())) {
+        const monthsSince = (today.getTime() - promoDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+        if (monthsSince > 24) signals.push(`${Math.round(monthsSince)}mo without promotion`);
+      }
+
+      // 2. Performance score
+      const perf = emp.performance_score;
+      if (typeof perf === "number" && perf < 6.5) signals.push(`performance ${perf.toFixed(1)}/10`);
+
+      // 3. New-hire onboarding risk (first 6 months)
+      const hireParts = emp.hire_date?.split("-").map(Number) ?? [];
+      if (hireParts.length >= 2) {
+        const hireDate = new Date(hireParts[0], hireParts[1] - 1, 1);
+        const tenureMonths = (today.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+        if (tenureMonths < 6) signals.push(`new hire (${Math.round(tenureMonths)}mo)`);
+      }
+
+      // 4. No rating in last 90 days → disengagement signal
+      const ratings = emp.monthly_ratings ?? [];
+      const cutoff = new Date(today); cutoff.setDate(today.getDate() - 90);
+      const cutoffStr = cutoff.toISOString().slice(0, 7); // YYYY-MM
+      const hasRecentRating = ratings.some((r: any) => String(r.month ?? r.date ?? "").slice(0, 7) >= cutoffStr);
+      if (ratings.length > 0 && !hasRecentRating) signals.push("no recent rating (>90d)");
+
+      void todayIso;
+      const level: "high" | "medium" | "low" =
+        signals.length >= 2 ? "high" :
+        signals.length === 1 ? "medium" :
+        "low";
+
+      return { id: emp.id, name: emp.name, role: emp.current_role_code, signals, level };
+    }).filter(r => r.level !== "low");
+  }, [employees]);
+
   // ─── Recent BD activity — last 10 proposals ──────────────────────────
   const recentBD = useMemo(() => {
     return [...proposals]
@@ -499,6 +594,119 @@ export default function ExecDashboard() {
           <div className="mt-3 text-[10px] text-muted-foreground">
             ⚠️ = last invoice &gt;30 days ago. Edit invoice date on the past-project row in /pricing.
           </div>
+        </Card>
+      )}
+
+      {/* ── Capacity Gap Calculator ──────────────────────────────── */}
+      <Card className={`p-4 border-2 ${
+        capacity.gapStatus === "over"  ? "border-red-300 bg-red-50/30"
+        : capacity.gapStatus === "tight" ? "border-amber-300 bg-amber-50/30"
+        : "border-emerald-300 bg-emerald-50/30"
+      }`}>
+        <div className="flex items-center gap-2 mb-4">
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+            capacity.gapStatus === "over"  ? "bg-red-100"
+            : capacity.gapStatus === "tight" ? "bg-amber-100"
+            : "bg-emerald-100"
+          }`}>
+            <Layers className={`w-4 h-4 ${
+              capacity.gapStatus === "over"  ? "text-red-600"
+              : capacity.gapStatus === "tight" ? "text-amber-600"
+              : "text-emerald-600"
+            }`} />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold">Capacity Gap Calculator</h3>
+            <p className="text-[11px] text-muted-foreground">
+              Current supply vs. committed + probability-weighted pipeline demand
+            </p>
+          </div>
+          <Badge variant="outline" className={`ml-auto text-xs ${
+            capacity.gapStatus === "over"  ? "border-red-400 text-red-700 bg-red-50"
+            : capacity.gapStatus === "tight" ? "border-amber-400 text-amber-700 bg-amber-50"
+            : "border-emerald-400 text-emerald-700 bg-emerald-50"
+          }`}>
+            {capacity.gapStatus === "over"  ? "⚠ Capacity risk"
+            : capacity.gapStatus === "tight" ? "↑ Getting tight"
+            : "✓ Sufficient"}
+          </Badge>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center mb-4">
+          {[
+            { label: "Supply (headcount)", value: capacity.supply, sub: "current consultants", tone: "blue" },
+            { label: "Committed demand",   value: Math.round(capacity.committedSlots), sub: `${ongoing.count} active projects`, tone: "slate" },
+            { label: "Pipeline demand (50%)", value: capacity.pipelineWeightedSlots.toFixed(1), sub: `${bd.pendingCount} pending proposals`, tone: "violet" },
+            { label: "Net gap",            value: capacity.gap > 0 ? `+${capacity.gap.toFixed(1)}` : capacity.gap.toFixed(1), sub: capacity.gap > 0 ? "slots needed" : "slack available", tone: capacity.gapStatus === "over" ? "red" : capacity.gapStatus === "tight" ? "amber" : "emerald" },
+          ].map(({ label, value, sub, tone }) => {
+            const toneText: Record<string, string> = {
+              blue: "text-blue-700", slate: "text-slate-700", violet: "text-violet-700",
+              red: "text-red-700", amber: "text-amber-700", emerald: "text-emerald-700",
+            };
+            return (
+              <div key={label} className="border rounded p-3 bg-background/80">
+                <div className={`text-2xl font-bold tabular-nums ${toneText[tone] ?? ""}`} data-privacy="blur">{value}</div>
+                <div className="text-[10px] font-semibold text-muted-foreground mt-0.5">{label}</div>
+                <div className="text-[10px] text-muted-foreground">{sub}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Utilisation bar */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-[11px] text-muted-foreground">
+            <span>Current utilisation (committed only)</span>
+            <span data-privacy="blur">{capacity.utilisation}%</span>
+          </div>
+          <div className="h-3 bg-muted rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                capacity.utilisation >= 100 ? "bg-red-500"
+                : capacity.utilisation >= 80  ? "bg-amber-500"
+                : "bg-emerald-500"
+              }`}
+              style={{ width: `${Math.min(100, capacity.utilisation)}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-1">
+            Each active project counts as ≥1 consultant slot. Pipeline deals use 50% probability.
+            To adjust: update team lists on ongoing proposals or add probability to BD deals.
+          </p>
+        </div>
+      </Card>
+
+      {/* ── People Risk ──────────────────────────────────────────── */}
+      {churnRisk.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
+              <TrendingDown className="w-4 h-4 text-red-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">People Risk</h3>
+              <p className="text-[11px] text-muted-foreground">
+                Attrition / churn signals — {churnRisk.filter(r => r.level === "high").length} high, {churnRisk.filter(r => r.level === "medium").length} medium
+              </p>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {churnRisk.sort((a, b) => (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1)).map(r => (
+              <div key={r.id} className={`flex items-center gap-2 flex-wrap text-xs rounded px-2 py-1.5 ${
+                r.level === "high" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"
+              }`}>
+                <Badge variant="outline" className={`text-[10px] shrink-0 ${
+                  r.level === "high" ? "border-red-400 text-red-700 bg-red-50" : "border-amber-400 text-amber-700 bg-amber-50"
+                }`}>{r.level}</Badge>
+                <span className="font-semibold" data-privacy="blur">{r.name}</span>
+                <span className="text-muted-foreground">{r.role}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">{r.signals.join(" · ")}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Signals: promotion overdue (&gt;24mo), performance &lt;6.5, onboarding (&lt;6mo), no recent rating. CHRO owns resolution.
+          </p>
         </Card>
       )}
 

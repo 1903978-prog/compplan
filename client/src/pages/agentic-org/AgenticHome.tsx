@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sun, Coffee, Users, Sparkles, Download, AlertTriangle, Zap, Send, MessageSquare, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
-  buildCoworkPrompt,
+  buildCoworkPrompt, buildCommitteePrompt, buildBoardMeetingPrompt,
   type AgentLite, type ObjectiveLite, type IdeaLite, type TaskLite, type ConflictLite,
   type BdDeal, type ProposalLite, type InvoiceLite, type WonProjectLite, type HiringStage, type CrossAlert,
   type SectionMapEntry,
@@ -29,6 +29,7 @@ export default function AgenticHome() {
   const [tasks, setTasks] = useState<TaskLite[]>([]);
   const [conflicts, setConflicts] = useState<ConflictLite[]>([]);
   const [generated, setGenerated] = useState<string>("");
+  const [generatedKind, setGeneratedKind] = useState<"cowork" | "committee" | "board">("cowork");
   // App-section enrichment for the 8am brief
   const [bdDeals, setBdDeals] = useState<BdDeal[]>([]);
   const [recentProposals, setRecentProposals] = useState<ProposalLite[]>([]);
@@ -247,6 +248,7 @@ export default function AgenticHome() {
       agentSections,
     });
     setGenerated(text);
+    setGeneratedKind("cowork");
     void fetch("/api/agentic/log", {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -268,26 +270,40 @@ export default function AgenticHome() {
   }
 
   function callCommittee() {
+    const today = new Date().toISOString().slice(0, 10);
+    const prompt = buildCommitteePrompt({ date: today, agents, objectives, ideas, tasks, conflicts });
+    setGenerated(prompt);
+    setGeneratedKind("committee");
     void fetch("/api/agentic/log", {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event_type: "exec_committee_called", payload: { invoked_at: new Date().toISOString() } }),
+      body: JSON.stringify({ event_type: "exec_committee_called", payload: { invoked_at: new Date().toISOString(), agents: agents.length } }),
     });
-    toast({ title: "AIOS Executive Committee logged", description: "Cross-agent reasoning trigger — review on Decision Log." });
+    toast({ title: "Executive Committee prompt ready", description: "Copy + paste into CoWork, then import decisions at OKR Center." });
   }
 
   function runBoardMeeting() {
+    const today = new Date().toISOString().slice(0, 10);
+    const prompt = buildBoardMeetingPrompt({
+      date: today,
+      agents,
+      objectives,
+      tasks,
+      conflicts,
+      ideas,
+      proposals: recentProposals,
+      invoices: openInvoices,
+    });
+    setGenerated(prompt);
+    setGeneratedKind("board");
     void fetch("/api/agentic/log", {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event_type: "decision_logged",
-        payload: { kind: "board_meeting", invoked_at: new Date().toISOString() },
-      }),
+      body: JSON.stringify({ event_type: "board_meeting_called", payload: { invoked_at: new Date().toISOString(), agents: agents.length } }),
     });
     toast({
-      title: "AIOS Board Meeting logged",
-      description: "Monthly review trigger — strategy, hires/fires, and OKR cascades. Pair with the AIOS Decisions page.",
+      title: "Board Meeting prompt ready",
+      description: "Copy + paste into CoWork, then import decisions at OKR Center.",
     });
   }
 
@@ -351,7 +367,8 @@ export default function AgenticHome() {
         <Card className="p-4 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold flex items-center gap-2">
-              <Sparkles className="w-4 h-4" /> AIOS CoWork Prompt — copy + paste
+              <Sparkles className="w-4 h-4" />
+              {generatedKind === "committee" ? "AIOS Executive Committee Prompt" : generatedKind === "board" ? "AIOS Board Meeting Prompt" : "AIOS CoWork Prompt"} — copy + paste
             </h2>
             <Button size="sm" onClick={() => copy(generated)}>
               <Download className="w-3.5 h-3.5 mr-1" /> Copy to clipboard
