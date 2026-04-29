@@ -6008,9 +6008,151 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── President-request auto-routing helpers ──────────────────────────────
+  // When the President sends a question, the CEO automatically routes it to
+  // the most competent specialist agent, fetches their live data, and has
+  // that agent answer. The CEO's response is:
+  //   "I've asked [Agent] — they are the domain expert. Their analysis: …"
+
+  /** Keyword-based routing: returns agent name, db-key, domain label */
+  function routePresidentQuestion(q: string): { name: string; key: string; domain: string } {
+    const lo = q.toLowerCase();
+    if (/invoice|unpaid|overdue|due amount|payment|cash flow|receiv|cfo|margin|ebitda|revenue|budget|spend|p&l|dso/i.test(lo))
+      return { name: "CFO", key: "cfo", domain: "finance, invoices & cash" };
+    if (/hire|recruit|headcount|candidate|chro|hr\b|employee|talent|onboard|attrition|salary|comp\b|open role|vacancy/i.test(lo))
+      return { name: "CHRO", key: "chro", domain: "people, hiring & headcount" };
+    if (/pric|discount|fee\b|day rate|win.loss|win rate|proposal fee|elasticit|rate card/i.test(lo))
+      return { name: "Pricing Director", key: "pricing", domain: "pricing & commercial terms" };
+    if (/deliver|qualit|utiliz|nps|engagement|on.time|project status|ongoing project|active engagement/i.test(lo))
+      return { name: "Delivery Director", key: "delivery", domain: "delivery & active projects" };
+    if (/sale|pipeline|deal|lead|prospect|bd\b|cco|commercial|funnel|close|client acqui/i.test(lo))
+      return { name: "CCO", key: "cco", domain: "sales & commercial pipeline" };
+    if (/content|brand|marketing|seo|linkedin|media|campaign|webinar|thought.leader/i.test(lo))
+      return { name: "Marketing Manager", key: "marketing", domain: "marketing & brand" };
+    if (/automat|tool|ai\b|ops\b|process|intern|it\b|admin|coo\b|system/i.test(lo))
+      return { name: "COO", key: "coo", domain: "operations & tools" };
+    // Default: CEO handles cross-domain questions directly
+    return { name: "CEO (cross-domain synthesis)", key: "ceo", domain: "cross-domain" };
+  }
+
+  /** Pull the live data that each specialist agent needs to answer the question */
+  async function fetchAgentLiveData(key: string): Promise<string> {
+    const today = new Date().toISOString().slice(0, 10);
+    const lines: string[] = [];
+    try {
+      if (key === "cfo") {
+        const r = await db.execute(sql`
+          SELECT client_name, due_amount, due_date, state, currency
+            FROM invoice_snapshots
+           WHERE state != 'paid'
+           ORDER BY due_date ASC NULLS LAST
+           LIMIT 50
+        `);
+        const invs: any[] = (r as any).rows ?? (r as any) ?? [];
+        const overdue = invs.filter((i: any) => i.due_date && i.due_date < today);
+        const pending = invs.filter((i: any) => !i.due_date || i.due_date >= today);
+        const overdueAmt = overdue.reduce((s: number, i: any) => s + (Number(i.due_amount) || 0), 0);
+        lines.push(`Invoice snapshot (${today}):`);
+        lines.push(`• Open/unpaid invoices total: ${invs.length}`);
+        if (overdue.length === 0) {
+          lines.push("• No overdue invoices — all open invoices are within their due date.");
+        } else {
+          lines.push(`• OVERDUE (past due date): ${overdue.length} invoices — total €${Math.round(overdueAmt).toLocaleString("en")}`);
+          for (const i of overdue.slice(0, 10))
+            lines.push(`  - ${i.client_name ?? "(unknown)"}: €${Number(i.due_amount ?? 0).toLocaleString("en")} — due ${i.due_date} — ${i.state}`);
+        }
+        if (pending.length > 0) {
+          lines.push(`• Due later (not yet overdue): ${pending.length} invoices`);
+          for (const i of pending.slice(0, 5))
+            lines.push(`  - ${i.client_name ?? "(unknown)"}: €${Number(i.due_amount ?? 0).toLocaleString("en")} — due ${i.due_date ?? "TBD"}`);
+        }
+      } else if (key === "chro") {
+        const empR = await db.execute(sql`SELECT COUNT(*)::int AS cnt FROM employees`);
+        const cnt = Number(((empR as any).rows ?? empR)[0]?.cnt ?? 0);
+        const hirR = await db.execute(sql`
+          SELECT stage, COUNT(*)::int AS count
+            FROM hiring_candidates
+           WHERE stage IS NOT NULL
+           GROUP BY stage ORDER BY count DESC
+        `);
+        const stages: any[] = (hirR as any).rows ?? hirR ?? [];
+        lines.push(`Headcount: ${cnt} active employees`);
+        if (stages.length === 0) {
+          lines.push("No candidates currently in hiring pipeline.");
+        } else {
+          lines.push("Hiring pipeline:");
+          for (const s of stages) lines.push(`  - ${s.stage}: ${s.count} candidate(s)`);
+        }
+      } else if (key === "cco") {
+        const dr = await db.execute(sql`
+          SELECT name, client_name, stage, amount, probability, close_date, currency
+            FROM bd_deals ORDER BY probability DESC NULLS LAST LIMIT 20
+        `);
+        const deals: any[] = (dr as any).rows ?? dr ?? [];
+        const weighted = deals.reduce((s: number, d: any) => s + (Number(d.amount) || 0) * ((Number(d.probability) || 0) / 100), 0);
+        lines.push(`BD pipeline: ${deals.length} deal(s) — weighted value €${Math.round(weighted).toLocaleString("en")}`);
+        for (const d of deals.slice(0, 8))
+          lines.push(`  - ${d.name} (${d.client_name ?? "?"}): stage=${d.stage ?? "?"} · €${Number(d.amount ?? 0).toLocaleString("en")} · ${d.probability ?? "?"}% · close ${d.close_date ?? "?"}`);
+      } else if (key === "delivery") {
+        const wr = await db.execute(sql`
+          SELECT project_name, client_name, status, start_date, end_date, total_amount, currency
+            FROM won_projects WHERE status = 'active' ORDER BY end_date ASC NULLS LAST
+        `);
+        const projs: any[] = (wr as any).rows ?? wr ?? [];
+        lines.push(`Active engagements: ${projs.length}`);
+        for (const p of projs.slice(0, 10))
+          lines.push(`  - ${p.project_name} (${p.client_name ?? "?"}): ${p.start_date ?? "?"} → ${p.end_date ?? "ongoing"}`);
+      } else {
+        lines.push("(No specific live data loaded for this domain — answer from general context and Eendigo knowledge.)");
+      }
+    } catch (_) {
+      lines.push("(Live data unavailable — DB query failed. Answer from general context.)");
+    }
+    return lines.join("\n");
+  }
+
+  /** Auto-answer a president request: route → fetch live data → call AI → return formatted reply */
+  async function autoAnswerPresidentRequest(question: string): Promise<string> {
+    const { generateText } = await import("./aiProviders");
+    const route = routePresidentQuestion(question);
+    const liveData = await fetchAgentLiveData(route.key);
+
+    const system = [
+      `You are the ${route.name} of Eendigo, a boutique management consulting firm.`,
+      `The CEO is forwarding a question from the company President to you because it falls under your domain: ${route.domain}.`,
+      "Answer concisely, factually, and precisely based on the data provided.",
+      "Lead with the key number or fact. Be direct — no hedging, no padding.",
+      "If data shows a problem, state it clearly and recommend a concrete next action.",
+      "Keep your reply under 150 words.",
+    ].join(" ");
+
+    const prompt = `President's question: "${question}"\n\nLive data from your domain:\n${liveData}`;
+
+    let agentAnswer: string;
+    try {
+      const result = await generateText({
+        provider: "anthropic",
+        model: "claude-haiku-4-5",
+        system,
+        prompt,
+        maxTokens: 400,
+        temperature: 0.3,
+      });
+      agentAnswer = result.text.trim();
+    } catch {
+      agentAnswer = "(AI unavailable — check ANTHROPIC_API_KEY)";
+    }
+
+    const isCEODirect = route.key === "ceo";
+    if (isCEODirect) {
+      return agentAnswer;
+    }
+    return `I'm forwarding this to **${route.name}** — this is their domain (${route.domain}).\n\n---\n\n**${route.name}:**\n\n${agentAnswer}`;
+  }
+
   // ── /api/agentic/president-requests ─────────────────────────────────────
   // Direct channel from Livio (President) → CEO agent. Lifecycle:
-  //   pending → answered                      (CEO replies directly)
+  //   pending → answered                      (auto-answered by specialist agent via AI)
   //   pending → needs_committee               (CEO escalates; prompt generated)
   //   needs_committee → committee_done        (Livio pastes Cowork outcome)
   //   committee_done → answered               (CEO finalises)
@@ -6047,7 +6189,26 @@ RULES:
         payload: { request_id: row.id, message: message.trim().slice(0, 200) } as any,
         created_at: now,
       } as any);
-      res.json(row);
+
+      // Auto-route to the specialist agent and generate their answer via AI.
+      // We await this so the client gets the answered state in one round-trip.
+      try {
+        const aiReply = await autoAnswerPresidentRequest(message.trim());
+        const answered = await db.execute(sql`
+          UPDATE president_requests
+             SET ceo_response = ${aiReply},
+                 status       = 'answered',
+                 responded_at = NOW(),
+                 updated_at   = NOW()
+           WHERE id = ${row.id}
+          RETURNING id, message, status, ceo_response, committee_prompt, committee_outcome,
+                    created_at, responded_at, updated_at
+        `);
+        return res.json(((answered as any).rows ?? answered)[0]);
+      } catch (_aiErr) {
+        // AI call failed — return the pending row; user can reply manually
+        return res.json(row);
+      }
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
