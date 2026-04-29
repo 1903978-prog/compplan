@@ -558,22 +558,26 @@ export default function OrgChart() {
 
       {/* Direct reports row + connector lines — recursive so any depth renders */}
       {ceo && directReports.length > 0 && (
-        <div className="relative overflow-x-auto">
-          {/* Vertical line down from CEO */}
-          <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-3 bg-foreground/60" />
-          {/* Horizontal line spanning all reports */}
-          <div className="absolute left-[5%] right-[5%] top-3 h-0.5 bg-foreground/60" />
-          <div className="flex flex-wrap justify-center gap-4 pt-6 relative">
-            {directReports.map(r => (
-              <RoleSubtree
-                key={r.id}
-                role={r}
-                childrenOf={childrenOf}
-                knowledge={knowledge}
-                onOpen={setOpenRole}
-                onAddKnowledge={setAddKnowledgeForRole}
-              />
-            ))}
+        <div className="overflow-x-auto pb-2">
+          <div className="relative inline-flex flex-col items-center min-w-full">
+            {/* Vertical line down from CEO to the busbar */}
+            <div className="w-0.5 h-3 bg-foreground/60" />
+            {/* Horizontal busbar — spans full width of the subtrees row */}
+            <div className="relative w-full">
+              <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
+              <div className="flex flex-nowrap justify-center gap-6 pt-3">
+                {directReports.map(r => (
+                  <RoleSubtree
+                    key={r.id}
+                    role={r}
+                    childrenOf={childrenOf}
+                    knowledge={knowledge}
+                    onOpen={setOpenRole}
+                    onAddKnowledge={setAddKnowledgeForRole}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -853,6 +857,8 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
 }
 
 // ── Recursive role subtree — renders a card + its children at any depth ──
+// All siblings always on a SINGLE horizontal line (flex-nowrap).
+// The outer page wraps in overflow-x-auto to allow scrolling.
 function RoleSubtree({
   role, childrenOf, knowledge, onOpen, onAddKnowledge,
 }: {
@@ -864,9 +870,10 @@ function RoleSubtree({
 }) {
   const children = childrenOf(role.role_key);
   return (
-    <div className="flex flex-col items-center relative">
-      {/* Vertical drop from the busbar above this node */}
-      <div className="absolute left-1/2 -translate-x-1/2 -top-3 w-0.5 h-3 bg-foreground/60" />
+    // flex-col items-center: card sits centered above its children row
+    <div className="flex flex-col items-center">
+      {/* Vertical drop from the busbar above this tile */}
+      <div className="w-0.5 h-3 bg-foreground/60" />
       <RoleCard
         role={role}
         knowledgeCount={knowledge.filter(k => k.role_key === role.role_key).length}
@@ -874,30 +881,25 @@ function RoleSubtree({
         onAddKnowledge={() => onAddKnowledge(role)}
       />
       {children.length > 0 && (
-        <div className="relative mt-2 pt-3">
-          {/* Vertical line from this card down to busbar */}
-          <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-3 bg-foreground/60" />
-          {/* Horizontal busbar across children (only when ≥2) */}
-          {children.length > 1 && (
-            <div
-              className="absolute h-0.5 bg-foreground/60 top-3"
-              style={{
-                left:  `${100 / (children.length * 2)}%`,
-                right: `${100 / (children.length * 2)}%`,
-              }}
-            />
-          )}
-          <div className="flex flex-wrap justify-center gap-3 pt-3">
-            {children.map(c => (
-              <RoleSubtree
-                key={c.id}
-                role={c}
-                childrenOf={childrenOf}
-                knowledge={knowledge}
-                onOpen={onOpen}
-                onAddKnowledge={onAddKnowledge}
-              />
-            ))}
+        <div className="flex flex-col items-center w-full">
+          {/* Vertical line from card down to horizontal bus */}
+          <div className="w-0.5 h-3 bg-foreground/60" />
+          {/* Horizontal bus — spans full width of this subtree */}
+          <div className="relative w-full">
+            <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
+            {/* Children — always on a single line, no wrapping */}
+            <div className="flex flex-nowrap justify-center gap-4 pt-3">
+              {children.map(c => (
+                <RoleSubtree
+                  key={c.id}
+                  role={c}
+                  childrenOf={childrenOf}
+                  knowledge={knowledge}
+                  onOpen={onOpen}
+                  onAddKnowledge={onAddKnowledge}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}
