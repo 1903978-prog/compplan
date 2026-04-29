@@ -100,7 +100,7 @@ export function buildCoworkPrompt(input: {
         const loss = p.loss_reason ? ` · loss: ${p.loss_reason}` : "";
         // net_total = weekly_price × weeks (set by ensureTbdProposalForFinalCase = NET1 × weeks).
         // Falls back to total_fee for legacy rows without weekly_price sync.
-        const netVal = p.net_total ?? (p.weekly_price && p.duration_weeks ? p.weekly_price * p.duration_weeks : p.total_fee);
+        const netVal = p.net_total ?? (p.weekly_price && p.duration_weeks ? p.weekly_price * p.duration_weeks : (p.total_fee ?? null));
         lines.push(`- ${p.project_name} (${p.client_name ?? "?"}) — ${p.outcome ?? "open"} · ${eur(netVal)}${p.win_probability != null ? ` · ${p.win_probability}% prob` : ""}${loss}`);
       }
       lines.push("");

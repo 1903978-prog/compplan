@@ -58,6 +58,9 @@ const CYCLE_STATUS_BADGE: Record<string, string> = {
   completed:              "bg-emerald-100 text-emerald-700",
   failed:                 "bg-red-100 text-red-700",
   cowork_output_received: "bg-purple-100 text-purple-700",
+  round2_running:         "bg-indigo-100 text-indigo-700 animate-pulse",
+  round2_completed:       "bg-teal-100 text-teal-700",
+  round2_failed:          "bg-red-100 text-red-700",
 };
 function fmt(ts?: string) {
   if (!ts) return "—";
@@ -78,6 +81,7 @@ export default function AiosCycle() {
   const [pasting, setPasting]       = useState(false);
   const [showCoworkPrompt, setShowCoworkPrompt] = useState(false);
   const [regening, setRegening]     = useState(false);
+  const [startingR2, setStartingR2] = useState(false);
   const [showLogs, setShowLogs]     = useState(true);
   const [showHistory, setShowHistory] = useState(false);
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
@@ -140,7 +144,8 @@ export default function AiosCycle() {
     if (cr.ok) {
       const updated: AiosCycle = await cr.json();
       setCycle(updated);
-      if (updated.status === "completed" || updated.status === "failed" || updated.status === "paused") {
+      const terminal = ["completed", "failed", "paused", "round2_completed", "round2_failed"];
+      if (terminal.includes(updated.status)) {
         stopPolling();
         loadCycleData(id);
       }
@@ -160,10 +165,12 @@ export default function AiosCycle() {
 
   useEffect(() => {
     if (!cycle) return;
-    if (cycle.status === "running" || cycle.status === "paused") {
+    const active = ["running", "round2_running"];
+    const done   = ["completed", "cowork_output_received", "round2_completed", "round2_failed"];
+    if (active.includes(cycle.status) || cycle.status === "paused") {
       loadCycleData(cycle.id);
-      if (cycle.status === "running") startPolling(cycle.id);
-    } else if (cycle.status === "completed" || cycle.status === "cowork_output_received") {
+      if (active.includes(cycle.status)) startPolling(cycle.id);
+    } else if (done.includes(cycle.status)) {
       loadCycleData(cycle.id);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -242,11 +249,29 @@ export default function AiosCycle() {
     setPasting(false);
   }
 
+  async function startRound2() {
+    if (!cycle) return;
+    setStartingR2(true);
+    try {
+      const r = await fetch(`/api/aios/cycles/${cycle.id}/run-round2`, { method: "POST", credentials: "include" });
+      if (!r.ok) throw new Error(await r.text());
+      startPolling(cycle.id);
+      loadLatestCycle();
+      toast({ title: "Round 2 started", description: "Agents are incorporating CoWork findings." });
+    } catch (e: any) {
+      toast({ title: "Round 2 failed to start", description: e.message, variant: "destructive" });
+    }
+    setStartingR2(false);
+  }
+
   // ── Derived state ──────────────────────────────────────────────────────────
-  const isRunning = cycle?.status === "running";
-  const isPaused  = cycle?.status === "paused";
-  const isDone    = cycle?.status === "completed" || cycle?.status === "cowork_output_received";
-  const canStart  = !cycle || isDone || cycle.status === "failed";
+  const isRunning   = cycle?.status === "running";
+  const isR2Running = cycle?.status === "round2_running";
+  const isPaused    = cycle?.status === "paused";
+  const isDone      = ["completed", "cowork_output_received", "round2_completed", "round2_failed"].includes(cycle?.status ?? "");
+  const canStart    = !cycle || isDone || cycle.status === "failed";
+  const canRunR2    = cycle?.status === "cowork_output_received";
+  const anyRunning  = isRunning || isR2Running;
 
   const agentNames = Array.from(new Set(deliverables.map(d => d.agent_name).filter((n): n is string => !!n)));
   const byAgent = (name: string, type: string) => deliverables.filter(d => d.agent_name === name && d.deliverable_type === type);
@@ -266,11 +291,11 @@ export default function AiosCycle() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={startCycle} disabled={starting || isRunning || isPaused} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+              <Button onClick={startCycle} disabled={starting || anyRunning || isPaused} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                 {starting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sun className="w-4 h-4 mr-2" />}
                 8am — Start AIOS
               </Button>
-              <Button onClick={startCycle} disabled={starting || isRunning || isPaused} variant="outline">
+              <Button onClick={startCycle} disabled={starting || anyRunning || isPaused} variant="outline">
                 <Play className="w-4 h-4 mr-2" /> Start Work
               </Button>
               {isRunning && (
@@ -281,6 +306,12 @@ export default function AiosCycle() {
               {isPaused && (
                 <Button onClick={resumeCycle} className="bg-blue-600 hover:bg-blue-700 text-white">
                   <Play className="w-4 h-4 mr-2" /> Resume AIOS
+                </Button>
+              )}
+              {canRunR2 && (
+                <Button onClick={startRound2} disabled={startingR2} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                  {startingR2 ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                  Start Round 2
                 </Button>
               )}
               {cycle && (
@@ -464,6 +495,9 @@ export default function AiosCycle() {
                                 <div key={d.id} className="text-xs flex gap-2 items-start py-0.5">
                                   <span className="text-muted-foreground shrink-0">#{d.rank}</span>
                                   <span className="flex-1">{d.title}</span>
+                                  {d.status === "round2" && (
+                                    <Badge className="text-[10px] h-4 shrink-0 bg-indigo-100 text-indigo-700 border-indigo-300">R2</Badge>
+                                  )}
                                   {d.total_score != null && (
                                     <Badge variant="outline" className="text-[10px] h-4 shrink-0">{d.total_score}</Badge>
                                   )}

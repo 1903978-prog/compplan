@@ -654,3 +654,123 @@ export async function storeCoworkOutput(cycleId: number, rawText: string, pasted
   await log(cycleId, "president", "President", "cowork_output_pasted",
     `CoWork output stored. ${parsed} agent letters parsed.`, "completed", "info");
 }
+
+// ── Round 2 — agents incorporate CoWork findings ──────────────────────────────
+export async function runRound2(cycleId: number): Promise<void> {
+  const nowStr = () => new Date().toISOString();
+  try {
+    await db.update(aiosCycles).set({ status: "round2_running", updated_at: nowStr() } as any).where(eq(aiosCycles.id, cycleId));
+    pushSSE(cycleId, { type: "status", status: "round2_running" });
+    await log(cycleId, "system", null, "round2_started",
+      "Round 2 started — agents reviewing CoWork letters.", "working", "info");
+
+    const allAgents = await db.select().from(agentsTable);
+    const activeAgents = allAgents.filter(a => a.status === "active" || a.status === "working");
+    const letters = await db.select().from(coworkLetters).where(eq(coworkLetters.cycle_id, cycleId));
+    const sectionMap = await db.select().from(agentSectionMap);
+    const allObjectives = await db.select().from(objectives);
+    const allTasks = await db.select().from(tasks);
+    const allKnowledge = await db.select().from(agentKnowledge);
+
+    let total = 0;
+
+    for (const agent of activeAgents) {
+      // Match letter to agent by name (case-insensitive, first-word fallback)
+      const letter = letters.find(l => {
+        if (!l.agent_name) return false;
+        const ln = l.agent_name.toLowerCase();
+        const an = agent.name.toLowerCase();
+        return ln === an || ln.split(" ")[0] === an.split(" ")[0] || an.includes(ln.split(" ")[0]);
+      });
+      if (!letter) {
+        await log(cycleId, "agent", agent.name, "round2_no_letter",
+          `${agent.name} has no CoWork letter — skipping Round 2.`, "warning", "warning");
+        continue;
+      }
+
+      await log(cycleId, "agent", agent.name, "round2_reading_letter",
+        `${agent.name} reviewing CoWork findings.`, "working", "info");
+
+      const agentObjectives = allObjectives.filter(o => o.agent_id === agent.id);
+      const agentTasks = allTasks.filter(t => t.agent_id === agent.id);
+      const agentSections = sectionMap.filter(sm =>
+        sm.primary_agent.toLowerCase().includes(agent.name.toLowerCase().split(" ")[0]) ||
+        agent.name.toLowerCase().includes(sm.primary_agent.toLowerCase().split(" ")[0])
+      );
+      const agentKb = allKnowledge.filter(k =>
+        k.role_key && agent.name.toLowerCase().includes(k.role_key.toLowerCase().replace(/-/g, " ").split(" ")[0])
+      );
+
+      const context = buildAgentContext(agent, agentObjectives, agentTasks, agentSections, agentKb);
+      const deliverables = await generateRound2Deliverables(cycleId, agent, context, letter.raw_letter_text);
+
+      for (const d of deliverables) {
+        await db.insert(aiosDeliverables).values({
+          cycle_id: cycleId,
+          agent_id: agent.id,
+          agent_name: agent.name,
+          ...d,
+          status: "round2",
+          created_at: nowStr(),
+        } as any);
+        total++;
+      }
+
+      await log(cycleId, "agent", agent.name, "round2_agent_completed",
+        `${agent.name} Round 2: ${deliverables.length} updated deliverables.`, "completed", "info");
+    }
+
+    await db.update(aiosCycles).set({ status: "round2_completed", updated_at: nowStr() } as any).where(eq(aiosCycles.id, cycleId));
+    await log(cycleId, "system", null, "round2_finished",
+      `Round 2 complete — ${total} updated deliverables generated.`, "completed", "info");
+    pushSSE(cycleId, { type: "status", status: "round2_completed" });
+  } catch (err: any) {
+    console.error("[AIOS] Round 2 failed:", err);
+    await db.update(aiosCycles).set({ status: "round2_failed", updated_at: new Date().toISOString() } as any).where(eq(aiosCycles.id, cycleId));
+    await log(cycleId, "system", null, "round2_failed", `Round 2 failed: ${err.message}`, "failed", "critical");
+    pushSSE(cycleId, { type: "status", status: "round2_failed" });
+  }
+}
+
+async function generateRound2Deliverables(cycleId: number, agent: any, context: string, letterText: string): Promise<any[]> {
+  const system = `You are ${agent.name}, an AI agent at Eendigo.
+You completed your morning analysis (Round 1). Claude CoWork has now researched your requests and sent you findings.
+Read the CoWork letter addressed to you and generate UPDATED, more informed deliverables.
+Respond ONLY with valid JSON. No markdown outside the JSON.`;
+
+  const user = `## Your original context
+${context}
+
+## CoWork Letter Addressed to You
+${letterText.slice(0, 6000)}
+
+Based on these research findings, generate 9 updated deliverables (3 insights, 3 ideas, 3 actions).
+These should incorporate the new information from CoWork and supersede or refine your Round 1 outputs.
+
+{
+  "insights": [
+    { "rank": 1, "title": "...", "description": "...", "source_app_section": "CoWork Research", "okr_link": "...", "okr_relevance_score": 80, "business_impact_score": 85, "urgency_score": 70, "confidence_score": 80, "total_score": 79, "scoring_rationale": "Informed by CoWork findings." }
+  ],
+  "ideas": [
+    { "rank": 1, "title": "...", "description": "...", "okr_link": "...", "business_impact_score": 85, "feasibility_score": 75, "urgency_score": 70, "total_score": 77, "scoring_rationale": "...", "decision_right_level": "autonomous" }
+  ],
+  "actions": [
+    { "rank": 1, "title": "...", "description": "...", "okr_link": "...", "urgency_score": 85, "business_impact_score": 80, "feasibility_score": 80, "total_score": 82, "scoring_rationale": "...", "decision_right_level": "autonomous", "deadline": "${new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)}" }
+  ]
+}
+
+Return exactly 3 insights, 3 ideas, 3 actions.`;
+
+  try {
+    const raw = await askClaude(system, user);
+    const json = JSON.parse(extractJson(raw));
+    const result: any[] = [];
+    for (const ins of (json.insights ?? []).slice(0, 3)) result.push({ deliverable_type: "insight", ...ins });
+    for (const idea of (json.ideas ?? []).slice(0, 3)) result.push({ deliverable_type: "idea", ...idea });
+    for (const act of (json.actions ?? []).slice(0, 3)) result.push({ deliverable_type: "action", ...act });
+    return result;
+  } catch (e: any) {
+    console.error(`[AIOS] Round 2 generation failed for ${agent.name}:`, e.message);
+    return [];
+  }
+}
