@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X } from "lucide-react";
+import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 // ── Types we read from the API ──────────────────────────────────────────────
@@ -47,6 +47,10 @@ function fmtWeek(d: Date): string {
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
+function fmtIso(d: Date): string {
+  return d.toISOString().split("T")[0];
+}
+
 function parseISODateOrNull(s: string | null | undefined): Date | null {
   if (!s) return null;
   const d = new Date(s);
@@ -59,7 +63,6 @@ function projectWeeks(p: Proposal, weekStart: Date): { from: number; to: number 
   if (!start) return null;
   const dur = (p.duration_weeks && p.duration_weeks > 0) ? p.duration_weeks : 8;
   const end = parseISODateOrNull(p.end_date) ?? new Date(start.getTime() + dur * MS_WK);
-  // map to week indices
   const fromMs = start.getTime();
   const toMs = end.getTime();
   const horizonStart = weekStart.getTime();
@@ -79,46 +82,51 @@ export default function StaffingGantt() {
   const [showWeighted, setShowWeighted] = useState(true);
   const [showPipeline, setShowPipeline] = useState(true);
 
-  // ── Assign-to-project modal state ──────────────────────────────────────────
-  // The user can click "+ Assign" on any person row to put them on an open
-  // project (won OR pending pipeline). On submit we PATCH the proposal:
-  //   • role=manager         → set proposal.manager_name = personName
-  //   • role=team-member     → push { role, name } into proposal.team_members
-  // The Gantt re-renders from the live data after the PUT returns.
-  const [assignFor, setAssignFor] = useState<string | null>(null);   // person name
-  const [assignProjectId, setAssignProjectId] = useState<string>("");
-  const [assignKind, setAssignKind] = useState<"manager" | "team">("team");
-  const [assignRoleLabel, setAssignRoleLabel] = useState<string>("Associate");
+  // ── Assign-to-project modal state ─────────────────────────────────────────
+  // Two entry points:
+  //   (A) Person-first  → click UserPlus on a row → assignFor is set, project blank
+  //   (B) Project-first → click Reserve on a TBD card → assignProjectId is set, person blank
+  const [assignModalOpen,  setAssignModalOpen]  = useState(false);
+  const [assignFor,        setAssignFor]        = useState<string | null>(null);   // person name
+  const [assignProjectId,  setAssignProjectId]  = useState<string>("");
+  const [assignKind,       setAssignKind]       = useState<"manager" | "team">("team");
+  const [assignRoleLabel,  setAssignRoleLabel]  = useState<string>("Associate");
   const [assignSubmitting, setAssignSubmitting] = useState(false);
+  // For TBD projects: optionally update the proposal's start_date to the
+  // person's first available week so the Gantt block appears in the right place.
+  const [updateStartDate,  setUpdateStartDate]  = useState(true);
 
   function openAssignModal(personName: string) {
     setAssignFor(personName);
     setAssignProjectId("");
     setAssignKind("team");
     setAssignRoleLabel("Associate");
+    setUpdateStartDate(true);
+    setAssignModalOpen(true);
   }
+
+  function openFromProjectModal(projectId: number) {
+    setAssignFor(null);
+    setAssignProjectId(String(projectId));
+    setAssignKind("team");
+    setAssignRoleLabel("Associate");
+    setUpdateStartDate(true);
+    setAssignModalOpen(true);
+  }
+
   function closeAssignModal() {
     setAssignFor(null);
+    setAssignProjectId("");
+    setAssignModalOpen(false);
     setAssignSubmitting(false);
   }
 
-  // Open projects in the dropdown = anything that ISN'T a closed loss AND
-  // either (a) has its date span overlapping the 16-week look-ahead, OR
-  // (b) is still pending pipeline (no firm dates yet but actively sold).
-  // The previous "won + future end_date" filter was too strict and hid
-  // ongoing engagements like SAN03 that are mid-flight (start in the
-  // past, end in the past or near future) from the assign dialog.
-  // weekStart is computed below in render — we re-derive it here so the
-  // memo doesn't depend on it.
   const dropdownWeekStart = useMemo(() => startOfWeekMonday(new Date()), []);
   const openProjects = useMemo(() => {
     return proposals
       .filter(p => {
         if (p.outcome === "lost") return false;
         if (p.outcome === "pending") return true;
-        // Won (or any non-lost outcome) — show if it overlaps the horizon
-        // OR has at least one assignee already (so the user can edit the
-        // current allocation even if dates are stale).
         const span = projectWeeks(p, dropdownWeekStart);
         if (span !== null) return true;
         if (p.manager_name || (p.team_members ?? []).length > 0) return true;
@@ -129,26 +137,31 @@ export default function StaffingGantt() {
 
   async function submitAssign() {
     if (!assignFor || !assignProjectId) {
-      toast({ title: "Pick a project", variant: "destructive" });
+      toast({ title: "Pick both a person and a project", variant: "destructive" });
       return;
     }
     const proj = proposals.find(p => String(p.id) === assignProjectId);
     if (!proj) return;
     setAssignSubmitting(true);
-    // Build the patch. We send the whole proposal back (the existing PUT is
-    // partial-tolerant but easier to send the full row to keep validation
-    // schemas happy).
+
     const patch: Record<string, unknown> = { ...proj };
     if (assignKind === "manager") {
       patch.manager_name = assignFor;
     } else {
       const existing = Array.isArray(proj.team_members) ? proj.team_members : [];
-      // Don't double-add if already on the team for this project.
       const already = existing.some(m => (m.name || "").trim().toLowerCase() === assignFor.trim().toLowerCase());
       patch.team_members = already
         ? existing
         : [...existing, { role: assignRoleLabel.trim() || "Team", name: assignFor }];
     }
+
+    // For TBD/pending projects: optionally set start_date = person's first free week
+    // so the Gantt block appears at the right position without manual date entry.
+    if (proj.outcome === "pending" && updateStartDate) {
+      const d = availabilityDates[assignFor];
+      patch.start_date = d ? fmtIso(d) : fmtIso(new Date());
+    }
+
     try {
       const r = await fetch(`/api/pricing/proposals/${proj.id}`, {
         method: "PUT", credentials: "include",
@@ -157,11 +170,10 @@ export default function StaffingGantt() {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const updated = await r.json();
-      // Splice the updated proposal back into local state
       setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
       toast({
-        title: "Assigned",
-        description: `${assignFor} → ${proj.project_name} (${assignKind === "manager" ? "manager" : assignRoleLabel})`,
+        title: "Reserved",
+        description: `${assignFor} → ${proj.project_name}${proj.outcome === "pending" ? " (TBD)" : ""}`,
       });
       closeAssignModal();
     } catch (e) {
@@ -170,8 +182,6 @@ export default function StaffingGantt() {
     }
   }
 
-  // Remove a person from a specific project block (manager or team member).
-  // Called from the small × that appears on each block on hover.
   async function unassign(personName: string, projectId: number) {
     const proj = proposals.find(p => p.id === projectId);
     if (!proj) return;
@@ -214,13 +224,8 @@ export default function StaffingGantt() {
     return Array.from({ length: HORIZON_WEEKS }, (_, i) => new Date(weekStart.getTime() + i * MS_WK));
   }, [weekStart]);
 
-  // Build the full set of people we want to display:
-  //  - every Eendigo employee (always shown so we can see who has slack)
-  //  - every manager_name + team_members[].name on a relevant proposal
-  // Back-office / non-billable role codes — these people don't get staffed
-  // on engagements so they shouldn't clutter the Gantt rows. Currently:
-  // ADMIN (Cosmin et al.). Extendable as new non-billable roles appear.
-  const NON_BILLABLE_ROLE_CODES = new Set(["ADMIN", "BACKOFFICE", "BO", "FINANCE", "OPS"]);
+  // Interns (INT) and Back Office (BO) are not billable — exclude from Gantt.
+  const NON_BILLABLE_ROLE_CODES = new Set(["ADMIN", "BACKOFFICE", "BO", "INT", "FINANCE", "OPS"]);
   const isBackOffice = (e: Employee): boolean => {
     const code = (e.current_role_code ?? "").trim().toUpperCase();
     return NON_BILLABLE_ROLE_CODES.has(code);
@@ -229,7 +234,7 @@ export default function StaffingGantt() {
   const people = useMemo(() => {
     const out = new Map<string, { name: string; role?: string }>();
     for (const e of employees) {
-      if (isBackOffice(e)) continue; // skip Cosmin (ADMIN) + future back-office hires
+      if (isBackOffice(e)) continue;
       out.set(e.name.trim().toLowerCase(), { name: e.name, role: e.current_role_code ?? undefined });
     }
     for (const p of proposals) {
@@ -248,9 +253,6 @@ export default function StaffingGantt() {
     return Array.from(out.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [employees, proposals, showPipeline]);
 
-  // Per-person × week allocation matrix. Each cell = list of project blocks.
-  // We carry projectId so the user can hover-and-remove a single allocation
-  // straight from the cell (× button) without going to /pricing.
   type Block = { project: string; projectId: number; client?: string | null; outcome: string; alpha: number; isManager: boolean };
   const matrix = useMemo(() => {
     const out: Record<string, Block[][]> = {};
@@ -268,16 +270,9 @@ export default function StaffingGantt() {
 
       const allocate = (name: string, isManager: boolean) => {
         const k = name.trim().toLowerCase();
-        if (!out[k]) return; // person not in display set
+        if (!out[k]) return;
         for (let w = span.from; w <= span.to; w++) {
-          out[k][w].push({
-            project: p.project_name,
-            projectId: p.id,
-            client: p.client_name ?? null,
-            outcome: p.outcome,
-            alpha,
-            isManager,
-          });
+          out[k][w].push({ project: p.project_name, projectId: p.id, client: p.client_name ?? null, outcome: p.outcome, alpha, isManager });
         }
       };
 
@@ -289,23 +284,42 @@ export default function StaffingGantt() {
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
 
-  // For each person: when are they next free? If currently allocated, find
-  // the first unallocated week.
-  const availability = useMemo(() => {
-    const out: Record<string, string> = {};
+  // Availability: human-readable string + actual Date for the first free week.
+  // The Date is used when reserving to a TBD project (start_date patch).
+  const { availability, availabilityDates } = useMemo(() => {
+    const avail: Record<string, string> = {};
+    const dates: Record<string, Date | null> = {};
     for (const person of people) {
       const cells = matrix[person.name.toLowerCase()] ?? [];
       const firstFree = cells.findIndex(c => c.length === 0);
       if (cells[0]?.length === 0) {
-        out[person.name] = "available now";
+        avail[person.name]  = "available now";
+        dates[person.name]  = null; // null = today
       } else if (firstFree === -1) {
-        out[person.name] = ">16 weeks";
+        avail[person.name]  = `>${HORIZON_WEEKS}w`;
+        dates[person.name]  = null;
       } else {
-        out[person.name] = `from ${fmtWeek(weeks[firstFree])}`;
+        avail[person.name]  = `from ${fmtWeek(weeks[firstFree])}`;
+        dates[person.name]  = weeks[firstFree];
       }
     }
-    return out;
+    return { availability: avail, availabilityDates: dates };
   }, [matrix, people, weeks]);
+
+  // TBD = pending proposals, sorted by win probability descending.
+  const tbdProposals = useMemo(() =>
+    proposals
+      .filter(p => p.outcome === "pending")
+      .sort((a, b) => (b.win_probability ?? 0) - (a.win_probability ?? 0)),
+    [proposals]);
+
+  // Derive modal context helpers
+  const selectedProposal = openProjects.find(x => String(x.id) === assignProjectId) ?? null;
+  const isTBD = selectedProposal?.outcome === "pending";
+  const personAvailDate = (assignFor && availabilityDates[assignFor] !== undefined)
+    ? availabilityDates[assignFor]
+    : null;
+  const proposedStartIso = personAvailDate ? fmtIso(personAvailDate) : fmtIso(new Date());
 
   if (loading) {
     return <div className="container mx-auto py-8 text-sm text-muted-foreground">Loading staffing…</div>;
@@ -319,7 +333,7 @@ export default function StaffingGantt() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Staffing Gantt</h1>
             <p className="text-sm text-muted-foreground">
-              16-week look-ahead. Solid blocks = won + ongoing. Striped/transparent = pipeline (weighted by win-probability when toggle is on). Sales: confirm a person is free before committing a start date.
+              {HORIZON_WEEKS}-week look-ahead. Solid = won / ongoing. Striped = TBD pipeline (weighted by win-prob). Click <span className="font-mono">+</span> to assign a person; click <span className="font-mono">Reserve</span> on a TBD card to pick a person.
             </p>
           </div>
         </div>
@@ -366,7 +380,7 @@ export default function StaffingGantt() {
                 const avail = availability[person.name];
                 const availTone = avail === "available now"
                   ? "text-emerald-600 font-semibold"
-                  : avail === ">16 weeks"
+                  : avail.startsWith(">")
                   ? "text-red-600 font-semibold"
                   : "text-amber-700";
                 return (
@@ -375,7 +389,6 @@ export default function StaffingGantt() {
                       <div className="flex items-center gap-1.5">
                         <span className="truncate">{person.name}</span>
                         {person.role && <Badge variant="outline" className="text-[9px] py-0 h-4 shrink-0">{person.role}</Badge>}
-                        {/* Quick-assign: opens the modal pre-filled with this person */}
                         <button
                           onClick={() => openAssignModal(person.name)}
                           className="ml-auto shrink-0 p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
@@ -394,14 +407,15 @@ export default function StaffingGantt() {
                               key={i}
                               title={`${b.project}${b.client ? " · " + b.client : ""} · ${b.outcome}${b.alpha < 1 ? ` · weighted ${(b.alpha * 100).toFixed(0)}%` : ""}${b.isManager ? " · manager" : ""}`}
                               className={`group relative text-[9px] px-1 py-0.5 rounded font-mono truncate ${
-                                b.isManager
+                                b.outcome === "pending"
+                                  ? "bg-amber-400/70 text-amber-950 ring-1 ring-amber-500"
+                                  : b.isManager
                                   ? "bg-primary/80 text-primary-foreground"
                                   : "bg-emerald-500/80 text-white"
-                              } ${b.outcome === "pending" ? "ring-1 ring-amber-400" : ""}`}
+                              }`}
                               style={{ opacity: Math.max(0.25, b.alpha) }}
                             >
                               {b.project}
-                              {/* × removes this person from the project entirely (manager OR team). */}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -427,101 +441,247 @@ export default function StaffingGantt() {
         </Card>
       )}
 
+      {/* ── Legend ─────────────────────────────────────────────────────────── */}
       <div className="mt-4 flex items-center gap-4 text-[11px] text-muted-foreground flex-wrap">
         <div className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded bg-primary/80" />
-          Manager assignment
+          Manager
         </div>
         <div className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded bg-emerald-500/80" />
-          Team-member assignment
+          Team member
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded bg-emerald-500/40 ring-1 ring-amber-400" />
-          Pipeline (probability-weighted)
+          <span className="inline-block w-3 h-3 rounded bg-amber-400/70 ring-1 ring-amber-500" />
+          TBD pipeline (prob-weighted)
         </div>
         <div className="ml-auto flex items-center gap-1.5">
           <AlertCircle className="w-3 h-3" />
-          Click <UserPlus className="inline w-3 h-3" /> on a row to assign that person to a project. Hover a block + click × to unassign.
+          Click <UserPlus className="inline w-3 h-3" /> on a row or <strong>Reserve</strong> on a TBD card. Hover a block + × to unassign.
         </div>
       </div>
 
-      {/* ── Assign-to-project modal ─────────────────────────────────────── */}
-      <Dialog open={assignFor !== null} onOpenChange={(open) => { if (!open) closeAssignModal(); }}>
+      {/* ── TBD Pipeline ───────────────────────────────────────────────────── */}
+      {tbdProposals.length > 0 && (
+        <div className="mt-8">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-amber-500" />
+            <h2 className="text-sm font-semibold">TBD Pipeline</h2>
+            <span className="text-[11px] text-muted-foreground">
+              {tbdProposals.length} pending proposal{tbdProposals.length !== 1 ? "s" : ""} · click Reserve to pre-assign a person starting from their availability date
+            </span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {tbdProposals.map(p => {
+              const team = [
+                ...(p.manager_name ? [{ role: "Manager", name: p.manager_name }] : []),
+                ...(p.team_members ?? []),
+              ];
+              const probColor =
+                (p.win_probability ?? 0) >= 70 ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
+                (p.win_probability ?? 0) >= 40 ? "bg-amber-100 text-amber-800 border-amber-300" :
+                "bg-red-100 text-red-800 border-red-300";
+              return (
+                <Card key={p.id} className="p-3 border-amber-200 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-mono font-bold text-sm truncate">{p.project_name}</div>
+                      {p.client_name && <div className="text-[10px] text-muted-foreground truncate">{p.client_name}</div>}
+                    </div>
+                    <Badge variant="outline" className={`text-[10px] shrink-0 ${probColor}`}>
+                      {p.win_probability != null ? `${p.win_probability}%` : "?%"}
+                    </Badge>
+                  </div>
+
+                  <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
+                    {p.duration_weeks && <span>{p.duration_weeks}w</span>}
+                    {p.start_date && <span>· starts {p.start_date}</span>}
+                    {!p.start_date && <span className="italic">· no start date yet</span>}
+                  </div>
+
+                  {/* Already-reserved team members */}
+                  {team.length > 0 && (
+                    <div className="text-[10px] text-muted-foreground space-y-0.5">
+                      {team.map((m, i) => (
+                        <div key={i} className="flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
+                          <span className="font-medium truncate">{m.name}</span>
+                          <span className="text-muted-foreground/60">· {m.role}</span>
+                          {/* Show availability of already-assigned members */}
+                          {availability[m.name] && (
+                            <span className={`ml-auto shrink-0 ${
+                              availability[m.name] === "available now" ? "text-emerald-600" :
+                              availability[m.name].startsWith(">")     ? "text-red-500" :
+                              "text-amber-600"
+                            }`}>{availability[m.name]}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <Button
+                    size="sm" variant="outline"
+                    className="w-full h-7 text-xs border-amber-300 hover:bg-amber-50"
+                    onClick={() => openFromProjectModal(p.id)}
+                  >
+                    <UserPlus className="w-3.5 h-3.5 mr-1" /> Reserve person →
+                  </Button>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Assign / Reserve modal ─────────────────────────────────────────── */}
+      <Dialog open={assignModalOpen} onOpenChange={(open) => { if (!open) closeAssignModal(); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Assign {assignFor} to a project</DialogTitle>
+            <DialogTitle>
+              {assignFor
+                ? `Assign ${assignFor} to a project`
+                : selectedProposal
+                ? `Reserve a person for ${selectedProposal.project_name}`
+                : "Assign to project"}
+            </DialogTitle>
             <DialogDescription>
-              Pick an open project (won + ongoing, or pending pipeline). The Gantt re-renders from the project's start_date / end_date / duration_weeks.
+              {isTBD
+                ? "TBD project — reserving a person will set the project's start date to when they become available."
+                : "Pick an open project (won + ongoing, or pending pipeline). The Gantt re-renders from the project's dates."}
             </DialogDescription>
           </DialogHeader>
+
           <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label className="text-xs">Project</Label>
-              <Select value={assignProjectId} onValueChange={setAssignProjectId}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="— pick a project —" />
-                </SelectTrigger>
-                <SelectContent>
-                  {openProjects.length === 0 ? (
-                    <div className="px-3 py-2 text-xs text-muted-foreground italic">
-                      No open projects. Add one under /pricing → Past Projects (outcome = Won or TBD).
-                    </div>
-                  ) : openProjects.map(p => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      <span className="font-mono font-semibold">{p.project_name}</span>
-                      {p.client_name && <span className="text-muted-foreground"> · {p.client_name}</span>}
-                      <span className="text-[10px] text-muted-foreground"> · {p.outcome}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+
+            {/* Person selector — shown when opened from a project card */}
+            {!assignFor && (
+              <div className="space-y-1">
+                <Label className="text-xs">Person</Label>
+                <Select
+                  value={assignFor ?? ""}
+                  onValueChange={v => setAssignFor(v || null)}
+                >
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="— pick a person —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {people.map(p => (
+                      <SelectItem key={p.name} value={p.name}>
+                        <span className="font-medium">{p.name}</span>
+                        {p.role && <span className="text-muted-foreground ml-1 text-[10px]">{p.role}</span>}
+                        <span className={`ml-2 text-[10px] ${
+                          availability[p.name] === "available now" ? "text-emerald-600" :
+                          availability[p.name]?.startsWith(">")    ? "text-red-500" :
+                          "text-amber-600"
+                        }`}>{availability[p.name]}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Project selector — shown when opened from a person row */}
+            {assignFor && (
+              <div className="space-y-1">
+                <Label className="text-xs">Project</Label>
+                <Select value={assignProjectId} onValueChange={setAssignProjectId}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="— pick a project —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {openProjects.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground italic">
+                        No open projects. Add one under /pricing → Past Projects.
+                      </div>
+                    ) : openProjects.map(p => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        <span className="font-mono font-semibold">{p.project_name}</span>
+                        {p.client_name && <span className="text-muted-foreground"> · {p.client_name}</span>}
+                        {p.outcome === "pending" && (
+                          <span className="text-amber-600 text-[10px]"> · TBD {p.win_probability != null ? `${p.win_probability}%` : ""}</span>
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Role on project */}
             <div className="space-y-1">
               <Label className="text-xs">Role on this project</Label>
               <Select value={assignKind} onValueChange={(v) => setAssignKind(v as "manager" | "team")}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="manager">Manager (EM) — replaces current manager</SelectItem>
                   <SelectItem value="team">Team member — added to team</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
             {assignKind === "team" && (
               <div className="space-y-1">
                 <Label className="text-xs">Team-member role label</Label>
                 <Input
                   value={assignRoleLabel}
                   onChange={(e) => setAssignRoleLabel(e.target.value)}
-                  placeholder="e.g. Partner, Senior Associate, BA"
+                  placeholder="e.g. Partner, Senior, BA"
                   className="h-9 text-sm"
                 />
-                <div className="text-[9px] text-muted-foreground">
-                  Free text — appears next to the name on past-projects + the Gantt tooltip.
-                </div>
               </div>
             )}
-            {assignProjectId && (() => {
-              const p = openProjects.find(x => String(x.id) === assignProjectId);
-              if (!p) return null;
-              const start = p.start_date || p.proposal_date || "—";
-              const end = p.end_date || (p.duration_weeks ? `${p.duration_weeks}w from start` : "—");
-              return (
-                <div className="text-[10px] text-muted-foreground border rounded p-2 bg-muted/30">
-                  Project window: <span className="font-mono">{start}</span> → <span className="font-mono">{end}</span>
-                  {p.outcome === "pending" && p.win_probability != null && (
-                    <> · win prob <span className="font-mono">{p.win_probability}%</span></>
-                  )}
+
+            {/* TBD project info: show availability + start-date update option */}
+            {isTBD && assignFor && (
+              <div className="space-y-2 border rounded p-2.5 bg-amber-50/60 border-amber-200">
+                <div className="text-[11px] text-amber-800">
+                  <span className="font-semibold">{assignFor}</span> is{" "}
+                  {personAvailDate
+                    ? <>free from <span className="font-mono">{fmtWeek(personAvailDate)}</span> ({proposedStartIso})</>
+                    : <span className="text-emerald-700 font-semibold">available now</span>
+                  }
                 </div>
-              );
-            })()}
+                <label className="flex items-center gap-2 cursor-pointer text-[11px] text-amber-900">
+                  <input
+                    type="checkbox"
+                    checked={updateStartDate}
+                    onChange={e => setUpdateStartDate(e.target.checked)}
+                    className="rounded"
+                  />
+                  Set <strong>{selectedProposal?.project_name}</strong> start date → <span className="font-mono">{proposedStartIso}</span>
+                </label>
+              </div>
+            )}
+
+            {/* Project window summary */}
+            {assignProjectId && selectedProposal && (
+              <div className="text-[10px] text-muted-foreground border rounded p-2 bg-muted/30">
+                {selectedProposal.outcome === "pending" ? (
+                  <>TBD · {selectedProposal.duration_weeks ?? "?"}w · win prob{" "}
+                  <span className="font-mono font-semibold">{selectedProposal.win_probability ?? "?"}%</span>
+                  {updateStartDate && assignFor
+                    ? <> · planned start <span className="font-mono">{proposedStartIso}</span></>
+                    : selectedProposal.start_date
+                    ? <> · current start <span className="font-mono">{selectedProposal.start_date}</span></>
+                    : " · no start date yet"}
+                  </>
+                ) : (
+                  <>Project window: <span className="font-mono">{selectedProposal.start_date || selectedProposal.proposal_date || "—"}</span> →{" "}
+                  <span className="font-mono">{selectedProposal.end_date || (selectedProposal.duration_weeks ? `${selectedProposal.duration_weeks}w from start` : "—")}</span></>
+                )}
+              </div>
+            )}
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={closeAssignModal} disabled={assignSubmitting}>Cancel</Button>
-            <Button onClick={submitAssign} disabled={!assignProjectId || assignSubmitting}>
-              {assignSubmitting ? "Assigning…" : "Assign"}
+            <Button
+              onClick={submitAssign}
+              disabled={!assignFor || !assignProjectId || assignSubmitting}
+            >
+              {assignSubmitting ? "Reserving…" : isTBD ? "Reserve" : "Assign"}
             </Button>
           </DialogFooter>
         </DialogContent>
