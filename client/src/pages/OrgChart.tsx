@@ -563,7 +563,7 @@ export default function OrgChart() {
           <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-3 bg-foreground/60" />
           {/* Horizontal line spanning all reports */}
           <div className="absolute left-[5%] right-[5%] top-3 h-0.5 bg-foreground/60" />
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 pt-6 relative">
+          <div className="flex flex-wrap justify-center gap-4 pt-6 relative">
             {directReports.map(r => {
               const grandchildren = childrenOf(r.role_key);
               return (
@@ -592,19 +592,10 @@ export default function OrgChart() {
                           }}
                         />
                       )}
-                      {/* Grandchildren grid — 1 child = single column,
-                          2+ children = side-by-side with auto-fit. Each
-                          gets its own vertical drop from the busbar. */}
-                      <div
-                        className="grid gap-2 relative"
-                        style={{
-                          gridTemplateColumns: grandchildren.length === 1
-                            ? "1fr"
-                            : `repeat(${grandchildren.length}, minmax(0, 1fr))`,
-                        }}
-                      >
+                      {/* Grandchildren — flex-wrap with fixed-size tiles */}
+                      <div className="flex flex-wrap justify-center gap-2 relative">
                         {grandchildren.map(g => (
-                          <div key={g.id} className="relative flex flex-col items-stretch">
+                          <div key={g.id} className="relative">
                             <div className="absolute left-1/2 -translate-x-1/2 -top-2 w-0.5 h-2 bg-foreground/60" />
                             <RoleCard
                               role={g}
@@ -822,6 +813,7 @@ export default function OrgChart() {
 }
 
 // ── Role card ─────────────────────────────────────────────────────────
+// Fixed 152 × 80 px so every tile is identical in size.
 function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: {
   role: OrgRole;
   highlight?: boolean;
@@ -830,84 +822,66 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
   onAddKnowledge: () => void;
 }) {
   const openTasks = role.tasks_10d.filter(t => t.status === "todo" || t.status === "in_progress").length;
-  const overdue = role.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
-  // President / founder / chairman tiles never show person name or email —
-  // the role title IS the identity; personal details add no value here.
-  const isPeer = /^(president|founder|chairman|board)$/i.test(role.role_key);
+  const overdue   = role.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
+  const isPeer    = /^(president|founder|chairman|board)$/i.test(role.role_key);
 
   return (
     <Card
       onClick={onClick}
-      className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/40 ${
+      className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/40 w-[152px] h-[80px] overflow-hidden shrink-0 ${
         highlight ? "border-2 border-primary/40 ring-2 ring-primary/10" : ""
       }`}
     >
-      <div className="p-3 space-y-2">
-        {/* Header row: kind icon · role name · status · knowledge button */}
-        <div className="flex items-start justify-between gap-1">
-          <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap">
-            {role.kind === "human" ? (
-              <span title="Human" className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 text-blue-700 shrink-0">
-                <User className="w-2.5 h-2.5" />
-              </span>
-            ) : (
-              <span title="AI agent" className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-violet-100 text-violet-700 shrink-0">
-                <Bot className="w-2.5 h-2.5" />
-              </span>
-            )}
-            <h3 className="font-semibold text-[11px] leading-tight">{role.role_name}</h3>
-            {statusBadge(role.status)}
-          </div>
+      <div className="p-2 flex flex-col h-full">
+        {/* Row 1 — kind icon · role name · knowledge btn */}
+        <div className="flex items-center gap-1 min-w-0">
+          {role.kind === "human" ? (
+            <span title="Human" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-100 text-blue-700 shrink-0">
+              <User className="w-2 h-2" />
+            </span>
+          ) : (
+            <span title="AI agent" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-violet-100 text-violet-700 shrink-0">
+              <Bot className="w-2 h-2" />
+            </span>
+          )}
+          <h3 className="font-semibold text-[10px] leading-tight truncate flex-1">{role.role_name}</h3>
           <Button
             size="sm" variant="ghost"
-            className="h-5 w-6 p-0 shrink-0"
+            className="h-4 w-4 p-0 shrink-0"
             onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
             title={`Add knowledge for ${role.role_name}`}
           >
-            <BookOpen className="w-3 h-3" />
-            {knowledgeCount > 0 && <span className="text-[9px] ml-0.5">{knowledgeCount}</span>}
+            <BookOpen className="w-2.5 h-2.5" />
           </Button>
         </div>
 
-        {/* Person name — hidden for peer/governance roles (President etc.) */}
-        {!isPeer && role.person_name && (
-          <p className="text-[10px] text-muted-foreground truncate leading-tight">{role.person_name}</p>
-        )}
+        {/* Row 2 — status badge + optional person name */}
+        <div className="flex items-center gap-1 mt-0.5 min-w-0">
+          {statusBadge(role.status)}
+          {!isPeer && role.person_name && (
+            <span className="text-[9px] text-muted-foreground truncate">{role.person_name}</span>
+          )}
+        </div>
 
-        {/* Dotted-line matrix relationships */}
-        {role.dotted_parent_role_keys && role.dotted_parent_role_keys.length > 0 && (
-          <p className="text-[9px] text-muted-foreground/70 italic truncate">
-            ↔ {role.dotted_parent_role_keys.join(", ")}
-          </p>
-        )}
+        {/* Spacer */}
+        <div className="flex-1" />
 
-        {/* Email — hidden for peer roles; only shown for non-peer humans */}
-        {!isPeer && role.kind === "human" && role.email && (
-          <a
-            href={`mailto:${role.email}?subject=Eendigo — instructions`}
-            onClick={e => e.stopPropagation()}
-            className="text-[9px] text-primary hover:underline inline-flex items-center gap-0.5"
-          >
-            <Mail className="w-2 h-2" /> {role.email}
-          </a>
-        )}
-
-        {/* Goals · OKRs · Tasks stats in one compact row */}
-        <div className="flex items-center justify-between border-t pt-1.5 text-[10px] text-muted-foreground">
-          <div className="flex items-center gap-2">
+        {/* Row 3 — stats */}
+        <div className="flex items-center justify-between border-t pt-1 text-[9px] text-muted-foreground">
+          <div className="flex items-center gap-1.5">
             {role.goals.length > 0 && (
-              <span className="flex items-center gap-0.5"><Target className="w-2.5 h-2.5" /> {role.goals.length}</span>
+              <span className="flex items-center gap-0.5"><Target className="w-2 h-2" />{role.goals.length}</span>
             )}
             {role.okrs.length > 0 && (
-              <span className="flex items-center gap-0.5"><Sparkles className="w-2.5 h-2.5" /> {role.okrs.length}</span>
+              <span className="flex items-center gap-0.5"><Sparkles className="w-2 h-2" />{role.okrs.length}</span>
             )}
-            <span className="flex items-center gap-0.5">
-              <ListTodo className="w-2.5 h-2.5" />
-              {openTasks} open · {role.tasks_10d.length} (10d)
-            </span>
+            <span className="flex items-center gap-0.5"><ListTodo className="w-2 h-2" />{openTasks}</span>
+            {knowledgeCount > 0 && (
+              <span className="flex items-center gap-0.5"><BookOpen className="w-2 h-2" />{knowledgeCount}</span>
+            )}
           </div>
           {overdue > 0 && (
-            <Badge variant="destructive" className="text-[9px] h-4 px-1">{overdue} overdue</Badge>
+            <Badge variant="destructive" className="text-[8px] h-3.5 px-0.5">{overdue}!</Badge>
           )}
         </div>
       </div>
