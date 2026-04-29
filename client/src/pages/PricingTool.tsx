@@ -689,6 +689,9 @@ export default function PricingTool() {
   const [loadErrors, setLoadErrors] = useState<{ settings?: string; cases?: string; proposals?: string }>({});
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<PricingCase>(emptyCase());
+  // Inline prob-edit state for the Pricing Cases table
+  const [editingProbId, setEditingProbId] = useState<number | null>(null);
+  const [probDraft, setProbDraft]         = useState<string>("");
   const [caseDiscounts, setCaseDiscounts] = useState<{ id: string; name: string; pct: number; enabled: boolean }[]>([]);
   // Three-timeline commercial-proposal comparison (short / medium / long).
   // Default: base duration + 4w + 8w, with 0 / 5 / 7% commitment discount
@@ -1116,6 +1119,19 @@ export default function PricingTool() {
     if (!confirm("Delete this pricing case?")) return;
     await fetch(`/api/pricing/cases/${id}`, { method: "DELETE", credentials: "include" });
     loadAll();
+  };
+
+  const saveProb = async (id: number) => {
+    const raw = probDraft.trim();
+    const val = raw === "" ? null : Math.max(0, Math.min(100, Math.round(Number(raw))));
+    // Optimistic local update so the table refreshes immediately.
+    setCases(prev => prev.map(c => c.id === id ? { ...c, win_probability: val } as any : c));
+    setEditingProbId(null);
+    await fetch(`/api/pricing/cases/${id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ win_probability: val }),
+    });
   };
 
   // Parse Excel-paste (tab-separated or comma-separated rows) into PricingProposal[]
@@ -3099,6 +3115,7 @@ export default function PricingTool() {
                       <TableHead>Duration</TableHead>
                       <TableHead>Target / wk</TableHead>
                       <TableHead className="w-14 text-center">Band</TableHead>
+                      <TableHead className="w-16 text-center">Prob %</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead className="w-20">Actions</TableHead>
@@ -3325,6 +3342,36 @@ export default function PricingTool() {
                               : { cls: "bg-red-500", label: `Red band (${fmt(price)}/wk)` };
                             return <span className={`inline-block w-3 h-3 rounded-full ${cfg.cls}`} title={cfg.label} />;
                           })()}
+                        </TableCell>
+                        {/* Inline-editable win probability */}
+                        <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                          {editingProbId === c.id ? (
+                            <input
+                              type="number" min="0" max="100" step="5"
+                              autoFocus
+                              className="w-14 h-6 text-xs font-mono text-center border rounded bg-background"
+                              value={probDraft}
+                              onChange={e => setProbDraft(e.target.value)}
+                              onBlur={() => void saveProb(c.id)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter")  { e.preventDefault(); void saveProb(c.id); }
+                                if (e.key === "Escape") { e.preventDefault(); setEditingProbId(null); }
+                              }}
+                            />
+                          ) : (
+                            <button
+                              className="text-xs font-mono text-center w-full hover:bg-muted rounded px-1 py-0.5"
+                              title="Click to edit win probability"
+                              onClick={() => {
+                                setEditingProbId(c.id);
+                                setProbDraft((c as any).win_probability != null ? String((c as any).win_probability) : "");
+                              }}
+                            >
+                              {(c as any).win_probability != null
+                                ? <span className="text-foreground">{(c as any).win_probability}%</span>
+                                : <span className="text-muted-foreground/40">—</span>}
+                            </button>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge variant={c.status === "final" ? "default" : "secondary"} className="text-xs capitalize">
