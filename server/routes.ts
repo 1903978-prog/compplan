@@ -6031,17 +6031,92 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── /api/agentic/brief-data/* — lightweight feeds for the 8am button ──
+  // Auth-protected (requireAuth). Client-side AgenticHome calls these in
+  // parallel to enrich the Cowork prompt with live app-section data.
+
+  app.get("/api/agentic/brief-data/bd-deals", requireAuth, async (_req, res) => {
+    try {
+      const r = await db.execute(sql`
+        SELECT name, client_name, stage, amount::float AS amount,
+               probability::float AS probability, close_date, currency
+          FROM bd_deals
+         ORDER BY probability DESC NULLS LAST, close_date ASC NULLS LAST
+         LIMIT 50
+      `);
+      res.json((r as any).rows ?? r);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/brief-data/proposals", requireAuth, async (_req, res) => {
+    try {
+      const r = await db.execute(sql`
+        SELECT project_name, client_name, outcome, total_fee::float AS total_fee,
+               win_probability::float AS win_probability, loss_reason
+          FROM pricing_proposals
+         ORDER BY created_at DESC
+         LIMIT 20
+      `);
+      res.json((r as any).rows ?? r);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/brief-data/invoices", requireAuth, async (_req, res) => {
+    try {
+      const r = await db.execute(sql`
+        SELECT client_name, due_amount::float AS due_amount, due_date, state, currency
+          FROM invoice_snapshots
+         WHERE state != 'paid'
+         ORDER BY due_date ASC NULLS LAST
+         LIMIT 50
+      `);
+      res.json((r as any).rows ?? r);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/brief-data/won-projects", requireAuth, async (_req, res) => {
+    try {
+      const r = await db.execute(sql`
+        SELECT project_name, client_name, status, start_date, end_date,
+               total_amount::float AS total_amount, currency
+          FROM won_projects
+         ORDER BY end_date ASC NULLS LAST
+      `);
+      res.json((r as any).rows ?? r);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/brief-data/hiring-pipeline", requireAuth, async (_req, res) => {
+    try {
+      const r = await db.execute(sql`
+        SELECT stage, COUNT(*)::int AS count
+          FROM hiring_candidates
+         WHERE stage IS NOT NULL
+         GROUP BY stage
+         ORDER BY count DESC
+      `);
+      res.json((r as any).rows ?? r);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/brief-data/headcount", requireAuth, async (_req, res) => {
+    try {
+      const r = await db.execute(sql`SELECT COUNT(*)::int AS count FROM employees`);
+      const row = ((r as any).rows ?? r)[0] ?? { count: 0 };
+      res.json({ count: Number(row.count) });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── /api/ceo-brief — public, token-protected daily brief ────────────────
   // External tools (Cowork skills, schedulers, etc.) GET this endpoint to
-  // pull the same daily brief the "8am — Start AIOS" button generates,
-  // built fresh from live DB state on each call.
+  // pull a comprehensive real-time brief covering ALL app sections, mapped
+  // to each agent's area of responsibility. Built fresh from live DB state.
   //
   //   GET /api/ceo-brief                      → text/plain
   //   GET /api/ceo-brief?format=json          → { generated_at, prompt_text, facts }
   //
-  // Auth: header `Authorization: Bearer <CEO_BRIEF_TOKEN>` against the env
-  // var of the same name. Constant-time compare. Header missing/wrong → 401.
-  // Env var missing entirely → 503 (so we never accidentally serve open).
+  // Auth: header `Authorization: Bearer <CEO_BRIEF_TOKEN>` against env var.
+  // Constant-time compare. Missing/wrong → 401. Env var unset → 503.
   function ceoBriefAuthOk(req: any): boolean {
     const expected = process.env.CEO_BRIEF_TOKEN ?? "";
     if (!expected) return false;
@@ -6050,92 +6125,187 @@ RULES:
     const provided = m?.[1]?.trim() ?? "";
     if (!provided || provided.length !== expected.length) return false;
     let mismatch = 0;
-    for (let i = 0; i < expected.length; i++) {
-      mismatch |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
-    }
+    for (let i = 0; i < expected.length; i++) mismatch |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
     return mismatch === 0;
   }
 
-  // Render the same Cowork prompt as client/promptTemplates.ts:buildCoworkPrompt.
-  // Kept in sync deliberately — if you change one, change the other.
   function renderCeoBrief(facts: {
     date: string;
+    // AIOS state
     agents: Array<{ id: number; name: string; mission: string | null; status: string }>;
     objectives: Array<{ id: number; agent_id: number; title: string; status: string }>;
     openTasks: Array<{ agent_id: number; title: string; deadline: string | null; approval_status: string }>;
     overdueTasks: Array<{ agent_id: number; title: string; deadline: string | null }>;
     recentIdeasByAgent: Map<number, Array<{ title: string; total_score: number | null; status: string }>>;
     openConflicts: Array<{ title: string; severity: string | null }>;
+    // SVP Sales / BD area
+    bdDeals: Array<{ name: string; client_name: string | null; stage: string | null; amount: number | null; probability: number | null; close_date: string | null; currency: string | null }>;
+    recentProposals: Array<{ project_name: string; client_name: string | null; outcome: string | null; total_fee: number | null; win_probability: number | null; loss_reason: string | null }>;
+    // CFO area
+    openInvoices: Array<{ client_name: string | null; due_amount: number | null; due_date: string | null; state: string | null; currency: string | null }>;
+    wonProjects: Array<{ project_name: string; client_name: string | null; status: string | null; start_date: string | null; end_date: string | null; total_amount: number | null; currency: string | null }>;
+    // CHRO area
+    hiringByStage: Array<{ stage: string; count: number }>;
+    employeeCount: number;
+    // Delivery / COO area
+    activeProjects: Array<{ project_name: string; client_name: string | null; end_date: string | null; total_amount: number | null }>;
+    // Cross-agent alerts (pre-computed)
+    alerts: Array<{ agent: string; severity: "high" | "medium" | "low"; text: string }>;
   }): string {
-    const lines: string[] = [];
-    lines.push(`# Eendigo Daily CEO Brief — ${facts.date}`);
-    lines.push("");
-    lines.push("You are the CEO of a small consulting firm. Your direct reports (8 agents) need a daily synthesis. Below is the live state of the company.");
-    lines.push("");
+    const L: string[] = [];
+    const eur = (n: number | null, ccy?: string | null) =>
+      n == null ? "?" : `${ccy ?? "€"}${Math.round(n).toLocaleString("en")}`;
 
-    lines.push("## Agents");
+    L.push(`# Eendigo Daily CEO Brief — ${facts.date}`);
+    L.push("");
+    L.push("You are the CEO of Eendigo, a boutique management consulting firm. This brief is compiled from the live state of every section of the company's operating system. Study each agent's section, synthesise across them, and respond with concrete decisions.");
+    L.push("");
+
+    // ── 1. Cross-agent alerts ──────────────────────────────────────────
+    if (facts.alerts.length > 0) {
+      L.push("## 🚨 Cross-agent alerts");
+      for (const a of facts.alerts) L.push(`- **[${a.severity.toUpperCase()}] ${a.agent}**: ${a.text}`);
+      L.push("");
+    }
+
+    // ── 2. SVP Sales / BD — Pipeline & Proposals ──────────────────────
+    L.push("## SVP Sales / BD — Pipeline");
+    if (facts.bdDeals.length === 0) {
+      L.push("(no deals in CRM)");
+    } else {
+      const totalWeighted = facts.bdDeals.reduce((s, d) => s + (d.amount ?? 0) * ((d.probability ?? 0) / 100), 0);
+      const highProb = facts.bdDeals.filter(d => (d.probability ?? 0) >= 60);
+      L.push(`Total deals: ${facts.bdDeals.length} · Weighted pipeline: ${eur(totalWeighted)} · High-probability (≥60%): ${highProb.length}`);
+      L.push("");
+      for (const d of facts.bdDeals.slice(0, 10)) {
+        L.push(`- **${d.name}** (${d.client_name ?? "?"}) — Stage: ${d.stage ?? "?"} · ${eur(d.amount, d.currency)} · ${d.probability ?? "?"}% · Close: ${d.close_date ?? "?"}`);
+      }
+      if (facts.bdDeals.length > 10) L.push(`  … and ${facts.bdDeals.length - 10} more deals`);
+    }
+    L.push("");
+
+    L.push("### Recent proposals (last 20)");
+    if (facts.recentProposals.length === 0) {
+      L.push("(none)");
+    } else {
+      const won  = facts.recentProposals.filter(p => p.outcome === "won").length;
+      const lost = facts.recentProposals.filter(p => p.outcome === "lost").length;
+      const open = facts.recentProposals.filter(p => !p.outcome || p.outcome === "open").length;
+      L.push(`Won: ${won} · Lost: ${lost} · Open: ${open}`);
+      for (const p of facts.recentProposals.slice(0, 8)) {
+        const fee = eur(p.total_fee);
+        const prob = p.win_probability != null ? ` · ${p.win_probability}% prob` : "";
+        const loss = p.loss_reason ? ` · loss: ${p.loss_reason}` : "";
+        L.push(`- ${p.project_name} (${p.client_name ?? "?"}) — ${p.outcome ?? "open"} · ${fee}${prob}${loss}`);
+      }
+    }
+    L.push("");
+
+    // ── 3. CFO — Invoices & Revenue ────────────────────────────────────
+    L.push("## CFO — Invoices & Revenue");
+    const overdueInv = facts.openInvoices.filter(i => i.due_date && i.due_date < facts.date && i.state !== "paid");
+    const dueInv     = facts.openInvoices.filter(i => i.due_date && i.due_date >= facts.date && i.state !== "paid");
+    const overdueAmt = overdueInv.reduce((s, i) => s + (i.due_amount ?? 0), 0);
+    const dueAmt     = dueInv.reduce((s, i) => s + (i.due_amount ?? 0), 0);
+    L.push(`Overdue: ${overdueInv.length} invoices · ${eur(overdueAmt)} · Due soon: ${dueInv.length} · ${eur(dueAmt)}`);
+    if (overdueInv.length > 0) {
+      L.push("Overdue invoices:");
+      for (const i of overdueInv.slice(0, 5)) {
+        L.push(`  - ${i.client_name ?? "?"} · ${eur(i.due_amount, i.currency)} · due ${i.due_date}`);
+      }
+    }
+    const activeRevenue = facts.wonProjects.filter(p => p.status === "active").reduce((s, p) => s + (p.total_amount ?? 0), 0);
+    L.push(`Active projects revenue: ${eur(activeRevenue)}`);
+    L.push("");
+
+    // ── 4. CHRO — Hiring & Headcount ───────────────────────────────────
+    L.push("## CHRO — Hiring & Headcount");
+    L.push(`Current headcount: ${facts.employeeCount} employees`);
+    if (facts.hiringByStage.length > 0) {
+      L.push("Hiring pipeline by stage:");
+      for (const s of facts.hiringByStage) L.push(`  - ${s.stage}: ${s.count} candidate${s.count !== 1 ? "s" : ""}`);
+      const lateStage = facts.hiringByStage.filter(s => /case|lm|final|offer/i.test(s.stage)).reduce((n, s) => n + s.count, 0);
+      if (lateStage > 0) L.push(`  → ${lateStage} candidate(s) in late-stage — potential near-term hires`);
+    } else {
+      L.push("No candidates in pipeline.");
+    }
+    L.push("");
+
+    // ── 5. COO / Delivery — Active Projects ────────────────────────────
+    L.push("## COO / Delivery — Active Projects");
+    if (facts.activeProjects.length === 0) {
+      L.push("(no active projects)");
+    } else {
+      const endingSoon = facts.activeProjects.filter(p => p.end_date && p.end_date <= new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10));
+      L.push(`Active projects: ${facts.activeProjects.length} · Ending within 45 days: ${endingSoon.length}`);
+      for (const p of facts.activeProjects) {
+        const ending = p.end_date ? ` · ends ${p.end_date}` : "";
+        const fee = p.total_amount ? ` · ${eur(p.total_amount)}` : "";
+        L.push(`  - ${p.project_name} (${p.client_name ?? "?"})${fee}${ending}`);
+      }
+    }
+    L.push("");
+
+    // ── 6. AIOS agent tasks & ideas ────────────────────────────────────
+    L.push("## AIOS — Agent tasks & ideas");
     for (const a of facts.agents) {
-      const okrCount = facts.objectives.filter(o => o.agent_id === a.id).length;
-      lines.push(`- **${a.name}** (${a.status}) — ${a.mission ?? "(no mission yet)"} · ${okrCount} objectives`);
+      const ideas = (facts.recentIdeasByAgent.get(a.id) ?? []).slice(0, 3);
+      const tasks = facts.openTasks.filter(t => t.agent_id === a.id).slice(0, 3);
+      if (ideas.length === 0 && tasks.length === 0) continue;
+      L.push(`### ${a.name}`);
+      if (ideas.length > 0) {
+        L.push("Ideas:");
+        for (const i of ideas) L.push(`  - [${i.status}] ${i.title} (score=${i.total_score ?? "—"})`);
+      }
+      if (tasks.length > 0) {
+        L.push("Tasks:");
+        for (const t of tasks) L.push(`  - [${t.approval_status}] ${t.title}${t.deadline ? ` due ${t.deadline}` : ""}`);
+      }
     }
-    lines.push("");
-
-    lines.push("## Recent ideas (top 5 per agent)");
-    for (const a of facts.agents) {
-      const ideas = (facts.recentIdeasByAgent.get(a.id) ?? []).slice(0, 5);
-      if (ideas.length === 0) continue;
-      lines.push(`### ${a.name}`);
-      for (const i of ideas) lines.push(`- [${i.status}] ${i.title} (score=${i.total_score ?? "—"})`);
-    }
-    lines.push("");
-
-    lines.push("## Open tasks");
-    if (facts.openTasks.length === 0) lines.push("(none)");
-    for (const t of facts.openTasks) {
-      const agentName = facts.agents.find(a => a.id === t.agent_id)?.name ?? "?";
-      lines.push(`- [${t.approval_status}] ${agentName}: ${t.title}${t.deadline ? ` (due ${t.deadline})` : ""}`);
-    }
-    lines.push("");
-
     if (facts.overdueTasks.length > 0) {
-      lines.push("## ⚠ Overdue tasks");
+      L.push("### ⚠ Overdue agent tasks");
       for (const t of facts.overdueTasks) {
         const agentName = facts.agents.find(a => a.id === t.agent_id)?.name ?? "?";
-        lines.push(`- ${agentName}: ${t.title} (was due ${t.deadline})`);
+        L.push(`  - ${agentName}: ${t.title} (was due ${t.deadline})`);
       }
-      lines.push("");
+    }
+    L.push("");
+
+    if (facts.openConflicts.length > 0) {
+      L.push("## Open conflicts");
+      for (const c of facts.openConflicts) L.push(`- [${c.severity ?? "?"}] ${c.title}`);
+      L.push("");
     }
 
-    lines.push("## Open conflicts");
-    if (facts.openConflicts.length === 0) lines.push("(none)");
-    for (const c of facts.openConflicts) lines.push(`- [${c.severity ?? "?"}] ${c.title}`);
-    lines.push("");
-
-    lines.push("## Your mandate");
-    lines.push("For each agent, propose **3 ideas** and **3 actions** for today. Each must:");
-    lines.push("- link to one objective the agent already owns (or `none` if it's a meta-task)");
-    lines.push("- carry an explicit approval level: `autonomous` | `boss` | `ceo` | `livio`");
-    lines.push("- include impact / effort / risk on a 0-100 scale");
-    lines.push("- prioritise actions whose absence would cost EBITDA, cash, reputation, or capacity in the next 30 days");
-    lines.push("");
-    lines.push("Detect any conflicts (two agents proposing incompatible actions; resource collisions; pricing vs margin tension) and surface them as `TYPE: conflict` blocks.");
-    lines.push("");
-    lines.push("---");
-    lines.push("");
-    lines.push("Return your answer ONLY in the following format. One block per decision, separated by '---'. Do not add prose before or after.");
-    lines.push("");
-    lines.push("DECISION_ID: <unique id>");
-    lines.push("TYPE: idea | action | conflict | proposal");
-    lines.push("AGENT: <agent name>");
-    lines.push("TITLE: <short>");
-    lines.push("DESCRIPTION: <one sentence>");
-    lines.push("OKR_LINK: <objective id or 'none'>");
-    lines.push("DEADLINE: <YYYY-MM-DD or 'none'>");
-    lines.push("APPROVAL_LEVEL: autonomous | boss | ceo | livio");
-    lines.push("IMPACT: 0-100");
-    lines.push("EFFORT: 0-100");
-    lines.push("RISK: 0-100");
-    return lines.join("\n");
+    // ── 7. Mandate ─────────────────────────────────────────────────────
+    L.push("## Your mandate");
+    L.push("Study the full brief above. For **each agent**, propose **3 ideas** and **3 actions** for today. Each must:");
+    L.push("- Be grounded in the specific data shown for that agent's section above.");
+    L.push("- Link to one objective the agent already owns (or `none` if meta-task).");
+    L.push("- Carry an explicit approval level: `autonomous` | `boss` | `ceo` | `livio`.");
+    L.push("- Include impact / effort / risk on a 0-100 scale.");
+    L.push("- Prioritise items whose absence would cost EBITDA, cash, reputation, or capacity in the next 30 days.");
+    L.push("");
+    L.push("**Cross-agent reasoning required**: if high-probability deals would overwhelm delivery capacity, alert CHRO to accelerate hiring. If projects end with no follow-on in pipeline, alert SVP Sales. If invoices are overdue > 30 days, escalate to CFO.");
+    L.push("");
+    L.push("Detect any conflicts (incompatible actions, resource collisions, pricing/margin tension) and surface them as `TYPE: conflict` blocks.");
+    L.push("");
+    L.push("---");
+    L.push("");
+    L.push("Return your answer ONLY in the following format. One block per decision, separated by '---'. Do not add prose before or after.");
+    L.push("");
+    L.push("DECISION_ID: <unique id>");
+    L.push("TYPE: idea | action | conflict | proposal");
+    L.push("AGENT: <agent name>");
+    L.push("TITLE: <short>");
+    L.push("DESCRIPTION: <one sentence>");
+    L.push("OKR_LINK: <objective id or 'none'>");
+    L.push("DEADLINE: <YYYY-MM-DD or 'none'>");
+    L.push("APPROVAL_LEVEL: autonomous | boss | ceo | livio");
+    L.push("IMPACT: 0-100");
+    L.push("EFFORT: 0-100");
+    L.push("RISK: 0-100");
+    return L.join("\n");
   }
 
   app.get("/api/ceo-brief", async (req, res) => {
@@ -6147,22 +6317,102 @@ RULES:
     }
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const [allAgents, allObjectives, allTasks, allIdeas, allConflicts] = await Promise.all([
+      const in45d = new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
+
+      // Pull all data in parallel — AIOS tables + app-section tables
+      const [
+        allAgents, allObjectives, allTasks, allIdeas, allConflicts,
+        bdDealsRows, recentProposalRows, invoiceRows, wonProjectRows,
+        hiringRows, employeeRows,
+      ] = await Promise.all([
         db.select().from(agentsTable).orderBy(agentsTable.id),
         db.select().from(objectivesTable),
         db.select().from(tasksTable),
         db.select().from(ideasTable).orderBy(desc(ideasTable.created_at)),
         db.select().from(conflictsTable),
+        db.execute(sql`SELECT name, client_name, stage, amount, probability, close_date, currency FROM bd_deals ORDER BY probability DESC NULLS LAST, close_date ASC NULLS LAST LIMIT 50`),
+        db.execute(sql`SELECT project_name, client_name, outcome, total_fee, win_probability, loss_reason FROM pricing_proposals ORDER BY created_at DESC LIMIT 20`),
+        db.execute(sql`SELECT client_name, due_amount, due_date, state, currency FROM invoice_snapshots WHERE state != 'paid' ORDER BY due_date ASC NULLS LAST LIMIT 50`),
+        db.execute(sql`SELECT project_name, client_name, status, start_date, end_date, total_amount, currency FROM won_projects ORDER BY end_date ASC NULLS LAST`),
+        db.execute(sql`SELECT stage, COUNT(*)::int AS count FROM hiring_candidates WHERE stage IS NOT NULL GROUP BY stage ORDER BY count DESC`),
+        db.execute(sql`SELECT COUNT(*)::int AS count FROM employees`),
       ]);
+
+      const rows = (r: any) => (r as any).rows ?? r;
+
       const openTasks    = allTasks.filter(t => t.status === "open" || t.status === "in_progress");
       const overdueTasks = allTasks.filter(t => t.deadline && t.deadline < today && t.status !== "done");
+      const openConflicts = allConflicts.filter(c => c.status === "open");
       const recentByAgent = new Map<number, Array<{ title: string; total_score: number | null; status: string }>>();
       for (const i of allIdeas) {
         const arr = recentByAgent.get(i.agent_id) ?? [];
         if (arr.length < 5) arr.push({ title: i.title, total_score: i.total_score, status: i.status });
         recentByAgent.set(i.agent_id, arr);
       }
-      const openConflicts = allConflicts.filter(c => c.status === "open");
+
+      const bdDeals        = rows(bdDealsRows)        as Array<any>;
+      const recentProposals= rows(recentProposalRows)  as Array<any>;
+      const invoices       = rows(invoiceRows)         as Array<any>;
+      const wonProjects    = rows(wonProjectRows)      as Array<any>;
+      const hiringByStage  = rows(hiringRows)          as Array<{ stage: string; count: number }>;
+      const empCount       = Number((rows(employeeRows)[0] as any)?.count ?? 0);
+      const activeProjects = wonProjects.filter((p: any) => p.status === "active");
+
+      // ── Cross-agent alert engine ──────────────────────────────────────
+      const alerts: Array<{ agent: string; severity: "high" | "medium" | "low"; text: string }> = [];
+
+      // 1. Capacity risk: high-prob deals vs headcount
+      const highProbDeals  = bdDeals.filter((d: any) => (Number(d.probability) || 0) >= 60);
+      const highProbValue  = highProbDeals.reduce((s: number, d: any) => s + (Number(d.amount) || 0), 0);
+      const estNewProjects = highProbDeals.length;
+      // Rule: active projects + expected new ones vs current headcount (assume 2 consultants/project avg)
+      const projectedDemand = (activeProjects.length + estNewProjects) * 2;
+      if (projectedDemand > empCount * 0.85) {
+        alerts.push({
+          agent: "CHRO",
+          severity: "high",
+          text: `Capacity risk: ${activeProjects.length} active projects + ${estNewProjects} high-probability deals (${highProbDeals.map((d: any) => d.name).join(", ") || "—"}) project ~${projectedDemand} consultant-slots but only ${empCount} employees. Accelerate hiring.`,
+        });
+      }
+
+      // 2. Pipeline gap: projects ending in 45 days with no open deal for that client
+      const endingSoon = activeProjects.filter((p: any) => p.end_date && p.end_date <= in45d);
+      for (const p of endingSoon) {
+        const hasPipeline = bdDeals.some((d: any) =>
+          d.client_name && p.client_name &&
+          d.client_name.toLowerCase().includes(p.client_name.toLowerCase().slice(0, 5))
+        );
+        if (!hasPipeline) {
+          alerts.push({
+            agent: "SVP Sales / BD",
+            severity: "medium",
+            text: `Pipeline gap: "${p.project_name}" (${p.client_name}) ends ${p.end_date} with no follow-on deal in CRM — initiate account extension conversation.`,
+          });
+        }
+      }
+
+      // 3. Overdue invoices > 30 days
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const longOverdue = invoices.filter((i: any) => i.due_date && i.due_date < thirtyDaysAgo && i.state !== "paid");
+      if (longOverdue.length > 0) {
+        const amt = longOverdue.reduce((s: number, i: any) => s + (Number(i.due_amount) || 0), 0);
+        alerts.push({
+          agent: "CFO",
+          severity: longOverdue.length >= 3 ? "high" : "medium",
+          text: `${longOverdue.length} invoice(s) overdue > 30 days · total €${Math.round(amt).toLocaleString("en")} — escalate collections immediately.`,
+        });
+      }
+
+      // 4. Hiring readiness: late-stage candidates
+      const lateStages = hiringByStage.filter(s => /case|lm|final|offer/i.test(s.stage));
+      const lateCount = lateStages.reduce((n, s) => n + s.count, 0);
+      if (lateCount > 0) {
+        alerts.push({
+          agent: "CHRO",
+          severity: "low",
+          text: `${lateCount} candidate(s) in final stages (${lateStages.map(s => `${s.count} ${s.stage}`).join(", ")}) — ready for offer decisions this week.`,
+        });
+      }
 
       const factsForRender = {
         date: today,
@@ -6172,11 +6422,18 @@ RULES:
         overdueTasks: overdueTasks.map(t => ({ agent_id: t.agent_id, title: t.title, deadline: t.deadline })),
         recentIdeasByAgent: recentByAgent,
         openConflicts: openConflicts.map(c => ({ title: c.title, severity: c.severity })),
+        bdDeals,
+        recentProposals,
+        openInvoices: invoices,
+        wonProjects,
+        hiringByStage,
+        employeeCount: empCount,
+        activeProjects,
+        alerts,
       };
       const promptText = renderCeoBrief(factsForRender);
 
       const now = new Date().toISOString();
-      // Audit-log the fetch (don't store the full prompt in payload — keep it light).
       await db.insert(executiveLog).values({
         timestamp: now,
         agent_id: null,
@@ -6187,6 +6444,10 @@ RULES:
           open_tasks: openTasks.length,
           overdue: overdueTasks.length,
           conflicts: openConflicts.length,
+          bd_deals: bdDeals.length,
+          high_prob_deals: highProbDeals.length,
+          overdue_invoices: invoices.filter((i: any) => i.due_date && i.due_date < today).length,
+          alerts: alerts.length,
         } as any,
         created_at: now,
       } as any);
@@ -6198,13 +6459,12 @@ RULES:
           facts: {
             date: today,
             agents: factsForRender.agents,
-            objectives_count: allObjectives.length,
-            open_tasks: factsForRender.openTasks,
-            overdue_tasks: factsForRender.overdueTasks,
-            recent_ideas_by_agent: Object.fromEntries(
-              Array.from(recentByAgent.entries()).map(([k, v]) => [String(k), v]),
-            ),
-            open_conflicts: factsForRender.openConflicts,
+            pipeline: { deals: bdDeals.length, high_prob: highProbDeals.length, weighted: highProbDeals.reduce((s: number, d: any) => s + (Number(d.amount) || 0) * ((Number(d.probability) || 0) / 100), 0) },
+            invoices: { overdue: invoices.filter((i: any) => i.due_date && i.due_date < today).length },
+            hiring: hiringByStage,
+            headcount: empCount,
+            active_projects: activeProjects.length,
+            alerts: alerts.length,
           },
         });
       }

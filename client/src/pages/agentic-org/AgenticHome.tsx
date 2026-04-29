@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   buildCoworkPrompt,
   type AgentLite, type ObjectiveLite, type IdeaLite, type TaskLite, type ConflictLite,
+  type BdDeal, type ProposalLite, type InvoiceLite, type WonProjectLite, type HiringStage, type CrossAlert,
 } from "./promptTemplates";
 
 // ─── Phase 1 — Agentic Home ────────────────────────────────────────────────
@@ -27,6 +28,13 @@ export default function AgenticHome() {
   const [tasks, setTasks] = useState<TaskLite[]>([]);
   const [conflicts, setConflicts] = useState<ConflictLite[]>([]);
   const [generated, setGenerated] = useState<string>("");
+  // App-section enrichment for the 8am brief
+  const [bdDeals, setBdDeals] = useState<BdDeal[]>([]);
+  const [recentProposals, setRecentProposals] = useState<ProposalLite[]>([]);
+  const [openInvoices, setOpenInvoices] = useState<InvoiceLite[]>([]);
+  const [wonProjects, setWonProjects] = useState<WonProjectLite[]>([]);
+  const [hiringByStage, setHiringByStage] = useState<HiringStage[]>([]);
+  const [employeeCount, setEmployeeCount] = useState<number>(0);
   const [paused, setPaused] = useState(() => {
     try { return localStorage.getItem("agents_paused_v1") === "true"; } catch { return false; }
   });
@@ -56,14 +64,27 @@ export default function AgenticHome() {
 
   async function loadAll() {
     try {
-      const [a, o, i, t, c] = await Promise.all([
+      const [a, o, i, t, c, bd, props, inv, wp, hs, emp] = await Promise.all([
         fetch("/api/agentic/agents",     { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/objectives", { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/ideas",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/tasks",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/conflicts",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        // App-section enrichment
+        fetch("/api/agentic/brief-data/bd-deals",        { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        fetch("/api/agentic/brief-data/proposals",       { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        fetch("/api/agentic/brief-data/invoices",        { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        fetch("/api/agentic/brief-data/won-projects",    { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        fetch("/api/agentic/brief-data/hiring-pipeline", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        fetch("/api/agentic/brief-data/headcount",       { credentials: "include" }).then(r => r.ok ? r.json() : { count: 0 }),
       ]);
       setAgents(a); setObjectives(o); setIdeas(i); setTasks(t); setConflicts(c);
+      setBdDeals(Array.isArray(bd) ? bd : []);
+      setRecentProposals(Array.isArray(props) ? props : []);
+      setOpenInvoices(Array.isArray(inv) ? inv : []);
+      setWonProjects(Array.isArray(wp) ? wp : []);
+      setHiringByStage(Array.isArray(hs) ? hs : []);
+      setEmployeeCount(typeof emp?.count === "number" ? emp.count : 0);
     } catch {
       toast({ title: "Failed to load agentic state", variant: "destructive" });
     }
@@ -145,6 +166,7 @@ export default function AgenticHome() {
 
   function generate8am() {
     const today = new Date().toISOString().slice(0, 10);
+    const in45d  = new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
     const overdueTasks = tasks.filter(t => t.deadline && t.deadline < today && t.status !== "done");
     const openTasks    = tasks.filter(t => t.status === "open" || t.status === "in_progress");
     const recentByAgent = new Map<number, IdeaLite[]>();
@@ -155,6 +177,44 @@ export default function AgenticHome() {
     }
     for (const arr of recentByAgent.values()) arr.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
+    // ── Client-side cross-agent alerts ────────────────────────────────
+    const alerts: CrossAlert[] = [];
+    const activeProjects = wonProjects.filter(p => p.status === "active");
+    const highProbDeals  = bdDeals.filter(d => (d.probability ?? 0) >= 60);
+    const projectedDemand = (activeProjects.length + highProbDeals.length) * 2;
+    if (projectedDemand > employeeCount * 0.85 && employeeCount > 0) {
+      alerts.push({
+        agent: "CHRO",
+        severity: "high",
+        text: `Capacity risk: ${activeProjects.length} active projects + ${highProbDeals.length} high-prob deals may need ~${projectedDemand} consultant-slots but only ${employeeCount} employees. Accelerate hiring.`,
+      });
+    }
+    const endingSoon = activeProjects.filter(p => p.end_date && p.end_date <= in45d);
+    for (const p of endingSoon) {
+      const hasPipeline = bdDeals.some(d =>
+        d.client_name && p.client_name &&
+        d.client_name.toLowerCase().includes(p.client_name.toLowerCase().slice(0, 5))
+      );
+      if (!hasPipeline) {
+        alerts.push({
+          agent: "SVP Sales / BD",
+          severity: "medium",
+          text: `Pipeline gap: "${p.project_name}" ends ${p.end_date} — no follow-on deal in CRM for ${p.client_name ?? "this client"}.`,
+        });
+      }
+    }
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const longOverdue = openInvoices.filter(i => i.due_date && i.due_date < thirtyDaysAgo && i.state !== "paid");
+    if (longOverdue.length > 0) {
+      const amt = longOverdue.reduce((s, i) => s + (i.due_amount ?? 0), 0);
+      alerts.push({ agent: "CFO", severity: longOverdue.length >= 3 ? "high" : "medium", text: `${longOverdue.length} invoice(s) overdue >30d · €${Math.round(amt).toLocaleString("en")} — escalate collections.` });
+    }
+    const lateStages = hiringByStage.filter(s => /case|lm|final|offer/i.test(s.stage));
+    const lateCount  = lateStages.reduce((n, s) => n + s.count, 0);
+    if (lateCount > 0) {
+      alerts.push({ agent: "CHRO", severity: "low", text: `${lateCount} candidate(s) in final stages — offer decisions possible this week.` });
+    }
+
     const text = buildCoworkPrompt({
       date: today,
       agents,
@@ -163,15 +223,21 @@ export default function AgenticHome() {
       overdueTasks,
       recentIdeasByAgent: recentByAgent,
       openConflicts: conflicts.filter(c => c.status === "open"),
+      bdDeals,
+      recentProposals,
+      openInvoices,
+      wonProjects,
+      hiringByStage,
+      employeeCount,
+      alerts,
     });
     setGenerated(text);
-    // Log the event.
     void fetch("/api/agentic/log", {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event_type: "prompt_generated", payload: { kind: "cowork-8am", agents: agents.length, tasks: tasks.length } }),
+      body: JSON.stringify({ event_type: "prompt_generated", payload: { kind: "cowork-8am", agents: agents.length, tasks: tasks.length, alerts: alerts.length } }),
     });
-    toast({ title: "Prompt ready", description: "Copy + paste into Cowork." });
+    toast({ title: "Prompt ready", description: `${alerts.length > 0 ? `${alerts.length} cross-agent alert(s) · ` : ""}Copy + paste into Cowork.` });
   }
 
   function toggleCoffee() {

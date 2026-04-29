@@ -17,6 +17,18 @@ export interface IdeaLite      { id: number; agent_id: number; title: string; to
 export interface TaskLite      { id: number; agent_id: number; title: string; deadline: string | null; status: string; approval_level: string; approval_status: string; }
 export interface ConflictLite  { id: number; title: string; severity: string | null; status: string; }
 
+// App-section data shapes (fetched client-side for the 8am prompt)
+export interface BdDeal        { name: string; client_name: string | null; stage: string | null; amount: number | null; probability: number | null; close_date: string | null; currency: string | null; }
+export interface ProposalLite  { project_name: string; client_name: string | null; outcome: string | null; total_fee: number | null; win_probability: number | null; loss_reason: string | null; }
+export interface InvoiceLite   { client_name: string | null; due_amount: number | null; due_date: string | null; state: string | null; currency: string | null; }
+export interface WonProjectLite{ project_name: string; client_name: string | null; status: string | null; start_date: string | null; end_date: string | null; total_amount: number | null; currency: string | null; }
+export interface HiringStage   { stage: string; count: number; }
+export interface CrossAlert    { agent: string; severity: "high" | "medium" | "low"; text: string; }
+
+function eur(n: number | null, ccy?: string | null) {
+  return n == null ? "?" : `${ccy ?? "€"}${Math.round(n).toLocaleString("en")}`;
+}
+
 // ── Cowork prompt: business reasoning, executive synthesis ─────────────────
 export function buildCoworkPrompt(input: {
   date: string;
@@ -26,70 +38,146 @@ export function buildCoworkPrompt(input: {
   overdueTasks: TaskLite[];
   recentIdeasByAgent: Map<number, IdeaLite[]>;
   openConflicts: ConflictLite[];
+  // App-section enrichment (optional — falls back to AIOS-only if absent)
+  bdDeals?: BdDeal[];
+  recentProposals?: ProposalLite[];
+  openInvoices?: InvoiceLite[];
+  wonProjects?: WonProjectLite[];
+  hiringByStage?: HiringStage[];
+  employeeCount?: number;
+  alerts?: CrossAlert[];
 }): string {
   const lines: string[] = [];
   lines.push(`# Eendigo Daily CEO Brief — ${input.date}`);
   lines.push("");
-  lines.push("You are the CEO of a small consulting firm. Your direct reports (8 agents) need a daily synthesis. Below is the live state of the company.");
+  lines.push("You are the CEO of Eendigo, a boutique management consulting firm. This brief is compiled from the live state of every section of the company. Study each agent's section, synthesise across them, and respond with concrete decisions.");
   lines.push("");
 
-  // Agents + missions
-  lines.push("## Agents");
-  for (const a of input.agents) {
-    const okrCount = input.objectives.filter(o => o.agent_id === a.id).length;
-    lines.push(`- **${a.name}** (${a.status}) — ${a.mission ?? "(no mission yet)"} · ${okrCount} objectives`);
+  // ── Cross-agent alerts ────────────────────────────────────────────────
+  if (input.alerts && input.alerts.length > 0) {
+    lines.push("## 🚨 Cross-agent alerts");
+    for (const a of input.alerts)
+      lines.push(`- **[${a.severity.toUpperCase()}] ${a.agent}**: ${a.text}`);
+    lines.push("");
   }
-  lines.push("");
 
-  // Recent ideas
-  lines.push("## Recent ideas (top 5 per agent)");
-  for (const a of input.agents) {
-    const ideas = (input.recentIdeasByAgent.get(a.id) ?? []).slice(0, 5);
-    if (ideas.length === 0) continue;
-    lines.push(`### ${a.name}`);
-    for (const i of ideas) lines.push(`- [${i.status}] ${i.title} (score=${i.total_score ?? "—"})`);
+  // ── SVP Sales / BD ───────────────────────────────────────────────────
+  if (input.bdDeals) {
+    lines.push("## SVP Sales / BD — Pipeline");
+    if (input.bdDeals.length === 0) {
+      lines.push("(no deals in CRM)");
+    } else {
+      const weighted = input.bdDeals.reduce((s, d) => s + (d.amount ?? 0) * ((d.probability ?? 0) / 100), 0);
+      const highProb = input.bdDeals.filter(d => (d.probability ?? 0) >= 60);
+      lines.push(`Deals: ${input.bdDeals.length} · Weighted pipeline: ${eur(weighted)} · High-prob (≥60%): ${highProb.length}`);
+      for (const d of input.bdDeals.slice(0, 10))
+        lines.push(`- **${d.name}** (${d.client_name ?? "?"}) — ${d.stage ?? "?"} · ${eur(d.amount, d.currency)} · ${d.probability ?? "?"}% · close ${d.close_date ?? "?"}`);
+      if (input.bdDeals.length > 10) lines.push(`  … and ${input.bdDeals.length - 10} more`);
+    }
+    lines.push("");
+    if (input.recentProposals && input.recentProposals.length > 0) {
+      lines.push("### Recent proposals");
+      const won  = input.recentProposals.filter(p => p.outcome === "won").length;
+      const lost = input.recentProposals.filter(p => p.outcome === "lost").length;
+      lines.push(`Won: ${won} · Lost: ${lost} · Open: ${input.recentProposals.length - won - lost}`);
+      for (const p of input.recentProposals.slice(0, 8)) {
+        const loss = p.loss_reason ? ` · loss: ${p.loss_reason}` : "";
+        lines.push(`- ${p.project_name} (${p.client_name ?? "?"}) — ${p.outcome ?? "open"} · ${eur(p.total_fee)}${p.win_probability != null ? ` · ${p.win_probability}% prob` : ""}${loss}`);
+      }
+      lines.push("");
+    }
   }
-  lines.push("");
 
-  // Open tasks
-  lines.push("## Open tasks");
-  if (input.openTasks.length === 0) lines.push("(none)");
-  for (const t of input.openTasks) {
-    const agentName = input.agents.find(a => a.id === t.agent_id)?.name ?? "?";
-    lines.push(`- [${t.approval_status}] ${agentName}: ${t.title}${t.deadline ? ` (due ${t.deadline})` : ""}`);
-  }
-  lines.push("");
-
-  // Overdue
-  if (input.overdueTasks.length > 0) {
-    lines.push("## ⚠ Overdue tasks");
-    for (const t of input.overdueTasks) {
-      const agentName = input.agents.find(a => a.id === t.agent_id)?.name ?? "?";
-      lines.push(`- ${agentName}: ${t.title} (was due ${t.deadline})`);
+  // ── CFO ──────────────────────────────────────────────────────────────
+  if (input.openInvoices) {
+    lines.push("## CFO — Invoices & Revenue");
+    const overdueInv = input.openInvoices.filter(i => i.due_date && i.due_date < input.date && i.state !== "paid");
+    const dueInv     = input.openInvoices.filter(i => i.due_date && i.due_date >= input.date && i.state !== "paid");
+    lines.push(`Overdue: ${overdueInv.length} · ${eur(overdueInv.reduce((s, i) => s + (i.due_amount ?? 0), 0))} | Due soon: ${dueInv.length} · ${eur(dueInv.reduce((s, i) => s + (i.due_amount ?? 0), 0))}`);
+    for (const i of overdueInv.slice(0, 5))
+      lines.push(`  - ${i.client_name ?? "?"} · ${eur(i.due_amount, i.currency)} overdue since ${i.due_date}`);
+    if (input.wonProjects) {
+      const activeRev = input.wonProjects.filter(p => p.status === "active").reduce((s, p) => s + (p.total_amount ?? 0), 0);
+      lines.push(`Active project revenue: ${eur(activeRev)}`);
     }
     lines.push("");
   }
 
-  // Conflicts
-  lines.push("## Open conflicts");
-  if (input.openConflicts.length === 0) lines.push("(none)");
-  for (const c of input.openConflicts) {
-    lines.push(`- [${c.severity ?? "?"}] ${c.title}`);
+  // ── CHRO ─────────────────────────────────────────────────────────────
+  if (input.hiringByStage) {
+    lines.push("## CHRO — Hiring & Headcount");
+    if (input.employeeCount != null) lines.push(`Headcount: ${input.employeeCount} employees`);
+    if (input.hiringByStage.length === 0) {
+      lines.push("No candidates in pipeline.");
+    } else {
+      lines.push("Hiring pipeline:");
+      for (const s of input.hiringByStage) lines.push(`  - ${s.stage}: ${s.count}`);
+      const lateCount = input.hiringByStage.filter(s => /case|lm|final|offer/i.test(s.stage)).reduce((n, s) => n + s.count, 0);
+      if (lateCount > 0) lines.push(`  → ${lateCount} in late stages — offer decisions possible this week`);
+    }
+    lines.push("");
+  }
+
+  // ── COO / Delivery ───────────────────────────────────────────────────
+  if (input.wonProjects) {
+    const active = input.wonProjects.filter(p => p.status === "active");
+    if (active.length > 0) {
+      const in45d = new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
+      lines.push("## COO / Delivery — Active Projects");
+      lines.push(`Active: ${active.length} · Ending within 45 days: ${active.filter(p => p.end_date && p.end_date <= in45d).length}`);
+      for (const p of active)
+        lines.push(`  - ${p.project_name} (${p.client_name ?? "?"}) · ${eur(p.total_amount)} · ends ${p.end_date ?? "?"}`);
+      lines.push("");
+    }
+  }
+
+  // ── AIOS agent tasks & ideas ─────────────────────────────────────────
+  lines.push("## AIOS — Agent tasks & ideas");
+  for (const a of input.agents) {
+    const ideas = (input.recentIdeasByAgent.get(a.id) ?? []).slice(0, 3);
+    const tasks = input.openTasks.filter(t => t.agent_id === a.id).slice(0, 3);
+    if (ideas.length === 0 && tasks.length === 0) continue;
+    lines.push(`### ${a.name}`);
+    if (ideas.length > 0) {
+      lines.push("Ideas:");
+      for (const i of ideas) lines.push(`  - [${i.status}] ${i.title} (score=${i.total_score ?? "—"})`);
+    }
+    if (tasks.length > 0) {
+      lines.push("Tasks:");
+      for (const t of tasks) lines.push(`  - [${t.approval_status}] ${t.title}${t.deadline ? ` due ${t.deadline}` : ""}`);
+    }
+  }
+  if (input.overdueTasks.length > 0) {
+    lines.push("### ⚠ Overdue agent tasks");
+    for (const t of input.overdueTasks) {
+      const agentName = input.agents.find(a => a.id === t.agent_id)?.name ?? "?";
+      lines.push(`  - ${agentName}: ${t.title} (was due ${t.deadline})`);
+    }
   }
   lines.push("");
 
+  // Conflicts
+  if (input.openConflicts.length > 0) {
+    lines.push("## Open conflicts");
+    for (const c of input.openConflicts) lines.push(`- [${c.severity ?? "?"}] ${c.title}`);
+    lines.push("");
+  }
+
   // Mandate
   lines.push("## Your mandate");
-  lines.push("For each agent, propose **3 ideas** and **3 actions** for today. Each must:");
-  lines.push("- link to one objective the agent already owns (or `none` if it's a meta-task)");
-  lines.push("- carry an explicit approval level: `autonomous` | `boss` | `ceo` | `livio`");
-  lines.push("- include impact / effort / risk on a 0-100 scale");
-  lines.push("- prioritise actions whose absence would cost EBITDA, cash, reputation, or capacity in the next 30 days");
+  lines.push("Study the full brief above. For **each agent**, propose **3 ideas** and **3 actions** for today. Each must:");
+  lines.push("- Be grounded in the specific data shown for that agent's section above.");
+  lines.push("- Link to one objective the agent already owns (or `none` if meta-task).");
+  lines.push("- Carry an explicit approval level: `autonomous` | `boss` | `ceo` | `livio`.");
+  lines.push("- Include impact / effort / risk on a 0-100 scale.");
+  lines.push("- Prioritise items whose absence would cost EBITDA, cash, reputation, or capacity in the next 30 days.");
   lines.push("");
-  lines.push("Detect any conflicts (two agents proposing incompatible actions; resource collisions; pricing vs margin tension) and surface them as `TYPE: conflict` blocks.");
+  lines.push("**Cross-agent reasoning required**: if high-probability deals would overwhelm delivery capacity, alert CHRO. If projects end with no follow-on in pipeline, alert SVP Sales. If invoices are overdue > 30 days, escalate to CFO.");
+  lines.push("");
+  lines.push("Detect any conflicts (incompatible actions, resource collisions, pricing/margin tension) and surface them as `TYPE: conflict` blocks.");
   lines.push("");
 
-  // The structured-output contract — MUST be the last thing in the prompt
+  // Structured output contract — MUST be last
   lines.push("---");
   lines.push("");
   lines.push("Return your answer ONLY in the following format. One block per decision, separated by '---'. Do not add prose before or after.");
