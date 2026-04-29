@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Trash2, X, ChevronDown, ChevronRight, Users, CheckSquare, ClipboardList, AlertTriangle, Calendar, Pencil } from "lucide-react";
+import { Plus, Trash2, X, ChevronDown, ChevronRight, Users, CheckSquare, ClipboardList, AlertTriangle, Calendar, Pencil, Play, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -84,6 +84,9 @@ export default function ExcomPage() {
   const [editId,   setEditId]   = useState<number | null>(null);
   const [editData, setEditData] = useState<Partial<Meeting>>({});
 
+  // Running a meeting
+  const [runningId, setRunningId] = useState<number | null>(null);
+
   async function load() {
     setLoading(true);
     try {
@@ -139,6 +142,28 @@ export default function ExcomPage() {
     if (!confirm("Delete this meeting?")) return;
     await fetch(`/api/excom/meetings/${id}`, { method: "DELETE", credentials: "include" });
     void load();
+  }
+
+  async function runMeeting(id: number) {
+    setRunningId(id);
+    setExpandedId(id);
+    try {
+      const r = await fetch(`/api/excom/meetings/${id}/run`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.message ?? `HTTP ${r.status}`);
+      }
+      const updated: Meeting = await r.json();
+      setMeetings(prev => prev.map(m => m.id === id ? updated : m));
+      toast({ title: "Meeting complete", description: "Minutes, decisions and action items generated." });
+    } catch (e) {
+      toast({ title: "Run failed", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setRunningId(null);
+    }
   }
 
   async function toggleTaskActive(t: PredefinedTask) {
@@ -280,6 +305,21 @@ export default function ExcomPage() {
                     {m.agenda_notes && <p className="text-xs text-muted-foreground mt-0.5 truncate">{m.agenda_notes.slice(0, 100)}</p>}
                   </div>
                   <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                    {/* Run button — available for any non-done meeting that has an agenda */}
+                    {m.status !== "done" && m.agenda_notes && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-xs border-primary/40 text-primary hover:bg-primary/10"
+                        disabled={runningId === m.id}
+                        onClick={() => void runMeeting(m.id)}
+                        title="Run this meeting — agents analyze each agenda item and generate minutes + decisions"
+                      >
+                        {runningId === m.id
+                          ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Running…</>
+                          : <><Play className="w-3 h-3 mr-1" /> Run meeting</>}
+                      </Button>
+                    )}
                     <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => { setEditId(m.id); setEditData({ ...m }); setExpandedId(m.id); }}>
                       <Pencil className="w-3 h-3" />
                     </Button>
@@ -292,6 +332,23 @@ export default function ExcomPage() {
                 {/* Expanded: view or edit */}
                 {isOpen && !isEditing && (
                   <div className="border-t px-4 py-3 space-y-3 bg-muted/10">
+                    {/* How-it-works banner — shown when agenda exists but no minutes yet */}
+                    {m.agenda_notes && !m.minutes_text && m.status !== "done" && (
+                      <div className="rounded border border-primary/30 bg-primary/5 p-3 text-xs space-y-1">
+                        <p className="font-semibold text-primary flex items-center gap-1.5">
+                          <Play className="w-3.5 h-3.5" /> How this meeting works
+                        </p>
+                        <p className="text-muted-foreground">
+                          Click <strong>▶ Run meeting</strong> to have the CEO route each agenda item to the right specialist agent.
+                          Each agent analyses their domain using live company data (invoices, pipeline, headcount, active projects),
+                          then the CEO synthesises the outputs into <strong>minutes</strong>, <strong>decisions</strong>, and <strong>action items</strong>.
+                          The meeting is automatically marked done.
+                        </p>
+                        {runningId === m.id && (
+                          <p className="text-primary font-medium animate-pulse">⏳ Agents are analysing — this takes ~10 seconds…</p>
+                        )}
+                      </div>
+                    )}
                     {m.agenda_notes && <MeetingSection icon={<ClipboardList className="w-3.5 h-3.5" />} title="Agenda" text={m.agenda_notes} />}
                     {m.minutes_text && <MeetingSection icon={<CheckSquare className="w-3.5 h-3.5" />} title="Minutes" text={m.minutes_text} />}
                     {m.decisions_text && <MeetingSection icon={<AlertTriangle className="w-3.5 h-3.5 text-amber-600" />} title="Decisions" text={m.decisions_text} />}

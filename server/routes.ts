@@ -6616,6 +6616,162 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── Run EXCOM meeting: each agenda item → routed agent → AI analysis → minutes ──
+  // The CEO facilitates: identifies which specialist owns each topic, asks them
+  // to speak based on live data, then synthesises decisions + action items.
+  app.post("/api/excom/meetings/:id/run", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const mtgRows = await db.execute(sql`SELECT * FROM excom_meetings WHERE id = ${id}`);
+      const mtg: any = ((mtgRows as any).rows ?? mtgRows)[0];
+      if (!mtg) return res.status(404).json({ message: "Meeting not found" });
+
+      const today   = new Date().toISOString().slice(0, 10);
+      const agenda  = (mtg.agenda_notes ?? "").trim();
+      if (!agenda) return res.status(400).json({ message: "Meeting has no agenda — add agenda items first." });
+
+      // ── Load all live company data in parallel ──────────────────────────
+      const [invR, dealR, propR, projR, hirR, empR] = await Promise.all([
+        db.execute(sql`SELECT client_name, due_amount, due_date, state, currency
+                         FROM invoice_snapshots WHERE state != 'paid'
+                        ORDER BY due_date ASC NULLS LAST LIMIT 50`),
+        db.execute(sql`SELECT name, client_name, stage, amount, probability, close_date, currency
+                         FROM bd_deals ORDER BY probability DESC NULLS LAST LIMIT 20`),
+        db.execute(sql`SELECT project_name, client_name, outcome, total_fee, win_probability
+                         FROM pricing_proposals ORDER BY created_at DESC LIMIT 15`),
+        db.execute(sql`SELECT project_name, client_name, status, start_date, end_date, total_amount
+                         FROM won_projects WHERE status = 'active' ORDER BY end_date ASC NULLS LAST`),
+        db.execute(sql`SELECT stage, COUNT(*)::int AS count
+                         FROM hiring_candidates WHERE stage IS NOT NULL
+                        GROUP BY stage ORDER BY count DESC`),
+        db.execute(sql`SELECT COUNT(*)::int AS cnt FROM employees`),
+      ]);
+
+      const R = (r: any) => (r as any).rows ?? r ?? [];
+      const invoices  = R(invR)  as any[];
+      const deals     = R(dealR) as any[];
+      const proposals = R(propR) as any[];
+      const projects  = R(projR) as any[];
+      const hiring    = R(hirR)  as any[];
+      const empCount  = Number(R(empR)[0]?.cnt ?? 0);
+
+      const overdue = invoices.filter((i: any) => i.due_date && i.due_date < today);
+      const overdueAmt = overdue.reduce((s: number, i: any) => s + (Number(i.due_amount) || 0), 0);
+      const weightedPipe = deals.reduce((s: number, d: any) => s + (Number(d.amount) || 0) * ((Number(d.probability) || 0) / 100), 0);
+
+      // ── Build comprehensive prompt ──────────────────────────────────────
+      const dataBlock = [
+        "### CFO — Finance, Invoices & Cash",
+        `Open invoices: ${invoices.length} | Overdue: ${overdue.length} (€${Math.round(overdueAmt).toLocaleString("en")})`,
+        overdue.length > 0
+          ? overdue.slice(0, 8).map((i: any) => `  - ${i.client_name ?? "?"}: €${Number(i.due_amount ?? 0).toLocaleString("en")} overdue since ${i.due_date}`).join("\n")
+          : "  No overdue invoices.",
+        invoices.filter((i: any) => !overdue.includes(i)).slice(0, 4).map((i: any) => `  - ${i.client_name ?? "?"}: €${Number(i.due_amount ?? 0).toLocaleString("en")} due ${i.due_date ?? "TBD"}`).join("\n"),
+        "",
+        "### CCO — Sales & Commercial Pipeline",
+        `Deals in CRM: ${deals.length} | Weighted pipeline: €${Math.round(weightedPipe).toLocaleString("en")}`,
+        deals.slice(0, 6).map((d: any) => `  - ${d.name} (${d.client_name ?? "?"}): €${Number(d.amount ?? 0).toLocaleString("en")} · ${d.probability ?? "?"}% · stage=${d.stage ?? "?"} · close ${d.close_date ?? "?"}`).join("\n"),
+        "",
+        "### Delivery Director — Active Projects",
+        `Active engagements: ${projects.length}`,
+        projects.slice(0, 8).map((p: any) => `  - ${p.project_name} (${p.client_name ?? "?"}): ${p.start_date ?? "?"} → ${p.end_date ?? "ongoing"}`).join("\n"),
+        "",
+        "### CHRO — Headcount & Hiring",
+        `Active employees: ${empCount}`,
+        hiring.length > 0
+          ? hiring.map((h: any) => `  - ${h.stage}: ${h.count} candidate(s)`).join("\n")
+          : "  No candidates in pipeline.",
+        "",
+        "### Pricing Director — Recent Proposals",
+        proposals.slice(0, 6).map((p: any) => `  - ${p.project_name} (${p.client_name ?? "?"}): ${p.outcome ?? "open"} · win prob ${p.win_probability ?? "?"}%`).join("\n"),
+      ].join("\n");
+
+      const systemPrompt = [
+        "You are the AI facilitator of the Eendigo Executive Committee (EXCOM).",
+        "Eendigo is a boutique management consulting firm.",
+        "The CEO chairs the meeting. Each agenda item is owned by the most relevant specialist agent.",
+        "Your job: for each agenda item, identify the owning agent, have them speak from the live data,",
+        "then have the CEO extract a concrete decision and action item.",
+        "Be direct, factual, and data-driven. Use actual numbers from the data. No padding or hedging.",
+        "Keep each agenda item analysis to 3–5 sentences.",
+      ].join(" ");
+
+      const userPrompt = [
+        `EXCOM Meeting — ${mtg.meeting_date}`,
+        `Attendees: ${mtg.attendees || "Livio (President), CEO, C-suite"}`,
+        "",
+        "AGENDA:",
+        agenda,
+        "",
+        "LIVE COMPANY DATA:",
+        dataBlock,
+        "",
+        "INSTRUCTIONS:",
+        "For each agenda item in the meeting:",
+        "1. State which agent owns it (CFO / CCO / CHRO / Delivery Director / Pricing Director / COO / CEO)",
+        "2. That agent reports using the live data above",
+        "3. CEO extracts a decision and assigns an action item",
+        "",
+        "Produce output in EXACTLY this format (nothing before ===MINUTES===):",
+        "",
+        "===MINUTES===",
+        "[For each agenda item: ## [Item Title] | Owner: [Agent Name]",
+        "Paragraph of analysis with concrete numbers from the data.]",
+        "",
+        "===DECISIONS===",
+        "[Numbered list. Each line: N. [Concrete decision made]]",
+        "",
+        "===ACTION_ITEMS===",
+        "[Bullet list. Each line: - [What to do] | Owner: [Role] | By: [YYYY-MM-DD or 'this week']]",
+      ].join("\n");
+
+      // ── Call AI ──────────────────────────────────────────────────────────
+      const { generateText } = await import("./aiProviders");
+      let raw = "";
+      try {
+        const result = await generateText({
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          system: systemPrompt,
+          prompt: userPrompt,
+          maxTokens: 1200,
+          temperature: 0.3,
+        });
+        raw = result.text.trim();
+      } catch (aiErr) {
+        return res.status(502).json({ message: `AI call failed: ${(aiErr as Error).message}` });
+      }
+
+      // ── Parse structured output ──────────────────────────────────────────
+      const extract = (tag: string, next: string): string => {
+        const start = raw.indexOf(`===${tag}===`);
+        if (start === -1) return "";
+        const after = raw.indexOf(`===${next}===`, start);
+        const slice = after === -1 ? raw.slice(start + tag.length + 6) : raw.slice(start + tag.length + 6, after);
+        return slice.trim();
+      };
+
+      const minutesText   = extract("MINUTES",   "DECISIONS");
+      const decisionsText = extract("DECISIONS",  "ACTION_ITEMS");
+      const actionItems   = extract("ACTION_ITEMS", "END"); // "END" won't match → takes rest
+
+      // ── Save back to the meeting ─────────────────────────────────────────
+      const nowTs = new Date().toISOString();
+      await db.execute(sql`
+        UPDATE excom_meetings SET
+          minutes_text   = ${minutesText   || raw},
+          decisions_text = ${decisionsText || ""},
+          action_items   = ${actionItems   || ""},
+          status         = 'done',
+          updated_at     = ${nowTs}
+        WHERE id = ${id}
+      `);
+
+      const updated = await db.execute(sql`SELECT * FROM excom_meetings WHERE id = ${id}`);
+      res.json(((updated as any).rows ?? updated)[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // Predefined tasks (templates)
   app.get("/api/excom/predefined-tasks", requireAuth, async (_req, res) => {
     try {
