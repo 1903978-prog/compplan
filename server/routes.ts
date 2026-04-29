@@ -6107,6 +6107,98 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── /api/agentic/section-map ─────────────────────────────────────────────
+  // CRUD for agent_section_map. Supports ?agent=Name filter on the list.
+
+  app.get("/api/agentic/section-map", requireAuth, async (req, res) => {
+    try {
+      const agent = req.query.agent as string | undefined;
+      let r;
+      if (agent) {
+        r = await db.execute(sql`
+          SELECT * FROM agent_section_map
+           WHERE LOWER(primary_agent) = LOWER(${agent})
+              OR LOWER(secondary_agents) ILIKE ${"%" + agent + "%"}
+           ORDER BY module, section, subsection
+        `);
+      } else {
+        r = await db.execute(sql`SELECT * FROM agent_section_map ORDER BY module, section, subsection`);
+      }
+      res.json((r as any).rows ?? r);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/agentic/section-map/by-agent/:agentName", requireAuth, async (req, res) => {
+    try {
+      const name = req.params.agentName;
+      const primary = await db.execute(sql`
+        SELECT * FROM agent_section_map
+         WHERE LOWER(primary_agent) = LOWER(${name})
+         ORDER BY module, section, subsection
+      `);
+      const secondary = await db.execute(sql`
+        SELECT * FROM agent_section_map
+         WHERE LOWER(secondary_agents) ILIKE ${"%" + name + "%"}
+           AND LOWER(primary_agent) != LOWER(${name})
+         ORDER BY module, section, subsection
+      `);
+      res.json({
+        primary:   (primary   as any).rows ?? primary,
+        secondary: (secondary as any).rows ?? secondary,
+      });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/agentic/section-map", requireAuth, async (req, res) => {
+    try {
+      const { module, section, subsection, primary_agent, secondary_agents = "", why = "", frequency = "Daily" } = req.body ?? {};
+      if (!module || !section || !subsection || !primary_agent) {
+        return res.status(400).json({ message: "module, section, subsection, primary_agent required" });
+      }
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        INSERT INTO agent_section_map (module, section, subsection, primary_agent, secondary_agents, why, frequency, created_at, updated_at)
+        VALUES (${module}, ${section}, ${subsection}, ${primary_agent}, ${secondary_agents}, ${why}, ${frequency}, ${now}, ${now})
+        RETURNING *
+      `);
+      res.status(201).json(((r as any).rows ?? r)[0]);
+    } catch (e: any) {
+      if (e?.code === "23505") return res.status(409).json({ message: "Duplicate (module, section, subsection)" });
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.put("/api/agentic/section-map/:id", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { module, section, subsection, primary_agent, secondary_agents, why, frequency } = req.body ?? {};
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        UPDATE agent_section_map SET
+          module           = COALESCE(${module ?? null},           module),
+          section          = COALESCE(${section ?? null},          section),
+          subsection       = COALESCE(${subsection ?? null},       subsection),
+          primary_agent    = COALESCE(${primary_agent ?? null},    primary_agent),
+          secondary_agents = COALESCE(${secondary_agents ?? null}, secondary_agents),
+          why              = COALESCE(${why ?? null},              why),
+          frequency        = COALESCE(${frequency ?? null},        frequency),
+          updated_at       = ${now}
+        WHERE id = ${id}
+        RETURNING *
+      `);
+      const row = ((r as any).rows ?? r)[0];
+      if (!row) return res.status(404).json({ message: "not found" });
+      res.json(row);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.delete("/api/agentic/section-map/:id", requireAuth, async (req, res) => {
+    try {
+      await db.execute(sql`DELETE FROM agent_section_map WHERE id = ${Number(req.params.id)}`);
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── /api/ceo-brief — public, token-protected daily brief ────────────────
   // External tools (Cowork skills, schedulers, etc.) GET this endpoint to
   // pull a comprehensive real-time brief covering ALL app sections, mapped
@@ -6147,6 +6239,7 @@ RULES:
     // CHRO area
     hiringByStage: Array<{ stage: string; count: number }>;
     employeeCount: number;
+    pendingCases: Array<{ project_name: string; client_name: string | null; win_probability: number | null; start_date: string | null; duration_weeks: number | null }>;
     // Delivery / COO area
     activeProjects: Array<{ project_name: string; client_name: string | null; end_date: string | null; total_amount: number | null }>;
     // Cross-agent alerts (pre-computed)
@@ -6228,6 +6321,26 @@ RULES:
       if (lateStage > 0) L.push(`  → ${lateStage} candidate(s) in late-stage — potential near-term hires`);
     } else {
       L.push("No candidates in pipeline.");
+    }
+    // 24-week staffing demand from pending pricing cases
+    const casesWithDemand = facts.pendingCases.filter(c => c.win_probability != null || c.start_date != null);
+    if (casesWithDemand.length > 0) {
+      L.push("");
+      L.push("### 24-week staffing demand from pipeline cases");
+      for (const c of casesWithDemand) {
+        const prob = c.win_probability != null ? `${c.win_probability}% win prob` : "prob unknown";
+        const start = c.start_date ?? "start TBD";
+        const dur = c.duration_weeks ? `${c.duration_weeks}w` : "duration TBD";
+        L.push(`  - **${c.project_name}** (${c.client_name ?? "?"}) — ${prob} · start ${start} · ${dur}`);
+      }
+      const totalWeightedWeeks = casesWithDemand.reduce((s, c) => {
+        const prob = (c.win_probability ?? 50) / 100;
+        const dur  = c.duration_weeks ?? 8;
+        return s + prob * dur;
+      }, 0);
+      L.push(`  → Probability-weighted demand: ~${Math.round(totalWeightedWeeks)} consultant-weeks in next 24 weeks.`);
+    } else {
+      L.push("No pending pricing cases with staffing data.");
     }
     L.push("");
 
@@ -6323,7 +6436,7 @@ RULES:
       const [
         allAgents, allObjectives, allTasks, allIdeas, allConflicts,
         bdDealsRows, recentProposalRows, invoiceRows, wonProjectRows,
-        hiringRows, employeeRows,
+        hiringRows, employeeRows, pendingCaseRows,
       ] = await Promise.all([
         db.select().from(agentsTable).orderBy(agentsTable.id),
         db.select().from(objectivesTable),
@@ -6336,6 +6449,7 @@ RULES:
         db.execute(sql`SELECT project_name, client_name, status, start_date, end_date, total_amount, currency FROM won_projects ORDER BY end_date ASC NULLS LAST`),
         db.execute(sql`SELECT stage, COUNT(*)::int AS count FROM hiring_candidates WHERE stage IS NOT NULL GROUP BY stage ORDER BY count DESC`),
         db.execute(sql`SELECT COUNT(*)::int AS count FROM employees`),
+        db.execute(sql`SELECT project_name, client_name, win_probability, start_date, duration_weeks FROM pricing_cases WHERE status != 'archived' ORDER BY win_probability DESC NULLS LAST LIMIT 30`),
       ]);
 
       const rows = (r: any) => (r as any).rows ?? r;
@@ -6428,6 +6542,7 @@ RULES:
         wonProjects,
         hiringByStage,
         employeeCount: empCount,
+        pendingCases: rows(pendingCaseRows) as Array<any>,
         activeProjects,
         alerts,
       };

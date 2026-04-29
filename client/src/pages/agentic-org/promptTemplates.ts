@@ -24,6 +24,20 @@ export interface InvoiceLite   { client_name: string | null; due_amount: number 
 export interface WonProjectLite{ project_name: string; client_name: string | null; status: string | null; start_date: string | null; end_date: string | null; total_amount: number | null; currency: string | null; }
 export interface HiringStage   { stage: string; count: number; }
 export interface CrossAlert    { agent: string; severity: "high" | "medium" | "low"; text: string; }
+export interface SectionMapEntry { module: string; section: string; subsection: string; frequency: string; why: string; }
+
+// Returns true if a section with the given frequency should be read on the given date.
+function shouldReadToday(frequency: string, date: string): boolean {
+  if (frequency === "Daily") return true;
+  if (frequency === "Triggered") return false;
+  const d = new Date(date + "T00:00:00");
+  if (frequency === "Weekly") return d.getDay() === 1; // Monday
+  if (frequency === "Monthly") return d.getDate() === 1;
+  if (frequency === "Quarterly") {
+    return d.getDate() === 1 && [0, 3, 6, 9].includes(d.getMonth()); // Jan/Apr/Jul/Oct
+  }
+  return false;
+}
 
 function eur(n: number | null, ccy?: string | null) {
   return n == null ? "?" : `${ccy ?? "€"}${Math.round(n).toLocaleString("en")}`;
@@ -46,6 +60,8 @@ export function buildCoworkPrompt(input: {
   hiringByStage?: HiringStage[];
   employeeCount?: number;
   alerts?: CrossAlert[];
+  // Agent ↔ section map: keyed by agent name → sections to read today
+  agentSections?: Map<string, SectionMapEntry[]>;
 }): string {
   const lines: string[] = [];
   lines.push(`# Eendigo Daily CEO Brief — ${input.date}`);
@@ -136,8 +152,13 @@ export function buildCoworkPrompt(input: {
   for (const a of input.agents) {
     const ideas = (input.recentIdeasByAgent.get(a.id) ?? []).slice(0, 3);
     const tasks = input.openTasks.filter(t => t.agent_id === a.id).slice(0, 3);
-    if (ideas.length === 0 && tasks.length === 0) continue;
+    const sections = input.agentSections?.get(a.name)?.filter(s => shouldReadToday(s.frequency, input.date)) ?? [];
+    if (ideas.length === 0 && tasks.length === 0 && sections.length === 0) continue;
     lines.push(`### ${a.name}`);
+    if (sections.length > 0) {
+      lines.push("Sections to read today:");
+      for (const s of sections) lines.push(`  - [${s.frequency}] ${s.module} › ${s.section} › ${s.subsection}${s.why ? ` — ${s.why}` : ""}`);
+    }
     if (ideas.length > 0) {
       lines.push("Ideas:");
       for (const i of ideas) lines.push(`  - [${i.status}] ${i.title} (score=${i.total_score ?? "—"})`);

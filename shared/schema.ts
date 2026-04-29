@@ -352,6 +352,14 @@ export const pricingCases = pgTable("pricing_cases", {
   risk_flags: jsonb("risk_flags"),
   problem_statement: text("problem_statement"),
   expected_impact_eur: real("expected_impact_eur"),
+  // win_probability (0-100): Livio's estimate of closing this deal.
+  // Used by the CHRO agent's 24-week staffing demand forecast and by the
+  // staffing Gantt's probability-weighted view.
+  win_probability: real("win_probability"),
+  // start_date (YYYY-MM-DD): expected delivery start. If null, the staffing
+  // forecast uses created_at as a proxy. Livio sets this when the case is
+  // being prepared; confirms it before signing.
+  start_date: text("start_date"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -376,6 +384,8 @@ export const insertPricingCaseSchema = createInsertSchema(pricingCases).partial(
   case_discounts: true,
   case_timelines: true,
   revision_letter: true,
+  win_probability: true,
+  start_date: true,
   created_at: true,
   updated_at: true,
 }).extend({
@@ -1316,3 +1326,18 @@ export const presidentRequests = pgTable("president_requests", {
   updated_at: text("updated_at"),
 });
 export type PresidentRequest = typeof presidentRequests.$inferSelect;
+
+// ── Phase 3 — Agent ↔ App-Section Map ────────────────────────────────────
+export const agentSectionMap = pgTable("agent_section_map", {
+  id:               serial("id").primaryKey(),
+  module:           text("module").notNull(),
+  section:          text("section").notNull(),
+  subsection:       text("subsection").notNull(),
+  primary_agent:    text("primary_agent").notNull(),
+  secondary_agents: text("secondary_agents").notNull().default(""),
+  why:              text("why").notNull().default(""),
+  frequency:        text("frequency").notNull().default("Daily"),
+  created_at:       text("created_at").notNull(),
+  updated_at:       text("updated_at").notNull(),
+});
+export type AgentSectionMapRow = typeof agentSectionMap.$inferSelect;

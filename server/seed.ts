@@ -2424,12 +2424,9 @@ Use sequential IDs prefixed LD-001.
   ];
   for (const a of seedAssets) {
     if (a.asset_type === "PC" && a.identifier) {
-      // Skip if a PC with this identifier already exists — even if assignment changed,
-      // we don't want the seed to overwrite live data.
       const existing = await db.execute(sql`SELECT id FROM assets WHERE asset_type = 'PC' AND identifier = ${a.identifier} LIMIT 1`);
       if ((existing as unknown as { rows: unknown[] }).rows.length > 0) continue;
     } else if (a.asset_type === "ThinkCell" && a.employee_id && a.license_key) {
-      // Skip if this employee already has a ThinkCell row with the same key.
       const existing = await db.execute(sql`SELECT id FROM assets WHERE asset_type = 'ThinkCell' AND employee_id = ${a.employee_id} AND license_key = ${a.license_key} LIMIT 1`);
       if ((existing as unknown as { rows: unknown[] }).rows.length > 0) continue;
     }
@@ -2437,5 +2434,136 @@ Use sequential IDs prefixed LD-001.
       INSERT INTO assets (asset_type, identifier, details, employee_id, status, license_key, notes, created_at, updated_at)
       VALUES (${a.asset_type}, ${a.identifier}, ${a.details}, ${a.employee_id}, ${a.status}, ${a.license_key}, ${a.notes}, ${_assetNow}, ${_assetNow})
     `);
+  }
+
+  // ── PHASE 3 — Agent ↔ App-Section Map ──────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS agent_section_map (
+      id               SERIAL PRIMARY KEY,
+      module           TEXT NOT NULL,
+      section          TEXT NOT NULL,
+      subsection       TEXT NOT NULL,
+      primary_agent    TEXT NOT NULL,
+      secondary_agents TEXT NOT NULL DEFAULT '',
+      why              TEXT NOT NULL DEFAULT '',
+      frequency        TEXT NOT NULL DEFAULT 'Daily',
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL,
+      UNIQUE (module, section, subsection)
+    )
+  `);
+
+  // Auto-create specialist agents if not present (boss = CEO for all except President).
+  {
+    const _now3 = new Date().toISOString();
+    const existingAgentsRes = await db.execute(sql`SELECT name FROM agents`);
+    const existingNames = new Set(
+      ((existingAgentsRes as any).rows ?? existingAgentsRes).map((r: any) => (r.name as string).toLowerCase().trim())
+    );
+    // Find CEO id for boss_id assignment.
+    const ceoRes = await db.execute(sql`SELECT id FROM agents WHERE LOWER(name) LIKE '%ceo%' LIMIT 1`);
+    const ceoId: number | null = ((ceoRes as any).rows ?? ceoRes)[0]?.id ?? null;
+
+    const specialistAgents = [
+      "Pricing Agent",
+      "Proposal Agent",
+      "BD Agent",
+      "AR Agent",
+      "Partnership Agent",
+      "CKO",
+      "L&D Manager",
+    ];
+    for (const agentName of specialistAgents) {
+      if (!existingNames.has(agentName.toLowerCase().trim())) {
+        await db.execute(sql`
+          INSERT INTO agents (name, mission, status, boss_id, created_at, updated_at)
+          VALUES (${agentName}, null, 'active', ${ceoId}, ${_now3}, ${_now3})
+        `);
+      }
+    }
+    // President has no boss.
+    if (!existingNames.has("president")) {
+      await db.execute(sql`
+        INSERT INTO agents (name, mission, status, boss_id, created_at, updated_at)
+        VALUES ('President', null, 'active', null, ${_now3}, ${_now3})
+      `);
+    }
+  }
+
+  // Seed the section map — idempotent via ON CONFLICT DO NOTHING.
+  {
+    const _now3 = new Date().toISOString();
+    type SeedRow = [string, string, string, string, string, string, string];
+    const sectionRows: SeedRow[] = [
+      // module, section, subsection, primary_agent, secondary_agents, why, frequency
+      ["Exec","Dashboard","Org Chart","CEO","President, COO","See structure, vacancies, agent activity counts","Daily"],
+      ["Exec","Dashboard","Top KPIs (revenue, margin, cash)","CEO","CFO, CCO","Compare reality vs OKRs","Daily"],
+      ["Exec","OKRs","Company OKRs","CEO","All C-suite","Cascade objectives down to each agent","Daily"],
+      ["Exec","OKRs","Agent → app-section mapping","COO","CEO","Owns who reads what; updates as org evolves","Weekly"],
+      ["Exec","Logs","Executive Log","CEO","COO, CHRO","Audit trail of ideas, actions, decisions","Daily"],
+      ["Exec","Logs","Conflict Area","CEO","COO","Resolve agent disputes, escalate to President","Daily"],
+      ["Exec","Approvals","Approval Center","President","CEO","Approve / reject pending actions","Daily"],
+      ["AIOS","Agent Registry","All agents list","COO","CEO, CHRO","Active/paused/retired agents, performance","Daily"],
+      ["AIOS","Agent Detail","Mission + OKRs","COO","CHRO, agent's boss","Keeps agent definition tight","Weekly"],
+      ["AIOS","Agent Detail","Ideas backlog","agent's boss","CEO","Score and approve agent's proposals","Daily"],
+      ["AIOS","Agent Detail","Tasks + deadlines","agent's boss","COO","Track delivery and slippage","Daily"],
+      ["AIOS","Agent Detail","Decision rights (4 levels)","COO","CEO","Maintain who decides what","Triggered"],
+      ["AIOS","Skill Factory","Skill prompts library","COO","CEO","Convert agent definitions into Cowork skills","Triggered"],
+      ["AIOS","L&D","Daily training packets","L&D Manager","CHRO","4-5pm training loop based on gaps","Daily"],
+      ["HR","Compensation","Compensation Dashboard","CHRO","CFO, CEO","Headcount cost vs budget","Weekly"],
+      ["HR","Compensation","Salary History / Log / Chart","CHRO","CFO","Pay equity, anomalies, raise patterns","Monthly"],
+      ["HR","Compensation","Salary Benchmarks","CHRO","CFO","Market positioning by role","Quarterly"],
+      ["HR","Compensation","Promotion / Scheduled Increase","CHRO","CFO, agent's boss","Forecast comp impact","Monthly"],
+      ["HR","Compensation","Bonus & Variable Fee","CHRO","CFO","Incentive design and accruals","Quarterly"],
+      ["HR","Performance","Yearly Reviews","CHRO","L&D, agent's boss","Calibration, promotion cases","Quarterly"],
+      ["HR","Performance","Performance Issues","CHRO","L&D, CEO","Flag underperformers, churn risk","Daily"],
+      ["HR","Performance","Development Plan / Competencies","L&D Manager","CHRO","Identify skill gaps, dispatch training","Weekly"],
+      ["HR","Org Design","Org Sizing","CHRO","COO, CEO","Probability-weighted capacity forecasting","Weekly"],
+      ["HR","Org Design","Roles / Consultant Roles","CHRO","CCO, COO","Role definition vs delivery needs","Monthly"],
+      ["HR","Org Design","Freelancers & Partners","COO","CHRO, CCO","Bench of pre-qualified externals","Weekly"],
+      ["HR","Time Off","Days Off / Carryover","COO","CHRO","Capacity adjustments, vacation cover","Weekly"],
+      ["HR","Onboarding","New hire checklist","CHRO","L&D Manager, COO","First-week plan, 30/60/90 goals","Triggered"],
+      ["Pricing","Cases","Pricing Cases (list)","CFO","CCO, Pricing Agent","Margin per active case","Daily"],
+      ["Pricing","Cases","Edit / New Pricing Case","Pricing Agent","CFO","Build & store quotes","Triggered"],
+      ["Pricing","Cases","Comprehensive Case Analysis","Pricing Agent","CFO, CCO","Deep margin / win-prob review","Weekly"],
+      ["Pricing","Tool","Pricing Tool / Waterfall","Pricing Agent","CFO, CCO","Price-to-EBITDA mechanics","Triggered"],
+      ["Pricing","Tool","List Pricing","Pricing Agent","CFO","Standard rate cards","Quarterly"],
+      ["Pricing","Tool","Pricing Corridors by Country","Pricing Agent","CFO, CCO","Geo discount controls","Quarterly"],
+      ["Pricing","Health","Pricing Health dashboard","CFO","CCO, CEO","Win rate vs price, leakage","Weekly"],
+      ["Pricing","Settings","Bracket / Variable Fee / Admin fees","CFO","Pricing Agent","Maintain pricing rules","Quarterly"],
+      ["Pricing","Settings","Fee Summary","CFO","CCO","Quick consolidated view per case","Triggered"],
+      ["Proposals","Past Proposals","Library of past proposals","Proposal Agent","CCO, CKO, CEO","Reuse precedents (Schaltbau, Sandoz, etc.)","Daily"],
+      ["Proposals","Pipeline","Active proposals + status","CCO","CFO, CEO, Proposal Agent","Conversion mgmt, follow-ups","Daily"],
+      ["Proposals","Pipeline","Sync TBD with Final Cases","Proposal Agent","CFO","Keep pricing & proposal aligned","Triggered"],
+      ["Proposals","Loss Debrief","MS Forms loss-debrief","CCO","Proposal Agent, CEO","Pattern detection on losses","Weekly"],
+      ["Proposals","Discussion","Discussion Summary","Proposal Agent","CCO","Capture call insights for next steps","Triggered"],
+      ["Hiring","Pipeline","Candidates by stage","CHRO","CEO, agent's boss","Sourcing -> screening -> offer","Weekly"],
+      ["Hiring","Pipeline","Interview scorecards","CHRO","agent's boss","Calibrate hire/no-hire","Triggered"],
+      ["Hiring","Pipeline","Offers + comp packages","CHRO","CFO, CEO","Stay within budget, equity dilution","Triggered"],
+      ["Hiring","Pipeline","Onboarding handoff","CHRO","L&D Manager, COO","Smooth Day 1","Triggered"],
+      ["AR","Invoices","All invoices + due dates","CFO","AR Agent","Cash position, aging","Daily"],
+      ["AR","Invoices","Overdue / late payments","AR Agent","CFO, CEO","Reminder cadence, escalation","Daily"],
+      ["AR","Payments","Payments received","AR Agent","CFO","Cash applied, residuals","Daily"],
+      ["AR","Sensitive","Strategic-client late payments","President","CFO, CEO","Personal escalation only","Triggered"],
+      ["BD","Clients","Client list / Profile / Size","CCO","BD Agent, CKO","Account knowledge for outreach","Daily"],
+      ["BD","Clients","Client Relationship status","BD Agent","CCO, CEO","Warmth scoring, last-contact","Weekly"],
+      ["BD","Contacts","External Contacts","BD Agent","CCO","Reactivation candidates","Daily"],
+      ["BD","Contacts","Dormant contacts (>120d)","BD Agent","CCO, CEO","Auto-reactivation drafts","Weekly"],
+      ["BD","Pipeline","Lead -> Pitch -> Proposal flow","CCO","BD Agent, Proposal Agent, CFO","Conversion at each stage","Daily"],
+      ["BD","Partnerships","Partners / Spark / War Rooms","Partnership Agent","CCO, CEO","Co-marketing, referrals","Weekly"],
+      ["Admin","Assets","Assets / Asset Types","COO","CFO","Equipment, software, licenses","Monthly"],
+      ["Admin","Settings","Global Settings","COO","CEO","App-level toggles","Triggered"],
+      ["Admin","Settings","Users / Theme / Auth","COO","CHRO","Access control, branding","Triggered"],
+      ["Admin","Backup","Backup status","COO","CEO","Disaster-recovery readiness","Weekly"],
+    ];
+    for (const [module, section, subsection, primary_agent, secondary_agents, why, frequency] of sectionRows) {
+      await db.execute(sql`
+        INSERT INTO agent_section_map
+          (module, section, subsection, primary_agent, secondary_agents, why, frequency, created_at, updated_at)
+        VALUES
+          (${module}, ${section}, ${subsection}, ${primary_agent}, ${secondary_agents}, ${why}, ${frequency}, ${_now3}, ${_now3})
+        ON CONFLICT (module, section, subsection) DO NOTHING
+      `);
+    }
   }
 }

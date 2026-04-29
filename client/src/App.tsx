@@ -41,11 +41,12 @@ import AgenticExec    from "@/pages/agentic-org/Executive";
 import Approvals      from "@/pages/agentic-org/Approvals";
 import Logs           from "@/pages/agentic-org/Logs";
 import AgenticSkills  from "@/pages/agentic-org/Skills";
+import SectionMap     from "@/pages/agentic-org/SectionMap";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -314,9 +315,6 @@ function Navigation() {
                 basePaths={["/exec"]}
                 items={[
                   { href: "/exec", label: "Dashboard", icon: Activity },
-                  { href: "/exec/org-chart", label: "Org Chart", icon: Network },
-                  { href: "/exec/okr", label: "OKR", icon: Target },
-                  { href: "/exec/brief-stream", label: "Brief Stream", icon: Activity },
                 ]}
               />
               {/* AIOS — Autonomous Intelligence Operating System.
@@ -326,14 +324,18 @@ function Navigation() {
               <NavDropdown
                 label="AIOS"
                 icon={Cpu}
-                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs"]}
+                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map"]}
                 items={[
-                  { href: "/agentic",        label: "Executive Dashboard", icon: Cpu },
-                  { href: "/agents",         label: "Agent Registry",      icon: Users },
-                  { href: "/executive",      label: "OKR Center",          icon: Target },
-                  { href: "/approvals",      label: "Decisions",           icon: Shield },
-                  { href: "/agentic/skills", label: "Skill Factory",       icon: Cpu },
-                  { href: "/logs",           label: "Decision Log",        icon: BookOpen },
+                  { href: "/agentic",            label: "Executive Dashboard", icon: Cpu },
+                  { href: "/exec/org-chart",     label: "Org Chart",           icon: Network },
+                  { href: "/exec/okr",           label: "OKR",                 icon: Target },
+                  { href: "/exec/brief-stream",  label: "Brief Stream",        icon: Activity },
+                  { href: "/agents",             label: "Agent Registry",      icon: Users },
+                  { href: "/exec/section-map",   label: "Section Map",         icon: Map },
+                  { href: "/executive",          label: "OKR Center",          icon: Target },
+                  { href: "/approvals",          label: "Decisions",           icon: Shield },
+                  { href: "/agentic/skills",     label: "Skill Factory",       icon: Cpu },
+                  { href: "/logs",               label: "Decision Log",        icon: BookOpen },
                 ]}
               />
               <NavDropdown
@@ -499,6 +501,7 @@ function Router() {
       <Route path="/approvals" component={Approvals} />
       <Route path="/logs" component={Logs} />
       <Route path="/agentic/skills" component={AgenticSkills} />
+      <Route path="/exec/section-map" component={SectionMap} />
       <Route path="/bd" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />

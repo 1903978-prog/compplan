@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Agent {
@@ -16,6 +16,11 @@ interface Agent {
   decision_rights_boss: string | null;
   decision_rights_ceo: string | null;
   decision_rights_livio: string | null;
+}
+interface SectionMapRow {
+  id: number; module: string; section: string; subsection: string;
+  primary_agent: string; secondary_agents: string;
+  why: string; frequency: string;
 }
 interface Objective { id: number; agent_id: number; title: string; description: string | null; target_date: string | null; status: string; }
 interface KeyResult { id: number; objective_id: number; title: string; target_value: string | null; current_value: string | null; unit: string | null; }
@@ -29,13 +34,19 @@ export default function AgentDetail() {
   const { toast } = useToast();
   const id = params ? parseInt(params.id, 10) : null;
 
-  const [agent, setAgent]           = useState<Agent | null>(null);
-  const [allAgents, setAllAgents]   = useState<Agent[]>([]);
-  const [objectives, setObjectives] = useState<Objective[]>([]);
-  const [krs, setKrs]               = useState<KeyResult[]>([]);
-  const [ideas, setIdeas]           = useState<Idea[]>([]);
-  const [tasks, setTasks]           = useState<Task[]>([]);
-  const [log, setLog]               = useState<LogRow[]>([]);
+  const [agent, setAgent]                       = useState<Agent | null>(null);
+  const [allAgents, setAllAgents]               = useState<Agent[]>([]);
+  const [objectives, setObjectives]             = useState<Objective[]>([]);
+  const [krs, setKrs]                           = useState<KeyResult[]>([]);
+  const [ideas, setIdeas]                       = useState<Idea[]>([]);
+  const [tasks, setTasks]                       = useState<Task[]>([]);
+  const [log, setLog]                           = useState<LogRow[]>([]);
+  // Section map
+  const [sectionsPrimary, setSectionsPrimary]   = useState<SectionMapRow[]>([]);
+  const [sectionsSecondary, setSectionsSecondary] = useState<SectionMapRow[]>([]);
+  // Re-route modal
+  const [rerouteRow, setRerouteRow]             = useState<SectionMapRow | null>(null);
+  const [rerouteDraft, setRerouteDraft]         = useState("");
 
   async function load() {
     if (!id) return;
@@ -63,6 +74,13 @@ export default function AgentDetail() {
       } else {
         setKrs([]);
       }
+      // Section map — loaded after we know the agent name
+      if (a?.name) {
+        const encoded = encodeURIComponent(a.name);
+        const sm = await fetch(`/api/agentic/section-map/by-agent/${encoded}`, { credentials: "include" }).then(r => r.ok ? r.json() : { primary: [], secondary: [] });
+        setSectionsPrimary(Array.isArray(sm.primary) ? sm.primary : []);
+        setSectionsSecondary(Array.isArray(sm.secondary) ? sm.secondary : []);
+      }
     } catch {
       toast({ title: "Failed to load agent", variant: "destructive" });
     }
@@ -71,6 +89,22 @@ export default function AgentDetail() {
 
   if (!id || !agent) {
     return <div className="container mx-auto py-8 text-sm text-muted-foreground">Loading agent…</div>;
+  }
+
+  async function rerouteSection(row: SectionMapRow, newPrimaryAgent: string) {
+    const r = await fetch(`/api/agentic/section-map/${row.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ primary_agent: newPrimaryAgent.trim() }),
+    });
+    if (r.ok) {
+      toast({ title: "Re-routed", description: `${row.subsection} → ${newPrimaryAgent.trim()}` });
+      setRerouteRow(null);
+      setRerouteDraft("");
+      void load();
+    } else {
+      toast({ title: "Re-route failed", variant: "destructive" });
+    }
   }
 
   async function patchAgent(patch: Partial<Agent>) {
@@ -199,14 +233,53 @@ export default function AgentDetail() {
         )}
       </Section>
 
-      {/* 5. App sections */}
-      <Section title="App sections assigned" icon={<BookOpen className="w-4 h-4" />}>
-        <Textarea
-          defaultValue={agent.app_sections_assigned ?? ""}
-          rows={3}
-          onBlur={(e) => void patchAgent({ app_sections_assigned: e.target.value })}
-          placeholder="One section per line, e.g.&#10;/bd&#10;/proposals&#10;/exec/staffing"
-        />
+      {/* 5. App sections (live from agent_section_map) */}
+      <Section
+        title={`App sections assigned (${sectionsPrimary.length} primary · ${sectionsSecondary.length} secondary)`}
+        icon={<Map className="w-4 h-4" />}
+        right={
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => void load()} title="Refresh">
+            <RefreshCw className="w-3 h-3" />
+          </Button>
+        }
+      >
+        {sectionsPrimary.length === 0 && sectionsSecondary.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">
+            No sections mapped yet.{" "}
+            <a href="/exec/section-map" className="text-primary hover:underline">Open Section Map</a> to add.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {sectionsPrimary.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase font-bold text-emerald-700 mb-1">Primary owner</div>
+                <SectionMapTable rows={sectionsPrimary} onReroute={row => { setRerouteRow(row); setRerouteDraft(row.primary_agent); }} />
+              </div>
+            )}
+            {sectionsSecondary.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase font-bold text-blue-700 mb-1">Secondary contributor</div>
+                <SectionMapTable rows={sectionsSecondary} onReroute={row => { setRerouteRow(row); setRerouteDraft(row.primary_agent); }} />
+              </div>
+            )}
+          </div>
+        )}
+        {/* Re-route modal */}
+        {rerouteRow && (
+          <div className="mt-3 border rounded-lg p-3 bg-muted/40 space-y-2">
+            <p className="text-xs font-medium">Re-route primary owner for: <strong>{rerouteRow.subsection}</strong></p>
+            <Input
+              value={rerouteDraft}
+              onChange={e => setRerouteDraft(e.target.value)}
+              placeholder="New primary agent name…"
+              className="h-7 text-xs"
+            />
+            <div className="flex gap-2">
+              <Button size="sm" className="h-7 text-xs" onClick={() => void rerouteSection(rerouteRow, rerouteDraft)}>Save</Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setRerouteRow(null); setRerouteDraft(""); }}>Cancel</Button>
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* 6. Ideas backlog */}
@@ -304,5 +377,38 @@ function Section({ title, icon, right, children }: { title: string; icon: React.
       </div>
       {children}
     </Card>
+  );
+}
+
+const FREQ_COLORS: Record<string, string> = {
+  Daily:     "border-emerald-300 text-emerald-700",
+  Weekly:    "border-blue-300 text-blue-700",
+  Monthly:   "border-purple-300 text-purple-700",
+  Quarterly: "border-amber-300 text-amber-700",
+  Triggered: "border-slate-300 text-slate-600",
+};
+
+function SectionMapTable({ rows, onReroute }: { rows: SectionMapRow[]; onReroute: (row: SectionMapRow) => void }) {
+  return (
+    <div className="text-xs border rounded overflow-hidden">
+      <div className="grid grid-cols-[100px_100px_1fr_80px_auto] gap-0 px-2 py-1 font-bold text-[10px] uppercase text-muted-foreground bg-muted/50 border-b">
+        <div>Module</div><div>Section</div><div>Subsection</div><div>Freq</div><div></div>
+      </div>
+      {rows.map(row => (
+        <div key={row.id} className="grid grid-cols-[100px_100px_1fr_80px_auto] gap-0 px-2 py-1 border-b last:border-0 items-center hover:bg-muted/20">
+          <div className="truncate text-muted-foreground" title={row.module}>{row.module}</div>
+          <div className="truncate text-muted-foreground" title={row.section}>{row.section}</div>
+          <div className="truncate font-medium" title={row.why || row.subsection}>{row.subsection}</div>
+          <div>
+            <Badge variant="outline" className={`text-[9px] px-1 ${FREQ_COLORS[row.frequency] ?? ""}`}>{row.frequency}</Badge>
+          </div>
+          <div>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => onReroute(row)} title="Re-route primary owner">
+              ↺ Re-route
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

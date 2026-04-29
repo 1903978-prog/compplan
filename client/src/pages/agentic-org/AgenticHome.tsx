@@ -10,6 +10,7 @@ import {
   buildCoworkPrompt,
   type AgentLite, type ObjectiveLite, type IdeaLite, type TaskLite, type ConflictLite,
   type BdDeal, type ProposalLite, type InvoiceLite, type WonProjectLite, type HiringStage, type CrossAlert,
+  type SectionMapEntry,
 } from "./promptTemplates";
 
 // ─── Phase 1 — Agentic Home ────────────────────────────────────────────────
@@ -35,6 +36,7 @@ export default function AgenticHome() {
   const [wonProjects, setWonProjects] = useState<WonProjectLite[]>([]);
   const [hiringByStage, setHiringByStage] = useState<HiringStage[]>([]);
   const [employeeCount, setEmployeeCount] = useState<number>(0);
+  const [sectionMapRows, setSectionMapRows] = useState<(SectionMapEntry & { primary_agent: string })[]>([]);
   const [paused, setPaused] = useState(() => {
     try { return localStorage.getItem("agents_paused_v1") === "true"; } catch { return false; }
   });
@@ -64,7 +66,7 @@ export default function AgenticHome() {
 
   async function loadAll() {
     try {
-      const [a, o, i, t, c, bd, props, inv, wp, hs, emp] = await Promise.all([
+      const [a, o, i, t, c, bd, props, inv, wp, hs, emp, sm] = await Promise.all([
         fetch("/api/agentic/agents",     { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/objectives", { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/ideas",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
@@ -77,6 +79,8 @@ export default function AgenticHome() {
         fetch("/api/agentic/brief-data/won-projects",    { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/brief-data/hiring-pipeline", { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch("/api/agentic/brief-data/headcount",       { credentials: "include" }).then(r => r.ok ? r.json() : { count: 0 }),
+        // Section map
+        fetch("/api/agentic/section-map",                { credentials: "include" }).then(r => r.ok ? r.json() : []),
       ]);
       setAgents(a); setObjectives(o); setIdeas(i); setTasks(t); setConflicts(c);
       setBdDeals(Array.isArray(bd) ? bd : []);
@@ -85,6 +89,7 @@ export default function AgenticHome() {
       setWonProjects(Array.isArray(wp) ? wp : []);
       setHiringByStage(Array.isArray(hs) ? hs : []);
       setEmployeeCount(typeof emp?.count === "number" ? emp.count : 0);
+      setSectionMapRows(Array.isArray(sm) ? sm : []);
     } catch {
       toast({ title: "Failed to load agentic state", variant: "destructive" });
     }
@@ -215,6 +220,15 @@ export default function AgenticHome() {
       alerts.push({ agent: "CHRO", severity: "low", text: `${lateCount} candidate(s) in final stages — offer decisions possible this week.` });
     }
 
+    // Build agent→sections map (keyed by primary_agent name)
+    const agentSections = new Map<string, SectionMapEntry[]>();
+    for (const row of sectionMapRows) {
+      const key = row.primary_agent;
+      const arr = agentSections.get(key) ?? [];
+      arr.push({ module: row.module, section: row.section, subsection: row.subsection, frequency: row.frequency, why: row.why });
+      agentSections.set(key, arr);
+    }
+
     const text = buildCoworkPrompt({
       date: today,
       agents,
@@ -230,6 +244,7 @@ export default function AgenticHome() {
       hiringByStage,
       employeeCount,
       alerts,
+      agentSections,
     });
     setGenerated(text);
     void fetch("/api/agentic/log", {
