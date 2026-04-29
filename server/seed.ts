@@ -3484,5 +3484,47 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
       WHERE name ILIKE ${'%' + jd.name_fragment + '%'}
     `);
   }
+
+  // ── CEO Brief Runs (in-app daily brief feature) ──────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS ceo_brief_runs (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      generated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+      generated_by    TEXT NOT NULL,
+      raw_brief_markdown   TEXT,
+      claude_response_raw  TEXT,
+      model           TEXT,
+      token_input     INTEGER,
+      token_output    INTEGER,
+      duration_ms     INTEGER,
+      status          TEXT NOT NULL DEFAULT 'success',
+      error           TEXT
+    )
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS ceo_brief_run_decisions (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      brief_id        UUID NOT NULL REFERENCES ceo_brief_runs(id),
+      decision_id     TEXT NOT NULL,
+      type            TEXT NOT NULL,
+      agent           TEXT NOT NULL,
+      title           TEXT NOT NULL,
+      description     TEXT NOT NULL,
+      okr_link        TEXT,
+      deadline        TEXT,
+      approval_level  TEXT NOT NULL,
+      impact          INTEGER,
+      effort          INTEGER,
+      risk            INTEGER,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      status_note     TEXT,
+      modified_text   TEXT,
+      postpone_until  TEXT,
+      decided_at      TIMESTAMPTZ,
+      decided_by      TEXT,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
   }
 }

@@ -4,6 +4,8 @@ import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
 import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters } from "@shared/schema";
 import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
+import { runCeoBrief } from "./ceoBriefRunner";
+import { ceoBriefRuns, ceoBriefRunDecisions } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -7405,6 +7407,129 @@ RULES:
       const id = parseInt((req.params as any).id);
       res.json({ ok: true, cycleId: id });
       runRound2(id).catch(e => console.error("[AIOS] runRound2 uncaught:", e));
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── CEO Brief (in-app daily brief with decisions) ─────────────────────────
+
+  // POST /api/ceo-brief/generate — run a new CEO Brief and wait for it
+  app.post("/api/ceo-brief/generate", requireAuth, async (req, res) => {
+    try {
+      if (await guardApiAsync(res)) return;
+      const result = await runCeoBrief({ trigger: "manual" });
+      if (result.status === "failed") {
+        res.status(500).json({ message: result.error ?? "Brief generation failed" });
+        return;
+      }
+      // Return the full brief + decisions
+      const [brief] = await db.select().from(ceoBriefRuns).where(eq(ceoBriefRuns.id, result.briefId));
+      const decisions = await db.select().from(ceoBriefRunDecisions)
+        .where(eq(ceoBriefRunDecisions.briefId, result.briefId))
+        .orderBy(ceoBriefRunDecisions.createdAt);
+      res.json({ brief, decisions });
+    } catch (e) {
+      console.error("[CEO Brief] Generate failed:", e);
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // GET /api/ceo-brief/latest — most recent brief + decisions
+  app.get("/api/ceo-brief/latest", requireAuth, async (_req, res) => {
+    try {
+      const briefs = await db.select().from(ceoBriefRuns)
+        .orderBy(desc(ceoBriefRuns.generatedAt))
+        .limit(1);
+      if (briefs.length === 0) { res.json({ brief: null, decisions: [] }); return; }
+      const brief = briefs[0];
+      const decisions = await db.select().from(ceoBriefRunDecisions)
+        .where(eq(ceoBriefRunDecisions.briefId, brief.id))
+        .orderBy(ceoBriefRunDecisions.createdAt);
+      res.json({ brief, decisions });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/ceo-brief/history — list of briefs (summary only)
+  app.get("/api/ceo-brief/history", requireAuth, async (req, res) => {
+    try {
+      const limit = Math.max(1, Math.min(100, parseInt((req.query.limit as string) ?? "30")));
+      const briefs = await db.select().from(ceoBriefRuns)
+        .orderBy(desc(ceoBriefRuns.generatedAt))
+        .limit(limit);
+      // For each brief, count decisions and approved/rejected
+      const result = await Promise.all(briefs.map(async b => {
+        const decisions = await db.select().from(ceoBriefRunDecisions)
+          .where(eq(ceoBriefRunDecisions.briefId, b.id));
+        return {
+          id: b.id,
+          generatedAt: b.generatedAt,
+          generatedBy: b.generatedBy,
+          status: b.status,
+          durationMs: b.durationMs,
+          model: b.model,
+          tokenInput: b.tokenInput,
+          tokenOutput: b.tokenOutput,
+          decisionCount: decisions.length,
+          approvedCount: decisions.filter(d => d.status === "approved").length,
+          rejectedCount: decisions.filter(d => d.status === "rejected").length,
+          pendingCount: decisions.filter(d => d.status === "pending").length,
+        };
+      }));
+      res.json(result);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/ceo-brief/:id — full brief + decisions
+  app.get("/api/ceo-brief/:id", requireAuth, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const [brief] = await db.select().from(ceoBriefRuns).where(eq(ceoBriefRuns.id, id));
+      if (!brief) { res.status(404).json({ message: "Brief not found" }); return; }
+      const decisions = await db.select().from(ceoBriefRunDecisions)
+        .where(eq(ceoBriefRunDecisions.briefId, id))
+        .orderBy(ceoBriefRunDecisions.createdAt);
+      res.json({ brief, decisions });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // PATCH /api/ceo-brief/decisions/:id — update a decision's status/note
+  app.patch("/api/ceo-brief/decisions/:id", requireAuth, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const body = req.body as Record<string, unknown>;
+      const status = String(body.status ?? "").trim();
+      const validStatuses = ["approved", "rejected", "modified", "postponed", "pending"];
+      if (!validStatuses.includes(status)) {
+        res.status(400).json({ message: `status must be one of: ${validStatuses.join(", ")}` });
+        return;
+      }
+      if (status === "modified" && !body.modified_text) {
+        res.status(400).json({ message: "modified_text is required when status is 'modified'" });
+        return;
+      }
+      if (status === "postponed" && !body.postpone_until) {
+        res.status(400).json({ message: "postpone_until is required when status is 'postponed'" });
+        return;
+      }
+
+      const update: Record<string, unknown> = {
+        status,
+        decidedAt: new Date(),
+        decidedBy: "livio",
+      };
+      if (body.status_note)    update.statusNote    = String(body.status_note).slice(0, 500);
+      if (body.modified_text)  update.modifiedText  = String(body.modified_text).slice(0, 2000);
+      if (body.postpone_until) update.postponeUntil = String(body.postpone_until).slice(0, 20);
+
+      const updated = await db.update(ceoBriefRunDecisions)
+        .set(update as any)
+        .where(eq(ceoBriefRunDecisions.id, id))
+        .returning();
+
+      if (updated.length === 0) {
+        res.status(404).json({ message: "Decision not found" });
+        return;
+      }
+      res.json(updated[0]);
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

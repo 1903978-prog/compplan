@@ -82,6 +82,26 @@ async function main() {
       console.error("[trash] heartbeat purge failed:", e);
     }
   }, PURGE_INTERVAL_MS).unref();
+
+  // CEO Brief daily cron — runs at 05:00 UTC (= 07:00 Europe/Rome in winter CET,
+  // 06:00 in summer CEST). node-cron runs in the server process timezone (UTC on
+  // Render). The brief will be ready by the time Livio opens his laptop.
+  try {
+    const cron = await import("node-cron");
+    cron.default.schedule("0 5 * * *", async () => {
+      console.log("[CEO Brief] Scheduled run starting...");
+      try {
+        const { runCeoBrief } = await import("./ceoBriefRunner");
+        const result = await runCeoBrief({ trigger: "scheduled" });
+        console.log(`[CEO Brief] Scheduled run complete — ${result.decisionsCount} decisions`);
+      } catch (e) {
+        console.error("[CEO Brief] Scheduled run failed:", e);
+      }
+    }, { timezone: "UTC" });
+    console.log("[CEO Brief] Cron job scheduled (05:00 UTC daily)");
+  } catch (e) {
+    console.error("[CEO Brief] Failed to schedule cron:", e);
+  }
 }
 
 main();

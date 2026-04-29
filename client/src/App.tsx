@@ -45,11 +45,13 @@ import KnowledgeBase  from "@/pages/agentic-org/KnowledgeBase";
 import SectionMap     from "@/pages/agentic-org/SectionMap";
 import ExcomPage      from "@/pages/agentic-org/ExcomPage";
 import AiosCycle     from "@/pages/agentic-org/AiosCycle";
+import CeoBrief from "@/pages/CeoBrief";
+import CeoBriefHistory from "@/pages/CeoBriefHistory";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -327,10 +329,12 @@ function Navigation() {
               <NavDropdown
                 label="AIOS"
                 icon={Cpu}
-                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map", "/exec/excom", "/agentic/aios-cycle"]}
+                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map", "/exec/excom", "/agentic/aios-cycle", "/ceo-brief"]}
                 items={[
                   { href: "/agentic",            label: "Executive Dashboard", icon: Cpu },
                   { href: "/agentic/aios-cycle", label: "8am AIOS Cycle",      icon: Zap },
+                  { href: "/ceo-brief",          label: "CEO Brief",           icon: Newspaper },
+                  { href: "/ceo-brief/history",  label: "Brief History",       icon: History },
                   { href: "/exec/org-chart",     label: "Org Chart",           icon: Network },
                   { href: "/exec/okr",           label: "OKR",                 icon: Target },
                   { href: "/exec/brief-stream",  label: "Brief Stream",        icon: Activity },
@@ -511,6 +515,9 @@ function Router() {
       <Route path="/exec/section-map" component={SectionMap} />
       <Route path="/exec/excom" component={ExcomPage} />
       <Route path="/agentic/aios-cycle" component={AiosCycle} />
+      <Route path="/ceo-brief/history" component={CeoBriefHistory} />
+      <Route path="/ceo-brief/:id">{() => <CeoBrief />}</Route>
+      <Route path="/ceo-brief">{() => <CeoBrief />}</Route>
       <Route path="/bd" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />
