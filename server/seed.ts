@@ -860,6 +860,12 @@ export async function seedDatabase() {
   // Lets a case track its proposal revision count without renaming.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS revision_letter TEXT DEFAULT 'A'`);
 
+  // Win probability + expected start date — captured at case-creation time
+  // so the HR agent can forecast 24-week staffing demand from the pipeline
+  // before a proposal is finalised and moves to pricing_proposals.
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS win_probability REAL`);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS start_date TEXT`);
+
   // (Removed) Seed pricing_cases for specific reference projects (EMV01,
   // SCHA01) — these were development scaffolding for the three-timeline
   // commercial-proposal layout. The shape is now covered by real user

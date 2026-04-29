@@ -33,7 +33,7 @@ interface Employee {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const MS_DAY = 86_400_000;
 const MS_WK = 7 * MS_DAY;
-const HORIZON_WEEKS = 16;
+const HORIZON_WEEKS = 24;
 
 function startOfWeekMonday(d: Date): Date {
   const out = new Date(d);
