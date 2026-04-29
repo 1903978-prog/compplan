@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Archive, User, Bot, Mail } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Archive, User, Bot, Mail, UserPlus } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -518,15 +518,33 @@ export default function OrgChart() {
                   />
                   {grandchildren.length > 0 && (
                     <div className="relative mt-3 pt-4">
-                      {/* Vertical line down from this role */}
+                      {/* Vertical drop from this role's card */}
                       <div className="absolute left-1/2 -translate-x-1/2 top-0 w-0.5 h-2 bg-foreground/40" />
-                      {/* Horizontal line for grandchildren */}
+                      {/* Horizontal busbar — only when ≥2 children. Spans
+                          from first child's vertical drop to last child's,
+                          which is centered relative to the parent card. */}
                       {grandchildren.length > 1 && (
-                        <div className="absolute left-[10%] right-[10%] top-2 h-0.5 bg-foreground/40" />
+                        <div
+                          className="absolute h-0.5 bg-foreground/40 top-2"
+                          style={{
+                            left:  `${100 / (grandchildren.length * 2)}%`,
+                            right: `${100 / (grandchildren.length * 2)}%`,
+                          }}
+                        />
                       )}
-                      <div className="grid grid-cols-1 gap-2 relative">
+                      {/* Grandchildren grid — 1 child = single column,
+                          2+ children = side-by-side with auto-fit. Each
+                          gets its own vertical drop from the busbar. */}
+                      <div
+                        className="grid gap-2 relative"
+                        style={{
+                          gridTemplateColumns: grandchildren.length === 1
+                            ? "1fr"
+                            : `repeat(${grandchildren.length}, minmax(0, 1fr))`,
+                        }}
+                      >
                         {grandchildren.map(g => (
-                          <div key={g.id} className="relative">
+                          <div key={g.id} className="relative flex flex-col items-stretch">
                             <div className="absolute left-1/2 -translate-x-1/2 -top-2 w-0.5 h-2 bg-foreground/40" />
                             <RoleCard
                               role={g}
