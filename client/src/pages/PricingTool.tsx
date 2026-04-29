@@ -754,6 +754,8 @@ export default function PricingTool() {
   // value while all discount % stay unchanged.
   const [anchorPanel, setAnchorPanel] = useState<{ field: "net1" | "gross1" | "grossv"; draft: string } | null>(null);
   const anchorCancelledRef = useRef(false);
+  // Inline custom-duration editor (replaces window.prompt for "Other" in waterfall)
+  const [durationPanel, setDurationPanel] = useState<string | null>(null);
   // 3-option commercial-proposal block visibility is now driven by the
   // persisted form.proposal_options_count (1 = hidden / single quote,
   // 3 = visible / three-option layout). No separate showThreeOptions
@@ -5321,12 +5323,9 @@ export default function PricingTool() {
                     value={String(waterfallDuration ?? form.duration_weeks)}
                     onValueChange={v => {
                       if (v === "other") {
-                        const weeks = window.prompt("Enter number of weeks:", "10");
-                        if (weeks && !isNaN(Number(weeks)) && Number(weeks) > 0) {
-                          setWaterfallDuration(Number(weeks));
-                          setForm(f => ({ ...f, duration_weeks: Number(weeks) }));
-                        }
+                        setDurationPanel("");
                       } else {
+                        setDurationPanel(null);
                         setWaterfallDuration(Number(v));
                         setForm(f => ({ ...f, duration_weeks: Number(v) }));
                       }
@@ -5338,6 +5337,32 @@ export default function PricingTool() {
                       <SelectItem value="other">Other…</SelectItem>
                     </SelectContent>
                   </Select>
+                  {durationPanel !== null && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <Input
+                        autoFocus
+                        type="number"
+                        min={1}
+                        placeholder="weeks"
+                        value={durationPanel}
+                        onChange={e => setDurationPanel(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                          if (e.key === "Escape") setDurationPanel(null);
+                        }}
+                        onBlur={() => {
+                          const w = parseInt(durationPanel, 10);
+                          if (w > 0) {
+                            setWaterfallDuration(w);
+                            setForm(f => ({ ...f, duration_weeks: w }));
+                          }
+                          setDurationPanel(null);
+                        }}
+                        className="h-7 text-sm w-20 font-mono"
+                      />
+                      <span className="text-xs text-muted-foreground">wks</span>
+                    </div>
+                  )}
                 </div>
                 {/* Price adjustment ±500 */}
                 <div className="space-y-1">

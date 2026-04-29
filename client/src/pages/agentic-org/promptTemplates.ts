@@ -19,7 +19,7 @@ export interface ConflictLite  { id: number; title: string; severity: string | n
 
 // App-section data shapes (fetched client-side for the 8am prompt)
 export interface BdDeal        { name: string; client_name: string | null; stage: string | null; amount: number | null; probability: number | null; close_date: string | null; currency: string | null; }
-export interface ProposalLite  { project_name: string; client_name: string | null; outcome: string | null; total_fee: number | null; net_total?: number | null; weekly_price?: number | null; duration_weeks?: number | null; win_probability: number | null; loss_reason: string | null; }
+export interface ProposalLite  { project_name: string; client_name: string | null; outcome: string | null; total_fee?: number | null; net_total?: number | null; weekly_price?: number | null; duration_weeks?: number | null; win_probability: number | null; loss_reason: string | null; }
 export interface InvoiceLite   { client_name: string | null; due_amount: number | null; due_date: string | null; state: string | null; currency: string | null; }
 export interface WonProjectLite{ project_name: string; client_name: string | null; status: string | null; start_date: string | null; end_date: string | null; total_amount: number | null; currency: string | null; }
 export interface HiringStage   { stage: string; count: number; }
