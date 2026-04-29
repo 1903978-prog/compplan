@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw, TrendingUp, GraduationCap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Agent {
@@ -16,6 +16,22 @@ interface Agent {
   decision_rights_boss: string | null;
   decision_rights_ceo: string | null;
   decision_rights_livio: string | null;
+  skill_gaps: string | null;
+  training_plan: string | null;
+  readiness_scores: string | null;  // JSON string
+}
+
+const READINESS_DIMS = [
+  { key: "role_clarity",         label: "Role clarity" },
+  { key: "data_access",          label: "Data access" },
+  { key: "skill_knowledge",      label: "Skill & knowledge" },
+  { key: "output_quality",       label: "Output quality" },
+  { key: "decision_discipline",  label: "Decision discipline" },
+  { key: "okr_progress",         label: "OKR progress" },
+] as const;
+
+function parseReadiness(raw: string | null): Record<string, number> {
+  try { return raw ? JSON.parse(raw) : {}; } catch { return {}; }
 }
 interface SectionMapRow {
   id: number; module: string; section: string; subsection: string;
@@ -364,7 +380,125 @@ export default function AgentDetail() {
           </div>
         )}
       </Section>
+
+      {/* 10. Performance Review — computed stats + 6-dimension readiness score */}
+      <PerformanceReviewSection
+        agent={agent}
+        tasks={tasks}
+        ideas={ideas}
+        objectives={objectives}
+        krs={krs}
+        onSave={(scores) => void patchAgent({ readiness_scores: JSON.stringify(scores) })}
+      />
+
+      {/* 11. Training Plan */}
+      <Section title="Training plan" icon={<GraduationCap className="w-4 h-4" />}>
+        <div className="space-y-3">
+          <div>
+            <label className="text-[10px] uppercase font-bold text-muted-foreground block mb-1">Skill gaps</label>
+            <Textarea
+              defaultValue={agent.skill_gaps ?? ""}
+              rows={3}
+              onBlur={(e) => void patchAgent({ skill_gaps: e.target.value })}
+              placeholder="List identified skill or knowledge gaps, one per line…"
+              className="text-xs"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase font-bold text-muted-foreground block mb-1">Training plan</label>
+            <Textarea
+              defaultValue={agent.training_plan ?? ""}
+              rows={5}
+              onBlur={(e) => void patchAgent({ training_plan: e.target.value })}
+              placeholder={"Format:\nSkill Gap: …\nTraining Objective: …\nMaterial Assigned: …\nExpected Behaviour Change: …\nDeadline: …\nHow Measured: …"}
+              className="text-xs font-mono"
+            />
+          </div>
+        </div>
+      </Section>
     </div>
+  );
+}
+
+// ── Performance Review sub-component ────────────────────────────────────────
+function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave }: {
+  agent: Agent;
+  tasks: Task[];
+  ideas: Idea[];
+  objectives: Objective[];
+  krs: KeyResult[];
+  onSave: (scores: Record<string, number>) => void;
+}) {
+  const [scores, setScores] = useState<Record<string, number>>(() => parseReadiness(agent.readiness_scores));
+
+  // Reparse when agent changes (e.g. after save)
+  useEffect(() => { setScores(parseReadiness(agent.readiness_scores)); }, [agent.readiness_scores]);
+
+  // Computed stats from live data
+  const totalTasks   = tasks.length;
+  const doneTasks    = tasks.filter(t => t.status === "done").length;
+  const completionPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+  const avgIdeaScore = ideas.length > 0
+    ? Math.round(ideas.reduce((s, i) => s + (i.total_score ?? 0), 0) / ideas.length)
+    : 0;
+  const openIdeas    = ideas.filter(i => i.status === "proposed").length;
+  const krCount      = krs.length;
+  const krWithProgress = krs.filter(k => k.current_value && k.target_value && k.current_value !== "0").length;
+
+  const overallReadiness = READINESS_DIMS.length > 0
+    ? Math.round(READINESS_DIMS.reduce((s, d) => s + (scores[d.key] ?? 0), 0) / READINESS_DIMS.length)
+    : 0;
+
+  function setDim(key: string, val: number) {
+    const next = { ...scores, [key]: val };
+    setScores(next);
+    onSave(next);
+  }
+
+  const readinessColor = overallReadiness >= 70 ? "text-emerald-600" : overallReadiness >= 40 ? "text-amber-600" : "text-red-600";
+
+  return (
+    <Section title="Performance review" icon={<TrendingUp className="w-4 h-4" />}>
+      {/* Computed stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {[
+          { label: "Task completion", value: `${completionPct}%`, sub: `${doneTasks}/${totalTasks} tasks` },
+          { label: "Avg idea score",  value: avgIdeaScore > 0 ? String(avgIdeaScore) : "—", sub: `${openIdeas} proposed` },
+          { label: "KR coverage",     value: krCount > 0 ? `${krWithProgress}/${krCount}` : "—", sub: "key results with progress" },
+          { label: "Readiness",       value: `${overallReadiness}`, sub: "/ 100 avg",
+            valueClass: readinessColor },
+        ].map(stat => (
+          <div key={stat.label} className="border rounded p-2 text-center">
+            <div className={`text-xl font-bold ${stat.valueClass ?? ""}`}>{stat.value}</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">{stat.label}</div>
+            <div className="text-[9px] text-muted-foreground">{stat.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 6-dimension readiness sliders */}
+      <div className="text-[10px] uppercase font-bold text-muted-foreground mb-2">Agent readiness score (edit each dimension 0–100)</div>
+      <div className="grid md:grid-cols-2 gap-x-6 gap-y-2">
+        {READINESS_DIMS.map(d => {
+          const val = scores[d.key] ?? 0;
+          const barColor = val >= 70 ? "bg-emerald-500" : val >= 40 ? "bg-amber-500" : "bg-red-500";
+          return (
+            <div key={d.key} className="flex items-center gap-2">
+              <span className="text-xs w-36 shrink-0">{d.label}</span>
+              <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${val}%` }} />
+              </div>
+              <input
+                type="number" min={0} max={100}
+                value={val}
+                onChange={e => setDim(d.key, Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                className="w-12 h-6 text-xs text-center border rounded bg-background"
+              />
+            </div>
+          );
+        })}
+      </div>
+    </Section>
   );
 }
 

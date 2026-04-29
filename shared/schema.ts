@@ -1195,6 +1195,9 @@ export const agents = pgTable("agents", {
   decision_rights_boss: text("decision_rights_boss"),
   decision_rights_ceo: text("decision_rights_ceo"),
   decision_rights_livio: text("decision_rights_livio"),
+  skill_gaps: text("skill_gaps"),
+  training_plan: text("training_plan"),
+  readiness_scores: text("readiness_scores"),   // JSON: { role_clarity, data_access, skill_knowledge, output_quality, decision_discipline, okr_progress }
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });

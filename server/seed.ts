@@ -1941,6 +1941,10 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
       updated_at TEXT NOT NULL
     )
   `);
+  // Performance Review + Training Plan columns (added in Phase 5)
+  await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS skill_gaps TEXT`);
+  await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS training_plan TEXT`);
+  await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS readiness_scores TEXT`);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS objectives (
       id SERIAL PRIMARY KEY,
