@@ -180,6 +180,33 @@ export function buildCoworkPrompt(input: {
   }
   lines.push("");
 
+  // ── Agent maturity scorecard ──────────────────────────────────────────
+  // Deliverables = open tasks + ideas + objectives. Target: ≥ 9 per agent.
+  // Agents below threshold are flagged for COO development planning.
+  lines.push("## Agent maturity — deliverable scorecard");
+  lines.push("Target: each agent must have ≥ 9 active deliverables (open tasks + ideas + objectives combined).");
+  lines.push("Agents below threshold require a COO development plan (see mandate below).");
+  lines.push("");
+  const DELIVERABLE_THRESHOLD = 9;
+  const underperforming: string[] = [];
+  for (const a of input.agents) {
+    const objCount  = input.objectives.filter(o => o.agent_id === a.id).length;
+    const taskCount = input.openTasks.filter(t => t.agent_id === a.id).length;
+    const ideaCount = (input.recentIdeasByAgent.get(a.id) ?? []).length;
+    const total     = objCount + taskCount + ideaCount;
+    const flag      = total < DELIVERABLE_THRESHOLD ? " ⚠ BELOW THRESHOLD" : "";
+    lines.push(`- **${a.name}**: objectives=${objCount} · tasks=${taskCount} · ideas=${ideaCount} → total=${total}${flag}`);
+    if (total < DELIVERABLE_THRESHOLD) underperforming.push(a.name);
+  }
+  if (underperforming.length === 0) {
+    lines.push("✅ All agents meet the 9-deliverable threshold.");
+  } else {
+    lines.push("");
+    lines.push(`⚠️ Agents below threshold: ${underperforming.join(", ")}`);
+    lines.push("COO must produce a development plan for each (see mandate).");
+  }
+  lines.push("");
+
   // Conflicts
   if (input.openConflicts.length > 0) {
     lines.push("## Open conflicts");
@@ -197,6 +224,8 @@ export function buildCoworkPrompt(input: {
   lines.push("- Prioritise items whose absence would cost EBITDA, cash, reputation, or capacity in the next 30 days.");
   lines.push("");
   lines.push("**Cross-agent reasoning required**: if high-probability deals would overwhelm delivery capacity, alert CHRO. If projects end with no follow-on in pipeline, alert SVP Sales. If invoices are overdue > 30 days, escalate to CFO.");
+  lines.push("");
+  lines.push("**Agent development (COO mandate)**: For every agent listed as ⚠ BELOW THRESHOLD in the maturity scorecard above, the COO must immediately produce a structured development plan that covers: (1) **Knowledge expansion** — identify missing knowledge notes and create at least 3 new knowledge items covering the agent's domain and responsibilities; (2) **Mission & objectives improvement** — rewrite the agent's mission to be more specific and measurable, and add at least 3 new objectives aligned to company OKRs; (3) **Process creation** — define at least 3 repeatable processes or playbooks the agent must follow. Surface each development plan as an ACTION block with AGENT: COO and APPROVAL_LEVEL: boss.");
   lines.push("");
   lines.push("Detect any conflicts (incompatible actions, resource collisions, pricing/margin tension) and surface them as `TYPE: conflict` blocks.");
   lines.push("");
