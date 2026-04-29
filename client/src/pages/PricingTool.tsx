@@ -6564,17 +6564,24 @@ export default function PricingTool() {
                     // weekly_price for manually-entered/won proposals is
                     // total_fee ÷ weeks — not NET1. canonical_net_weekly was
                     // explicitly computed and stored on every case save.
-                    const caseNet1Map = new Map<string, number>(
-                      cases
-                        .filter((c: any) => c.project_name && (c.recommendation?.canonical_net_weekly ?? c.recommendation?.target_weekly ?? 0) > 0)
-                        .map((c: any) => [
-                          (c.project_name as string).trim().toLowerCase(),
-                          Math.round(c.recommendation.canonical_net_weekly ?? c.recommendation.target_weekly),
-                        ])
-                    );
+                    // Build NET1 lookup: index by BOTH exact case name AND base
+                    // code (trailing-letter suffix stripped). Cases are named
+                    // "COE03A" (current) while old won proposals are stored as
+                    // "COE03" — the suffix-stripped key "coe03" bridges them.
+                    const caseNet1Map = new Map<string, number>();
+                    cases
+                      .filter((c: any) => c.project_name && (c.recommendation?.canonical_net_weekly ?? c.recommendation?.target_weekly ?? 0) > 0)
+                      .forEach((c: any) => {
+                        const name = (c.project_name as string).trim().toLowerCase();
+                        const net1 = Math.round(c.recommendation.canonical_net_weekly ?? c.recommendation.target_weekly);
+                        caseNet1Map.set(name, net1);
+                        // Also store under base code, e.g. "coe03a" → key "coe03"
+                        const base = name.replace(/[a-z]+$/, "");
+                        if (base !== name && !caseNet1Map.has(base)) caseNet1Map.set(base, net1);
+                      });
                     const proposalNet1 = (p: PricingProposal): number => {
-                      const net1 = caseNet1Map.get((p.project_name ?? "").trim().toLowerCase());
-                      return net1 ?? p.weekly_price;
+                      const key = (p.project_name ?? "").trim().toLowerCase();
+                      return caseNet1Map.get(key) ?? caseNet1Map.get(key.replace(/[a-z]+$/, "")) ?? p.weekly_price;
                     };
 
                     const renderSection = (s: typeof sections[number]) => {
