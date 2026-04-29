@@ -233,46 +233,51 @@ function emptyProposal(): PricingProposal {
 // (removed per user request — table has no such row). Three timeline
 // options are the headline structure, each showing the full discount
 // stack so the proposal text reads 1:1 with the table.
-const DEFAULT_PROPOSAL_TEMPLATE = `{{#if COMMITMENT_OPTIONS_BLOCK}}This Statement of Work covers an engagement delivered by a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}). The professional fees depend on the timeline selected by the client. Three alternative options are proposed below, with Net Professional Fees ranging from {{OPTION_1_NET_TOTAL}} ({{OPTION_1_WEEKS}} weeks) to {{OPTION_3_NET_TOTAL}} ({{OPTION_3_WEEKS}} weeks).{{/if}}{{#if NO_COMMITMENT_BLOCK}}The standard professional fees for this Statement of Work, covering a {{ENGAGEMENT_DURATION_WEEKS}}-week engagement and a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}), amount to {{STANDARD_PROFESSIONAL_FEES}}.{{/if}}
+const DEFAULT_PROPOSAL_TEMPLATE = `{{#if COMMITMENT_OPTIONS_BLOCK}}This Statement of Work covers an engagement delivered by a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}). The professional fees depend on the timeline selected by the client. Three alternative options are proposed below, with Net Professional Fees ranging from {{OPTION_1_NET_TOTAL}} ({{OPTION_1_WEEKS}} weeks) to {{OPTION_3_NET_TOTAL}} ({{OPTION_3_WEEKS}} weeks).{{/if}}{{#if NO_COMMITMENT_BLOCK}}The standard professional fees for this Statement of Work, covering a {{ENGAGEMENT_DURATION_WEEKS}}-week engagement and a team of {{TEAM_SIZE}} professionals ({{TEAM_COMPOSITION}}), amount to {{NO_COMMIT_GROSS}}.{{/if}}
 
 {{#if COMMITMENT_OPTIONS_BLOCK}}
-In consideration of the parties' intention to establish a long-term partnership, Eendigo is pleased to propose three alternative timeline options for this engagement. The weekly rate and team composition remain identical across all three; the client may choose the option that best fits their objectives and speed of execution.
+In consideration of the parties' intention to establish a long-term partnership, Eendigo is pleased to propose three alternative timeline options for this engagement. The weekly rate and team composition remain identical across all three; the client may choose the option that best fits their objectives and speed of execution. Each applicable incentive below is calculated sequentially on the remaining professional fees after application of the preceding incentive.
 
 **Option 1 — {{OPTION_1_WEEKS}} weeks**
-- Gross total price: {{OPTION_1_GROSS_TOTAL}}
-{{#if OPTION_1_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_1_ONE_OFF_AMOUNT}}
-{{/if}}{{#if OPTION_1_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_1_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
-{{/if}}{{#if OPTION_1_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_1_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
-{{/if}}{{#if OPTION_1_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_1_COMMIT_PCT}}%): −{{OPTION_1_COMMIT_AMOUNT}}
-{{/if}}- **Net total price: {{OPTION_1_NET_TOTAL}}**
+The gross total price is {{OPTION_1_GROSS_TOTAL}}.
+{{#if OPTION_1_ONE_OFF_AMOUNT}}One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}%, equal to {{OPTION_1_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}, reducing the professional fees to {{OPTION_1_ONE_OFF_AFTER}}.
+{{/if}}{{#if OPTION_1_SUCCESS_FEE_AMOUNT}}Success-Fee Rebate: {{SUCCESS_FEE_REBATE_PERCENT}}%, equal to {{OPTION_1_SUCCESS_FEE_AMOUNT}}, calculated on the remaining professional fees after the One-Off Discount.
+{{/if}}{{#if OPTION_1_PROMPT_AMOUNT}}Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%, equal to {{OPTION_1_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms.
+{{/if}}{{#if OPTION_1_REBATE_AMOUNT}}Conditional Rebate: {{REBATE_PERCENT}}%, equal to {{OPTION_1_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work.
+{{/if}}{{#if OPTION_1_COMMIT_AMOUNT}}Additional commitment discount: {{OPTION_1_COMMIT_PCT}}%, equal to {{OPTION_1_COMMIT_AMOUNT}}.
+{{/if}}**Net Professional Fees: {{OPTION_1_NET_TOTAL}}.**
 
 **Option 2 — {{OPTION_2_WEEKS}} weeks**
-- Gross total price: {{OPTION_2_GROSS_TOTAL}}
-{{#if OPTION_2_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_2_ONE_OFF_AMOUNT}}
-{{/if}}{{#if OPTION_2_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_2_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
-{{/if}}{{#if OPTION_2_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_2_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
-{{/if}}{{#if OPTION_2_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_2_COMMIT_PCT}}%): −{{OPTION_2_COMMIT_AMOUNT}}, granted in recognition of the extended engagement
-{{/if}}- **Net total price: {{OPTION_2_NET_TOTAL}}**
+The gross total price is {{OPTION_2_GROSS_TOTAL}}.
+{{#if OPTION_2_ONE_OFF_AMOUNT}}One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}%, equal to {{OPTION_2_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}, reducing the professional fees to {{OPTION_2_ONE_OFF_AFTER}}.
+{{/if}}{{#if OPTION_2_SUCCESS_FEE_AMOUNT}}Success-Fee Rebate: {{SUCCESS_FEE_REBATE_PERCENT}}%, equal to {{OPTION_2_SUCCESS_FEE_AMOUNT}}, calculated on the remaining professional fees after the One-Off Discount.
+{{/if}}{{#if OPTION_2_PROMPT_AMOUNT}}Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%, equal to {{OPTION_2_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms.
+{{/if}}{{#if OPTION_2_REBATE_AMOUNT}}Conditional Rebate: {{REBATE_PERCENT}}%, equal to {{OPTION_2_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work.
+{{/if}}{{#if OPTION_2_COMMIT_AMOUNT}}Additional commitment discount: {{OPTION_2_COMMIT_PCT}}%, equal to {{OPTION_2_COMMIT_AMOUNT}}, granted in recognition of the extended engagement.
+{{/if}}**Net Professional Fees: {{OPTION_2_NET_TOTAL}}.**
 
 **Option 3 — {{OPTION_3_WEEKS}} weeks**
-- Gross total price: {{OPTION_3_GROSS_TOTAL}}
-{{#if OPTION_3_ONE_OFF_AMOUNT}}- One-Off discount ({{ONE_OFF_DISCOUNT_PERCENT}}%): −{{OPTION_3_ONE_OFF_AMOUNT}}
-{{/if}}{{#if OPTION_3_PROMPT_AMOUNT}}- Prompt Payment discount ({{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%): −{{OPTION_3_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms
-{{/if}}{{#if OPTION_3_REBATE_AMOUNT}}- Rebate ({{REBATE_PERCENT}}%): −{{OPTION_3_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work
-{{/if}}{{#if OPTION_3_COMMIT_AMOUNT}}- Additional commitment discount ({{OPTION_3_COMMIT_PCT}}%): −{{OPTION_3_COMMIT_AMOUNT}}, granted in recognition of the longer-term partnership
-{{/if}}- **Net total price: {{OPTION_3_NET_TOTAL}}**
+The gross total price is {{OPTION_3_GROSS_TOTAL}}.
+{{#if OPTION_3_ONE_OFF_AMOUNT}}One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}%, equal to {{OPTION_3_ONE_OFF_AMOUNT}}{{PE_FUND_CLAUSE}}, reducing the professional fees to {{OPTION_3_ONE_OFF_AFTER}}.
+{{/if}}{{#if OPTION_3_SUCCESS_FEE_AMOUNT}}Success-Fee Rebate: {{SUCCESS_FEE_REBATE_PERCENT}}%, equal to {{OPTION_3_SUCCESS_FEE_AMOUNT}}, calculated on the remaining professional fees after the One-Off Discount.
+{{/if}}{{#if OPTION_3_PROMPT_AMOUNT}}Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%, equal to {{OPTION_3_PROMPT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms.
+{{/if}}{{#if OPTION_3_REBATE_AMOUNT}}Conditional Rebate: {{REBATE_PERCENT}}%, equal to {{OPTION_3_REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work.
+{{/if}}{{#if OPTION_3_COMMIT_AMOUNT}}Additional commitment discount: {{OPTION_3_COMMIT_PCT}}%, equal to {{OPTION_3_COMMIT_AMOUNT}}, granted in recognition of the longer-term partnership.
+{{/if}}**Net Professional Fees: {{OPTION_3_NET_TOTAL}}.**
 
 The additional commitment discount is contingent upon the client confirming the selected timeline at contract signing. All other commercial terms (team, methodology, governance, deliverables) remain unchanged across the three options. The fees shall be invoiced in equal instalments over the engagement, as detailed in the Statement of Work.
 {{/if}}
 
 {{#if NO_COMMITMENT_BLOCK}}
-In consideration of the parties' intention to establish a long-term partnership, the following commercial incentives may apply, where applicable:
+{{#if HAS_DISCOUNTS}}In consideration of the parties' intention to establish a long-term partnership, Eendigo is pleased to offer the following incentives. Each incentive is calculated sequentially on the remaining professional fees after application of the preceding incentive:
 
-{{#if ONE_OFF_DISCOUNT_PERCENT}}- One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}% (equal to {{ONE_OFF_DISCOUNT_AMOUNT}}){{PE_FUND_CLAUSE}}.
-{{/if}}{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}- Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}% (equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}), applicable only if payment is received in full within the agreed payment terms.
-{{/if}}{{#if REBATE_PERCENT}}- Rebate: {{REBATE_PERCENT}}% (equal to {{REBATE_AMOUNT}}), subject to the conditions set out in this Statement of Work.
+{{#if ONE_OFF_DISCOUNT_PERCENT}}One-Off Discount: {{ONE_OFF_DISCOUNT_PERCENT}}%, equal to {{ONE_OFF_DISCOUNT_AMOUNT}}{{PE_FUND_CLAUSE}}, reducing the professional fees to {{ONE_OFF_AFTER_AMOUNT}}.
+{{/if}}{{#if SUCCESS_FEE_REBATE_PERCENT}}Success-Fee Rebate: {{SUCCESS_FEE_REBATE_PERCENT}}%, equal to {{SUCCESS_FEE_REBATE_AMOUNT}}, calculated on the remaining professional fees after the One-Off Discount.
+{{/if}}{{#if PROMPT_PAYMENT_DISCOUNT_PERCENT}}Prompt Payment Discount: {{PROMPT_PAYMENT_DISCOUNT_PERCENT}}%, equal to {{PROMPT_PAYMENT_DISCOUNT_AMOUNT}}, applicable only if payment is received in full within the agreed payment terms.
+{{/if}}{{#if REBATE_PERCENT}}Conditional Rebate: {{REBATE_PERCENT}}%, equal to {{REBATE_AMOUNT}}, subject to the conditions set out in this Statement of Work.
 {{/if}}
 Accordingly, assuming all applicable incentives are achieved, the Net Professional Fees amount to {{NET_TOTAL}}.
+{{/if}}
 {{/if}}`;
 
 // Fixed staffing roles shown in the build-up (display label → admin role_name substring match)
@@ -6894,13 +6899,17 @@ export default function PricingTool() {
                     // Headline = GROSSV (the all-inclusive number we report)
                     const headlineGross = grossVTotal;
 
-                    // Identify specific discount types by name pattern
+                    // Identify specific discount types by name pattern.
+                    // successFeeDisc matched BEFORE rebate so "Success-Fee Rebate"
+                    // doesn't accidentally land in the generic rebate bucket.
                     const promptPayment = enabledDisc.find(d => /prompt|payment/i.test(d.name));
                     const oneOff = enabledDisc.find(d => /one.?off/i.test(d.name));
-                    const rebate = enabledDisc.find(d => /rebate/i.test(d.name));
+                    const successFeeDisc = enabledDisc.find(d => /success.?fee/i.test(d.name));
+                    const rebate = enabledDisc.find(d => /rebate/i.test(d.name) && !/success/i.test(d.name));
 
                     const promptPct = promptPayment?.pct ?? 0;
                     const oneOffPct = oneOff?.pct ?? 0;
+                    const successFeePct = successFeeDisc?.pct ?? 0;
                     const rebatePct = rebate?.pct ?? 0;
                     const promptAmt = promptPct > 0 ? Math.round(grossTotal * promptPct / 100) : 0;
                     const oneOffAmt = oneOffPct > 0 ? Math.round(grossTotal * oneOffPct / 100) : 0;
@@ -6957,6 +6966,8 @@ export default function PricingTool() {
                         oneOffAmt: perDisc["oneoff"] ?? 0,
                         promptAmt: perDisc["prompt_payment"] ?? 0,
                         rebateAmt: perDisc["rebate"] ?? 0,
+                        // Dynamic: uses whatever id the success-fee discount has
+                        successFeeAmt: successFeeDisc ? (perDisc[successFeeDisc.id] ?? 0) : 0,
                         commitAmt,
                       };
                     };
@@ -7015,8 +7026,22 @@ export default function PricingTool() {
                       PE_FUND_CLAUSE: form.fund_name ? `, granted in connection with ${form.fund_name}` : "",
                       REBATE_PERCENT: rebatePct > 0 ? String(rebatePct) : "",
                       REBATE_AMOUNT: rebatePct > 0 ? fmtP(rebateAmt) : "",
-                      // Success fee intentionally dropped from default
-                      // template — the table above has no success-fee row.
+                      // Sequential discount helpers for the new proposal format.
+                      // NO_COMMIT_GROSS = gross before any discounts (opt1.gross).
+                      // ONE_OFF_AFTER_AMOUNT = remaining after one-off (gross × (1-oneOff%)).
+                      // SUCCESS_FEE_REBATE vars: computed sequentially via opt1.
+                      // OPTION_X_ONE_OFF_AFTER / OPTION_X_SUCCESS_FEE_AMOUNT: per-option.
+                      NO_COMMIT_GROSS: fmtP(opt1.gross),
+                      ONE_OFF_AFTER_AMOUNT: oneOffPct > 0 ? fmtP(Math.round(opt1.gross * (1 - oneOffPct / 100))) : "",
+                      SUCCESS_FEE_REBATE_PERCENT: successFeePct > 0 ? String(successFeePct) : "",
+                      SUCCESS_FEE_REBATE_AMOUNT: opt1.successFeeAmt > 0 ? fmtP(opt1.successFeeAmt) : "",
+                      HAS_DISCOUNTS: (oneOffPct > 0 || promptPct > 0 || rebatePct > 0 || successFeePct > 0) ? "yes" : "",
+                      OPTION_1_ONE_OFF_AFTER: oneOffPct > 0 ? fmtP(Math.round(opt1.gross * (1 - oneOffPct / 100))) : "",
+                      OPTION_2_ONE_OFF_AFTER: oneOffPct > 0 ? fmtP(Math.round(opt2.gross * (1 - oneOffPct / 100))) : "",
+                      OPTION_3_ONE_OFF_AFTER: oneOffPct > 0 ? fmtP(Math.round(opt3.gross * (1 - oneOffPct / 100))) : "",
+                      OPTION_1_SUCCESS_FEE_AMOUNT: opt1.successFeeAmt > 0 ? fmtP(opt1.successFeeAmt) : "",
+                      OPTION_2_SUCCESS_FEE_AMOUNT: opt2.successFeeAmt > 0 ? fmtP(opt2.successFeeAmt) : "",
+                      OPTION_3_SUCCESS_FEE_AMOUNT: opt3.successFeeAmt > 0 ? fmtP(opt3.successFeeAmt) : "",
                       NET_PROFESSIONAL_FEES_EXCL_SUCCESS_FEE: fmtP(netTotal),
                       NUMBER_OF_INVOICES: String(invoiceCount),
                       ADMINISTRATION_FEE_PERCENT: String(adminFeePct),
