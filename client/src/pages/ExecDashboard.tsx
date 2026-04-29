@@ -48,10 +48,14 @@ interface PricingProposal {
   project_name: string | null;
   client_name: string | null;
   total_fee: number | null;
+  weekly_price: number;
+  duration_weeks: number | null;
   outcome: "pending" | "won" | "lost" | null;
   proposal_date: string | null;
   region: string | null;
   currency: string | null;
+  end_date?: string | null;
+  last_invoice_at?: string | null;
 }
 
 interface WonProject {
@@ -286,6 +290,33 @@ export default function ExecDashboard() {
     return { openCount: open.length, outstanding, overdue, overdueCount, overdue60 };
   }, [invoices]);
 
+  // ─── NET1 lookup: case → canonical_net_weekly ────────────────────────
+  // Mirrors PricingTool's logic — all monetary figures use the pricing
+  // engine's NET1, not stored total_fee (which may be stale).
+  const dashNet1Map = useMemo(() => {
+    const m = new Map<string, number>();
+    pricingCases
+      .filter((c: any) => c.project_name && (c.recommendation?.canonical_net_weekly ?? c.recommendation?.target_weekly ?? 0) > 0)
+      .forEach((c: any) => {
+        const name = (c.project_name as string).trim().toLowerCase();
+        const net1 = Math.round(c.recommendation.canonical_net_weekly ?? c.recommendation.target_weekly);
+        m.set(name, net1);
+        const base = name.replace(/[a-z]+$/, "");
+        if (base !== name && !m.has(base)) m.set(base, net1);
+      });
+    return m;
+  }, [pricingCases]);
+
+  const propNet1 = (p: PricingProposal): number => {
+    const key = (p.project_name ?? "").trim().toLowerCase();
+    return dashNet1Map.get(key) ?? dashNet1Map.get(key.replace(/[a-z]+$/, "")) ?? p.weekly_price;
+  };
+  const propNet1Total = (p: PricingProposal): number => {
+    const wk = propNet1(p);
+    const weeks = p.duration_weeks ?? 0;
+    return weeks > 0 ? Math.round(wk * weeks) : (p.total_fee ?? 0);
+  };
+
   // ─── BD pipeline (last 12 months of pricing proposals) ───────────────
   const bd = useMemo(() => {
     const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
@@ -300,7 +331,7 @@ export default function ExecDashboard() {
     const lost    = recent.filter(p => p.outcome === "lost");
 
     const sumFee = (list: PricingProposal[]) =>
-      list.reduce((s, p) => s + toEUR(p.total_fee, p.currency), 0);
+      list.reduce((s, p) => s + propNet1Total(p), 0);
 
     const decided = won.length + lost.length;
     const winRate = decided > 0 ? Math.round((won.length / decided) * 100) : 0;
@@ -321,7 +352,7 @@ export default function ExecDashboard() {
       lostValue: sumFee(lost),
       winRate,
     };
-  }, [proposals]);
+  }, [proposals, dashNet1Map]);
 
   // ─── Active projects from wonProjects ────────────────────────────────
   const active = useMemo(() => {
@@ -339,7 +370,7 @@ export default function ExecDashboard() {
     const list = proposals
       .filter(p => p.outcome === "won" && p.end_date && p.end_date >= todayIso)
       .sort((a, b) => String(a.end_date ?? "").localeCompare(String(b.end_date ?? "")));
-    const totalValue = list.reduce((s, p) => s + toEUR(p.total_fee, p.currency), 0);
+    const totalValue = list.reduce((s, p) => s + propNet1Total(p), 0);
     // "Needs invoice" = no last_invoice_at OR last_invoice_at >30d ago
     const todayMs = Date.now();
     const needsInvoice = list.filter(p => {
@@ -349,7 +380,7 @@ export default function ExecDashboard() {
       return (todayMs - last) > 30 * 86_400_000;
     });
     return { list, count: list.length, totalValue, needsInvoice };
-  }, [proposals]);
+  }, [proposals, dashNet1Map]);
 
   // ─── Recent BD activity — last 10 proposals ──────────────────────────
   const recentBD = useMemo(() => {
@@ -448,7 +479,7 @@ export default function ExecDashboard() {
                         ) : <span className="text-muted-foreground italic">—</span>}
                       </td>
                       <td className="py-1.5 pr-3 text-right font-mono" data-privacy="blur">
-                        {p.total_fee ? eur(p.total_fee) : "—"}
+                        {propNet1Total(p) > 0 ? eur(propNet1Total(p)) : "—"}
                       </td>
                       <td className="py-1.5 pr-3">
                         {lastInv ? (
@@ -581,7 +612,7 @@ export default function ExecDashboard() {
                       <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
                     </span>
                     <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
-                      {eur(toEUR(p.total_fee, p.currency))}
+                      {eur(propNet1Total(p))}
                     </span>
                   </Link>
                 ))}
@@ -636,7 +667,7 @@ export default function ExecDashboard() {
                       <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
                     </span>
                     <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
-                      {eur(toEUR(p.total_fee, p.currency))}
+                      {eur(propNet1Total(p))}
                     </span>
                   </div>
                 );

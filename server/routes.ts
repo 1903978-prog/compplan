@@ -1274,18 +1274,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const dur = Number(caseRow.duration_weeks ?? 0);
     const totalFee = weeklyNet > 0 && dur > 0 ? Math.round(weeklyNet * dur) : 0;
 
-    // If a pending TBD already exists, refresh its weekly_price + total_fee
-    // so a re-saved case (with updated recommendation) doesn't leave a stale
-    // weekly behind. Won/Lost are user-decided, never touched.
-    const matching = all.find(p => (p.project_name ?? "").trim().toLowerCase() === lower);
+    // If a pending TBD already exists (exact name OR base-code match),
+    // refresh its project_name (to match the case), weekly_price, and
+    // total_fee so a re-saved case doesn't leave stale figures behind.
+    // Won/Lost rows are user-decided — never touched.
+    const baseCode = lower.replace(/[a-z]+$/, "");
+    const matching = all.find(p => {
+      const pn = (p.project_name ?? "").trim().toLowerCase();
+      return pn === lower || (baseCode !== lower && (pn === baseCode || pn.replace(/[a-z]+$/, "") === baseCode));
+    });
     if (matching) {
-      if (matching.outcome === "pending" && weeklyNet > 0 && (matching.id != null)) {
-        const stale = matching.weekly_price !== weeklyNet || matching.total_fee !== totalFee;
-        if (stale) {
+      if (matching.outcome === "pending" && (matching.id != null)) {
+        const nameStale = (matching.project_name ?? "").trim() !== name;
+        const priceStale = weeklyNet > 0 && (matching.weekly_price !== weeklyNet || matching.total_fee !== totalFee);
+        if (nameStale || priceStale) {
           await storage.updatePricingProposal(matching.id, {
-            weekly_price: weeklyNet,
-            total_fee: totalFee,
-            duration_weeks: caseRow.duration_weeks ?? matching.duration_weeks,
+            project_name: name,  // normalize name to match case
+            ...(weeklyNet > 0 ? {
+              weekly_price: weeklyNet,
+              total_fee: totalFee,
+              duration_weeks: caseRow.duration_weeks ?? matching.duration_weeks,
+            } : {}),
           });
         }
       }
@@ -1504,6 +1513,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (e) {
       console.error("sync-tbd-with-final-cases failed:", e);
+      res.status(500).json({ ok: false, message: (e as Error).message });
+    }
+  });
+
+  // ── Normalize proposal names so TBD proposals match their case name ────
+  // Rule: TBD/pending → rename to match the case name (adds letter suffix,
+  //       e.g. "COE03" → "COE03A").
+  //       Won/Lost with trailing alpha → strip letter (e.g. "FLE01A" → "FLE01").
+  // Safe to call multiple times — idempotent.
+  app.post("/api/pricing/proposals/normalize-names", requireAuth, async (_req, res) => {
+    try {
+      const cases = await storage.getPricingCases();
+      const proposals = await storage.getPricingProposals();
+      const renamed: string[] = [];
+
+      // Build case lookup: base code → case (for TBD renaming)
+      const caseByKey = new Map<string, any>();
+      for (const c of cases) {
+        const n = (c.project_name ?? "").trim().toLowerCase();
+        if (!n) continue;
+        caseByKey.set(n, c);
+        const base = n.replace(/[a-z]+$/, "");
+        if (base !== n && !caseByKey.has(base)) caseByKey.set(base, c);
+      }
+
+      for (const p of proposals) {
+        const pName = (p.project_name ?? "").trim();
+        const pLower = pName.toLowerCase();
+        if (!pName || p.id == null) continue;
+
+        if (p.outcome === "pending" || !p.outcome) {
+          // TBD: find matching case, rename proposal to case name
+          const matched = caseByKey.get(pLower) ?? caseByKey.get(pLower.replace(/[a-z]+$/, ""));
+          if (matched) {
+            const caseName = (matched.project_name ?? "").trim();
+            if (caseName && caseName !== pName) {
+              await storage.updatePricingProposal(p.id, { project_name: caseName });
+              renamed.push(`${pName} → ${caseName} (TBD)`);
+            }
+          }
+        } else if (p.outcome === "won" || p.outcome === "lost") {
+          // Won/Lost: strip trailing letter suffix
+          const stripped = pName.replace(/[A-Za-z]$/, "");
+          if (stripped !== pName && stripped.length > 0 && /\d$/.test(stripped)) {
+            await storage.updatePricingProposal(p.id, { project_name: stripped });
+            renamed.push(`${pName} → ${stripped} (${p.outcome})`);
+          }
+        }
+      }
+      res.json({ ok: true, renamed, count: renamed.length });
+    } catch (e) {
+      console.error("normalize-names failed:", e);
       res.status(500).json({ ok: false, message: (e as Error).message });
     }
   });

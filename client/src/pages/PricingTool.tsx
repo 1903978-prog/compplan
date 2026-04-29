@@ -651,6 +651,35 @@ export default function PricingTool() {
   const [view, setView] = useState<"list" | "form">("list");
   const [cases, setCases] = useState<any[]>([]);
   const [proposals, setProposals] = useState<PricingProposal[]>([]);
+
+  // ── Component-wide NET1 lookup ──────────────────────────────────────────
+  // Maps project_name (lower) → canonical_net_weekly from the matching case.
+  // Also adds a base-code key (strips trailing letter, e.g. "coe03a"→"coe03")
+  // so old proposals named "COE03" resolve against case "COE03A".
+  const caseNet1Map = useMemo(() => {
+    const m = new Map<string, number>();
+    cases
+      .filter((c: any) => c.project_name && (c.recommendation?.canonical_net_weekly ?? c.recommendation?.target_weekly ?? 0) > 0)
+      .forEach((c: any) => {
+        const name = (c.project_name as string).trim().toLowerCase();
+        const net1 = Math.round(c.recommendation.canonical_net_weekly ?? c.recommendation.target_weekly);
+        m.set(name, net1);
+        const base = name.replace(/[a-z]+$/, "");
+        if (base !== name && !m.has(base)) m.set(base, net1);
+      });
+    return m;
+  }, [cases]);
+  // NET1 weekly for a proposal: case lookup → stored weekly_price fallback
+  const proposalNet1 = (p: PricingProposal): number => {
+    const key = (p.project_name ?? "").trim().toLowerCase();
+    return caseNet1Map.get(key) ?? caseNet1Map.get(key.replace(/[a-z]+$/, "")) ?? p.weekly_price;
+  };
+  // NET1 total for a proposal: NET1/wk × weeks → total_fee fallback
+  const proposalNet1Total = (p: PricingProposal): number => {
+    const wk = proposalNet1(p);
+    const weeks = p.duration_weeks ?? 0;
+    return weeks > 0 ? Math.round(wk * weeks) : (p.total_fee ?? 0);
+  };
   const [settings, setSettings] = useState<PricingSettings | null>(null);
   const [loading, setLoading] = useState(true);
   // Tracks which of the three parallel loads failed (if any). Surfaced as a
@@ -3332,14 +3361,28 @@ export default function PricingTool() {
               >
                 {backfillingTbd ? "Syncing…" : `Sync ${tbdBackfillCount || ""}`}
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    const r = await fetch("/api/pricing/proposals/normalize-names", { method: "POST", credentials: "include" });
+                    const d = await r.json();
+                    toast({ title: `Names normalized`, description: d.count > 0 ? d.renamed.join(", ") : "All names already consistent." });
+                    if (d.count > 0) await loadAll();
+                  } catch { toast({ title: "Normalize failed", variant: "destructive" }); }
+                }}
+              >
+                Normalize names
+              </Button>
             </div>
             {/* Stats */}
             <div className="grid grid-cols-4 gap-4">
               {(() => {
                 const won = proposals.filter(p => p.outcome === "won");
                 const lost = proposals.filter(p => p.outcome === "lost");
-                const avgWon = won.length ? won.reduce((s, p) => s + p.weekly_price, 0) / won.length : 0;
-                const avgLost = lost.length ? lost.reduce((s, p) => s + p.weekly_price, 0) / lost.length : 0;
+                const avgWon = won.length ? won.reduce((s, p) => s + proposalNet1(p), 0) / won.length : 0;
+                const avgLost = lost.length ? lost.reduce((s, p) => s + proposalNet1(p), 0) / lost.length : 0;
                 return [
                   { label: "Won", value: won.length, icon: CheckCircle, cls: "text-emerald-600" },
                   { label: "Lost", value: lost.length, icon: XCircle, cls: "text-red-500" },
@@ -3637,22 +3680,14 @@ export default function PricingTool() {
                             </TableCell>
                             <TableCell className="text-xs font-semibold text-muted-foreground">{p.currency || "EUR"}</TableCell>
                             <TableCell className="font-semibold text-sm font-mono">
-                              {/* Derived weekly = total fee / weeks. Same rule
-                                  as the Pricing Cases list (Option 2 net /
-                                  weeks): the displayed weekly price always
-                                  comes from the project's total / its
-                                  duration. Falls back to the stored
-                                  weekly_price when total_fee or
-                                  duration_weeks isn't populated yet. */}
-                              {fmt(
-                                p.total_fee && p.total_fee > 0 && p.duration_weeks && p.duration_weeks > 0
-                                  ? p.total_fee / p.duration_weeks
-                                  : p.weekly_price
-                              )}
+                              {/* Net/wk = NET1 from the linked pricing case.
+                                  Falls back to weekly_price only when no
+                                  matching case exists (e.g. legacy rows). */}
+                              {fmt(proposalNet1(p))}
                             </TableCell>
                             <TableCell className="font-semibold text-sm font-mono text-right">
-                              {p.total_fee && p.total_fee > 0
-                                ? `${Math.round(p.total_fee / 1000).toLocaleString("it-IT")}`
+                              {proposalNet1Total(p) > 0
+                                ? `${Math.round(proposalNet1Total(p) / 1000).toLocaleString("it-IT")}`
                                 : "—"}
                             </TableCell>
                             <TableCell>
@@ -4445,20 +4480,20 @@ export default function PricingTool() {
                                 <line x1={xAt(avgLost)} y1={padT} x2={xAt(avgLost)} y2={H - padB}
                                   stroke="#ef4444" strokeWidth="1.2" strokeDasharray="2,2" />
                               )}
-                              {/* Won dots */}
+                              {/* Won dots — x position = NET1 */}
                               {won.map((p, i) => (
-                                <circle key={`w${i}`} cx={xAt(p.weekly_price)}
+                                <circle key={`w${i}`} cx={xAt(proposalNet1(p))}
                                   cy={padT + 12 + (i % 3) * 10} r="3.5"
                                   fill="#10b981" opacity="0.85" stroke="#065f46" strokeWidth="0.4">
-                                  <title>{p.project_name} · Won · {fmtFull(p.weekly_price)}/wk</title>
+                                  <title>{p.project_name} · Won · {fmtFull(proposalNet1(p))}/wk</title>
                                 </circle>
                               ))}
-                              {/* Lost dots */}
+                              {/* Lost dots — x position = NET1 */}
                               {lost.map((p, i) => (
-                                <circle key={`l${i}`} cx={xAt(p.weekly_price)}
+                                <circle key={`l${i}`} cx={xAt(proposalNet1(p))}
                                   cy={padT + 45 + (i % 3) * 10} r="3.5"
                                   fill="#ef4444" opacity="0.85" stroke="#7f1d1d" strokeWidth="0.4">
-                                  <title>{p.project_name} · Lost · {fmtFull(p.weekly_price)}/wk</title>
+                                  <title>{p.project_name} · Lost · {fmtFull(proposalNet1(p))}/wk</title>
                                 </circle>
                               ))}
                               {/* Scale labels */}
@@ -6566,23 +6601,9 @@ export default function PricingTool() {
                     // explicitly computed and stored on every case save.
                     // Build NET1 lookup: index by BOTH exact case name AND base
                     // code (trailing-letter suffix stripped). Cases are named
-                    // "COE03A" (current) while old won proposals are stored as
-                    // "COE03" — the suffix-stripped key "coe03" bridges them.
-                    const caseNet1Map = new Map<string, number>();
-                    cases
-                      .filter((c: any) => c.project_name && (c.recommendation?.canonical_net_weekly ?? c.recommendation?.target_weekly ?? 0) > 0)
-                      .forEach((c: any) => {
-                        const name = (c.project_name as string).trim().toLowerCase();
-                        const net1 = Math.round(c.recommendation.canonical_net_weekly ?? c.recommendation.target_weekly);
-                        caseNet1Map.set(name, net1);
-                        // Also store under base code, e.g. "coe03a" → key "coe03"
-                        const base = name.replace(/[a-z]+$/, "");
-                        if (base !== name && !caseNet1Map.has(base)) caseNet1Map.set(base, net1);
-                      });
-                    const proposalNet1 = (p: PricingProposal): number => {
-                      const key = (p.project_name ?? "").trim().toLowerCase();
-                      return caseNet1Map.get(key) ?? caseNet1Map.get(key.replace(/[a-z]+$/, "")) ?? p.weekly_price;
-                    };
+                    // proposalNet1 / proposalNet1Total / caseNet1Map are defined
+                    // at component level (above state declarations) so they are
+                    // available here and in all other tabs (history, scatter, KPIs).
 
                     const renderSection = (s: typeof sections[number]) => {
                       const weeklyFees = s.items.map(p => proposalNet1(p));
