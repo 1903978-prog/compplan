@@ -30,6 +30,13 @@ interface Employee {
   current_role_code?: string | null;
 }
 
+interface ExternalContact {
+  id: number;
+  name: string;
+  email?: string | null;
+  kind: string; // "freelancer" | "partner" | ...
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const MS_DAY = 86_400_000;
 const MS_WK = 7 * MS_DAY;
@@ -78,6 +85,7 @@ export default function StaffingGantt() {
   const { toast } = useToast();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [externals, setExternals] = useState<ExternalContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [showWeighted, setShowWeighted] = useState(true);
   const [showPipeline, setShowPipeline] = useState(true);
@@ -210,11 +218,13 @@ export default function StaffingGantt() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/pricing/proposals", { credentials: "include" }).then(r => r.ok ? r.json() : []),
-      fetch("/api/employees", { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([pp, ee]) => {
+      fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch("/api/employees",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      fetch("/api/external-contacts",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([pp, ee, ex]) => {
       setProposals(Array.isArray(pp) ? pp : []);
       setEmployees(Array.isArray(ee) ? ee : []);
+      setExternals(Array.isArray(ex) ? ex : []);
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load staffing data", variant: "destructive" }); setLoading(false); });
   }, [toast]);
@@ -305,6 +315,22 @@ export default function StaffingGantt() {
     }
     return { availability: avail, availabilityDates: dates };
   }, [matrix, people, weeks]);
+
+  // Full person list for the modal picker: Gantt rows + all external contacts.
+  // External contacts include freelancers (Wissam, Thomas, Defne, …) and partners.
+  // Deduped by lower-case name so employees already in the Gantt aren't doubled.
+  const allPeopleForModal = useMemo(() => {
+    const seen = new Set(people.map(p => p.name.trim().toLowerCase()));
+    const extras: { name: string; role?: string }[] = [];
+    for (const ext of externals) {
+      const key = ext.name.trim().toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        extras.push({ name: ext.name, role: ext.kind });
+      }
+    }
+    return [...people, ...extras].sort((a, b) => a.name.localeCompare(b.name));
+  }, [people, externals]);
 
   // TBD = pending proposals, sorted by win probability descending.
   const tbdProposals = useMemo(() =>
@@ -566,17 +592,24 @@ export default function StaffingGantt() {
                     <SelectValue placeholder="— pick a person —" />
                   </SelectTrigger>
                   <SelectContent>
-                    {people.map(p => (
-                      <SelectItem key={p.name} value={p.name}>
-                        <span className="font-medium">{p.name}</span>
-                        {p.role && <span className="text-muted-foreground ml-1 text-[10px]">{p.role}</span>}
-                        <span className={`ml-2 text-[10px] ${
-                          availability[p.name] === "available now" ? "text-emerald-600" :
-                          availability[p.name]?.startsWith(">")    ? "text-red-500" :
-                          "text-amber-600"
-                        }`}>{availability[p.name]}</span>
-                      </SelectItem>
-                    ))}
+                    {allPeopleForModal.map(p => {
+                      const avail = availability[p.name];
+                      return (
+                        <SelectItem key={p.name} value={p.name}>
+                          <span className="font-medium">{p.name}</span>
+                          {p.role && <span className="text-muted-foreground ml-1 text-[10px]">{p.role}</span>}
+                          {avail ? (
+                            <span className={`ml-2 text-[10px] ${
+                              avail === "available now" ? "text-emerald-600" :
+                              avail.startsWith(">")    ? "text-red-500" :
+                              "text-amber-600"
+                            }`}>{avail}</span>
+                          ) : (
+                            <span className="ml-2 text-[10px] text-emerald-600">freelancer</span>
+                          )}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
