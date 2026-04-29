@@ -3170,5 +3170,134 @@ Sequential IDs: PAR-001.
         ON CONFLICT DO NOTHING
       `);
     }
+
+    // ── AIOS Cycle tables ─────────────────────────────────────────────────────
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS role_title TEXT`);
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS job_description TEXT`);
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS function_area TEXT`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS aios_cycles (
+        id SERIAL PRIMARY KEY,
+        cycle_date TEXT NOT NULL,
+        cycle_type TEXT NOT NULL DEFAULT 'daily',
+        status TEXT NOT NULL DEFAULT 'not_started',
+        started_at TEXT,
+        completed_at TEXT,
+        started_by TEXT NOT NULL DEFAULT 'President',
+        summary TEXT,
+        cowork_prompt TEXT,
+        cowork_output_raw TEXT,
+        agents_processed INTEGER NOT NULL DEFAULT 0,
+        sections_analyzed INTEGER NOT NULL DEFAULT 0,
+        insights_count INTEGER NOT NULL DEFAULT 0,
+        ideas_count INTEGER NOT NULL DEFAULT 0,
+        actions_count INTEGER NOT NULL DEFAULT 0,
+        cowork_requests_count INTEGER NOT NULL DEFAULT 0,
+        conflicts_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS aios_exec_logs (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        timestamp TEXT NOT NULL,
+        actor_type TEXT NOT NULL DEFAULT 'system',
+        actor_name TEXT,
+        action_type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'working',
+        severity TEXT NOT NULL DEFAULT 'info',
+        metadata JSONB,
+        created_at TEXT NOT NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS aios_deliverables (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        agent_id INTEGER NOT NULL,
+        agent_name TEXT,
+        deliverable_type TEXT NOT NULL,
+        rank INTEGER NOT NULL DEFAULT 1,
+        title TEXT NOT NULL,
+        description TEXT,
+        source_app_section TEXT,
+        okr_link TEXT,
+        okr_relevance_score INTEGER,
+        business_impact_score INTEGER,
+        urgency_score INTEGER,
+        confidence_score INTEGER,
+        feasibility_score INTEGER,
+        total_score INTEGER,
+        scoring_rationale TEXT,
+        decision_right_level TEXT DEFAULT 'autonomous',
+        deadline TEXT,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        request_type TEXT,
+        research_topic TEXT,
+        business_question TEXT,
+        expected_output TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS boss_consolidations (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        boss_agent_id INTEGER NOT NULL,
+        boss_agent_name TEXT,
+        direct_reports_included JSONB DEFAULT '[]',
+        top_insights JSONB DEFAULT '[]',
+        top_ideas JSONB DEFAULT '[]',
+        top_actions JSONB DEFAULT '[]',
+        top_cowork_requests JSONB DEFAULT '[]',
+        conflicts JSONB DEFAULT '[]',
+        boss_summary TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS ceo_briefs (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        executive_summary TEXT,
+        top_insights JSONB DEFAULT '[]',
+        top_ideas JSONB DEFAULT '[]',
+        top_actions JSONB DEFAULT '[]',
+        top_cowork_requests JSONB DEFAULT '[]',
+        conflicts JSONB DEFAULT '[]',
+        decisions_required JSONB DEFAULT '[]',
+        autonomous_actions JSONB DEFAULT '[]',
+        coo_proposals JSONB DEFAULT '[]',
+        cowork_prompt TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS cowork_outputs (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        raw_output_text TEXT NOT NULL,
+        pasted_by TEXT NOT NULL DEFAULT 'President',
+        pasted_at TEXT NOT NULL,
+        parsed_status TEXT NOT NULL DEFAULT 'not_parsed',
+        created_at TEXT NOT NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS cowork_letters (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        agent_id INTEGER,
+        agent_name TEXT,
+        raw_letter_text TEXT NOT NULL,
+        extracted_findings JSONB DEFAULT '[]',
+        extracted_recommendations JSONB DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'received',
+        created_at TEXT NOT NULL
+      )
+    `);
   }
 }

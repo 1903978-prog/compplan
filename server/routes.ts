@@ -2,7 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters } from "@shared/schema";
+import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle } from "./aiosService";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -7255,6 +7256,146 @@ RULES:
     } catch (e) {
       res.status(500).type("text/plain").send(`Error: ${(e as Error).message}`);
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AIOS CYCLE ROUTES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/aios/cycles — list recent cycles
+  app.get("/api/aios/cycles", requireAuth, async (_req, res) => {
+    try {
+      const cycles = await db.select().from(aiosCycles).orderBy(desc(aiosCycles.id)).limit(20);
+      res.json(cycles);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // POST /api/aios/cycles — create + immediately start a new cycle
+  app.post("/api/aios/cycles", requireAuth, async (_req, res) => {
+    try {
+      const cycleId = await createAiosCycle("President");
+      res.json({ cycleId });
+      // Run async in background (do not await)
+      runDailyAiosCycle(cycleId).catch(e => console.error("[AIOS] bg error:", e));
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/cycles/latest — latest cycle
+  app.get("/api/aios/cycles/latest", requireAuth, async (_req, res) => {
+    try {
+      const [cycle] = await db.select().from(aiosCycles).orderBy(desc(aiosCycles.id)).limit(1);
+      res.json(cycle ?? null);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/cycles/:id — single cycle
+  app.get("/api/aios/cycles/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const [cycle] = await db.select().from(aiosCycles).where(eq(aiosCycles.id, id));
+      if (!cycle) return res.status(404).json({ message: "Not found" });
+      res.json(cycle);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // POST /api/aios/cycles/:id/pause
+  app.post("/api/aios/cycles/:id/pause", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      await pauseAiosCycle(id);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // POST /api/aios/cycles/:id/resume
+  app.post("/api/aios/cycles/:id/resume", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      await resumeAiosCycle(id);
+      // restart background processing
+      runDailyAiosCycle(id).catch(e => console.error("[AIOS] bg resume error:", e));
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/cycles/:id/logs — exec logs for a cycle (polling)
+  app.get("/api/aios/cycles/:id/logs", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const since = (req.query as any).since ? parseInt((req.query as any).since) : 0;
+      const logs = await db.select().from(aiosExecLogs)
+        .where(and(eq(aiosExecLogs.cycle_id, id), sql`id > ${since}`))
+        .orderBy(aiosExecLogs.id)
+        .limit(200);
+      res.json(logs);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/cycles/:id/stream — SSE live log
+  app.get("/api/aios/cycles/:id/stream", requireAuth, async (req, res) => {
+    const id = parseInt((req.params as any).id);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.write("data: {\"type\":\"connected\"}\n\n");
+    subscribeToCycle(id, res);
+    req.on("close", () => unsubscribeFromCycle(id, res));
+  });
+
+  // GET /api/aios/cycles/:id/deliverables
+  app.get("/api/aios/cycles/:id/deliverables", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const items = await db.select().from(aiosDeliverables).where(eq(aiosDeliverables.cycle_id, id)).orderBy(aiosDeliverables.agent_name, aiosDeliverables.deliverable_type, aiosDeliverables.rank);
+      res.json(items);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/cycles/:id/boss-reports
+  app.get("/api/aios/cycles/:id/boss-reports", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const reports = await db.select().from(bossConsolidations).where(eq(bossConsolidations.cycle_id, id));
+      res.json(reports);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/cycles/:id/ceo-brief
+  app.get("/api/aios/cycles/:id/ceo-brief", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const [brief] = await db.select().from(ceoBriefs).where(eq(ceoBriefs.cycle_id, id));
+      res.json(brief ?? null);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // POST /api/aios/cycles/:id/generate-cowork-prompt
+  app.post("/api/aios/cycles/:id/generate-cowork-prompt", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const prompt = await genCoworkPrompt(id);
+      res.json({ prompt });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // POST /api/aios/cycles/:id/cowork-output — paste CoWork output back
+  app.post("/api/aios/cycles/:id/cowork-output", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const { raw_output_text } = req.body as any;
+      if (!raw_output_text?.trim()) return res.status(400).json({ message: "raw_output_text required" });
+      await storeCoworkOutput(id, raw_output_text);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/cycles/:id/cowork-letters
+  app.get("/api/aios/cycles/:id/cowork-letters", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt((req.params as any).id);
+      const letters = await db.select().from(coworkLetters).where(eq(coworkLetters.cycle_id, id));
+      res.json(letters);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
   return httpServer;
