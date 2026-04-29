@@ -421,6 +421,13 @@ export default function AgentDetail() {
 }
 
 // ── Performance Review sub-component ────────────────────────────────────────
+interface ReadinessReview {
+  id: number; agent_id: number; reviewed_at: string; overall: number;
+  role_clarity: number; data_access: number; skill_knowledge: number;
+  output_quality: number; decision_discipline: number; okr_progress: number;
+  notes: string | null;
+}
+
 function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave }: {
   agent: Agent;
   tasks: Task[];
@@ -429,10 +436,23 @@ function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave
   krs: KeyResult[];
   onSave: (scores: Record<string, number>) => void;
 }) {
+  const { toast } = useToast();
   const [scores, setScores] = useState<Record<string, number>>(() => parseReadiness(agent.readiness_scores));
+  const [history, setHistory] = useState<ReadinessReview[]>([]);
+  const [savingReview, setSavingReview] = useState(false);
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
 
   // Reparse when agent changes (e.g. after save)
   useEffect(() => { setScores(parseReadiness(agent.readiness_scores)); }, [agent.readiness_scores]);
+
+  // Load history from DB
+  useEffect(() => {
+    fetch(`/api/agentic/readiness/${agent.id}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: ReadinessReview[]) => setHistory(Array.isArray(rows) ? rows : []))
+      .catch(() => {/* non-fatal */});
+  }, [agent.id]);
 
   // Computed stats from live data
   const totalTasks   = tasks.length;
@@ -449,10 +469,44 @@ function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave
     ? Math.round(READINESS_DIMS.reduce((s, d) => s + (scores[d.key] ?? 0), 0) / READINESS_DIMS.length)
     : 0;
 
+  // Delta vs last DB review
+  const lastReview = history[0] ?? null;
+  function delta(key: string): number | null {
+    if (!lastReview) return null;
+    const prev = (lastReview as any)[key] ?? null;
+    const curr = scores[key] ?? 0;
+    return prev != null ? curr - prev : null;
+  }
+
   function setDim(key: string, val: number) {
     const next = { ...scores, [key]: val };
     setScores(next);
     onSave(next);
+  }
+
+  async function saveReview() {
+    setSavingReview(true);
+    try {
+      const r = await fetch("/api/agentic/readiness", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_id: agent.id,
+          reviewed_at: new Date().toISOString().slice(0, 10),
+          notes: reviewNotes || null,
+          ...Object.fromEntries(READINESS_DIMS.map(d => [d.key, scores[d.key] ?? 0])),
+        }),
+      });
+      if (!r.ok) throw new Error("save failed");
+      const saved: ReadinessReview = await r.json();
+      setHistory(prev => [saved, ...prev]);
+      setReviewNotes("");
+      toast({ title: `Readiness snapshot saved — overall ${saved.overall}/100` });
+    } catch {
+      toast({ title: "Save failed", variant: "destructive" });
+    } finally {
+      setSavingReview(false);
+    }
   }
 
   const readinessColor = overallReadiness >= 70 ? "text-emerald-600" : overallReadiness >= 40 ? "text-amber-600" : "text-red-600";
@@ -465,7 +519,7 @@ function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave
           { label: "Task completion", value: `${completionPct}%`, sub: `${doneTasks}/${totalTasks} tasks` },
           { label: "Avg idea score",  value: avgIdeaScore > 0 ? String(avgIdeaScore) : "—", sub: `${openIdeas} proposed` },
           { label: "KR coverage",     value: krCount > 0 ? `${krWithProgress}/${krCount}` : "—", sub: "key results with progress" },
-          { label: "Readiness",       value: `${overallReadiness}`, sub: "/ 100 avg",
+          { label: "Readiness",       value: `${overallReadiness}`, sub: `/ 100 avg · ${history.length} review${history.length === 1 ? "" : "s"}`,
             valueClass: readinessColor },
         ].map(stat => (
           <div key={stat.label} className="border rounded p-2 text-center">
@@ -476,11 +530,12 @@ function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave
         ))}
       </div>
 
-      {/* 6-dimension readiness sliders */}
-      <div className="text-[10px] uppercase font-bold text-muted-foreground mb-2">Agent readiness score (edit each dimension 0–100)</div>
-      <div className="grid md:grid-cols-2 gap-x-6 gap-y-2">
+      {/* 6-dimension readiness bars + delta vs last review */}
+      <div className="text-[10px] uppercase font-bold text-muted-foreground mb-2">Agent readiness (0–100)</div>
+      <div className="grid md:grid-cols-2 gap-x-6 gap-y-2 mb-4">
         {READINESS_DIMS.map(d => {
           const val = scores[d.key] ?? 0;
+          const d_ = delta(d.key);
           const barColor = val >= 70 ? "bg-emerald-500" : val >= 40 ? "bg-amber-500" : "bg-red-500";
           return (
             <div key={d.key} className="flex items-center gap-2">
@@ -494,10 +549,84 @@ function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave
                 onChange={e => setDim(d.key, Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
                 className="w-12 h-6 text-xs text-center border rounded bg-background"
               />
+              {d_ !== null && (
+                <span className={`text-[10px] w-8 text-right shrink-0 font-mono ${d_ > 0 ? "text-emerald-600" : d_ < 0 ? "text-red-600" : "text-muted-foreground"}`}>
+                  {d_ > 0 ? `+${d_}` : d_ < 0 ? String(d_) : "="}
+                </span>
+              )}
             </div>
           );
         })}
       </div>
+
+      {/* Save snapshot */}
+      <div className="border rounded p-3 bg-muted/20 space-y-2">
+        <div className="text-[10px] uppercase font-bold text-muted-foreground">Save readiness snapshot to history</div>
+        <input
+          className="w-full border rounded px-2 py-1 text-xs bg-background"
+          placeholder="Notes (optional) — e.g. 'After onboarding Q1' or 'Post training on pricing'"
+          value={reviewNotes}
+          onChange={e => setReviewNotes(e.target.value)}
+        />
+        <Button size="sm" onClick={saveReview} disabled={savingReview} className="h-7">
+          <TrendingUp className="w-3.5 h-3.5 mr-1" /> {savingReview ? "Saving…" : "Save snapshot"}
+        </Button>
+      </div>
+
+      {/* Review history */}
+      {history.length > 0 && (
+        <div className="mt-3">
+          <button
+            className="text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-1 mb-2"
+            onClick={() => setShowHistory(h => !h)}
+          >
+            <Activity className="w-3 h-3" /> History ({history.length}) {showHistory ? "▲" : "▼"}
+          </button>
+          {showHistory && (
+            <div className="overflow-x-auto">
+              <table className="text-[10px] w-full">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="text-left p-1 font-semibold">Date</th>
+                    <th className="text-right p-1 font-semibold">Overall</th>
+                    {READINESS_DIMS.map(d => (
+                      <th key={d.key} className="text-right p-1 font-semibold whitespace-nowrap">{d.label.split(" ")[0]}</th>
+                    ))}
+                    <th className="text-left p-1 font-semibold">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((r, i) => {
+                    const prevOverall = history[i + 1]?.overall ?? null;
+                    const trend = prevOverall != null ? r.overall - prevOverall : null;
+                    return (
+                      <tr key={r.id} className="border-b hover:bg-muted/20">
+                        <td className="p-1 font-mono">{r.reviewed_at}</td>
+                        <td className="p-1 text-right font-bold">
+                          <span className={r.overall >= 70 ? "text-emerald-600" : r.overall >= 40 ? "text-amber-600" : "text-red-600"}>
+                            {r.overall}
+                          </span>
+                          {trend !== null && (
+                            <span className={`ml-1 ${trend > 0 ? "text-emerald-500" : trend < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                              {trend > 0 ? `↑${trend}` : trend < 0 ? `↓${Math.abs(trend)}` : "="}
+                            </span>
+                          )}
+                        </td>
+                        {READINESS_DIMS.map(d => (
+                          <td key={d.key} className="p-1 text-right tabular-nums">
+                            {(r as any)[d.key] ?? "—"}
+                          </td>
+                        ))}
+                        <td className="p-1 text-muted-foreground max-w-[160px] truncate">{r.notes ?? ""}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </Section>
   );
 }

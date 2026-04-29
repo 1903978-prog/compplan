@@ -5509,6 +5509,134 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── Phase 3 — Project Knowledge Base ────────────────────────────────────
+  app.get("/api/agentic/knowledge", requireAuth, async (req, res) => {
+    try {
+      const q = String((req.query as any).q ?? "").trim().toLowerCase();
+      const rows = await db.execute(sql`
+        SELECT * FROM project_knowledge ORDER BY updated_at DESC LIMIT 200
+      `);
+      let data = ((rows as any).rows ?? rows) as any[];
+      if (q) data = data.filter((r: any) =>
+        [r.project_name, r.client_name, r.sector, r.service_line, r.tags, r.problem_statement, r.key_outputs]
+          .some(f => f && String(f).toLowerCase().includes(q))
+      );
+      res.json(data);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/agentic/knowledge", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (!b.project_name) { res.status(400).json({ message: "project_name required" }); return; }
+      const now = nowIso();
+      const rows = await db.execute(sql`
+        INSERT INTO project_knowledge
+          (client_name, project_name, sector, service_line, duration_weeks, team_size,
+           revenue_eur, problem_statement, approach, key_outputs, results_impact,
+           lessons_learned, reuse_potential, tags, status, created_at, updated_at)
+        VALUES (
+          ${b.client_name ?? null}, ${String(b.project_name)}, ${b.sector ?? null},
+          ${b.service_line ?? null}, ${b.duration_weeks ?? null}, ${b.team_size ?? null},
+          ${b.revenue_eur ?? null}, ${b.problem_statement ?? null}, ${b.approach ?? null},
+          ${b.key_outputs ?? null}, ${b.results_impact ?? null}, ${b.lessons_learned ?? null},
+          ${b.reuse_potential ?? null}, ${b.tags ?? null},
+          ${b.status ?? "draft"}, ${now}, ${now}
+        )
+        RETURNING *
+      `);
+      res.status(201).json(((rows as any).rows ?? rows)[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/agentic/knowledge/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const now = nowIso();
+      const fields = ["client_name","project_name","sector","service_line","duration_weeks",
+        "team_size","revenue_eur","problem_statement","approach","key_outputs",
+        "results_impact","lessons_learned","reuse_potential","tags","status"];
+      const rows = await db.execute(sql`
+        UPDATE project_knowledge SET
+          client_name       = COALESCE(${b.client_name ?? null},       client_name),
+          project_name      = COALESCE(${b.project_name ?? null},      project_name),
+          sector            = COALESCE(${b.sector ?? null},            sector),
+          service_line      = COALESCE(${b.service_line ?? null},      service_line),
+          problem_statement = COALESCE(${b.problem_statement ?? null}, problem_statement),
+          approach          = COALESCE(${b.approach ?? null},          approach),
+          key_outputs       = COALESCE(${b.key_outputs ?? null},       key_outputs),
+          results_impact    = COALESCE(${b.results_impact ?? null},    results_impact),
+          lessons_learned   = COALESCE(${b.lessons_learned ?? null},   lessons_learned),
+          reuse_potential   = COALESCE(${b.reuse_potential ?? null},   reuse_potential),
+          tags              = COALESCE(${b.tags ?? null},              tags),
+          status            = COALESCE(${b.status ?? null},            status),
+          updated_at        = ${now}
+        WHERE id = ${id}
+        RETURNING *
+      `);
+      void fields;
+      res.json(((rows as any).rows ?? rows)[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.delete("/api/agentic/knowledge/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.execute(sql`DELETE FROM project_knowledge WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── Agent Readiness Reviews — daily snapshot with trend history ────────
+  app.get("/api/agentic/readiness/:agent_id", requireAuth, async (req, res) => {
+    try {
+      const agentId = safeInt(req.params.agent_id);
+      const rows = await db.execute(sql`
+        SELECT * FROM agent_readiness_reviews
+        WHERE agent_id = ${agentId}
+        ORDER BY reviewed_at DESC, id DESC
+        LIMIT 30
+      `);
+      res.json((rows as any).rows ?? rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/agentic/readiness", requireAuth, async (req, res) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      const agentId = safeInt(String(b.agent_id ?? "0"));
+      if (!agentId) { res.status(400).json({ message: "agent_id required" }); return; }
+      const now = nowIso();
+      const reviewedAt = typeof b.reviewed_at === "string" ? b.reviewed_at : now.slice(0, 10);
+      const dim = (k: string) => Math.min(100, Math.max(0, parseInt(String(b[k] ?? "0")) || 0));
+      const rc = dim("role_clarity");
+      const da = dim("data_access");
+      const sk = dim("skill_knowledge");
+      const oq = dim("output_quality");
+      const dd = dim("decision_discipline");
+      const op = dim("okr_progress");
+      const overall = Math.round((rc + da + sk + oq + dd + op) / 6);
+      const rows = await db.execute(sql`
+        INSERT INTO agent_readiness_reviews
+          (agent_id, reviewed_at, role_clarity, data_access, skill_knowledge,
+           output_quality, decision_discipline, okr_progress, overall, notes, created_at)
+        VALUES (${agentId}, ${reviewedAt}, ${rc}, ${da}, ${sk}, ${oq}, ${dd}, ${op},
+                ${overall}, ${b.notes ?? null}, ${now})
+        RETURNING *
+      `);
+      // Also update the JSON snapshot on the agents table for backwards-compat.
+      const patch = { role_clarity: rc, data_access: da, skill_knowledge: sk,
+                      output_quality: oq, decision_discipline: dd, okr_progress: op };
+      await db.execute(sql`
+        UPDATE agents SET readiness_scores = ${JSON.stringify(patch)}, updated_at = ${now}
+        WHERE id = ${agentId}
+      `);
+      await logEvent("readiness_review_saved", agentId, { overall, reviewed_at: reviewedAt });
+      res.status(201).json(((rows as any).rows ?? rows)[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── Phase 2 — Cowork Skills Library ────────────────────────────────────
   app.get("/api/agentic/skills", requireAuth, async (_req, res) => {
     try {

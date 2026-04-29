@@ -1945,6 +1945,24 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
   await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS skill_gaps TEXT`);
   await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS training_plan TEXT`);
   await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS readiness_scores TEXT`);
+
+  // Agent Readiness Reviews — daily snapshot table (Phase 7 Item 7)
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS agent_readiness_reviews (
+      id SERIAL PRIMARY KEY,
+      agent_id INTEGER NOT NULL,
+      reviewed_at TEXT NOT NULL,
+      role_clarity INTEGER NOT NULL DEFAULT 0,
+      data_access INTEGER NOT NULL DEFAULT 0,
+      skill_knowledge INTEGER NOT NULL DEFAULT 0,
+      output_quality INTEGER NOT NULL DEFAULT 0,
+      decision_discipline INTEGER NOT NULL DEFAULT 0,
+      okr_progress INTEGER NOT NULL DEFAULT 0,
+      overall INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS objectives (
       id SERIAL PRIMARY KEY,
@@ -2722,6 +2740,30 @@ Sequential IDs: PAR-001.
       ('Eendigo AR Agent',          'eendigo-ar',          'core', ${AR_MD},          'ready', ${_skillNow}, ${_skillNow}),
       ('Eendigo Partnership Agent', 'eendigo-partnership', 'core', ${PARTNERSHIP_MD}, 'ready', ${_skillNow}, ${_skillNow})
     ON CONFLICT (agent_key) DO NOTHING
+  `);
+
+  // ── Phase 3 — Knowledge Ingestion (past projects → structured KB) ────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS project_knowledge (
+      id SERIAL PRIMARY KEY,
+      client_name TEXT,
+      project_name TEXT NOT NULL,
+      sector TEXT,
+      service_line TEXT,
+      duration_weeks INTEGER,
+      team_size INTEGER,
+      revenue_eur INTEGER,
+      problem_statement TEXT,
+      approach TEXT,
+      key_outputs TEXT,
+      results_impact TEXT,
+      lessons_learned TEXT,
+      reuse_potential TEXT,
+      tags TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
   `);
 
   // ── OKR node data (per-branch editable metadata for /exec/okr) ──────────

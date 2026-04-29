@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Sun, Coffee, Users, Sparkles, Download, AlertTriangle, Zap, Send, MessageSquare, X } from "lucide-react";
+import { Sun, Coffee, Users, Sparkles, Download, AlertTriangle, Zap, Send, MessageSquare, X, BookOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   buildCoworkPrompt, buildCommitteePrompt, buildBoardMeetingPrompt,
@@ -530,7 +530,7 @@ export default function AgenticHome() {
       </Card>
 
       {/* AIOS quick-link tiles */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-6 gap-3">
         <button onClick={() => navigate("/agents")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
           <Users className="w-5 h-5 text-primary mb-1" />
           <div className="font-bold text-sm">Agent Registry</div>
@@ -550,6 +550,11 @@ export default function AgenticHome() {
           <Sparkles className="w-5 h-5 text-primary mb-1" />
           <div className="font-bold text-sm">Skill Factory</div>
           <div className="text-xs text-muted-foreground">core + drafted skills</div>
+        </button>
+        <button onClick={() => navigate("/agentic/knowledge")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
+          <BookOpen className="w-5 h-5 text-primary mb-1" />
+          <div className="font-bold text-sm">Knowledge Base</div>
+          <div className="text-xs text-muted-foreground">past projects · CKO</div>
         </button>
         <button onClick={() => navigate("/logs")} className="text-left p-4 border rounded hover:shadow transition-shadow bg-card">
           {openConflicts > 0

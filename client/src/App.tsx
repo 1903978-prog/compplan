@@ -41,6 +41,7 @@ import AgenticExec    from "@/pages/agentic-org/Executive";
 import Approvals      from "@/pages/agentic-org/Approvals";
 import Logs           from "@/pages/agentic-org/Logs";
 import AgenticSkills  from "@/pages/agentic-org/Skills";
+import KnowledgeBase  from "@/pages/agentic-org/KnowledgeBase";
 import SectionMap     from "@/pages/agentic-org/SectionMap";
 import ExcomPage      from "@/pages/agentic-org/ExcomPage";
 import OrgChart from "@/pages/OrgChart";
@@ -337,6 +338,7 @@ function Navigation() {
                   { href: "/executive",          label: "OKR Center",          icon: Target },
                   { href: "/approvals",          label: "Decisions",           icon: Shield },
                   { href: "/agentic/skills",     label: "Skill Factory",       icon: Cpu },
+                  { href: "/agentic/knowledge",  label: "Knowledge Base",      icon: BookOpen },
                   { href: "/logs",               label: "Decision Log",        icon: BookOpen },
                 ]}
               />
@@ -503,6 +505,7 @@ function Router() {
       <Route path="/approvals" component={Approvals} />
       <Route path="/logs" component={Logs} />
       <Route path="/agentic/skills" component={AgenticSkills} />
+      <Route path="/agentic/knowledge" component={KnowledgeBase} />
       <Route path="/exec/section-map" component={SectionMap} />
       <Route path="/exec/excom" component={ExcomPage} />
       <Route path="/bd" component={BusinessDevelopment} />
