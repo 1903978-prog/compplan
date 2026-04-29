@@ -6911,9 +6911,10 @@ export default function PricingTool() {
                     const oneOffPct = oneOff?.pct ?? 0;
                     const successFeePct = successFeeDisc?.pct ?? 0;
                     const rebatePct = rebate?.pct ?? 0;
-                    const promptAmt = promptPct > 0 ? Math.round(grossTotal * promptPct / 100) : 0;
-                    const oneOffAmt = oneOffPct > 0 ? Math.round(grossTotal * oneOffPct / 100) : 0;
-                    const rebateAmt = rebatePct > 0 ? Math.round(grossTotal * rebatePct / 100) : 0;
+                    // Flat amounts use GROSSV as the base (same starting point as computeOption)
+                    const promptAmt = promptPct > 0 ? Math.round(grossVTotal * promptPct / 100) : 0;
+                    const oneOffAmt = oneOffPct > 0 ? Math.round(grossVTotal * oneOffPct / 100) : 0;
+                    const rebateAmt = rebatePct > 0 ? Math.round(grossVTotal * rebatePct / 100) : 0;
 
                     // Per-option numbers — mirror EXACTLY the three-timeline
                     // table above. Same compound arithmetic as the table:
@@ -6929,8 +6930,8 @@ export default function PricingTool() {
                     // SCHA01 where the 16w weekly rate differs from the
                     // 12w rate; EMV01 where commit is flat % × gross).
                     // Math:
-                    //   gross = override if set, else grossWk × weeks
-                    //   non-commit discounts applied COMPOUND in order
+                    //   gross = override if set, else grossVWeekly × weeks (GROSSV)
+                    //   non-commit discounts applied COMPOUND in order from GROSSV
                     //   commit = override if set, else pct × gross (flat)
                     //   net = running - commit_amount
                     const computeOption = (t: { weeks: number; commitPct: number; grossTotal?: number; commitAmount?: number; netTotal?: number }) => {
@@ -6938,7 +6939,7 @@ export default function PricingTool() {
                       const commitPct = t.commitPct;
                       const gross = typeof t.grossTotal === "number" && t.grossTotal > 0
                         ? Math.round(t.grossTotal)
-                        : Math.round(grossWk * weeks);
+                        : Math.round(grossVWeekly * weeks);
                       let running = gross;
                       const perDisc: Record<string, number> = {};
                       for (const d of baseEnabledDiscs) {
