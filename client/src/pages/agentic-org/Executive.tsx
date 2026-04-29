@@ -94,9 +94,29 @@ export default function Executive() {
           payload: { created, errors, parse_errors: parsed.errors.length },
         }),
       });
+      // Phase 3 — auto-detect conflicts on the freshly-imported tasks.
+      // Heuristics: overload (>7 actions/agent in last hour), same-deadline
+      // collision across ≥2 agents, antonym-keyword titles. Each detection
+      // creates a row in `conflicts` + an executive_log event.
+      let autoConflicts = 0;
+      try {
+        const dr = await fetch("/api/agentic/conflicts/auto-detect", {
+          method: "POST", credentials: "include",
+        });
+        if (dr.ok) {
+          const j = await dr.json();
+          autoConflicts = j.created ?? 0;
+        }
+      } catch { /* non-fatal */ }
       setLastImport({ created, errors: errors + parsed.errors.length });
       setPasted("");
-      toast({ title: `Imported ${created} decisions`, description: errors > 0 ? `${errors} skipped (unknown agent / parse error)` : undefined });
+      toast({
+        title: `Imported ${created} decisions`,
+        description: [
+          errors > 0 ? `${errors} skipped` : null,
+          autoConflicts > 0 ? `${autoConflicts} conflicts auto-detected — review on /logs` : null,
+        ].filter(Boolean).join(" · ") || undefined,
+      });
     } catch (e) {
       toast({ title: "Import failed", description: (e as Error).message, variant: "destructive" });
     } finally {

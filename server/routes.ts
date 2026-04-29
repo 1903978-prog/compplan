@@ -5543,6 +5543,226 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── Phase 3 — Skill activation: parse drafted markdown → create agent ─
+  // When a drafted skill goes to status='ready', extract the role's
+  // mission, boss, decision-rights × 4, and app sections from the
+  // markdown body and create the corresponding row in `agents`. Updates
+  // the skill's source_agent_id so the link is bidirectional.
+  function parseDraftedSkill(md: string): {
+    role_name: string | null;
+    mission: string | null;
+    boss_name: string | null;
+    app_sections: string | null;
+    autonomous: string | null;
+    boss: string | null;
+    ceo: string | null;
+    livio: string | null;
+  } {
+    const grab = (rx: RegExp): string | null => {
+      const m = md.match(rx);
+      return m ? m[1].trim() : null;
+    };
+    // Pull the section between a header and the next header.
+    const grabSection = (header: string): string | null => {
+      const rx = new RegExp(`##\\s+${header}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, "i");
+      const m = md.match(rx);
+      return m ? m[1].trim() : null;
+    };
+    const role_name = grab(/^ROLE_NAME:\s*(.+)$/m);
+    const mission = grabSection("Mission");
+    const boss_name = grab(/Boss:\s*([^.\n]+)/i);
+    const dailyInputs = grabSection("Daily inputs you must read");
+    let app_sections: string | null = null;
+    if (dailyInputs) {
+      // Extract /paths from the section.
+      const paths = dailyInputs.match(/\/[a-zA-Z0-9\-_/]+/g);
+      app_sections = paths ? paths.join("\n") : null;
+    }
+    const decisionRights = grabSection("Decision rights");
+    let autonomous: string | null = null, boss: string | null = null, ceo: string | null = null, livio: string | null = null;
+    if (decisionRights) {
+      const pickList = (label: string): string | null => {
+        const rx = new RegExp(`-\\s*${label}:\\s*(.+?)(?=\\n-\\s|$)`, "is");
+        const m = decisionRights.match(rx);
+        return m ? m[1].trim() : null;
+      };
+      autonomous = pickList("Autonomous");
+      boss = pickList("Boss approval");
+      ceo = pickList("CEO approval");
+      livio = pickList("Livio approval");
+    }
+    return { role_name, mission, boss_name, app_sections, autonomous, boss, ceo, livio };
+  }
+
+  app.post("/api/agentic/skills/:id/activate", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const skill = (await db.select().from(coworkSkills).where(eq(coworkSkills.id, id)))[0];
+      if (!skill) { res.status(404).json({ message: "Skill not found" }); return; }
+      if (skill.kind !== "drafted") {
+        res.status(400).json({ message: "Only drafted skills can be activated. Core skills are agent-less." });
+        return;
+      }
+      // Skip if already activated.
+      if (skill.source_agent_id) {
+        res.json({ message: "Already activated", skill });
+        return;
+      }
+      const parsed = parseDraftedSkill(skill.markdown);
+      if (!parsed.role_name) {
+        res.status(400).json({ message: "Could not parse ROLE_NAME from skill markdown" });
+        return;
+      }
+      // Resolve boss_id by name lookup (case-insensitive trim).
+      let boss_id: number | null = null;
+      if (parsed.boss_name) {
+        const all = await db.select().from(agentsTable);
+        const match = all.find(a => a.name.trim().toLowerCase() === parsed.boss_name!.trim().toLowerCase());
+        if (match) boss_id = match.id;
+      }
+      // Create the agent row.
+      const inserted = await db.insert(agentsTable).values({
+        name: parsed.role_name,
+        mission: parsed.mission,
+        boss_id,
+        status: "active",
+        app_sections_assigned: parsed.app_sections,
+        decision_rights_autonomous: parsed.autonomous,
+        decision_rights_boss: parsed.boss,
+        decision_rights_ceo: parsed.ceo,
+        decision_rights_livio: parsed.livio,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      } as any).returning();
+      // Link skill → agent + flip status to 'ready'.
+      const updatedSkill = await db.update(coworkSkills).set({
+        source_agent_id: inserted[0].id,
+        status: "ready",
+        updated_at: nowIso(),
+      } as any).where(eq(coworkSkills.id, id)).returning();
+      await logEvent("decision_logged", inserted[0].id, {
+        kind: "skill_activated",
+        skill_id: id, agent_id: inserted[0].id, role_name: parsed.role_name,
+      });
+      res.json({ agent: inserted[0], skill: updatedSkill[0] });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── Phase 3 — Conflict auto-detection ──────────────────────────────────
+  // Run after the user imports a Cowork output. Heuristics:
+  //   1. Multi-agent OKR collision: ≥ 2 different agents have new actions
+  //      pointing at the same OKR within the last hour.
+  //   2. Overload: a single agent received > 7 new actions in the last hour.
+  //   3. Antonym titles: two agents have actions whose TITLE contains
+  //      opposite keywords on the same OKR (raise/lower, hire/cut,
+  //      push/pause, increase/decrease).
+  // Each detected conflict becomes a row in `conflicts` + an executive_log
+  // event (event_type='conflict_detected', payload.detection='auto').
+  app.post("/api/agentic/conflicts/auto-detect", requireAuth, async (_req, res) => {
+    try {
+      // Pull tasks created in the last hour.
+      const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const recent = (await db.select().from(tasksTable)) as Array<typeof tasksTable.$inferSelect>;
+      const fresh = recent.filter(t => t.created_at > cutoff);
+      const allAgents = await db.select().from(agentsTable);
+      const agentName = (id: number) => allAgents.find(a => a.id === id)?.name ?? `#${id}`;
+
+      const detected: Array<{ title: string; agents: string; severity: string }> = [];
+
+      // (2) Overload
+      const byAgent = new Map<number, typeof fresh>();
+      for (const t of fresh) {
+        const arr = byAgent.get(t.agent_id) ?? [];
+        arr.push(t);
+        byAgent.set(t.agent_id, arr);
+      }
+      for (const [aid, arr] of byAgent) {
+        if (arr.length > 7) {
+          detected.push({
+            title: `Overload: ${agentName(aid)} received ${arr.length} new actions in 1h`,
+            agents: agentName(aid),
+            severity: "high",
+          });
+        }
+      }
+
+      // (1) Multi-agent OKR collision — group by deadline + simple keyword
+      // overlap on title since real OKR linking is in `ideas` not `tasks`.
+      // For now: same exact deadline + ≥ 2 agents → flag.
+      const byDeadline = new Map<string, typeof fresh>();
+      for (const t of fresh) {
+        if (!t.deadline) continue;
+        const arr = byDeadline.get(t.deadline) ?? [];
+        arr.push(t);
+        byDeadline.set(t.deadline, arr);
+      }
+      for (const [dl, arr] of byDeadline) {
+        const distinctAgents = new Set(arr.map(a => a.agent_id));
+        if (distinctAgents.size >= 2 && arr.length >= 3) {
+          detected.push({
+            title: `Same-deadline collision (${dl}): ${arr.length} actions across ${distinctAgents.size} agents`,
+            agents: [...distinctAgents].map(agentName).join(", "),
+            severity: "medium",
+          });
+        }
+      }
+
+      // (3) Antonym titles
+      const ANTONYMS: Array<[RegExp, RegExp, string]> = [
+        [/\b(raise|increase|push|grow|expand)\b/i, /\b(lower|decrease|pause|cut|shrink|reduce)\b/i, "raise vs cut"],
+        [/\bhire\b/i,     /\b(fire|cut|reduce|let go)\b/i,                                          "hire vs cut"],
+        [/\b(launch|start|kick.?off)\b/i, /\b(stop|halt|cancel|pause)\b/i,                          "launch vs stop"],
+        [/\b(approve|accept|green.?light)\b/i, /\b(reject|deny|block)\b/i,                          "approve vs reject"],
+      ];
+      for (const t of fresh) {
+        for (const t2 of fresh) {
+          if (t.id >= t2.id) continue;
+          if (t.agent_id === t2.agent_id) continue;
+          for (const [a, b, label] of ANTONYMS) {
+            if ((a.test(t.title) && b.test(t2.title)) || (b.test(t.title) && a.test(t2.title))) {
+              detected.push({
+                title: `${label}: "${t.title}" vs "${t2.title}"`,
+                agents: `${agentName(t.agent_id)}, ${agentName(t2.agent_id)}`,
+                severity: "high",
+              });
+            }
+          }
+        }
+      }
+
+      // De-dupe by title.
+      const seen = new Set<string>();
+      const unique = detected.filter(d => {
+        if (seen.has(d.title)) return false;
+        seen.add(d.title);
+        return true;
+      });
+
+      // Insert + log.
+      const inserted: number[] = [];
+      for (const d of unique) {
+        // Skip if a conflict with same title already open.
+        const existing = await db.execute(sql`
+          SELECT id FROM conflicts WHERE title = ${d.title} AND status = 'open' LIMIT 1
+        `);
+        if ((existing as any).rows?.length > 0) continue;
+        const ins = await db.insert(conflictsTable).values({
+          title: d.title,
+          agents_involved: d.agents,
+          severity: d.severity,
+          status: "open",
+          created_at: nowIso(),
+          resolved_at: null,
+        } as any).returning();
+        await logEvent("conflict_detected", null, {
+          conflict_id: ins[0].id, title: d.title, detection: "auto",
+        });
+        inserted.push(ins[0].id);
+      }
+      res.json({ detected: unique.length, created: inserted.length });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // Convenience: build the COO Skill Factory PAYLOAD (the input the user
   // pastes into Cowork along with the COO skill). Reads the factory-queue
   // and renders APPROVED_PROPOSAL blocks.

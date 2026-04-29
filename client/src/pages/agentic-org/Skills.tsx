@@ -67,6 +67,26 @@ export default function Skills() {
     });
   }
 
+  // Activate a drafted skill: parse markdown → create agent row →
+  // link source_agent_id back. The button lights up only when status is
+  // 'draft' and kind='drafted'.
+  async function activate(s: Skill) {
+    try {
+      const r = await fetch(`/api/agentic/skills/${s.id}/activate`, {
+        method: "POST", credentials: "include",
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message ?? `HTTP ${r.status}`);
+      toast({
+        title: `Activated: ${data.agent?.name ?? "agent"}`,
+        description: "Agent created with mission + decision rights from the skill markdown. Visit /agents to confirm.",
+      });
+      await load();
+    } catch (e) {
+      toast({ title: "Activation failed", description: (e as Error).message, variant: "destructive" });
+    }
+  }
+
   async function importDraftedSkills() {
     if (!importInput.trim()) return;
     try {
@@ -146,7 +166,7 @@ export default function Skills() {
         {loading ? <p className="text-xs italic text-muted-foreground">Loading…</p> : (
           <div className="space-y-2">
             {coreSkills.map(s => (
-              <SkillRow key={s.id} skill={s} expanded={expandedIds.has(s.id)} onToggle={() => toggle(s.id)} onCopy={() => copy(s.markdown, s.name)} onStatus={(status) => patch(s, { status })} />
+              <SkillRow key={s.id} skill={s} expanded={expandedIds.has(s.id)} onToggle={() => toggle(s.id)} onCopy={() => copy(s.markdown, s.name)} onStatus={(status) => patch(s, { status })} onActivate={() => activate(s)} />
             ))}
           </div>
         )}
@@ -160,12 +180,12 @@ export default function Skills() {
         </div>
         {draftedSkills.length === 0 ? (
           <p className="text-xs italic text-muted-foreground">
-            Drafted skills appear here after you import COO's output. Each starts as <Badge variant="outline" className="text-[9px] mx-1">draft</Badge> — review, then mark ready, then paste into a fresh Cowork session.
+            Drafted skills appear here after you import COO's output. Each starts as <Badge variant="outline" className="text-[9px] mx-1">draft</Badge> — review, click <strong>Activate</strong> to create the agent row (mission + decision rights parsed from the markdown), then paste the skill into a fresh Cowork session.
           </p>
         ) : (
           <div className="space-y-2">
             {draftedSkills.map(s => (
-              <SkillRow key={s.id} skill={s} expanded={expandedIds.has(s.id)} onToggle={() => toggle(s.id)} onCopy={() => copy(s.markdown, s.name)} onStatus={(status) => patch(s, { status })} />
+              <SkillRow key={s.id} skill={s} expanded={expandedIds.has(s.id)} onToggle={() => toggle(s.id)} onCopy={() => copy(s.markdown, s.name)} onStatus={(status) => patch(s, { status })} onActivate={() => activate(s)} />
             ))}
           </div>
         )}
@@ -197,28 +217,40 @@ export default function Skills() {
 
 // One skill row — collapsed by default, expanded shows the full markdown.
 function SkillRow({
-  skill, expanded, onToggle, onCopy, onStatus,
+  skill, expanded, onToggle, onCopy, onStatus, onActivate,
 }: {
-  skill: Skill; expanded: boolean; onToggle: () => void; onCopy: () => void; onStatus: (s: string) => void;
+  skill: Skill; expanded: boolean; onToggle: () => void; onCopy: () => void;
+  onStatus: (s: string) => void; onActivate: () => void;
 }) {
   const statusTone =
     skill.status === "ready"      ? "border-emerald-300 text-emerald-700 bg-emerald-50"
     : skill.status === "pasted"   ? "border-blue-300 text-blue-700 bg-blue-50"
     : skill.status === "draft"    ? "border-amber-300 text-amber-700 bg-amber-50"
     :                                "border-slate-300 text-slate-700 bg-slate-50";
+  // Activate button is only meaningful for drafted skills that don't yet
+  // have a backing agent row (source_agent_id null).
+  const canActivate = skill.kind === "drafted" && !skill.source_agent_id;
   return (
     <div className="border rounded overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 bg-muted/20">
+      <div className="flex items-center gap-2 px-3 py-2 bg-muted/20 flex-wrap">
         <button onClick={onToggle} className="text-muted-foreground hover:text-foreground">
           {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
-        <span className="font-semibold text-sm flex-1 truncate">{skill.name}</span>
+        <span className="font-semibold text-sm flex-1 truncate min-w-[120px]">{skill.name}</span>
         <Badge variant="outline" className="text-[10px] font-mono">{skill.agent_key}</Badge>
         <Badge variant="outline" className={`text-[10px] ${statusTone}`}>{skill.status}</Badge>
+        {skill.source_agent_id && (
+          <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700">agent #{skill.source_agent_id}</Badge>
+        )}
         <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={onCopy}>
           <Download className="w-3 h-3 mr-1" /> Copy
         </Button>
-        {skill.status !== "ready" && skill.status !== "pasted" && (
+        {canActivate && (
+          <Button size="sm" className="h-6 text-[10px] bg-emerald-600 hover:bg-emerald-700" onClick={onActivate}>
+            <Check className="w-3 h-3 mr-1" /> Activate (create agent)
+          </Button>
+        )}
+        {skill.status !== "ready" && skill.status !== "pasted" && !canActivate && (
           <Button size="sm" className="h-6 text-[10px]" onClick={() => onStatus("ready")}>
             <Check className="w-3 h-3 mr-1" /> Ready
           </Button>
