@@ -1271,3 +1271,26 @@ export type Idea       = typeof ideas.$inferSelect;
 export type Task       = typeof tasks.$inferSelect;
 export type LogEntry   = typeof executiveLog.$inferSelect;
 export type Conflict   = typeof conflicts.$inferSelect;
+
+// ── Phase 2 — Cowork Skills Library ─────────────────────────────────────
+// Stores the markdown text of every Cowork-targeted skill. Two flavours:
+//   kind='core'    — handcrafted top-of-org skills (CEO, COO). Seeded
+//                    on boot; the user pastes them into Cowork sessions.
+//   kind='drafted' — produced by the COO Skill Factory from an approved
+//                    CEO proposal (TYPE=proposal). status=draft until the
+//                    user reviews + clicks "Mark as ready"; then 'ready';
+//                    then 'pasted' once dropped into Cowork.
+export const coworkSkills = pgTable("cowork_skills", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),                                    // "Eendigo CEO" / "Eendigo Customer Reactivation Agent"
+  agent_key: text("agent_key").notNull().unique(),                 // kebab-case slug, used as anchor
+  kind: text("kind").notNull().default("core"),                    // core | drafted
+  markdown: text("markdown").notNull(),                            // the full skill body
+  status: text("status").notNull().default("ready"),               // draft | ready | pasted | superseded
+  source_task_id: integer("source_task_id"),                       // FK→tasks.id (approved proposal that triggered the draft)
+  source_agent_id: integer("source_agent_id"),                     // FK→agents.id (who this skill is for)
+  notes: text("notes"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type CoworkSkill = typeof coworkSkills.$inferSelect;

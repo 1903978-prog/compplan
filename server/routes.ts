@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, type BenchmarkRow } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, type BenchmarkRow } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
@@ -5445,6 +5445,132 @@ RULES:
       }
       const rows = await db.update(conflictsTable).set(update as any).where(eq(conflictsTable.id, id)).returning();
       res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── Phase 2 — Cowork Skills Library ────────────────────────────────────
+  app.get("/api/agentic/skills", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.select().from(coworkSkills).orderBy(coworkSkills.kind, coworkSkills.name);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/agentic/skills/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body as Record<string, unknown>;
+      const update: Record<string, unknown> = { updated_at: nowIso() };
+      for (const f of ["name", "markdown", "status", "notes"]) {
+        if (typeof b[f] === "string" || b[f] === null) update[f] = b[f];
+      }
+      const rows = await db.update(coworkSkills).set(update as any).where(eq(coworkSkills.id, id)).returning();
+      res.json(rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.delete("/api/agentic/skills/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      await db.delete(coworkSkills).where(eq(coworkSkills.id, id));
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // Skill Factory queue: tasks of TYPE=proposal that have been approved
+  // by Livio AND don't yet have a drafted skill (cowork_skills.source_task_id).
+  app.get("/api/agentic/skills/factory-queue", requireAuth, async (_req, res) => {
+    try {
+      // Approved hire proposals = tasks with approval_status='approved' AND
+      // approval_level='livio' AND title starting with "Hire:".
+      const allTasks = await db.select().from(tasksTable);
+      const drafted = await db.select().from(coworkSkills);
+      const draftedTaskIds = new Set(drafted.map(d => d.source_task_id).filter(Boolean));
+      const queue = allTasks.filter(t =>
+        t.approval_status === "approved"
+        && t.approval_level === "livio"
+        && /^hire:/i.test(t.title)
+        && !draftedTaskIds.has(t.id),
+      );
+      res.json(queue);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // Import COO's drafted-skills payload. The COO's Cowork output contains
+  // multiple ```skill-md fenced blocks; this endpoint accepts the full
+  // pasted text and inserts one row per block.
+  app.post("/api/agentic/skills/import", requireAuth, async (req, res) => {
+    try {
+      const raw = String((req.body as any)?.payload ?? "");
+      if (!raw.trim()) { res.status(400).json({ message: "payload required" }); return; }
+      // Split on ```skill-md fences. Robust to extra whitespace + missing
+      // closing fences (last block may run to EOF).
+      const blocks = raw.split(/^[ \t]*```\s*skill-md\s*$/m).slice(1)
+        .map(b => b.split(/^[ \t]*```\s*$/m)[0].trim())
+        .filter(Boolean);
+      let created = 0;
+      const errors: { reason: string }[] = [];
+      const now = nowIso();
+      for (const block of blocks) {
+        const m1 = block.match(/^DRAFT_FOR_TASK:\s*(\d+)/m);
+        const m2 = block.match(/^AGENT_KEY:\s*([a-z0-9\-_]+)/im);
+        const m3 = block.match(/^ROLE_NAME:\s*(.+)$/m);
+        if (!m2 || !m3) {
+          errors.push({ reason: "Missing AGENT_KEY or ROLE_NAME header" });
+          continue;
+        }
+        const source_task_id = m1 ? parseInt(m1[1], 10) : null;
+        const agent_key = m2[1].trim();
+        const name = `Eendigo ${m3[1].trim()}`;
+        try {
+          await db.insert(coworkSkills).values({
+            name,
+            agent_key,
+            kind: "drafted",
+            markdown: block,
+            status: "draft",
+            source_task_id,
+            source_agent_id: null,
+            created_at: now, updated_at: now,
+          } as any);
+          created++;
+        } catch (e) {
+          errors.push({ reason: (e as Error).message });
+        }
+      }
+      await logEvent("output_imported", null, { kind: "skill_factory", created, errors: errors.length });
+      res.json({ created, errors });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // Convenience: build the COO Skill Factory PAYLOAD (the input the user
+  // pastes into Cowork along with the COO skill). Reads the factory-queue
+  // and renders APPROVED_PROPOSAL blocks.
+  app.get("/api/agentic/skills/factory-payload", requireAuth, async (_req, res) => {
+    try {
+      const allTasks = await db.select().from(tasksTable);
+      const drafted = await db.select().from(coworkSkills);
+      const allAgents = await db.select().from(agentsTable);
+      const draftedTaskIds = new Set(drafted.map(d => d.source_task_id).filter(Boolean));
+      const queue = allTasks.filter(t =>
+        t.approval_status === "approved"
+        && t.approval_level === "livio"
+        && /^hire:/i.test(t.title)
+        && !draftedTaskIds.has(t.id),
+      );
+      const lines: string[] = [];
+      for (const t of queue) {
+        const agent = allAgents.find(a => a.id === t.agent_id);
+        const role = t.title.replace(/^hire:\s*/i, "").trim();
+        lines.push("APPROVED_PROPOSAL");
+        lines.push(`ROLE_NAME: ${role}`);
+        lines.push(`RATIONALE: ${(t.description ?? "").slice(0, 400)}`);
+        lines.push(`SUGGESTED_BOSS: ${agent?.name ?? "CEO"}`);
+        lines.push(`DECISION_LEVEL: ${t.approval_level}`);
+        lines.push(`SOURCE_TASK_ID: ${t.id}`);
+        lines.push("---");
+      }
+      res.json({ count: queue.length, payload: lines.join("\n") });
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

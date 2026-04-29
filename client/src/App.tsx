@@ -40,6 +40,7 @@ import AgentDetail    from "@/pages/agentic-org/AgentDetail";
 import AgenticExec    from "@/pages/agentic-org/Executive";
 import Approvals      from "@/pages/agentic-org/Approvals";
 import Logs           from "@/pages/agentic-org/Logs";
+import AgenticSkills  from "@/pages/agentic-org/Skills";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
@@ -324,11 +325,12 @@ function Navigation() {
                 icon={Cpu}
                 basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs"]}
                 items={[
-                  { href: "/agentic",   label: "Dashboard",        icon: Cpu },
-                  { href: "/agents",    label: "Agent Registry",   icon: Users },
-                  { href: "/executive", label: "Executive OKR",    icon: Target },
-                  { href: "/approvals", label: "Approval Center",  icon: Shield },
-                  { href: "/logs",      label: "Executive Log",    icon: BookOpen },
+                  { href: "/agentic",        label: "Dashboard",        icon: Cpu },
+                  { href: "/agents",         label: "Agent Registry",   icon: Users },
+                  { href: "/executive",      label: "Executive OKR",    icon: Target },
+                  { href: "/approvals",      label: "Approval Center",  icon: Shield },
+                  { href: "/agentic/skills", label: "Skills Library",   icon: Cpu },
+                  { href: "/logs",           label: "Executive Log",    icon: BookOpen },
                 ]}
               />
               <NavDropdown
@@ -493,6 +495,7 @@ function Router() {
       <Route path="/executive" component={AgenticExec} />
       <Route path="/approvals" component={Approvals} />
       <Route path="/logs" component={Logs} />
+      <Route path="/agentic/skills" component={AgenticSkills} />
       <Route path="/bd" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />
