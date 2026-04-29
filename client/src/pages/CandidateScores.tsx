@@ -42,17 +42,32 @@ interface Candidate {
 
 interface TestDef { id: string; label: string; short: string }
 
+// Order matters — this is the left-to-right column order in the grid.
+// Stages map to the actual hiring funnel:
+//   HSA   → screening assessment (TestGorilla Logic + Verbal composite)
+//   PPT   → PowerPoint task (TG Pres test)
+//   Excel → Excel skills test (TG Excel)
+//   TG    → TG overall composite
+//   Intro → ASC-EM intro call rating
+//   Case  → case-study rating (ASC-EM)
+//   LM    → line-manager review of the case (was "Final"; relabeled per
+//           the user's correct funnel terminology — same id 'final' for
+//           back-compat with stored manual scores).
 const TESTS: TestDef[] = [
-  { id: "hsa",         label: "HSA",             short: "HSA" },
-  { id: "testgorilla", label: "TestGorilla",     short: "TG" },
-  { id: "case_study",  label: "Case study (EM)", short: "Case" },
+  { id: "hsa",         label: "HSA",             short: "HSA"   },
+  { id: "ppt",         label: "PowerPoint task", short: "PPT"   },
+  { id: "excel",       label: "Excel test",      short: "Excel" },
+  { id: "testgorilla", label: "TestGorilla",     short: "TG"    },
   { id: "intro_call",  label: "Intro call",      short: "Intro" },
-  { id: "ppt",         label: "PowerPoint task", short: "PPT" },
-  { id: "final",       label: "Final interview", short: "Final" },
+  { id: "case_study",  label: "Case study (EM)", short: "Case"  },
+  { id: "final",       label: "LM case review",  short: "LM"    },
 ];
 
+// Weights sum to 100. HSA stays the heaviest (foundation screen);
+// LM case (line-manager partner verdict) is the strongest go/no-go
+// signal so it's elevated from 5% to 15%. Rebalanced from prior.
 const DEFAULT_WEIGHTS: Record<string, number> = {
-  hsa: 30, testgorilla: 25, case_study: 25, intro_call: 10, ppt: 5, final: 5,
+  hsa: 25, ppt: 10, excel: 10, testgorilla: 15, intro_call: 10, case_study: 15, final: 15,
 };
 const WEIGHTS_KEY = "candidate_score_weights_v1";
 

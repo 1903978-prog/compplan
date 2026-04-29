@@ -37,10 +37,12 @@ interface Candidate {
   created_at: string;
 }
 
-// Composite rubric — matches CandidateScores.tsx. These six drive the
-// Weighted Avg calculation; everything else in the table is detail.
+// Composite rubric — matches CandidateScores.tsx. Seven stages now drive
+// the Weighted Avg in the order HSA → PPT → Excel → TG → Intro → Case → LM
+// case. (LM case = partner's review of the case study; same id 'final'
+// kept for back-compat with stored manual scores.)
 const WEIGHTS: Record<string, number> = {
-  hsa: 30, testgorilla: 25, case_study: 25, intro_call: 10, ppt: 5, final: 5,
+  hsa: 25, ppt: 10, excel: 10, testgorilla: 15, intro_call: 10, case_study: 15, final: 15,
 };
 
 // Display columns in the table, left-to-right. Each column pulls from
@@ -121,8 +123,10 @@ function resolveRow(c: Candidate): Record<string, number | string | null> {
   if (parsed.introScore != null) out.intro_call  = parsed.introScore;
   if (parsed.csRateScore != null) out.cs_rate    = parsed.csRateScore;
   if (parsed.csLMScore  != null) out.case_study  = parsed.csLMScore;
-  // Manual override wins for the six composite keys
-  for (const k of ["hsa", "testgorilla", "case_study", "intro_call", "ppt", "final"]) {
+  // Manual override wins for the seven composite keys (added 'excel'
+  // alongside 'ppt' as a separate test — the Excel parsed sub-score
+  // still lights up the Excel column when no manual override is set).
+  for (const k of ["hsa", "testgorilla", "case_study", "intro_call", "ppt", "excel", "final"]) {
     const v = manual[k];
     if (typeof v === "number") out[k] = v;
   }
