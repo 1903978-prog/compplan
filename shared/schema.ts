@@ -1341,3 +1341,31 @@ export const agentSectionMap = pgTable("agent_section_map", {
   updated_at:       text("updated_at").notNull(),
 });
 export type AgentSectionMapRow = typeof agentSectionMap.$inferSelect;
+
+// ── Phase 4 — EXCOM ───────────────────────────────────────────────────────
+export const excomMeetings = pgTable("excom_meetings", {
+  id:               serial("id").primaryKey(),
+  meeting_date:     text("meeting_date").notNull(),
+  status:           text("status").notNull().default("draft"),
+  agenda_notes:     text("agenda_notes").notNull().default(""),
+  minutes_text:     text("minutes_text").notNull().default(""),
+  decisions_text:   text("decisions_text").notNull().default(""),
+  action_items:     text("action_items").notNull().default(""),
+  attendees:        text("attendees").notNull().default(""),
+  next_meeting_date:text("next_meeting_date").notNull().default(""),
+  created_at:       text("created_at").notNull(),
+  updated_at:       text("updated_at").notNull(),
+});
+export type ExcomMeeting = typeof excomMeetings.$inferSelect;
+
+export const excomPredefinedTasks = pgTable("excom_predefined_tasks", {
+  id:               serial("id").primaryKey(),
+  title:            text("title").notNull(),
+  description:      text("description").notNull().default(""),
+  category:         text("category").notNull().default("General"),
+  outcome_template: text("outcome_template").notNull().default(""),
+  frequency:        text("frequency").notNull().default("Monthly"),
+  is_active:        integer("is_active").notNull().default(1),
+  created_at:       text("created_at").notNull(),
+});
+export type ExcomPredefinedTask = typeof excomPredefinedTasks.$inferSelect;

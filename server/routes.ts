@@ -6199,6 +6199,114 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── /api/excom — Executive Committee ────────────────────────────────────
+  // Meetings CRUD
+  app.get("/api/excom/meetings", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`SELECT * FROM excom_meetings ORDER BY meeting_date DESC`);
+      res.json(rows.rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.get("/api/excom/meetings/:id", requireAuth, async (req, res) => {
+    try {
+      const rows = await db.execute(sql`SELECT * FROM excom_meetings WHERE id = ${Number(req.params.id)}`);
+      if (!rows.rows.length) return res.status(404).json({ message: "Not found" });
+      res.json(rows.rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/excom/meetings", requireAuth, async (req, res) => {
+    try {
+      const now = new Date().toISOString();
+      const b = req.body;
+      const rows = await db.execute(sql`
+        INSERT INTO excom_meetings
+          (meeting_date, status, agenda_notes, minutes_text, decisions_text, action_items, attendees, next_meeting_date, created_at, updated_at)
+        VALUES
+          (${b.meeting_date ?? now.slice(0,10)}, ${b.status ?? "draft"}, ${b.agenda_notes ?? ""},
+           ${b.minutes_text ?? ""}, ${b.decisions_text ?? ""}, ${b.action_items ?? ""},
+           ${b.attendees ?? ""}, ${b.next_meeting_date ?? ""}, ${now}, ${now})
+        RETURNING *
+      `);
+      res.status(201).json(rows.rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/excom/meetings/:id", requireAuth, async (req, res) => {
+    try {
+      const now = new Date().toISOString();
+      const b = req.body;
+      const id = Number(req.params.id);
+      await db.execute(sql`
+        UPDATE excom_meetings SET
+          meeting_date      = COALESCE(${b.meeting_date      ?? null}, meeting_date),
+          status            = COALESCE(${b.status            ?? null}, status),
+          agenda_notes      = COALESCE(${b.agenda_notes      ?? null}, agenda_notes),
+          minutes_text      = COALESCE(${b.minutes_text      ?? null}, minutes_text),
+          decisions_text    = COALESCE(${b.decisions_text    ?? null}, decisions_text),
+          action_items      = COALESCE(${b.action_items      ?? null}, action_items),
+          attendees         = COALESCE(${b.attendees         ?? null}, attendees),
+          next_meeting_date = COALESCE(${b.next_meeting_date ?? null}, next_meeting_date),
+          updated_at        = ${now}
+        WHERE id = ${id}
+      `);
+      const rows = await db.execute(sql`SELECT * FROM excom_meetings WHERE id = ${id}`);
+      res.json(rows.rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.delete("/api/excom/meetings/:id", requireAuth, async (req, res) => {
+    try {
+      await db.execute(sql`DELETE FROM excom_meetings WHERE id = ${Number(req.params.id)}`);
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // Predefined tasks (templates)
+  app.get("/api/excom/predefined-tasks", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`SELECT * FROM excom_predefined_tasks WHERE is_active = 1 ORDER BY category, title`);
+      res.json(rows.rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/excom/predefined-tasks", requireAuth, async (req, res) => {
+    try {
+      const now = new Date().toISOString();
+      const b = req.body;
+      const rows = await db.execute(sql`
+        INSERT INTO excom_predefined_tasks
+          (title, description, category, outcome_template, frequency, is_active, created_at)
+        VALUES
+          (${b.title ?? ""}, ${b.description ?? ""}, ${b.category ?? "General"},
+           ${b.outcome_template ?? ""}, ${b.frequency ?? "Monthly"}, ${b.is_active ?? 1}, ${now})
+        RETURNING *
+      `);
+      res.status(201).json(rows.rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/excom/predefined-tasks/:id", requireAuth, async (req, res) => {
+    try {
+      const now = new Date().toISOString();
+      const b = req.body;
+      const id = Number(req.params.id);
+      await db.execute(sql`
+        UPDATE excom_predefined_tasks SET
+          title            = COALESCE(${b.title            ?? null}, title),
+          description      = COALESCE(${b.description      ?? null}, description),
+          category         = COALESCE(${b.category         ?? null}, category),
+          outcome_template = COALESCE(${b.outcome_template ?? null}, outcome_template),
+          frequency        = COALESCE(${b.frequency        ?? null}, frequency),
+          is_active        = COALESCE(${b.is_active        ?? null}, is_active)
+        WHERE id = ${id}
+      `);
+      const rows = await db.execute(sql`SELECT * FROM excom_predefined_tasks WHERE id = ${id}`);
+      res.json(rows.rows[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── /api/ceo-brief — public, token-protected daily brief ────────────────
   // External tools (Cowork skills, schedulers, etc.) GET this endpoint to
   // pull a comprehensive real-time brief covering ALL app sections, mapped

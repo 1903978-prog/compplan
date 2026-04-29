@@ -2572,4 +2572,105 @@ Use sequential IDs prefixed LD-001.
       `);
     }
   }
+
+  // ── Phase 4 — EXCOM (Executive Committee) ──────────────────────────────────
+  {
+    const _now4 = new Date().toISOString();
+
+    // excom_meetings — one row per scheduled meeting
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS excom_meetings (
+        id             SERIAL PRIMARY KEY,
+        meeting_date   TEXT NOT NULL,
+        status         TEXT NOT NULL DEFAULT 'draft',
+        agenda_notes   TEXT NOT NULL DEFAULT '',
+        minutes_text   TEXT NOT NULL DEFAULT '',
+        decisions_text TEXT NOT NULL DEFAULT '',
+        action_items   TEXT NOT NULL DEFAULT '',
+        attendees      TEXT NOT NULL DEFAULT '',
+        next_meeting_date TEXT NOT NULL DEFAULT '',
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+      )
+    `);
+
+    // excom_predefined_tasks — reusable meeting agenda templates
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS excom_predefined_tasks (
+        id               SERIAL PRIMARY KEY,
+        title            TEXT NOT NULL,
+        description      TEXT NOT NULL DEFAULT '',
+        category         TEXT NOT NULL DEFAULT 'Performance',
+        outcome_template TEXT NOT NULL DEFAULT '',
+        frequency        TEXT NOT NULL DEFAULT 'Monthly',
+        is_active        INTEGER NOT NULL DEFAULT 1,
+        created_at       TEXT NOT NULL,
+        UNIQUE (title)
+      )
+    `);
+
+    const predefinedTasks: [string, string, string, string, string][] = [
+      // title, description, category, outcome_template, frequency
+      ["Review agent performance",
+       "Score each AIOS agent on output quality, task completion, and initiative. Rank from best to worst.",
+       "Performance",
+       "Top performer: __. Average performers: __. On chopping list: __. Recommended action: __.",
+       "Monthly"],
+      ["Pipeline review",
+       "Walk every open BD deal: probability, blockers, next action, and close-date confidence.",
+       "Sales",
+       "Total pipeline: €__. Deals advancing: __. Deals at risk: __. Actions: __.",
+       "Weekly"],
+      ["Cash & AR review",
+       "Overdue invoices, cash runway, and any outstanding collection issues.",
+       "Finance",
+       "Cash: €__. Overdue >30d: €__. Escalations: __. Decisions: __.",
+       "Weekly"],
+      ["Hiring decisions",
+       "Review candidates in final stages (Case / LM / Offer). Make hire/no-hire calls.",
+       "Hiring",
+       "Offers extended: __. Rejections: __. Pipeline gaps: __.",
+       "Triggered"],
+      ["OKR health check",
+       "Review each agent's key results: on-track vs lagging. Identify blockers.",
+       "Strategy",
+       "On-track OKRs: __. Lagging: __. Blockers removed: __. Re-prioritised: __.",
+       "Monthly"],
+      ["Pricing strategy",
+       "Review recent win/loss rates by region and adjust pricing benchmarks if needed.",
+       "Strategy",
+       "Win rate this month: __%. Avg Net/wk: €__. Benchmark updates: __.",
+       "Monthly"],
+      ["Capacity & headcount plan",
+       "Active projects vs pipeline demand. Risk of being over/under-capacity in 45 days.",
+       "Operations",
+       "Current capacity: __ FTEs. Demand forecast: __. Hiring urgency: __.",
+       "Monthly"],
+      ["Risk register",
+       "Identify any operational, financial, or reputational risks that emerged since last EXCOM.",
+       "Risk",
+       "New risks: __. Mitigations agreed: __. Owner: __. Deadline: __.",
+       "Monthly"],
+      ["Strategic initiatives review",
+       "Status of any cross-functional projects (new service lines, partnerships, tool rollouts).",
+       "Strategy",
+       "Active initiatives: __. Progress: __. Blockers: __. Next milestones: __.",
+       "Monthly"],
+      ["Any Other Business",
+       "Open floor for urgent topics not covered by the standing agenda.",
+       "General",
+       "Topics raised: __. Decisions: __. Follow-ups: __.",
+       "Weekly"],
+    ];
+
+    for (const [title, description, category, outcome_template, frequency] of predefinedTasks) {
+      await db.execute(sql`
+        INSERT INTO excom_predefined_tasks
+          (title, description, category, outcome_template, frequency, is_active, created_at)
+        VALUES
+          (${title}, ${description}, ${category}, ${outcome_template}, ${frequency}, 1, ${_now4})
+        ON CONFLICT (title) DO NOTHING
+      `);
+    }
+  }
 }
