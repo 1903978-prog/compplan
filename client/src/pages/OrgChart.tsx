@@ -225,23 +225,8 @@ export default function OrgChart() {
       setAcceptanceStats(stats);
       setAiosAgents(aios);
 
-      // Seed initial collapsed state: collapse all depth-1 nodes so
-      // depth ≥ 2 (grandchildren of root) starts hidden on first render.
-      const _PEER_RX = /^(president|founder|chairman|board)$/i;
-      const _depths = new Map<string, number>();
-      const _q: { key: string; d: number }[] = (orgs as OrgRole[])
-        .filter(r => !r.parent_role_key && !_PEER_RX.test(r.role_key))
-        .map(r => ({ key: r.role_key, d: 0 }));
-      for (let _i = 0; _i < _q.length; _i++) {
-        const { key, d } = _q[_i];
-        if (_depths.has(key)) continue;
-        _depths.set(key, d);
-        for (const child of (orgs as OrgRole[]).filter(r => r.parent_role_key === key && !_PEER_RX.test(r.role_key)))
-          _q.push({ key: child.role_key, d: d + 1 });
-      }
-      const _initCollapsed = new Set<string>();
-      _depths.forEach((depth, key) => { if (depth === 1) _initCollapsed.add(key); });
-      setCollapsedKeys(_initCollapsed);
+      // Start fully expanded so every agent is visible on load.
+      setCollapsedKeys(new Set());
 
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
