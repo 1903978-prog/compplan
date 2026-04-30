@@ -566,49 +566,108 @@ export default function OrgChart() {
         );
       })()}
 
-      {/* Direct reports row + connector lines — recursive so any depth renders.
-          Same ± collapse toggle as deeper subtrees: clicking it on the CEO's
-          drop hides the entire org below the C-suite. */}
-      {ceo && directReports.length > 0 && (
-        <div className="overflow-x-auto pb-2">
-          <div className="relative inline-flex flex-col items-center min-w-full">
-            {/* Vertical line down from CEO with the ± toggle in the middle. */}
-            <div className="relative w-px h-5 bg-slate-300">
-              <button
-                type="button"
-                onClick={() => toggleCollapse(ceo.role_key)}
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors"
-                title={collapsedKeys.has(ceo.role_key) ? "Expand the org" : "Collapse the org"}
-              >
-                {collapsedKeys.has(ceo.role_key)
-                  ? <Plus className="w-2.5 h-2.5 text-slate-600" />
-                  : <Minus className="w-2.5 h-2.5 text-slate-600" />}
-              </button>
-            </div>
-            {!collapsedKeys.has(ceo.role_key) && (
-              /* Horizontal busbar — spans full width of the subtrees row */
-              <div className="relative w-full">
-                <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
-                <div className="flex flex-nowrap justify-center gap-4 pt-0">
-                  {directReports.map(r => (
-                    <RoleSubtree
-                      key={r.id}
-                      role={r}
-                      depth={1}
-                      childrenOf={childrenOf}
-                      knowledge={knowledge}
-                      onOpen={setOpenRole}
-                      onAddKnowledge={setAddKnowledgeForRole}
-                      collapsedKeys={collapsedKeys}
-                      onToggleCollapse={toggleCollapse}
-                    />
-                  ))}
+      {/* Direct reports — adaptive layout matching the rest of the chart:
+          ≤2 reports → classic horizontal row below the CEO.
+          ≥3 reports → vertical stack to the RIGHT of the CEO (saves
+          enormous page width and matches how Pingboard / Sift / modern
+          org-chart tools render wide top tiers). The CEO is rendered
+          above; we render a "ghost" right-stack here that visually
+          attaches to the CEO via a horizontal stub and bracket. */}
+      {ceo && directReports.length > 0 && (() => {
+        const ceoCollapsed = collapsedKeys.has(ceo.role_key);
+        const useRightStack = directReports.length >= 3;
+        const ceoToggle = (
+          <button
+            type="button"
+            onClick={() => toggleCollapse(ceo.role_key)}
+            className="w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors shrink-0"
+            title={ceoCollapsed ? "Expand the org" : "Collapse the org"}
+          >
+            {ceoCollapsed
+              ? <Plus className="w-2.5 h-2.5 text-slate-600" />
+              : <Minus className="w-2.5 h-2.5 text-slate-600" />}
+          </button>
+        );
+
+        if (useRightStack) {
+          // Right-stack: render reports as a vertical column to the right
+          // of where the CEO lives, with a bracket connector. Negative top
+          // margin pulls this row up so it visually attaches to the CEO
+          // card above (which sits in mb-3 ≈ 12px of bottom margin).
+          return (
+            <div className="overflow-x-auto pb-2 -mt-[60px]">
+              <div className="flex justify-center">
+                <div className="flex items-start">
+                  {/* Spacer matching the width of the CEO card so the right-stack
+                      sits horizontally to the right of where the CEO is. */}
+                  <div className="w-[240px] shrink-0" />
+                  {/* Bracket area — toggle, then (when expanded) reports column. */}
+                  <div className="flex items-start pt-[28px]">
+                    <div className="w-3 h-px bg-slate-300 mt-2" />
+                    {ceoToggle}
+                    {!ceoCollapsed && (
+                      <>
+                        <div className="w-3 h-px bg-slate-300 mt-2" />
+                        <div className="relative flex flex-col gap-3 -mt-[28px]">
+                          <div className="absolute left-0 top-[52px] bottom-[52px] w-px bg-slate-300" />
+                          {directReports.map(r => (
+                            <div key={r.id} className="relative pl-3">
+                              <div className="absolute left-0 top-[52px] w-3 h-px bg-slate-300" />
+                              <RoleSubtree
+                                role={r}
+                                depth={1}
+                                childrenOf={childrenOf}
+                                knowledge={knowledge}
+                                onOpen={setOpenRole}
+                                onAddKnowledge={setAddKnowledgeForRole}
+                                collapsedKeys={collapsedKeys}
+                                onToggleCollapse={toggleCollapse}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
+          );
+        }
+
+        // Classic horizontal row for ≤2 reports.
+        return (
+          <div className="overflow-x-auto pb-2">
+            <div className="relative inline-flex flex-col items-center min-w-full">
+              <div className="relative w-px h-5 bg-slate-300">
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                  {ceoToggle}
+                </div>
+              </div>
+              {!ceoCollapsed && (
+                <div className="relative w-full">
+                  <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
+                  <div className="flex flex-nowrap justify-center gap-4 pt-0">
+                    {directReports.map(r => (
+                      <RoleSubtree
+                        key={r.id}
+                        role={r}
+                        depth={1}
+                        childrenOf={childrenOf}
+                        knowledge={knowledge}
+                        onOpen={setOpenRole}
+                        onAddKnowledge={setAddKnowledgeForRole}
+                        collapsedKeys={collapsedKeys}
+                        onToggleCollapse={toggleCollapse}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Add-knowledge popup ────────────────────────────────────── */}
       <Dialog open={!!addKnowledgeForRole} onOpenChange={(o) => !o && setAddKnowledgeForRole(null)}>
@@ -916,14 +975,15 @@ function RoleCard({ role, highlight, knowledgeCount, depth = 0, onClick, onAddKn
   );
 }
 
-// ── Recursive role subtree — renders a card + its children at any depth ──
-// All siblings always on a SINGLE horizontal line (flex-nowrap).
-// The outer page wraps in overflow-x-auto to allow scrolling.
-//
-// Connectors are 1px slate-300 lines. A small ± circle sits on the vertical
-// segment between this tile and its children's busbar — click it to hide /
-// show the subtree below. Collapsed state is owned by the OrgChart top-level
-// component and threaded down via `collapsedKeys` / `onToggleCollapse`.
+// ── Recursive role subtree — adaptive layout ─────────────────────────
+// Layout rule (matches modern org-chart tools — Pingboard, Sift, Lucidchart):
+//   - 0-2 direct reports → render them HORIZONTALLY below the parent
+//     (classic top-down org chart). Compact when few reports, easy to read.
+//   - 3+ direct reports → render them VERTICALLY to the RIGHT of the
+//     parent with a bracket connector. Saves enormous horizontal space
+//     so the whole org fits on one page even at depth.
+// Cards stay 240×72 in both modes — the user explicitly asked for tiles
+// not to grow. The ± toggle stays clickable in both layouts.
 function RoleSubtree({
   role, childrenOf, knowledge, onOpen, onAddKnowledge,
   depth = 1, collapsedKeys, onToggleCollapse,
@@ -940,57 +1000,126 @@ function RoleSubtree({
   const children = childrenOf(role.role_key);
   const collapsed = collapsedKeys.has(role.role_key);
   const hasChildren = children.length > 0;
+  // Right-stack for ≥3 reports. Threshold matches Livio's brief — three
+  // is the point at which a horizontal row starts wasting page width.
+  const useVerticalStack = children.length >= 3;
 
-  return (
-    // flex-col items-center: card sits centered above its children row
-    <div className="flex flex-col items-center">
-      {/* Vertical drop from the busbar above this tile (1px slate). */}
-      <div className="w-px h-4 bg-slate-300" />
-      <RoleCard
-        role={role}
-        depth={depth}
-        knowledgeCount={knowledge.filter(k => k.role_key === role.role_key).length}
-        onClick={() => onOpen(role)}
-        onAddKnowledge={() => onAddKnowledge(role)}
-      />
-      {hasChildren && (
-        <div className="flex flex-col items-center w-full">
-          {/* Vertical drop from this card with the ± toggle in the middle */}
-          <div className="relative w-px h-5 bg-slate-300">
-            <button
-              type="button"
-              onClick={() => onToggleCollapse(role.role_key)}
-              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors"
-              title={collapsed ? `Expand ${role.role_name}'s reports` : `Collapse ${role.role_name}'s reports`}
-            >
-              {collapsed
-                ? <Plus className="w-2.5 h-2.5 text-slate-600" />
-                : <Minus className="w-2.5 h-2.5 text-slate-600" />}
-            </button>
-          </div>
-          {!collapsed && (
-            <>
-              {/* Horizontal busbar — spans full width of this subtree */}
-              <div className="relative w-full">
-                <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
-                {/* Children — always on a single line, no wrapping */}
-                <div className="flex flex-nowrap justify-center gap-4 pt-0">
+  // Card height = 72px. Card center (when there's a 16px drop above) = 16+36 = 52px.
+  // For the right-stack mode the parent column has NO drop above it (drops belong
+  // to the rendering caller), so the parent card center is at y=36 from the row top.
+  // We keep things aligned by putting `pt-4` (16px) on the right side to match a
+  // 16px drop above the parent card — see how this component is invoked.
+
+  // Card-on-top rendering used by both layouts.
+  const card = (
+    <RoleCard
+      role={role}
+      depth={depth}
+      knowledgeCount={knowledge.filter(k => k.role_key === role.role_key).length}
+      onClick={() => onOpen(role)}
+      onAddKnowledge={() => onAddKnowledge(role)}
+    />
+  );
+
+  // Toggle button shared by both layouts (same look, different position).
+  const toggleBtn = (
+    <button
+      type="button"
+      onClick={() => onToggleCollapse(role.role_key)}
+      className="w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors shrink-0"
+      title={collapsed ? `Expand ${role.role_name}'s reports` : `Collapse ${role.role_name}'s reports`}
+    >
+      {collapsed
+        ? <Plus className="w-2.5 h-2.5 text-slate-600" />
+        : <Minus className="w-2.5 h-2.5 text-slate-600" />}
+    </button>
+  );
+
+  // ── VERTICAL right-stack layout (≥3 reports) ───────────────────────
+  if (useVerticalStack) {
+    return (
+      <div className="flex flex-col items-start">
+        {/* Drop line from busbar above — centered above the parent card. */}
+        <div className="w-px h-4 bg-slate-300 self-start ml-[120px]" />
+        <div className="flex items-start">
+          {/* Parent card */}
+          {card}
+          {/* Bracket area — toggle, then (when expanded) children stack on the right.
+              `pt-[28px]` aligns the horizontal stub with the parent card's vertical
+              centre (card is 72px tall so centre = 36px; the stub element has height
+              ~16px so we offset by 36-8 = 28px). */}
+          <div className="flex items-start pt-[28px]">
+            {/* Horizontal stub from parent's right edge to the toggle */}
+            <div className="w-3 h-px bg-slate-300 mt-2" />
+            {toggleBtn}
+            {!collapsed && (
+              <>
+                <div className="w-3 h-px bg-slate-300 mt-2" />
+                {/* Bracket: children column with vertical bus on the left */}
+                <div className="relative flex flex-col gap-3 -mt-[28px]">
+                  {/* Vertical bus from the centre of the first child to centre of the last.
+                      Each child is at least 72px tall (cards) and uses gap-3 (12px). The
+                      first child's vertical centre lands at y=52 from the top of this column
+                      (16 drop + 36 half-card). The last child's centre lands at
+                      y=(total - 36 - 16). Easier expressed with inset-y-[52px] which works
+                      because every child uses the same 16/72 pattern. */}
+                  <div className="absolute left-0 top-[52px] bottom-[52px] w-px bg-slate-300" />
                   {children.map(c => (
-                    <RoleSubtree
-                      key={c.id}
-                      role={c}
-                      depth={depth + 1}
-                      childrenOf={childrenOf}
-                      knowledge={knowledge}
-                      onOpen={onOpen}
-                      onAddKnowledge={onAddKnowledge}
-                      collapsedKeys={collapsedKeys}
-                      onToggleCollapse={onToggleCollapse}
-                    />
+                    <div key={c.id} className="relative pl-3">
+                      {/* Horizontal stub into this child, at child's vertical centre. */}
+                      <div className="absolute left-0 top-[52px] w-3 h-px bg-slate-300" />
+                      <RoleSubtree
+                        role={c}
+                        depth={depth + 1}
+                        childrenOf={childrenOf}
+                        knowledge={knowledge}
+                        onOpen={onOpen}
+                        onAddKnowledge={onAddKnowledge}
+                        collapsedKeys={collapsedKeys}
+                        onToggleCollapse={onToggleCollapse}
+                      />
+                    </div>
                   ))}
                 </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── HORIZONTAL below-parent layout (0-2 reports — original behaviour) ──
+  return (
+    <div className="flex flex-col items-center">
+      <div className="w-px h-4 bg-slate-300" />
+      {card}
+      {hasChildren && (
+        <div className="flex flex-col items-center w-full">
+          <div className="relative w-px h-5 bg-slate-300">
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+              {toggleBtn}
+            </div>
+          </div>
+          {!collapsed && (
+            <div className="relative w-full">
+              <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
+              <div className="flex flex-nowrap justify-center gap-4 pt-0">
+                {children.map(c => (
+                  <RoleSubtree
+                    key={c.id}
+                    role={c}
+                    depth={depth + 1}
+                    childrenOf={childrenOf}
+                    knowledge={knowledge}
+                    onOpen={onOpen}
+                    onAddKnowledge={onAddKnowledge}
+                    collapsedKeys={collapsedKeys}
+                    onToggleCollapse={onToggleCollapse}
+                  />
+                ))}
               </div>
-            </>
+            </div>
           )}
         </div>
       )}
