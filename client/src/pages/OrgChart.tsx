@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useToast } from "@/hooks/use-toast";
 import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import OrgTree, { type OrgTreeNode } from "@/components/OrgTree";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface OkrItem { objective: string; key_results: string[] }
@@ -396,7 +397,7 @@ export default function OrgChart() {
   };
 
   return (
-    <div className="container mx-auto py-6 max-w-7xl">
+    <div className="container mx-auto py-6 w-full max-w-none px-6">
       <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
         <div className="flex items-center gap-3">
           <Network className="w-7 h-7 text-primary" />
@@ -524,147 +525,47 @@ export default function OrgChart() {
         </DialogContent>
       </Dialog>
 
-      {/* CEO row — President (if exists) renders to the LEFT of CEO with a
-          solid horizontal connector. President is identified by role_key
-          ("president" / "founder" / "chairman" / "board"). It's a peer of
-          CEO conceptually, not a subordinate, so we render it side-by-side
-          rather than above. The connector is a solid line — no L-bend —
-          to signal "horizontal authority/governance" relationship. */}
+      {/* ── Org tree — d3-hierarchy tidy-tree layout with SVG elbow
+          connectors. Replaces the previous nested CSS layout that produced
+          row misalignment, dual-root ambiguity and overlapping cards.
+          Peer roles (President / Founder / Chairman / Board) render to
+          the left of CEO with a dotted governance edge. */}
       {ceo && (() => {
-        const president = roles.find(r => /^(president|founder|chairman|board)$/i.test(r.role_key));
-        if (!president) {
-          return (
-            <div className="flex justify-center mb-3">
-              <RoleCard
-                role={ceo} highlight
-                knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
-                onClick={() => setOpenRole(ceo)}
-                onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
-              />
-            </div>
-          );
-        }
+        const peerRx = PEER_ROLE_RX;
+        const peerIds = roles.filter(r => peerRx.test(r.role_key)).map(r => r.role_key);
+        const orgNodes: OrgTreeNode[] = roles.map(r => ({
+          id: r.role_key,
+          name: r.person_name ?? "",
+          title: r.role_name,
+          type: (r.kind ?? "agent") as "agent" | "human",
+          vacant: r.status === "vacant",
+          onboarding: r.status === "onboarding",
+          fired: r.status === "fired",
+          // Peer roles get null primary boss so they don't clutter the
+          // tree; they're rendered separately at level 0 next to the CEO.
+          primaryBossId: peerRx.test(r.role_key) ? null : (r.parent_role_key ?? null),
+          matrixBossIds: r.dotted_parent_role_keys ?? [],
+          knowledgeCount: knowledge.filter(k => k.role_key === r.role_key).length,
+          overdueCount: r.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length,
+          highlight: r.role_key === "ceo" || peerRx.test(r.role_key),
+          email: r.email ?? undefined,
+        }));
         return (
-          <div className="flex justify-center mb-3">
-            {/* President is the apex — no connecting line. CEO sits alongside
-                it; the vertical line below CEO connects down to direct reports. */}
-            <div className="flex items-start gap-3">
-              <RoleCard
-                role={president} highlight
-                knowledgeCount={knowledge.filter(k => k.role_key === president.role_key).length}
-                onClick={() => setOpenRole(president)}
-                onAddKnowledge={() => setAddKnowledgeForRole(president)}
-              />
-              <RoleCard
-                role={ceo} highlight
-                knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
-                onClick={() => setOpenRole(ceo)}
-                onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
-              />
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Direct reports — adaptive layout matching the rest of the chart:
-          ≤2 reports → classic horizontal row below the CEO.
-          ≥3 reports → vertical stack to the RIGHT of the CEO (saves
-          enormous page width and matches how Pingboard / Sift / modern
-          org-chart tools render wide top tiers). The CEO is rendered
-          above; we render a "ghost" right-stack here that visually
-          attaches to the CEO via a horizontal stub and bracket. */}
-      {ceo && directReports.length > 0 && (() => {
-        const ceoCollapsed = collapsedKeys.has(ceo.role_key);
-        const useRightStack = directReports.length >= 3;
-        const ceoToggle = (
-          <button
-            type="button"
-            onClick={() => toggleCollapse(ceo.role_key)}
-            className="w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors shrink-0"
-            title={ceoCollapsed ? "Expand the org" : "Collapse the org"}
-          >
-            {ceoCollapsed
-              ? <Plus className="w-2.5 h-2.5 text-slate-600" />
-              : <Minus className="w-2.5 h-2.5 text-slate-600" />}
-          </button>
-        );
-
-        if (useRightStack) {
-          // Right-stack: render reports as a vertical column to the right
-          // of where the CEO lives, with a bracket connector. Negative top
-          // margin pulls this row up so it visually attaches to the CEO
-          // card above (which sits in mb-3 ≈ 12px of bottom margin).
-          return (
-            <div className="overflow-x-auto pb-2 -mt-[60px]">
-              <div className="flex justify-center">
-                <div className="flex items-start">
-                  {/* Spacer matching the width of the CEO card so the right-stack
-                      sits horizontally to the right of where the CEO is. */}
-                  <div className="w-[240px] shrink-0" />
-                  {/* Bracket area — toggle, then (when expanded) reports column. */}
-                  <div className="flex items-start pt-[28px]">
-                    <div className="w-3 h-px bg-slate-300 mt-2" />
-                    {ceoToggle}
-                    {!ceoCollapsed && (
-                      <>
-                        <div className="w-3 h-px bg-slate-300 mt-2" />
-                        <div className="relative flex flex-col gap-3 -mt-[28px]">
-                          <div className="absolute left-0 top-[52px] bottom-[52px] w-px bg-slate-300" />
-                          {directReports.map(r => (
-                            <div key={r.id} className="relative pl-3">
-                              <div className="absolute left-0 top-[52px] w-3 h-px bg-slate-300" />
-                              <RoleSubtree
-                                role={r}
-                                depth={1}
-                                childrenOf={childrenOf}
-                                knowledge={knowledge}
-                                onOpen={setOpenRole}
-                                onAddKnowledge={setAddKnowledgeForRole}
-                                collapsedKeys={collapsedKeys}
-                                onToggleCollapse={toggleCollapse}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        }
-
-        // Classic horizontal row for ≤2 reports.
-        return (
-          <div className="overflow-x-auto pb-2">
-            <div className="relative inline-flex flex-col items-center min-w-full">
-              <div className="relative w-px h-5 bg-slate-300">
-                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-                  {ceoToggle}
-                </div>
-              </div>
-              {!ceoCollapsed && (
-                <div className="relative w-full">
-                  <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
-                  <div className="flex flex-nowrap justify-center gap-4 pt-0">
-                    {directReports.map(r => (
-                      <RoleSubtree
-                        key={r.id}
-                        role={r}
-                        depth={1}
-                        childrenOf={childrenOf}
-                        knowledge={knowledge}
-                        onOpen={setOpenRole}
-                        onAddKnowledge={setAddKnowledgeForRole}
-                        collapsedKeys={collapsedKeys}
-                        onToggleCollapse={toggleCollapse}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+          <div className="mb-3">
+            <OrgTree
+              nodes={orgNodes}
+              peerIds={peerIds}
+              collapsedIds={collapsedKeys}
+              onToggleCollapse={toggleCollapse}
+              onOpen={(id) => {
+                const r = roles.find(x => x.role_key === id);
+                if (r) setOpenRole(r);
+              }}
+              onAddKnowledge={(id) => {
+                const r = roles.find(x => x.role_key === id);
+                if (r) setAddKnowledgeForRole(r);
+              }}
+            />
           </div>
         );
       })()}
