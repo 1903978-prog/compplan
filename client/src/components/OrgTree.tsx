@@ -30,22 +30,20 @@ interface OrgTreeProps {
 }
 
 // ─── Layout constants ─────────────────────────────────────────────────
-// Compact right-stack tree: X = depth column (grows rightward),
-// Y = row (grows downward). Parents are vertically centred among their
-// children; leaves are assigned sequential integer rows. This way a boss
-// with N reports produces a compact vertical list rather than a wide
-// horizontal fan — exactly the "save horizontal space" request.
-const CARD_W    = 168;
-const CARD_H    = 50;
-const COL_GAP   = 52;    // horizontal gap between depth columns (connector travel)
-const ROW_GAP   = 8;     // vertical gap between sibling rows
-const COL_STEP  = CARD_W + COL_GAP;   // 220 — distance between column origins
-const ROW_STEP  = CARD_H + ROW_GAP;   // 58  — distance between row origins
-const PAD_X     = 20;
-const PAD_TOP   = 10;
-const PAD_BOT   = 14;
-const PEER_GAP  = 16;    // vertical gap between peer card bottom and root card top
-const ELBOW_R   = 4;
+// Top-down layout: root at top, children spread horizontally below.
+// Each depth level occupies one row. Leaves get one slot each; parents
+// are centred over their children span (Reingold-Tilford style).
+const CARD_W  = 176;
+const CARD_H  = 58;
+const H_GAP   = 12;          // horizontal gap between sibling cards
+const V_GAP   = 40;          // vertical space between card bottom and next card top
+const X_STEP  = CARD_W + H_GAP;  // 188 px per leaf slot
+const Y_STEP  = CARD_H + V_GAP;  // 98  px per depth level
+const PAD_X   = 24;
+const PAD_TOP = 14;
+const PAD_BOT = 18;
+const PEER_GAP = 18;         // above-root vertical gap for peer cards
+const ELBOW_R  = 5;
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 function initialsOf(name: string | undefined | null): string {
@@ -56,7 +54,7 @@ function initialsOf(name: string | undefined | null): string {
   return (parts[0][0]! + parts[parts.length - 1]![0]!).toUpperCase();
 }
 
-// ─── Card component (compact) ─────────────────────────────────────────
+// ─── Card component ───────────────────────────────────────────────────
 function NodeCard({
   node, depth, onOpen, onAddKnowledge,
 }: {
@@ -88,14 +86,14 @@ function NodeCard({
       }`}
       style={{ width: CARD_W, height: CARD_H }}
     >
-      {/* Color stripe */}
-      <div className={`absolute inset-x-0 top-0 h-[2px] ${accent.stripe}`} />
+      {/* Top accent stripe */}
+      <div className={`absolute inset-x-0 top-0 h-[3px] ${accent.stripe}`} />
 
-      <div className="flex items-center h-full pl-2 pr-6 gap-2 pt-[3px]">
+      <div className="flex items-center h-full pl-2 pr-6 gap-2 pt-[4px]">
         {/* Avatar */}
         <div className="relative shrink-0">
-          <div className={`w-7 h-7 rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold text-[10px]`}>
-            {node.type === "agent" ? <Bot className="w-3.5 h-3.5" /> : initialsOf(node.name)}
+          <div className={`w-8 h-8 rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold text-[11px]`}>
+            {node.type === "agent" ? <Bot className="w-4 h-4" /> : initialsOf(node.name)}
           </div>
           {(node.overdueCount ?? 0) > 0 && (
             <span
@@ -108,7 +106,7 @@ function NodeCard({
         {/* Text */}
         <div className="flex-1 min-w-0">
           <div
-            className={`font-semibold text-[11px] leading-tight ${accent.name}`}
+            className={`font-semibold text-[12px] leading-tight ${accent.name}`}
             style={{ display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}
           >
             {headline}
@@ -146,28 +144,39 @@ function NodeCard({
 }
 
 // ─── Layout algorithm ─────────────────────────────────────────────────
-// Right-stack compact tree:
-//   • Leaves receive sequential integer row numbers (0, 1, 2 …).
-//   • Internal nodes are vertically centred among their first/last child rows.
-//   • X = col * COL_STEP + PAD_X   (increases with depth — leftmost = root)
-//   • Y = row * ROW_STEP + PAD_TOP  (increases downward — row from DFS above)
+// Top-down Reingold-Tilford layout:
+//   • Every leaf node is assigned exactly one horizontal slot.
+//   • Internal nodes are centred over their children's slot range.
+//   • X = node._cx * X_STEP + PAD_X   (cx is a fractional slot index)
+//   • Y = depth * Y_STEP + PAD_TOP    (depth = distance from root)
 //
-// Result: a node with 5 children draws a compact vertical bracket list to
-// its right instead of a wide horizontal fan below it.
+// Result: the classic org-chart look where children fan out horizontally
+// below their parent with bracket connectors.
 interface LayoutPoint {
   id: string;
   data: OrgTreeNode;
   depth: number;
   x: number;   // left edge of card
-  y: number;   // top edge of card  (WITHOUT treeOffY — add that at render time)
+  y: number;   // top edge of card
+  cx: number;  // centre-x of card (for connectors)
   parentId: string | null;
+}
+
+interface TNode {
+  id: string;
+  data: OrgTreeNode | null;
+  children: TNode[];
+  parentId: string | null;
+  _slots: number;   // leaf count in subtree
+  _cx: number;      // fractional slot-centre (0 = leftmost slot centre)
+  _depth: number;
 }
 
 function computeLayout(
   nodes: OrgTreeNode[],
   collapsedIds: Set<string>,
   excludeIds: Set<string>,
-): { points: LayoutPoint[]; width: number; height: number } | null {
+): { points: LayoutPoint[]; width: number; height: number; maxDepth: number } | null {
   const ROOT_ID = "__virtual_root__";
   const usable  = nodes.filter(n => !excludeIds.has(n.id));
   const byId    = new Map(usable.map(n => [n.id, n]));
@@ -186,14 +195,13 @@ function computeLayout(
   if (visible.length === 0) return null;
   const visibleIds = new Set(visible.map(n => n.id));
 
-  interface TNode {
-    id: string; data: OrgTreeNode | null; children: TNode[]; parentId: string | null;
-    _col: number; _row: number;
-  }
+  // Build tree map
   const tmap = new Map<string, TNode>();
-  const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null, _col: -1, _row: 0 };
+  const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null, _slots: 0, _cx: 0, _depth: 0 };
   tmap.set(ROOT_ID, vRoot);
-  for (const n of visible) tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null, _col: 0, _row: 0 });
+  for (const n of visible) {
+    tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null, _slots: 1, _cx: 0, _depth: 0 });
+  }
 
   for (const n of visible) {
     const node = tmap.get(n.id)!;
@@ -202,63 +210,84 @@ function computeLayout(
     tmap.get(pid)?.children.push(node);
   }
 
-  // DFS row assignment.
-  let rowCounter = 0;
-  const assignRows = (node: TNode, col: number): void => {
-    node._col = col;
-    if (node.children.length === 0) {
-      node._row = rowCounter++;
-      return;
-    }
-    const startRow = rowCounter;
-    for (const c of node.children) assignRows(c, col + 1);
-    // Centre parent between first and last child rows.
-    node._row = (startRow + rowCounter - 1) / 2;
+  // Pass 1: compute leaf-slot counts bottom-up
+  const countSlots = (n: TNode): number => {
+    if (n.children.length === 0) { n._slots = 1; return 1; }
+    n._slots = n.children.reduce((s, c) => s + countSlots(c), 0);
+    return n._slots;
   };
-  assignRows(vRoot, -1);  // virtual root at col=-1, not rendered
+  countSlots(vRoot);
 
-  const points: LayoutPoint[] = [];
-  const collect = (node: TNode, depth: number) => {
-    if (node.id === ROOT_ID) {
-      for (const c of node.children) collect(c, 0);
+  // Pass 2: assign centre-x positions (in slot units) top-down
+  const assignCx = (n: TNode, slotStart: number): void => {
+    if (n.children.length === 0) {
+      n._cx = slotStart + 0.5;
       return;
     }
+    let s = slotStart;
+    for (const c of n.children) {
+      assignCx(c, s);
+      s += c._slots;
+    }
+    // Centre parent over first-to-last child range
+    n._cx = (n.children[0]._cx + n.children[n.children.length - 1]._cx) / 2;
+  };
+  assignCx(vRoot, 0);
+
+  // Pass 3: assign depth and collect points
+  const points: LayoutPoint[] = [];
+  let maxDepth = 0;
+
+  const collect = (n: TNode, depth: number) => {
+    if (n.id === ROOT_ID) {
+      n._depth = -1;
+      for (const c of n.children) collect(c, 0);
+      return;
+    }
+    n._depth = depth;
+    if (depth > maxDepth) maxDepth = depth;
+
+    const px = (n._cx - 0.5) * X_STEP + PAD_X;  // left edge: centre - half card
+    const py = depth * Y_STEP + PAD_TOP;
+
     points.push({
-      id:       node.id,
-      data:     node.data!,
+      id:       n.id,
+      data:     n.data!,
       depth,
-      x:        node._col * COL_STEP + PAD_X,
-      y:        node._row * ROW_STEP + PAD_TOP,
-      parentId: node.parentId === ROOT_ID ? null : node.parentId,
+      x:        px,
+      y:        py,
+      cx:       px + CARD_W / 2,
+      parentId: n.parentId === ROOT_ID ? null : n.parentId,
     });
-    for (const c of node.children) collect(c, depth + 1);
+    for (const c of n.children) collect(c, depth + 1);
   };
   collect(vRoot, 0);
 
   if (points.length === 0) return null;
 
-  const maxCol = Math.max(...points.map(p => (p.x - PAD_X) / COL_STEP));
-  const width  = maxCol * COL_STEP + CARD_W + PAD_X * 2;
-  // rowCounter = number of leaves = total rows occupied.
-  const height = (rowCounter - 1) * ROW_STEP + CARD_H + PAD_TOP + PAD_BOT;
-  return { points, width, height };
+  // Canvas size
+  const width  = vRoot._slots * X_STEP + PAD_X * 2;
+  const height = (maxDepth + 1) * Y_STEP - V_GAP + PAD_TOP + PAD_BOT;
+
+  return { points, width, height, maxDepth };
 }
 
-// Horizontal elbow: right-center of parent → left-center of child.
-// When multiple children share the same parent, their paths all pass through
-// the same midX, producing a natural vertical bracket / bus-bar effect.
-function hElbow(px: number, py: number, cx: number, cy: number): string {
-  if (Math.abs(cy - py) < 0.5) return `M${px},${py} L${cx},${cy}`;
-  const midX = (px + cx) / 2;
+// Top-down elbow: bottom-center of parent → top-center of child.
+// Straight vertical when same CX; otherwise step via midY.
+function vElbow(pcx: number, py: number, ccx: number, cy: number): string {
+  const midY = (py + cy) / 2;
+  if (Math.abs(ccx - pcx) < 0.5) {
+    return `M${pcx},${py} V${cy}`;
+  }
   const r    = ELBOW_R;
-  const sign = cy > py ? 1 : -1;
+  const sign = ccx > pcx ? 1 : -1;
   return [
-    `M${px},${py}`,
-    `L${midX - r},${py}`,
-    `Q${midX},${py} ${midX},${py + sign * r}`,
-    `L${midX},${cy - sign * r}`,
-    `Q${midX},${cy} ${midX + r},${cy}`,
-    `L${cx},${cy}`,
+    `M${pcx},${py}`,
+    `V${midY - r}`,
+    `Q${pcx},${midY} ${pcx + sign * r},${midY}`,
+    `H${ccx - sign * r}`,
+    `Q${ccx},${midY} ${ccx},${midY + r}`,
+    `V${cy}`,
   ].join(" ");
 }
 
@@ -287,12 +316,12 @@ export default function OrgTree({
     return s;
   }, [nodes]);
 
-  // Auto-fit on first render and whenever canvas changes.
+  // Auto-fit on first render and whenever the canvas changes.
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el || !layout) return;
-    const cw = el.clientWidth  || window.innerWidth  || 1200;
-    const ch = el.clientHeight || window.innerHeight || 700;
+    const cw = el.clientWidth  || 1200;
+    const ch = el.clientHeight || 700;
 
     const peerNodes = peerIds.map(id => nodeById.get(id)).filter(Boolean);
     const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
@@ -300,7 +329,7 @@ export default function OrgTree({
 
     const scaleX = cw / layout.width;
     const scaleY = ch / totalH;
-    const fit    = Math.max(0.25, Math.min(scaleX, scaleY, 1) * 0.93);
+    const fit    = Math.max(0.18, Math.min(scaleX, scaleY, 1) * 0.92);
     setFitZoom(fit);
     setZoom(fit);
     setPan({ x: 0, y: 0 });
@@ -315,10 +344,7 @@ export default function OrgTree({
   const peerNodes = peerIds.map(id => nodeById.get(id)).filter((n): n is OrgTreeNode => !!n);
   const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
 
-  // Shallowest node = primary root (CEO).
-  const rootPoint = points.reduce((a, b) => a.depth < b.depth ? a : b);
-
-  // All tree cards are offset DOWN by peerBand so peer cards live above them.
+  // All tree cards shift down by peerBand so peer cards live above them.
   const treeOffY = peerBand;
 
   const canvasW = width;
@@ -326,12 +352,10 @@ export default function OrgTree({
 
   const ptById = new Map(points.map(p => [p.id, p]));
 
-  // Anchor helpers — right/left centers + vertical midpoint, adjusted for treeOffY.
-  const rightCX = (p: LayoutPoint) => p.x + CARD_W;
-  const leftCX  = (p: LayoutPoint) => p.x;
-  const midCY   = (p: LayoutPoint) => p.y + treeOffY + CARD_H / 2;
+  // Shallowest point = root (depth 0)
+  const rootPoint = points.reduce((a, b) => a.depth < b.depth ? a : b);
 
-  // Edges
+  // ─ Edges ──────────────────────────────────────────────────────────
   interface Edge { from: LayoutPoint; to: LayoutPoint }
   const primaryEdges: Edge[] = [];
   for (const p of points) {
@@ -348,11 +372,16 @@ export default function OrgTree({
     }
   }
 
-  // Pan + zoom
+  // Anchor helpers for top-down connectors
+  const botCY  = (p: LayoutPoint) => p.y + treeOffY + CARD_H;       // bottom edge Y
+  const topCY  = (p: LayoutPoint) => p.y + treeOffY;                 // top edge Y
+  const midX   = (p: LayoutPoint) => p.cx;                           // centre X
+
+  // ─ Pan + zoom ─────────────────────────────────────────────────────
   const onWheel = (e: React.WheelEvent) => {
     if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
-    setZoom(z => Math.max(0.25, Math.min(2, z + (e.deltaY < 0 ? 0.05 : -0.05))));
+    setZoom(z => Math.max(0.18, Math.min(2.5, z + (e.deltaY < 0 ? 0.05 : -0.05))));
   };
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -364,14 +393,14 @@ export default function OrgTree({
     if (!isPanning || !panStart.current) return;
     setPan({ x: panStart.current.px + (e.clientX - panStart.current.x), y: panStart.current.py + (e.clientY - panStart.current.y) });
   };
-  const stopPan = () => { setIsPan(false); panStart.current = null; };
+  const stopPan  = () => { setIsPan(false); panStart.current = null; };
   const resetView = () => { setZoom(fitZoom); setPan({ x: 0, y: 0 }); };
 
   return (
     <div className="relative">
       {/* Zoom controls */}
       <div className="absolute z-20 right-2 top-2 flex items-center gap-1 bg-background/80 backdrop-blur rounded border border-slate-200 dark:border-slate-700 shadow-sm p-0.5">
-        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setZoom(z => Math.max(0.25, z - 0.1))} title="Zoom out">
+        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setZoom(z => Math.max(0.18, z - 0.08))} title="Zoom out">
           <Minus className="w-3 h-3" />
         </Button>
         <button
@@ -381,12 +410,12 @@ export default function OrgTree({
         >
           {zoom === fitZoom ? "Fit" : `${Math.round(zoom * 100)}%`}
         </button>
-        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setZoom(z => Math.min(2, z + 0.1))} title="Zoom in">
+        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setZoom(z => Math.min(2.5, z + 0.08))} title="Zoom in">
           <Plus className="w-3 h-3" />
         </Button>
       </div>
 
-      {/* Canvas container */}
+      {/* Canvas container — fills the viewport minus header */}
       <div
         ref={containerRef}
         className="overflow-hidden border-y border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-950/20"
@@ -413,11 +442,11 @@ export default function OrgTree({
             className="absolute inset-0 pointer-events-none"
             style={{ zIndex: 1 }}
           >
-            {/* Solid primary edges — horizontal elbow connectors */}
+            {/* Solid primary edges — top-down elbow connectors */}
             {primaryEdges.map(({ from, to }, i) => (
               <path
                 key={`p-${i}`}
-                d={hElbow(rightCX(from), midCY(from), leftCX(to), midCY(to))}
+                d={vElbow(midX(from), botCY(from), midX(to), topCY(to))}
                 className="stroke-slate-400 dark:stroke-slate-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -428,7 +457,7 @@ export default function OrgTree({
             {matrixEdges.map(({ from, to }, i) => (
               <path
                 key={`m-${i}`}
-                d={hElbow(rightCX(from), midCY(from), leftCX(to), midCY(to))}
+                d={vElbow(midX(from), botCY(from), midX(to), topCY(to))}
                 className="stroke-amber-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -436,16 +465,16 @@ export default function OrgTree({
               />
             ))}
 
-            {/* Dashed vertical line from each peer's bottom-center to root's top-center */}
+            {/* Dashed connector from each peer card's bottom to root's top */}
             {peerNodes.map((peer, i) => {
-              const peerCenterX = rootPoint.x + CARD_W / 2;
-              const peerBottomY = PAD_TOP + i * (CARD_H + PEER_GAP) + CARD_H;
-              const rootTopY    = rootPoint.y + treeOffY;
+              const peerCX   = rootPoint.cx;
+              const peerBotY = PAD_TOP + i * (CARD_H + PEER_GAP) + CARD_H;
+              const rootTopY = rootPoint.y + treeOffY;
               return (
                 <line
                   key={`peer-${peer.id}`}
-                  x1={peerCenterX} y1={peerBottomY}
-                  x2={peerCenterX} y2={rootTopY}
+                  x1={peerCX} y1={peerBotY}
+                  x2={peerCX} y2={rootTopY}
                   className="stroke-slate-400 dark:stroke-slate-500"
                   strokeWidth={1.5}
                   strokeDasharray="5 4"
@@ -454,9 +483,9 @@ export default function OrgTree({
             })}
           </svg>
 
-          {/* Peer cards — stacked ABOVE the root, horizontally aligned with root */}
+          {/* Peer cards — above the root, aligned to its centre-x */}
           {peerNodes.map((peer, i) => {
-            const x = rootPoint.x;
+            const x = rootPoint.cx - CARD_W / 2;
             const y = PAD_TOP + i * (CARD_H + PEER_GAP);
             return (
               <div key={peer.id} data-orgcard="1" className="absolute" style={{ left: x, top: y, zIndex: 2 }}>
@@ -487,12 +516,13 @@ export default function OrgTree({
             </div>
           ))}
 
-          {/* Collapse / expand toggles — centred to the RIGHT of each card that has children */}
+          {/* Collapse/expand toggles — centred BELOW each card that has children,
+              sitting on the connector line that exits the card's bottom. */}
           {points
             .filter(p => hasChildren.has(p.id))
             .map(p => {
-              const tx = rightCX(p) + 2;                    // just right of card edge
-              const ty = p.y + treeOffY + CARD_H / 2 - 8;  // vertically centred (toggle = 16px)
+              const tx = p.cx - 8;                              // horizontally centred (toggle = 16px wide)
+              const ty = p.y + treeOffY + CARD_H + V_GAP / 2 - 8;  // midpoint of vertical gap
               const collapsed = collapsedIds.has(p.id);
               return (
                 <button
