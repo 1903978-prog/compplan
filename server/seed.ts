@@ -1856,6 +1856,44 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     `);
   }
 
+  // ── Sub-agent seed: BD Agent, Proposal Agent, CKO, L&D Manager, AR Agent,
+  //    Partnership Agent — created via seedSources.js (one-time script) but
+  //    their OKRs/goals were left empty. This migration idempotently back-fills
+  //    goals and OKRs from AGENT_SPECS so the org-chart popup shows them.
+  const _SUB_AGENT_ROLE_KEYS: Record<string, { roleKey: string; parentKey: string; sort: number }> = {
+    "BD Agent":          { roleKey: "bd-agent",          parentKey: "cco",             sort: 20 },
+    "Proposal Agent":    { roleKey: "proposal-agent",    parentKey: "cco",             sort: 21 },
+    "CKO":               { roleKey: "cko",               parentKey: "ceo",             sort: 22 },
+    "L&D Manager":       { roleKey: "ld-manager",        parentKey: "hiring-manager",  sort: 23 },
+    "AR Agent":          { roleKey: "ar-agent",          parentKey: "cfo",             sort: 24 },
+    "Partnership Agent": { roleKey: "partnership-agent", parentKey: "cco",             sort: 25 },
+  };
+  for (const spec of AGENT_SPECS) {
+    const mapping = _SUB_AGENT_ROLE_KEYS[spec.name];
+    if (!mapping) continue;
+    const { roleKey, parentKey, sort } = mapping;
+    const goals = spec.responsibilities.slice(0, 4)
+      .map(r => r.replace(/^\[(AUTONOMOUS|HUMAN-APPROVED)\]\s*/i, ""));
+    const okrs = spec.okrs.map(o => ({ objective: o.objective, key_results: o.krs }));
+    // Create if missing (idempotent — handles fresh deploys without seedSources.js).
+    await db.execute(sql`
+      INSERT INTO org_agents (role_key, role_name, parent_role_key, person_name, status,
+        goals, okrs, tasks_10d, dotted_parent_role_keys, sort_order, created_at, updated_at)
+      SELECT ${roleKey}, ${spec.name}, ${parentKey}, NULL, 'active',
+             ${JSON.stringify(goals)}::jsonb, ${JSON.stringify(okrs)}::jsonb,
+             '[]'::jsonb, '[]'::jsonb, ${sort}, ${_orgNow}, ${_orgNow}
+      WHERE NOT EXISTS (SELECT 1 FROM org_agents WHERE role_key = ${roleKey})
+    `);
+    // Backfill goals + OKRs for rows that still have empty arrays.
+    await db.execute(sql`
+      UPDATE org_agents
+      SET goals = ${JSON.stringify(goals)}::jsonb,
+          okrs  = ${JSON.stringify(okrs)}::jsonb,
+          updated_at = ${_orgNow}
+      WHERE role_key = ${roleKey} AND okrs = '[]'::jsonb
+    `);
+  }
+
   // Seed settings if empty
   const existingSettings = await db.select().from(appSettings);
   if (existingSettings.length === 0) {

@@ -4,9 +4,32 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import OrgTree, { type OrgTreeNode } from "@/components/OrgTree";
+
+// ── AIOS role-key ↔ agent name map ────────────────────────────────────
+const AIOS_NAME_BY_ROLE_KEY: Record<string, string> = {
+  "ceo": "CEO", "coo": "COO", "cfo": "CFO", "cco": "CCO",
+  "hiring-manager": "CHRO", "marketing-manager": "CMO",
+  "cko": "CKO", "delivery-director": "Delivery Officer",
+  "pricing-director": "Pricing Agent", "proposal-agent": "Proposal Agent",
+  "bd-agent": "BD Agent", "ar-agent": "AR Agent",
+  "partnership-agent": "Partnership Agent", "ld-manager": "L&D Manager",
+};
+
+interface AiosAgent {
+  id: number;
+  name: string;
+  mission: string | null;
+  role_title: string | null;
+  function_area: string | null;
+  job_description: string | null;
+  deliverables: string[] | null;
+  skills: string[] | null;
+  knowledge: string[] | null;
+  training: string[] | null;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface OkrItem { objective: string; key_results: string[] }
@@ -126,6 +149,7 @@ export default function OrgChart() {
   });
 
   const [showStartAgents, setShowStartAgents] = useState(false);
+  const [aiosAgents, setAiosAgents] = useState<AiosAgent[]>([]);
 
   // Collapse state — set of role_keys whose children are hidden. Toggled by
   // the small ± circle that sits on the connector between a parent and its
@@ -192,11 +216,13 @@ export default function OrgChart() {
       fetch("/api/agent-proposals?status=pending", { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/agent-knowledge?status=active", { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/agent-proposals/acceptance-stats", { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([orgs, props, kn, stats]) => {
+      fetch("/api/agentic/agents", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([orgs, props, kn, stats, aios]) => {
       setRoles(orgs);
       setProposals(props);
       setKnowledge(kn);
       setAcceptanceStats(stats);
+      setAiosAgents(aios);
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
   }, [toast]);
@@ -740,6 +766,7 @@ export default function OrgChart() {
         role={openRole}
         knowledge={openRole ? knowledge.filter(k => k.role_key === openRole.role_key) : []}
         allRoles={roles}
+        aiosAgent={openRole ? (aiosAgents.find(a => a.name === AIOS_NAME_BY_ROLE_KEY[openRole.role_key]) ?? undefined) : undefined}
         onUpdateReportsTo={updateReportsTo}
         onSaveFields={saveRoleFields}
         onCascade={cascadeToReports}
@@ -1033,6 +1060,7 @@ function RoleDetailDialog({
   role,
   knowledge,
   allRoles,
+  aiosAgent,
   onUpdateReportsTo,
   onSaveFields,
   onCascade,
@@ -1044,6 +1072,7 @@ function RoleDetailDialog({
   role: OrgRole | null;
   knowledge: KnowledgeNote[];
   allRoles: OrgRole[];
+  aiosAgent?: AiosAgent;
   onUpdateReportsTo: (role: OrgRole, newParent: string | null) => Promise<void>;
   onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs">>) => Promise<void>;
   onCascade: (role: OrgRole) => Promise<void>;
@@ -1132,6 +1161,13 @@ function RoleDetailDialog({
             <UserPlus className="w-3.5 h-3.5 mr-1" /> Add direct report under {role.role_name}
           </Button>
         </section>
+
+        {/* ── Agent spec: job description, deliverables, skills, training ── */}
+        {aiosAgent && (
+          <section className="mt-4">
+            <AgentSpecSection agent={aiosAgent} />
+          </section>
+        )}
 
         {/* Knowledge / instructions — COLLAPSIBLE-BY-TITLE.
             Each note shows just the title + metadata; click the row to
@@ -1456,6 +1492,102 @@ function KnowledgeBlock({
           Persistence: every paste / upload is stored in <code>agent_knowledge</code> and re-read by the agent on every run. No fine-tuning happens — the agent reads this same text every time it wakes.
         </p>
       )}
+    </div>
+  );
+}
+
+// ── Agent Spec Section ────────────────────────────────────────────────
+// Renders the structured AIOS spec for the role: function area, job
+// description, deliverables, skills, training. Each sub-section is
+// independently collapsible so the dialog doesn't feel overwhelming.
+function SpecGroup({
+  icon, label, items, defaultOpen = false,
+}: { icon: React.ReactNode; label: string; items: string[]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="border rounded bg-muted/10 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-muted/30 text-left"
+      >
+        {open ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />}
+        {icon}
+        <span className="text-xs font-semibold">{label}</span>
+        <span className="text-[10px] text-muted-foreground ml-auto">{items.length} items</span>
+      </button>
+      {open && (
+        <ul className="px-3 pb-2 pt-0.5 space-y-0.5">
+          {items.map((item, i) => (
+            <li key={i} className="text-[11px] text-muted-foreground leading-relaxed flex gap-1.5">
+              <span className="text-muted-foreground/50 mt-0.5 shrink-0">•</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function AgentSpecSection({ agent }: { agent: AiosAgent }) {
+  const [jdOpen, setJdOpen] = useState(false);
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <Briefcase className="w-4 h-4 text-primary" />
+        <h4 className="font-semibold text-sm">Agent Profile</h4>
+        {agent.function_area && (
+          <Badge variant="secondary" className="text-[10px]">{agent.function_area}</Badge>
+        )}
+        {agent.role_title && (
+          <span className="text-xs text-muted-foreground">{agent.role_title}</span>
+        )}
+      </div>
+
+      {/* Mission / Job Description — collapsed by default */}
+      {agent.job_description && (
+        <div className="border rounded bg-muted/10 overflow-hidden mb-1.5">
+          <button
+            type="button"
+            onClick={() => setJdOpen(o => !o)}
+            className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-muted/30 text-left"
+          >
+            {jdOpen ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />}
+            <span className="text-xs font-semibold">Job Description</span>
+          </button>
+          {jdOpen && (
+            <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed px-3 pb-2 border-t text-muted-foreground">
+              {agent.job_description}
+            </pre>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <SpecGroup
+          icon={<PackageOpen className="w-3 h-3 text-blue-500 shrink-0" />}
+          label="Deliverables"
+          items={agent.deliverables ?? []}
+          defaultOpen={true}
+        />
+        <SpecGroup
+          icon={<Lightbulb className="w-3 h-3 text-amber-500 shrink-0" />}
+          label="Skills"
+          items={agent.skills ?? []}
+        />
+        <SpecGroup
+          icon={<BookOpen className="w-3 h-3 text-emerald-500 shrink-0" />}
+          label="Domain Knowledge"
+          items={agent.knowledge ?? []}
+        />
+        <SpecGroup
+          icon={<GraduationCap className="w-3 h-3 text-purple-500 shrink-0" />}
+          label="Training"
+          items={agent.training ?? []}
+        />
+      </div>
     </div>
   );
 }
