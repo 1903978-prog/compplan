@@ -171,7 +171,7 @@ export default function SlideBackgroundsAdmin() {
         <CardContent className="text-sm text-muted-foreground space-y-2">
           <p>1. Open your Canva template and, for each page you want to reuse, click <em>Share → Download → PNG</em>.</p>
           <p>2. Use the full slide size (16:9 — Canva&apos;s default "Presentation" document is already correct).</p>
-          <p>3. Upload each PNG against the matching CompPlan slide row below. The <code>slide_id</code> on the left is how the server matches it.</p>
+          <p>3. Upload each PNG against the matching Command Center slide row below. The <code>slide_id</code> on the left is how the server matches it.</p>
           <p>4. When you generate or refine a slide in Proposals, the PNG is baked into the HTML outer div as a CSS background-image. The Playwright PPTX export inherits it automatically — no extra config.</p>
           <p className="text-xs italic">Note: Claude is told <em>not</em> to repaint the background or add the &quot;eendigo&quot; footer when a background is present, so your template stays clean.</p>
         </CardContent>

@@ -66,7 +66,7 @@ async function main() {
 
   const port = parseInt(process.env.PORT || "5000");
   server.listen(port, "0.0.0.0", () => {
-    console.log(`Eendigo Op Model running on port ${port}`);
+    console.log(`Eendigo Command Center running on port ${port}`);
   });
 
   // Trash auto-purge heartbeat. seedDatabase() already purges on boot, but
