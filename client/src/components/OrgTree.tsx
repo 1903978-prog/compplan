@@ -30,18 +30,18 @@ interface OrgTreeProps {
 }
 
 // ─── Layout constants ─────────────────────────────────────────────────
-// Compact cards — user wants small tiles that fit on one page.
+// Vertical top-down dendrogram: X = sibling slot, Y = depth.
 const CARD_W    = 168;
 const CARD_H    = 50;
-const COL_GAP   = 38;   // horizontal gap between depth columns (connector travel)
-const ROW_GAP   = 8;    // vertical gap between stacked siblings
-const COL_STEP  = CARD_W + COL_GAP;
-const ROW_STEP  = CARD_H + ROW_GAP;
-const PAD_X     = 20;   // left/right canvas padding
+const COL_GAP   = 16;    // horizontal gap between sibling cards
+const ROW_GAP   = 52;    // vertical gap between depth levels (connector travel)
+const COL_STEP  = CARD_W + COL_GAP;   // horizontal step per sibling slot
+const ROW_STEP  = CARD_H + ROW_GAP;   // vertical step per depth level
+const PAD_X     = 20;
 const PAD_TOP   = 10;
 const PAD_BOT   = 14;
-const PEER_GAP  = 44;   // gap between peer card right-edge and root left-edge
-const ELBOW_R   = 4;    // rounded corner radius on connector elbows
+const PEER_GAP  = 20;    // vertical gap between peer card and root top
+const ELBOW_R   = 4;
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 function initialsOf(name: string | undefined | null): string {
@@ -142,14 +142,15 @@ function NodeCard({
 }
 
 // ─── Layout algorithm ─────────────────────────────────────────────────
-// Horizontal dendrogram: X = depth column, Y = vertical stacking.
-// Children are one below the other (vertical), parent is horizontally
-// centered (vertically centered on its children cluster).
+// Vertical top-down dendrogram: X = sibling slot (horizontal spread),
+// Y = depth (increases downward). Parent is horizontally centered over
+// its children cluster. Same slot-assignment logic as before — leaves get
+// sequential integer slots, parents get the average of first/last child.
 interface LayoutPoint {
   id: string;
   data: OrgTreeNode;
   depth: number;
-  x: number;   // left edge of card in canvas coords (before peer offset)
+  x: number;   // left edge of card
   y: number;   // top edge of card
   parentId: string | null;
 }
@@ -163,7 +164,6 @@ function computeLayout(
   const usable  = nodes.filter(n => !excludeIds.has(n.id));
   const byId    = new Map(usable.map(n => [n.id, n]));
 
-  // Walk primary-boss chain; return true if any ancestor is collapsed.
   const isHidden = (id: string): boolean => {
     let cursor: string | null = byId.get(id)?.primaryBossId ?? null;
     let safety = 64;
@@ -178,7 +178,6 @@ function computeLayout(
   if (visible.length === 0) return null;
   const visibleIds = new Set(visible.map(n => n.id));
 
-  // Build tree (manual — no d3.tree needed for this layout).
   interface TNode { id: string; data: OrgTreeNode | null; children: TNode[]; parentId: string | null }
   const tmap = new Map<string, TNode>();
   const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null };
@@ -192,8 +191,7 @@ function computeLayout(
     tmap.get(pid)?.children.push(node);
   }
 
-  // Assign row slots: post-order — leaves get sequential integer slots,
-  // non-leaves get the average slot of their first and last child.
+  // Post-order slot assignment: leaves → sequential int, parents → midpoint of children.
   let slotCounter = 0;
   const assignSlots = (node: TNode): number => {
     if (node.children.length === 0) {
@@ -208,7 +206,6 @@ function computeLayout(
   };
   assignSlots(vRoot);
 
-  // Collect layout points (depth-first, skip virtual root).
   const points: LayoutPoint[] = [];
   const collect = (node: TNode, depth: number) => {
     if (node.id === ROOT_ID) {
@@ -220,8 +217,8 @@ function computeLayout(
       id:       node.id,
       data:     node.data!,
       depth,
-      x:        depth * COL_STEP + PAD_X,
-      y:        slot  * ROW_STEP + PAD_TOP,
+      x:        slot  * COL_STEP + PAD_X,   // slot → horizontal
+      y:        depth * ROW_STEP + PAD_TOP,  // depth → vertical
       parentId: node.parentId === ROOT_ID ? null : node.parentId,
     });
     for (const c of node.children) collect(c, depth + 1);
@@ -231,26 +228,26 @@ function computeLayout(
   if (points.length === 0) return null;
 
   const maxDepth = Math.max(...points.map(p => p.depth));
-  const maxSlot  = Math.max(...points.map(p => (p.y - PAD_TOP) / ROW_STEP));
+  const maxSlot  = Math.max(...points.map(p => (p.x - PAD_X) / COL_STEP));
 
-  const width  = maxDepth * COL_STEP + CARD_W + PAD_X * 2;
-  const height = Math.ceil(maxSlot + 1) * ROW_STEP - ROW_GAP + PAD_TOP + PAD_BOT;
+  const width  = maxSlot * COL_STEP + CARD_W + PAD_X * 2;
+  const height = maxDepth * ROW_STEP + CARD_H + PAD_TOP + PAD_BOT;
   return { points, width, height };
 }
 
-// Horizontal elbow: right-center of parent → left-center of child.
-// Goes: right → horizontal to midX → curve → vertical → curve → right to child.
-function hElbow(px: number, py: number, cx: number, cy: number): string {
-  if (Math.abs(cy - py) < 0.5) return `M${px},${py} L${cx},${cy}`;
-  const midX = (px + cx) / 2;
+// Vertical elbow: bottom-center of parent → top-center of child.
+// Goes: down → horizontal midY → elbows → down to child top.
+function vElbow(px: number, py: number, cx: number, cy: number): string {
+  if (Math.abs(cx - px) < 0.5) return `M${px},${py} L${cx},${cy}`;
+  const midY = (py + cy) / 2;
   const r    = ELBOW_R;
-  const sign = cy > py ? 1 : -1;
+  const sign = cx > px ? 1 : -1;
   return [
     `M${px},${py}`,
-    `L${midX - r},${py}`,
-    `Q${midX},${py} ${midX},${py + sign * r}`,
-    `L${midX},${cy - sign * r}`,
-    `Q${midX},${cy} ${midX + r},${cy}`,
+    `L${px},${midY - r}`,
+    `Q${px},${midY} ${px + sign * r},${midY}`,
+    `L${cx - sign * r},${midY}`,
+    `Q${cx},${midY} ${cx},${midY + r}`,
     `L${cx},${cy}`,
   ].join(" ");
 }
@@ -260,11 +257,11 @@ export default function OrgTree({
   nodes, peerIds = [], collapsedIds, onToggleCollapse, onOpen, onAddKnowledge,
 }: OrgTreeProps) {
   const [zoom, setZoom]       = useState(1);
-  const [fitZoom, setFitZoom] = useState(1);   // last auto-fit value; "Fit" button restores this
+  const [fitZoom, setFitZoom] = useState(1);
   const [pan, setPan]         = useState({ x: 0, y: 0 });
   const [isPanning, setIsPan] = useState(false);
   const panStart = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
-  const containerRef          = useRef<HTMLDivElement>(null);
+  const containerRef           = useRef<HTMLDivElement>(null);
 
   const peerSet  = useMemo(() => new Set(peerIds), [peerIds]);
   const nodeById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
@@ -280,21 +277,20 @@ export default function OrgTree({
     return s;
   }, [nodes]);
 
-  // Auto-fit: scale so the whole chart is visible on first render.
-  // Re-runs whenever canvas dimensions change (collapse / expand).
+  // Auto-fit on first render and whenever canvas changes.
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el || !layout) return;
-    // Safari/preview may report 0; fall back to window dimensions.
     const cw = el.clientWidth  || window.innerWidth  || 1200;
     const ch = el.clientHeight || window.innerHeight || 700;
 
     const peerNodes = peerIds.map(id => nodeById.get(id)).filter(Boolean);
-    const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_W + PEER_GAP) : 0;
-    const totalW    = layout.width + peerBand;
+    // Peers stack vertically above root; total height adds their band.
+    const peerBand = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
+    const totalH   = layout.height + peerBand;
 
-    const scaleX = cw / totalW;
-    const scaleY = ch / layout.height;
+    const scaleX = cw / layout.width;
+    const scaleY = ch / totalH;
     const fit    = Math.max(0.25, Math.min(scaleX, scaleY, 1) * 0.93);
     setFitZoom(fit);
     setZoom(fit);
@@ -308,19 +304,24 @@ export default function OrgTree({
   const { points, width, height } = layout;
 
   const peerNodes = peerIds.map(id => nodeById.get(id)).filter((n): n is OrgTreeNode => !!n);
-  const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_W + PEER_GAP) : 0;
+  // Peers sit ABOVE the tree — add their height to the top.
+  const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
 
-  // Shallowest node = primary root (CEO). Peers align to its Y.
+  // Shallowest node = primary root (CEO).
   const rootPoint = points.reduce((a, b) => a.depth < b.depth ? a : b);
 
-  // All tree cards are offset right by peerBand so peer cards can live on the left.
-  const treeOffX = peerBand;
+  // All tree cards are offset DOWN by peerBand so peer cards live above them.
+  const treeOffY = peerBand;
 
-  const canvasW = width  + peerBand;
-  const canvasH = height;
+  const canvasW = width;
+  const canvasH = height + peerBand;
 
-  // Point lookup
   const ptById = new Map(points.map(p => [p.id, p]));
+
+  // Anchor helpers — bottom/top centers, adjusted for treeOffY.
+  const midCX = (p: LayoutPoint) => p.x + CARD_W / 2;
+  const topCY = (p: LayoutPoint) => p.y + treeOffY;
+  const botCY = (p: LayoutPoint) => p.y + treeOffY + CARD_H;
 
   // Edges
   interface Edge { from: LayoutPoint; to: LayoutPoint }
@@ -338,11 +339,6 @@ export default function OrgTree({
       if (mp) matrixEdges.push({ from: mp, to: p });
     }
   }
-
-  // Anchor helpers — right/left centers of a card
-  const rightCX = (p: LayoutPoint) => p.x + treeOffX + CARD_W;
-  const leftCX  = (p: LayoutPoint) => p.x + treeOffX;
-  const midCY   = (p: LayoutPoint) => p.y + CARD_H / 2;
 
   // Pan + zoom
   const onWheel = (e: React.WheelEvent) => {
@@ -382,7 +378,7 @@ export default function OrgTree({
         </Button>
       </div>
 
-      {/* Canvas container — fixed height so the chart fills the viewport */}
+      {/* Canvas container */}
       <div
         ref={containerRef}
         className="overflow-hidden border-y border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-950/20"
@@ -409,11 +405,11 @@ export default function OrgTree({
             className="absolute inset-0 pointer-events-none"
             style={{ zIndex: 1 }}
           >
-            {/* Solid primary edges */}
+            {/* Solid primary edges — vertical elbow connectors */}
             {primaryEdges.map(({ from, to }, i) => (
               <path
                 key={`p-${i}`}
-                d={hElbow(rightCX(from), midCY(from), leftCX(to), midCY(to))}
+                d={vElbow(midCX(from), botCY(from), midCX(to), topCY(to))}
                 className="stroke-slate-400 dark:stroke-slate-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -424,7 +420,7 @@ export default function OrgTree({
             {matrixEdges.map(({ from, to }, i) => (
               <path
                 key={`m-${i}`}
-                d={hElbow(rightCX(from), midCY(from), leftCX(to), midCY(to))}
+                d={vElbow(midCX(from), botCY(from), midCX(to), topCY(to))}
                 className="stroke-amber-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -432,16 +428,16 @@ export default function OrgTree({
               />
             ))}
 
-            {/* Dotted horizontal line from each peer's right edge to root's left */}
+            {/* Dashed vertical line from each peer's bottom-center to root's top-center */}
             {peerNodes.map((peer, i) => {
-              const peerRightX = PAD_X + i * (CARD_W + PEER_GAP) + CARD_W;
-              const lineY      = rootPoint.y + CARD_H / 2;
-              const rootLeftX  = rootPoint.x + treeOffX;
+              const peerCenterX = rootPoint.x + CARD_W / 2;
+              const peerBottomY = PAD_TOP + i * (CARD_H + PEER_GAP) + CARD_H;
+              const rootTopY    = rootPoint.y + treeOffY;
               return (
                 <line
                   key={`peer-${peer.id}`}
-                  x1={peerRightX} y1={lineY}
-                  x2={rootLeftX}  y2={lineY}
+                  x1={peerCenterX} y1={peerBottomY}
+                  x2={peerCenterX} y2={rootTopY}
                   className="stroke-slate-400 dark:stroke-slate-500"
                   strokeWidth={1.5}
                   strokeDasharray="5 4"
@@ -450,10 +446,10 @@ export default function OrgTree({
             })}
           </svg>
 
-          {/* Peer cards — to the left of the root */}
+          {/* Peer cards — stacked ABOVE the root, horizontally aligned with root */}
           {peerNodes.map((peer, i) => {
-            const x = PAD_X + i * (CARD_W + PEER_GAP);
-            const y = rootPoint.y;
+            const x = rootPoint.x;
+            const y = PAD_TOP + i * (CARD_H + PEER_GAP);
             return (
               <div key={peer.id} data-orgcard="1" className="absolute" style={{ left: x, top: y, zIndex: 2 }}>
                 <NodeCard
@@ -466,13 +462,13 @@ export default function OrgTree({
             );
           })}
 
-          {/* Tree cards */}
+          {/* Tree cards — shifted down by treeOffY */}
           {points.map(p => (
             <div
               key={p.id}
               data-orgcard="1"
               className="absolute"
-              style={{ left: p.x + treeOffX, top: p.y, zIndex: 2 }}
+              style={{ left: p.x, top: p.y + treeOffY, zIndex: 2 }}
             >
               <NodeCard
                 node={{ ...p.data, highlight: p === rootPoint ? true : p.data.highlight }}
@@ -483,13 +479,12 @@ export default function OrgTree({
             </div>
           ))}
 
-          {/* Collapse / expand toggles — sits on the connector to the right
-              of each card that has children. */}
+          {/* Collapse / expand toggles — centered below each card that has children */}
           {points
             .filter(p => hasChildren.has(p.id))
             .map(p => {
-              const bx = rightCX(p) + 8;  // just past the right edge
-              const by = midCY(p);
+              const bx = midCX(p) - 8;   // center the 16px circle at card's horizontal center
+              const by = botCY(p) + 2;   // just below bottom edge of card
               const collapsed = collapsedIds.has(p.id);
               return (
                 <button
@@ -498,7 +493,7 @@ export default function OrgTree({
                   onClick={(e) => { e.stopPropagation(); onToggleCollapse(p.id); }}
                   title={collapsed ? "Expand" : "Collapse"}
                   className="absolute z-10 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow"
-                  style={{ left: bx - 8, top: by - 8 }}
+                  style={{ left: bx, top: by }}
                 >
                   {collapsed
                     ? <Plus  className="w-2.5 h-2.5 text-slate-600" />
@@ -509,7 +504,7 @@ export default function OrgTree({
         </div>
       </div>
 
-      {/* Legend — only shown when there are matrix / peer edges */}
+      {/* Legend */}
       {(matrixEdges.length > 0 || peerNodes.length > 0) && (
         <div className="flex items-center gap-4 text-[11px] text-muted-foreground mt-1 px-2">
           <div className="flex items-center gap-1.5">
