@@ -30,17 +30,21 @@ interface OrgTreeProps {
 }
 
 // ─── Layout constants ─────────────────────────────────────────────────
-// Vertical top-down dendrogram: X = sibling slot, Y = depth.
+// Compact right-stack tree: X = depth column (grows rightward),
+// Y = row (grows downward). Parents are vertically centred among their
+// children; leaves are assigned sequential integer rows. This way a boss
+// with N reports produces a compact vertical list rather than a wide
+// horizontal fan — exactly the "save horizontal space" request.
 const CARD_W    = 168;
 const CARD_H    = 50;
-const COL_GAP   = 16;    // horizontal gap between sibling cards
-const ROW_GAP   = 52;    // vertical gap between depth levels (connector travel)
-const COL_STEP  = CARD_W + COL_GAP;   // horizontal step per sibling slot
-const ROW_STEP  = CARD_H + ROW_GAP;   // vertical step per depth level
+const COL_GAP   = 52;    // horizontal gap between depth columns (connector travel)
+const ROW_GAP   = 8;     // vertical gap between sibling rows
+const COL_STEP  = CARD_W + COL_GAP;   // 220 — distance between column origins
+const ROW_STEP  = CARD_H + ROW_GAP;   // 58  — distance between row origins
 const PAD_X     = 20;
 const PAD_TOP   = 10;
 const PAD_BOT   = 14;
-const PEER_GAP  = 20;    // vertical gap between peer card and root top
+const PEER_GAP  = 16;    // vertical gap between peer card bottom and root card top
 const ELBOW_R   = 4;
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -142,16 +146,20 @@ function NodeCard({
 }
 
 // ─── Layout algorithm ─────────────────────────────────────────────────
-// Vertical top-down dendrogram: X = sibling slot (horizontal spread),
-// Y = depth (increases downward). Parent is horizontally centered over
-// its children cluster. Same slot-assignment logic as before — leaves get
-// sequential integer slots, parents get the average of first/last child.
+// Right-stack compact tree:
+//   • Leaves receive sequential integer row numbers (0, 1, 2 …).
+//   • Internal nodes are vertically centred among their first/last child rows.
+//   • X = col * COL_STEP + PAD_X   (increases with depth — leftmost = root)
+//   • Y = row * ROW_STEP + PAD_TOP  (increases downward — row from DFS above)
+//
+// Result: a node with 5 children draws a compact vertical bracket list to
+// its right instead of a wide horizontal fan below it.
 interface LayoutPoint {
   id: string;
   data: OrgTreeNode;
   depth: number;
   x: number;   // left edge of card
-  y: number;   // top edge of card
+  y: number;   // top edge of card  (WITHOUT treeOffY — add that at render time)
   parentId: string | null;
 }
 
@@ -178,11 +186,14 @@ function computeLayout(
   if (visible.length === 0) return null;
   const visibleIds = new Set(visible.map(n => n.id));
 
-  interface TNode { id: string; data: OrgTreeNode | null; children: TNode[]; parentId: string | null }
+  interface TNode {
+    id: string; data: OrgTreeNode | null; children: TNode[]; parentId: string | null;
+    _col: number; _row: number;
+  }
   const tmap = new Map<string, TNode>();
-  const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null };
+  const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null, _col: -1, _row: 0 };
   tmap.set(ROOT_ID, vRoot);
-  for (const n of visible) tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null });
+  for (const n of visible) tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null, _col: 0, _row: 0 });
 
   for (const n of visible) {
     const node = tmap.get(n.id)!;
@@ -191,20 +202,20 @@ function computeLayout(
     tmap.get(pid)?.children.push(node);
   }
 
-  // Post-order slot assignment: leaves → sequential int, parents → midpoint of children.
-  let slotCounter = 0;
-  const assignSlots = (node: TNode): number => {
+  // DFS row assignment.
+  let rowCounter = 0;
+  const assignRows = (node: TNode, col: number): void => {
+    node._col = col;
     if (node.children.length === 0) {
-      const s = slotCounter++;
-      (node as any)._slot = s;
-      return s;
+      node._row = rowCounter++;
+      return;
     }
-    const childSlots = node.children.map(c => assignSlots(c));
-    const center = (childSlots[0]! + childSlots[childSlots.length - 1]!) / 2;
-    (node as any)._slot = center;
-    return center;
+    const startRow = rowCounter;
+    for (const c of node.children) assignRows(c, col + 1);
+    // Centre parent between first and last child rows.
+    node._row = (startRow + rowCounter - 1) / 2;
   };
-  assignSlots(vRoot);
+  assignRows(vRoot, -1);  // virtual root at col=-1, not rendered
 
   const points: LayoutPoint[] = [];
   const collect = (node: TNode, depth: number) => {
@@ -212,13 +223,12 @@ function computeLayout(
       for (const c of node.children) collect(c, 0);
       return;
     }
-    const slot = (node as any)._slot as number;
     points.push({
       id:       node.id,
       data:     node.data!,
       depth,
-      x:        slot  * COL_STEP + PAD_X,   // slot → horizontal
-      y:        depth * ROW_STEP + PAD_TOP,  // depth → vertical
+      x:        node._col * COL_STEP + PAD_X,
+      y:        node._row * ROW_STEP + PAD_TOP,
       parentId: node.parentId === ROOT_ID ? null : node.parentId,
     });
     for (const c of node.children) collect(c, depth + 1);
@@ -227,27 +237,27 @@ function computeLayout(
 
   if (points.length === 0) return null;
 
-  const maxDepth = Math.max(...points.map(p => p.depth));
-  const maxSlot  = Math.max(...points.map(p => (p.x - PAD_X) / COL_STEP));
-
-  const width  = maxSlot * COL_STEP + CARD_W + PAD_X * 2;
-  const height = maxDepth * ROW_STEP + CARD_H + PAD_TOP + PAD_BOT;
+  const maxCol = Math.max(...points.map(p => (p.x - PAD_X) / COL_STEP));
+  const width  = maxCol * COL_STEP + CARD_W + PAD_X * 2;
+  // rowCounter = number of leaves = total rows occupied.
+  const height = (rowCounter - 1) * ROW_STEP + CARD_H + PAD_TOP + PAD_BOT;
   return { points, width, height };
 }
 
-// Vertical elbow: bottom-center of parent → top-center of child.
-// Goes: down → horizontal midY → elbows → down to child top.
-function vElbow(px: number, py: number, cx: number, cy: number): string {
-  if (Math.abs(cx - px) < 0.5) return `M${px},${py} L${cx},${cy}`;
-  const midY = (py + cy) / 2;
+// Horizontal elbow: right-center of parent → left-center of child.
+// When multiple children share the same parent, their paths all pass through
+// the same midX, producing a natural vertical bracket / bus-bar effect.
+function hElbow(px: number, py: number, cx: number, cy: number): string {
+  if (Math.abs(cy - py) < 0.5) return `M${px},${py} L${cx},${cy}`;
+  const midX = (px + cx) / 2;
   const r    = ELBOW_R;
-  const sign = cx > px ? 1 : -1;
+  const sign = cy > py ? 1 : -1;
   return [
     `M${px},${py}`,
-    `L${px},${midY - r}`,
-    `Q${px},${midY} ${px + sign * r},${midY}`,
-    `L${cx - sign * r},${midY}`,
-    `Q${cx},${midY} ${cx},${midY + r}`,
+    `L${midX - r},${py}`,
+    `Q${midX},${py} ${midX},${py + sign * r}`,
+    `L${midX},${cy - sign * r}`,
+    `Q${midX},${cy} ${midX + r},${cy}`,
     `L${cx},${cy}`,
   ].join(" ");
 }
@@ -285,9 +295,8 @@ export default function OrgTree({
     const ch = el.clientHeight || window.innerHeight || 700;
 
     const peerNodes = peerIds.map(id => nodeById.get(id)).filter(Boolean);
-    // Peers stack vertically above root; total height adds their band.
-    const peerBand = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
-    const totalH   = layout.height + peerBand;
+    const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
+    const totalH    = layout.height + peerBand;
 
     const scaleX = cw / layout.width;
     const scaleY = ch / totalH;
@@ -304,7 +313,6 @@ export default function OrgTree({
   const { points, width, height } = layout;
 
   const peerNodes = peerIds.map(id => nodeById.get(id)).filter((n): n is OrgTreeNode => !!n);
-  // Peers sit ABOVE the tree — add their height to the top.
   const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
 
   // Shallowest node = primary root (CEO).
@@ -318,10 +326,10 @@ export default function OrgTree({
 
   const ptById = new Map(points.map(p => [p.id, p]));
 
-  // Anchor helpers — bottom/top centers, adjusted for treeOffY.
-  const midCX = (p: LayoutPoint) => p.x + CARD_W / 2;
-  const topCY = (p: LayoutPoint) => p.y + treeOffY;
-  const botCY = (p: LayoutPoint) => p.y + treeOffY + CARD_H;
+  // Anchor helpers — right/left centers + vertical midpoint, adjusted for treeOffY.
+  const rightCX = (p: LayoutPoint) => p.x + CARD_W;
+  const leftCX  = (p: LayoutPoint) => p.x;
+  const midCY   = (p: LayoutPoint) => p.y + treeOffY + CARD_H / 2;
 
   // Edges
   interface Edge { from: LayoutPoint; to: LayoutPoint }
@@ -405,11 +413,11 @@ export default function OrgTree({
             className="absolute inset-0 pointer-events-none"
             style={{ zIndex: 1 }}
           >
-            {/* Solid primary edges — vertical elbow connectors */}
+            {/* Solid primary edges — horizontal elbow connectors */}
             {primaryEdges.map(({ from, to }, i) => (
               <path
                 key={`p-${i}`}
-                d={vElbow(midCX(from), botCY(from), midCX(to), topCY(to))}
+                d={hElbow(rightCX(from), midCY(from), leftCX(to), midCY(to))}
                 className="stroke-slate-400 dark:stroke-slate-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -420,7 +428,7 @@ export default function OrgTree({
             {matrixEdges.map(({ from, to }, i) => (
               <path
                 key={`m-${i}`}
-                d={vElbow(midCX(from), botCY(from), midCX(to), topCY(to))}
+                d={hElbow(rightCX(from), midCY(from), leftCX(to), midCY(to))}
                 className="stroke-amber-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -462,7 +470,7 @@ export default function OrgTree({
             );
           })}
 
-          {/* Tree cards — shifted down by treeOffY */}
+          {/* Tree cards */}
           {points.map(p => (
             <div
               key={p.id}
@@ -479,12 +487,12 @@ export default function OrgTree({
             </div>
           ))}
 
-          {/* Collapse / expand toggles — centered below each card that has children */}
+          {/* Collapse / expand toggles — centred to the RIGHT of each card that has children */}
           {points
             .filter(p => hasChildren.has(p.id))
             .map(p => {
-              const bx = midCX(p) - 8;   // center the 16px circle at card's horizontal center
-              const by = botCY(p) + 2;   // just below bottom edge of card
+              const tx = rightCX(p) + 2;                    // just right of card edge
+              const ty = p.y + treeOffY + CARD_H / 2 - 8;  // vertically centred (toggle = 16px)
               const collapsed = collapsedIds.has(p.id);
               return (
                 <button
@@ -493,7 +501,7 @@ export default function OrgTree({
                   onClick={(e) => { e.stopPropagation(); onToggleCollapse(p.id); }}
                   title={collapsed ? "Expand" : "Collapse"}
                   className="absolute z-10 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow"
-                  style={{ left: bx, top: by }}
+                  style={{ left: tx, top: ty }}
                 >
                   {collapsed
                     ? <Plus  className="w-2.5 h-2.5 text-slate-600" />
