@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Archive, User, Bot, Mail, UserPlus } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -125,6 +125,16 @@ export default function OrgChart() {
   });
 
   const [showStartAgents, setShowStartAgents] = useState(false);
+
+  // Collapse state — set of role_keys whose children are hidden. Toggled by
+  // the small ± circle that sits on the connector between a parent and its
+  // children. Default is "all expanded" — explicit clicks add to this set.
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
+  const toggleCollapse = (key: string) => setCollapsedKeys(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
 
   // Copy helper for committee prompts (also used by Start Agents dialog).
   const copyToClipboard = async (text: string, label = "Copied") => {
@@ -556,28 +566,46 @@ export default function OrgChart() {
         );
       })()}
 
-      {/* Direct reports row + connector lines — recursive so any depth renders */}
+      {/* Direct reports row + connector lines — recursive so any depth renders.
+          Same ± collapse toggle as deeper subtrees: clicking it on the CEO's
+          drop hides the entire org below the C-suite. */}
       {ceo && directReports.length > 0 && (
         <div className="overflow-x-auto pb-2">
           <div className="relative inline-flex flex-col items-center min-w-full">
-            {/* Vertical line down from CEO to the busbar */}
-            <div className="w-0.5 h-3 bg-foreground/60" />
-            {/* Horizontal busbar — spans full width of the subtrees row */}
-            <div className="relative w-full">
-              <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
-              <div className="flex flex-nowrap justify-center gap-3 pt-3">
-                {directReports.map(r => (
-                  <RoleSubtree
-                    key={r.id}
-                    role={r}
-                    childrenOf={childrenOf}
-                    knowledge={knowledge}
-                    onOpen={setOpenRole}
-                    onAddKnowledge={setAddKnowledgeForRole}
-                  />
-                ))}
-              </div>
+            {/* Vertical line down from CEO with the ± toggle in the middle. */}
+            <div className="relative w-px h-5 bg-slate-300">
+              <button
+                type="button"
+                onClick={() => toggleCollapse(ceo.role_key)}
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors"
+                title={collapsedKeys.has(ceo.role_key) ? "Expand the org" : "Collapse the org"}
+              >
+                {collapsedKeys.has(ceo.role_key)
+                  ? <Plus className="w-2.5 h-2.5 text-slate-600" />
+                  : <Minus className="w-2.5 h-2.5 text-slate-600" />}
+              </button>
             </div>
+            {!collapsedKeys.has(ceo.role_key) && (
+              /* Horizontal busbar — spans full width of the subtrees row */
+              <div className="relative w-full">
+                <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
+                <div className="flex flex-nowrap justify-center gap-4 pt-0">
+                  {directReports.map(r => (
+                    <RoleSubtree
+                      key={r.id}
+                      role={r}
+                      depth={1}
+                      childrenOf={childrenOf}
+                      knowledge={knowledge}
+                      onOpen={setOpenRole}
+                      onAddKnowledge={setAddKnowledgeForRole}
+                      collapsedKeys={collapsedKeys}
+                      onToggleCollapse={toggleCollapse}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -780,77 +808,109 @@ export default function OrgChart() {
 }
 
 // ── Role card ─────────────────────────────────────────────────────────
-// Fixed 152 × 80 px so every tile is identical in size.
-function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: {
+// 240 × 72 px tile in the SmartDraw / OrgChart-Plus style:
+//   - Coloured top accent stripe (blue for top tiers, orange for leaves
+//     and deeper roles), driven by the `depth` prop the parent passes.
+//   - Circular avatar on the left (initials for humans, bot icon for AI).
+//   - Bold coloured name on top, muted role title below.
+//   - Status / overdue indicators are dots in the corners (small, quiet).
+//   - Add-knowledge button is hover-revealed top-right.
+//
+// Goals / OKRs / open-task counts have moved to the detail dialog (which
+// already shows them in full) — the tile stays clean and readable when
+// the chart spans many roles. Underlying data is untouched.
+function initialsOf(name: string | null): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0][0]!.toUpperCase();
+  return (parts[0][0]! + parts[parts.length - 1]![0]!).toUpperCase();
+}
+
+function RoleCard({ role, highlight, knowledgeCount, depth = 0, onClick, onAddKnowledge }: {
   role: OrgRole;
   highlight?: boolean;
   knowledgeCount: number;
+  depth?: number;
   onClick: () => void;
   onAddKnowledge: () => void;
 }) {
-  const openTasks = role.tasks_10d.filter(t => t.status === "todo" || t.status === "in_progress").length;
-  const overdue   = role.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
-  const isPeer    = /^(president|founder|chairman|board)$/i.test(role.role_key);
+  const overdue = role.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
+
+  // Depth-driven accent colour — matches the reference screenshot:
+  // depth 0 (CEO/President) and depth 1 (CXOs / direct reports) = blue,
+  // depth ≥ 2 (deeper layers) = orange.
+  const isUpperTier = depth <= 1;
+  const accent = isUpperTier
+    ? { stripe: "bg-sky-500",    name: "text-sky-600",    avatarBg: "bg-sky-100",    avatarFg: "text-sky-700" }
+    : { stripe: "bg-orange-500", name: "text-orange-600", avatarBg: "bg-orange-100", avatarFg: "text-orange-700" };
+
+  // Display name: prefer the person's name if present, fall back to the
+  // role title. Sub-line shows whichever the headline didn't already use.
+  const headline = role.person_name?.trim() ? role.person_name : role.role_name;
+  const sub      = role.person_name?.trim() ? role.role_name : (role.email || "");
+
+  // Status pip — vacant=red, onboarding=amber, fired=slate, active=none
+  const statusPipClass =
+    role.status === "vacant"     ? "bg-red-500"
+  : role.status === "onboarding" ? "bg-amber-500"
+  : role.status === "fired"      ? "bg-slate-500"
+                                 : "";
 
   return (
     <Card
       onClick={onClick}
-      className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/40 w-[112px] h-[58px] overflow-hidden shrink-0 ${
-        highlight ? "border-2 border-primary/40 ring-2 ring-primary/10" : ""
+      className={`group relative cursor-pointer transition-all hover:shadow-md w-[240px] h-[72px] overflow-hidden shrink-0 bg-card border-slate-200 dark:border-slate-700 rounded-md ${
+        highlight ? "ring-2 ring-sky-300/60" : ""
       }`}
     >
-      <div className="p-1.5 flex flex-col h-full">
-        {/* Row 1 — kind icon · role name · knowledge btn */}
-        <div className="flex items-center gap-0.5 min-w-0">
-          {role.kind === "human" ? (
-            <span title="Human" className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-100 text-blue-700 shrink-0">
-              <User className="w-1.5 h-1.5" />
-            </span>
-          ) : (
-            <span title="AI agent" className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-violet-100 text-violet-700 shrink-0">
-              <Bot className="w-1.5 h-1.5" />
-            </span>
-          )}
-          <h3 className="font-semibold text-[9px] leading-tight truncate flex-1">{role.role_name}</h3>
-          <Button
-            size="sm" variant="ghost"
-            className="h-3.5 w-3.5 p-0 shrink-0"
-            onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
-            title={`Add knowledge for ${role.role_name}`}
-          >
-            <BookOpen className="w-2 h-2" />
-          </Button>
-        </div>
+      {/* Top accent stripe — full width, colour driven by depth. */}
+      <div className={`absolute inset-x-0 top-0 h-[3px] ${accent.stripe}`} />
 
-        {/* Row 2 — non-active status badge + optional person name (hidden for peers) */}
-        <div className="flex items-center gap-0.5 mt-0.5 min-w-0">
-          {role.status !== "active" && statusBadge(role.status)}
-          {!isPeer && role.person_name && (
-            <span className="text-[8px] text-muted-foreground truncate">{role.person_name}</span>
-          )}
-        </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Row 3 — stats */}
-        <div className="flex items-center justify-between border-t pt-0.5 text-[8px] text-muted-foreground">
-          <div className="flex items-center gap-1">
-            {role.goals.length > 0 && (
-              <span className="flex items-center gap-0.5"><Target className="w-1.5 h-1.5" />{role.goals.length}</span>
-            )}
-            {role.okrs.length > 0 && (
-              <span className="flex items-center gap-0.5"><Sparkles className="w-1.5 h-1.5" />{role.okrs.length}</span>
-            )}
-            <span className="flex items-center gap-0.5"><ListTodo className="w-1.5 h-1.5" />{openTasks}</span>
-            {knowledgeCount > 0 && (
-              <span className="flex items-center gap-0.5"><BookOpen className="w-1.5 h-1.5" />{knowledgeCount}</span>
-            )}
+      <div className="flex items-center h-full pl-3 pr-3 pt-[6px] pb-1 gap-3">
+        {/* Avatar — initials for humans, bot icon for AI agents. */}
+        <div className="relative shrink-0">
+          <div className={`w-12 h-12 rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold text-sm`}>
+            {role.kind === "agent" ? <Bot className="w-5 h-5" /> : initialsOf(role.person_name)}
           </div>
+          {/* Overdue indicator — a small red dot on the avatar's corner. */}
           {overdue > 0 && (
-            <Badge variant="destructive" className="text-[7px] h-3 px-0.5">{overdue}!</Badge>
+            <span
+              className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-red-500 ring-2 ring-card"
+              title={`${overdue} overdue task${overdue !== 1 ? "s" : ""}`}
+            />
           )}
         </div>
+
+        {/* Name + sub */}
+        <div className="flex-1 min-w-0">
+          <div className={`font-semibold text-[13px] leading-tight truncate ${accent.name}`}>{headline}</div>
+          {sub && (
+            <div className="text-[11px] text-muted-foreground leading-tight truncate mt-0.5">{sub}</div>
+          )}
+          {/* Status badge under the sub-line, only when not active. */}
+          {statusPipClass && (
+            <div className="flex items-center gap-1 mt-1">
+              <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusPipClass}`} />
+              <span className="text-[9px] uppercase tracking-wide text-muted-foreground">{role.status}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Hover-revealed knowledge button — top-right. */}
+        <Button
+          size="sm" variant="ghost"
+          className="absolute top-1 right-1 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
+          title={`Add knowledge for ${role.role_name}`}
+        >
+          <BookOpen className="w-3 h-3" />
+          {knowledgeCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 text-[8px] bg-primary text-primary-foreground rounded-full w-3 h-3 flex items-center justify-center font-semibold">
+              {knowledgeCount > 9 ? "9+" : knowledgeCount}
+            </span>
+          )}
+        </Button>
       </div>
     </Card>
   );
@@ -859,48 +919,79 @@ function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: 
 // ── Recursive role subtree — renders a card + its children at any depth ──
 // All siblings always on a SINGLE horizontal line (flex-nowrap).
 // The outer page wraps in overflow-x-auto to allow scrolling.
+//
+// Connectors are 1px slate-300 lines. A small ± circle sits on the vertical
+// segment between this tile and its children's busbar — click it to hide /
+// show the subtree below. Collapsed state is owned by the OrgChart top-level
+// component and threaded down via `collapsedKeys` / `onToggleCollapse`.
 function RoleSubtree({
   role, childrenOf, knowledge, onOpen, onAddKnowledge,
+  depth = 1, collapsedKeys, onToggleCollapse,
 }: {
   role: OrgRole;
   childrenOf: (key: string) => OrgRole[];
   knowledge: KnowledgeNote[];
   onOpen: (r: OrgRole) => void;
   onAddKnowledge: (r: OrgRole) => void;
+  depth?: number;
+  collapsedKeys: Set<string>;
+  onToggleCollapse: (key: string) => void;
 }) {
   const children = childrenOf(role.role_key);
+  const collapsed = collapsedKeys.has(role.role_key);
+  const hasChildren = children.length > 0;
+
   return (
     // flex-col items-center: card sits centered above its children row
     <div className="flex flex-col items-center">
-      {/* Vertical drop from the busbar above this tile */}
-      <div className="w-0.5 h-3 bg-foreground/60" />
+      {/* Vertical drop from the busbar above this tile (1px slate). */}
+      <div className="w-px h-4 bg-slate-300" />
       <RoleCard
         role={role}
+        depth={depth}
         knowledgeCount={knowledge.filter(k => k.role_key === role.role_key).length}
         onClick={() => onOpen(role)}
         onAddKnowledge={() => onAddKnowledge(role)}
       />
-      {children.length > 0 && (
+      {hasChildren && (
         <div className="flex flex-col items-center w-full">
-          {/* Vertical line from card down to horizontal bus */}
-          <div className="w-0.5 h-3 bg-foreground/60" />
-          {/* Horizontal bus — spans full width of this subtree */}
-          <div className="relative w-full">
-            <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
-            {/* Children — always on a single line, no wrapping */}
-            <div className="flex flex-nowrap justify-center gap-2 pt-3">
-              {children.map(c => (
-                <RoleSubtree
-                  key={c.id}
-                  role={c}
-                  childrenOf={childrenOf}
-                  knowledge={knowledge}
-                  onOpen={onOpen}
-                  onAddKnowledge={onAddKnowledge}
-                />
-              ))}
-            </div>
+          {/* Vertical drop from this card with the ± toggle in the middle */}
+          <div className="relative w-px h-5 bg-slate-300">
+            <button
+              type="button"
+              onClick={() => onToggleCollapse(role.role_key)}
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors"
+              title={collapsed ? `Expand ${role.role_name}'s reports` : `Collapse ${role.role_name}'s reports`}
+            >
+              {collapsed
+                ? <Plus className="w-2.5 h-2.5 text-slate-600" />
+                : <Minus className="w-2.5 h-2.5 text-slate-600" />}
+            </button>
           </div>
+          {!collapsed && (
+            <>
+              {/* Horizontal busbar — spans full width of this subtree */}
+              <div className="relative w-full">
+                <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
+                {/* Children — always on a single line, no wrapping */}
+                <div className="flex flex-nowrap justify-center gap-4 pt-0">
+                  {children.map(c => (
+                    <RoleSubtree
+                      key={c.id}
+                      role={c}
+                      depth={depth + 1}
+                      childrenOf={childrenOf}
+                      knowledge={knowledge}
+                      onOpen={onOpen}
+                      onAddKnowledge={onAddKnowledge}
+                      collapsedKeys={collapsedKeys}
+                      onToggleCollapse={onToggleCollapse}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
