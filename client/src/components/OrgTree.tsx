@@ -41,7 +41,7 @@ const X_STEP  = CARD_W + H_GAP;  // 188 px per leaf slot
 const Y_STEP  = CARD_H + V_GAP;  // 98  px per depth level
 const PAD_X   = 24;
 const PAD_TOP = 14;
-const PAD_BOT = 18;
+const PAD_BOT = 28;
 const PEER_GAP = 18;         // above-root vertical gap for peer cards
 const ELBOW_R  = 5;
 
