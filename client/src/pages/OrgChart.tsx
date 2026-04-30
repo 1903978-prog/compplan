@@ -514,17 +514,14 @@ export default function OrgChart() {
         </DialogContent>
       </Dialog>
 
-      {/* CEO row — President (if exists) renders to the LEFT of CEO with a
-          solid horizontal connector. President is identified by role_key
-          ("president" / "founder" / "chairman" / "board"). It's a peer of
-          CEO conceptually, not a subordinate, so we render it side-by-side
-          rather than above. The connector is a solid line — no L-bend —
-          to signal "horizontal authority/governance" relationship. */}
+      {/* ── Top of hierarchy: President (if exists) sits ABOVE CEO.
+          Livio is the owner/boss; the dashed vertical line signals the
+          human-over-AI governance relationship. CEO is centered below. */}
       {ceo && (() => {
         const president = roles.find(r => /^(president|founder|chairman|board)$/i.test(r.role_key));
         if (!president) {
           return (
-            <div className="flex justify-center mb-3">
+            <div className="flex flex-col items-center mb-3">
               <RoleCard
                 role={ceo} highlight
                 knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
@@ -535,34 +532,37 @@ export default function OrgChart() {
           );
         }
         return (
-          <div className="flex justify-center mb-3">
-            {/* President is the apex — no connecting line. CEO sits alongside
-                it; the vertical line below CEO connects down to direct reports. */}
-            <div className="flex items-start gap-3">
-              <RoleCard
-                role={president} highlight
-                knowledgeCount={knowledge.filter(k => k.role_key === president.role_key).length}
-                onClick={() => setOpenRole(president)}
-                onAddKnowledge={() => setAddKnowledgeForRole(president)}
-              />
-              <RoleCard
-                role={ceo} highlight
-                knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
-                onClick={() => setOpenRole(ceo)}
-                onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
-              />
-            </div>
+          <div className="flex flex-col items-center mb-3">
+            {/* President — apex of the hierarchy */}
+            <RoleCard
+              role={president} highlight
+              knowledgeCount={knowledge.filter(k => k.role_key === president.role_key).length}
+              onClick={() => setOpenRole(president)}
+              onAddKnowledge={() => setAddKnowledgeForRole(president)}
+            />
+            {/* Dashed vertical connector: human principal → AI CEO */}
+            <div className="h-4 border-l-2 border-dashed border-foreground/50" />
+            {/* CEO sits directly below President */}
+            <RoleCard
+              role={ceo} highlight
+              knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
+              onClick={() => setOpenRole(ceo)}
+              onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
+            />
           </div>
         );
       })()}
 
-      {/* Direct reports row + connector lines — recursive so any depth renders */}
+      {/* ── Direct reports + full recursive subtree ─────────────────────
+          All children render in a horizontal row at each level (no wrap).
+          overflow-x-auto on the outer div allows scrolling if the chart
+          is wider than the viewport. */}
       {ceo && directReports.length > 0 && (
-        <div className="overflow-x-auto pb-2">
-          <div className="relative inline-flex flex-col items-center min-w-full">
-            {/* Vertical line down from CEO to the busbar */}
+        <div className="w-full overflow-x-auto pb-4">
+          <div className="flex flex-col items-center min-w-max mx-auto">
+            {/* Solid vertical line down from CEO to the horizontal busbar */}
             <div className="w-0.5 h-3 bg-foreground/60" />
-            {/* Horizontal busbar — spans full width of the subtrees row */}
+            {/* Horizontal busbar + children row */}
             <div className="relative w-full">
               <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
               <div className="flex flex-nowrap justify-center gap-3 pt-3">
@@ -581,6 +581,53 @@ export default function OrgChart() {
           </div>
         </div>
       )}
+
+      {/* ── Orphaned agents — not connected to the main tree ─────────────
+          Roles whose parent_role_key is null, empty, or points to a role
+          that doesn't exist in the dataset. Shown in a muted row so
+          nothing is invisible. */}
+      {(() => {
+        const reachableKeys = new Set<string>();
+        const PEER_KEYS = new Set(
+          roles.filter(r => /^(president|founder|chairman|board)$/i.test(r.role_key)).map(r => r.role_key)
+        );
+        const allKeys = new Set(roles.map(r => r.role_key));
+        // BFS from CEO
+        if (ceo) {
+          const queue = [ceo.role_key];
+          while (queue.length) {
+            const k = queue.shift()!;
+            if (reachableKeys.has(k)) continue;
+            reachableKeys.add(k);
+            for (const child of childrenOf(k)) queue.push(child.role_key);
+          }
+        }
+        const orphans = roles.filter(r =>
+          !reachableKeys.has(r.role_key) &&
+          !PEER_KEYS.has(r.role_key) &&
+          r.status !== "fired"
+        );
+        if (orphans.length === 0) return null;
+        return (
+          <div className="mt-8 pt-4 border-t">
+            <p className="text-xs text-muted-foreground italic mb-3 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3 text-amber-500" />
+              {orphans.length} agent{orphans.length > 1 ? "s" : ""} not connected to the org tree — check their "Reports to" field.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {orphans.map(r => (
+                <RoleCard
+                  key={r.id}
+                  role={r}
+                  knowledgeCount={knowledge.filter(k => k.role_key === r.role_key).length}
+                  onClick={() => setOpenRole(r)}
+                  onAddKnowledge={() => setAddKnowledgeForRole(r)}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Add-knowledge popup ────────────────────────────────────── */}
       <Dialog open={!!addKnowledgeForRole} onOpenChange={(o) => !o && setAddKnowledgeForRole(null)}>
