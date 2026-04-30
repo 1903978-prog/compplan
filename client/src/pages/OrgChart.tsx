@@ -1162,182 +1162,201 @@ function RoleDetailDialog({
           </Button>
         </section>
 
-        {/* ── Agent spec: job description, deliverables, skills, training ── */}
-        {aiosAgent && (
-          <section className="mt-4">
-            <AgentSpecSection agent={aiosAgent} />
-          </section>
-        )}
+        {/* ── Ordered sections — all collapsed by default ── */}
+        {(() => {
+          const PRIORITY_SET = new Set(["Must", "Should", "Nice"]);
+          const isSource = (n: KnowledgeNote) => Array.isArray(n.tags) && n.tags.some(t => PRIORITY_SET.has(t));
+          const brain   = knowledge.filter(n => !isSource(n));
+          const sources = knowledge.filter(isSource);
+          const hasDRs  = allRoles.some(r => r.parent_role_key === role.role_key);
 
-        {/* Knowledge / instructions — COLLAPSIBLE-BY-TITLE.
-            Each note shows just the title + metadata; click the row to
-            expand the body. Click again to collapse. + Add (paste) and
-            📎 Upload (file → server-side text extraction) buttons. */}
-        <section className="mt-4">
-          <KnowledgeBlock
-            knowledge={knowledge}
-            roleKey={role.role_key}
-            onAddKnowledgeFromDialog={onAddKnowledgeFromDialog}
-            onArchiveKnowledge={onArchiveKnowledge}
-          />
-        </section>
+          return (
+            <div className="mt-4 space-y-1.5">
 
-        {/* Goals — editable. One textarea per goal, +Add button at the
-            bottom, ✕ to remove. Saves on blur via onSaveFields. */}
-        <section className="mt-4">
-          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-            <h4 className="font-semibold text-sm flex items-center gap-2">
-              <Target className="w-4 h-4 text-primary" /> Goals
-              <span className="text-xs font-normal text-muted-foreground">({role.goals.length})</span>
-            </h4>
-            {/* Cascade button — pushes goals + OKRs to direct reports
-                routed by topic keyword (finance→CFO, sales→Sales, etc.) */}
-            {allRoles.some(r => r.parent_role_key === role.role_key) && (
-              <Button
-                size="sm" variant="outline" className="h-7 text-xs"
-                onClick={() => onCascade(role)}
-                title="Cascade goals + OKRs to direct reports, routed by topic keyword"
+              {/* 1 · Goals */}
+              <SectionBlock
+                icon={<Target className="w-3.5 h-3.5 text-primary" />}
+                label="Goals"
+                count={role.goals.length}
+                extra={hasDRs && (
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 ml-auto"
+                    onClick={e => { e.stopPropagation(); void onCascade(role); }}>
+                    <Sparkles className="w-3 h-3 mr-1" /> Cascade
+                  </Button>
+                )}
               >
-                <Sparkles className="w-3 h-3 mr-1" /> Cascade to DRs
-              </Button>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            {role.goals.map((g, i) => (
-              <div key={i} className="flex gap-1 items-start">
-                <span className="text-muted-foreground pt-2">•</span>
-                <textarea
-                  defaultValue={g}
-                  rows={Math.max(1, Math.ceil(g.length / 80))}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v === g) return;
-                    const next = v ? role.goals.map((x, j) => j === i ? v : x) : role.goals.filter((_, j) => j !== i);
-                    void onSaveFields(role, { goals: next });
-                  }}
-                  className="flex-1 text-sm leading-snug resize-y border-b border-transparent focus:border-primary outline-none bg-transparent py-1"
-                />
-                <button
-                  onClick={() => void onSaveFields(role, { goals: role.goals.filter((_, j) => j !== i) })}
-                  className="text-muted-foreground hover:text-destructive p-1"
-                  title="Remove goal"
-                >×</button>
-              </div>
-            ))}
-            <Button
-              size="sm" variant="ghost" className="h-7 text-xs"
-              onClick={() => void onSaveFields(role, { goals: [...role.goals, "New goal"] })}
-            >
-              <Plus className="w-3 h-3 mr-1" /> Add goal
-            </Button>
-          </div>
-        </section>
-
-        {/* OKRs — editable. Each objective is a textarea; KRs are one per
-            line in their own textarea. ✕ removes the OKR. */}
-        <section className="mt-5">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="font-semibold text-sm flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" /> OKRs
-              <span className="text-xs font-normal text-muted-foreground">({role.okrs.length})</span>
-            </h4>
-          </div>
-          <div className="space-y-3">
-            {role.okrs.map((o, i) => (
-              <div key={i} className="border-l-2 border-primary/30 pl-3 py-1 group">
-                <div className="flex items-start gap-1">
-                  <span className="text-sm font-medium pt-1 shrink-0">{i + 1}.</span>
-                  <textarea
-                    defaultValue={o.objective}
-                    rows={Math.max(1, Math.ceil(o.objective.length / 70))}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v === o.objective) return;
-                      const next = role.okrs.map((x, j) => j === i ? { ...x, objective: v } : x);
-                      void onSaveFields(role, { okrs: next });
-                    }}
-                    className="flex-1 text-sm font-medium resize-y border-b border-transparent focus:border-primary outline-none bg-transparent"
-                  />
-                  <button
-                    onClick={() => void onSaveFields(role, { okrs: role.okrs.filter((_, j) => j !== i) })}
-                    className="text-muted-foreground hover:text-destructive p-0.5 opacity-0 group-hover:opacity-100"
-                    title="Remove OKR"
-                  >×</button>
+                <div className="space-y-1.5 py-1">
+                  {role.goals.length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No goals yet.</p>
+                    : role.goals.map((g, i) => (
+                      <div key={i} className="flex gap-1 items-start">
+                        <span className="text-muted-foreground pt-1.5 shrink-0">•</span>
+                        <textarea defaultValue={g} rows={Math.max(1, Math.ceil(g.length / 80))}
+                          onBlur={e => {
+                            const v = e.target.value.trim(); if (v === g) return;
+                            const next = v ? role.goals.map((x, j) => j === i ? v : x) : role.goals.filter((_, j) => j !== i);
+                            void onSaveFields(role, { goals: next });
+                          }}
+                          className="flex-1 text-sm leading-snug resize-y border-b border-transparent focus:border-primary outline-none bg-transparent py-1" />
+                        <button onClick={() => void onSaveFields(role, { goals: role.goals.filter((_, j) => j !== i) })}
+                          className="text-muted-foreground hover:text-destructive p-1 shrink-0">×</button>
+                      </div>
+                    ))}
+                  <Button size="sm" variant="ghost" className="h-7 text-xs mt-1"
+                    onClick={() => void onSaveFields(role, { goals: [...role.goals, "New goal"] })}>
+                    <Plus className="w-3 h-3 mr-1" /> Add goal
+                  </Button>
                 </div>
-                <textarea
-                  defaultValue={o.key_results.join("\n")}
-                  rows={Math.max(2, o.key_results.length)}
-                  onBlur={(e) => {
-                    const krs = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
-                    if (krs.join("\n") === o.key_results.join("\n")) return;
-                    const next = role.okrs.map((x, j) => j === i ? { ...x, key_results: krs } : x);
-                    void onSaveFields(role, { okrs: next });
-                  }}
-                  placeholder="One key result per line"
-                  className="w-full text-xs text-muted-foreground space-y-0.5 mt-1 resize-y border-b border-transparent focus:border-primary outline-none bg-transparent"
-                />
-              </div>
-            ))}
-            <Button
-              size="sm" variant="ghost" className="h-7 text-xs"
-              onClick={() => void onSaveFields(role, {
-                okrs: [...role.okrs, { objective: "New objective", key_results: ["KR 1"] }],
-              })}
-            >
-              <Plus className="w-3 h-3 mr-1" /> Add OKR
-            </Button>
-          </div>
-        </section>
+              </SectionBlock>
 
-        {/* Tasks 10d */}
-        <section className="mt-5">
-          <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-            <ListTodo className="w-4 h-4 text-primary" /> Tasks · next 10 days
-            <span className="text-xs text-muted-foreground font-normal ml-auto">
-              {openTasks.length} open · {doneTasks.length} done
-            </span>
-          </h4>
-          {role.tasks_10d.length === 0 ? (
-            <p className="text-sm text-muted-foreground italic px-1">No tasks set yet. The role's daily cron run will populate this.</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {[...openTasks, ...doneTasks].map(t => {
-                const dDays = daysFromNow(t.due_date);
-                const overdue = t.status !== "done" && dDays < 0;
-                return (
-                  <li key={t.id} className={`flex items-start gap-2 p-2 rounded border ${overdue ? "border-red-300 bg-red-50/50 dark:bg-red-950/20" : "border-border"}`}>
-                    <button
-                      onClick={() => onTaskToggle(t, t.status === "done" ? "todo" : "done")}
-                      className="mt-0.5 hover:opacity-70 transition-opacity"
-                      title={t.status === "done" ? "Mark as todo" : "Mark as done"}
-                    >
-                      {taskStatusIcon(t.status)}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-sm leading-snug ${t.status === "done" ? "line-through text-muted-foreground" : ""}`}>
-                        {t.title}
+              {/* 2 · OKRs */}
+              <SectionBlock
+                icon={<Sparkles className="w-3.5 h-3.5 text-primary" />}
+                label="OKRs"
+                count={role.okrs.length}
+              >
+                <div className="space-y-3 py-1">
+                  {role.okrs.length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No OKRs yet.</p>
+                    : role.okrs.map((o, i) => (
+                      <div key={i} className="border-l-2 border-primary/30 pl-3 py-1 group">
+                        <div className="flex items-start gap-1">
+                          <span className="text-sm font-medium pt-1 shrink-0">{i + 1}.</span>
+                          <textarea defaultValue={o.objective} rows={Math.max(1, Math.ceil(o.objective.length / 70))}
+                            onBlur={e => {
+                              const v = e.target.value.trim(); if (v === o.objective) return;
+                              void onSaveFields(role, { okrs: role.okrs.map((x, j) => j === i ? { ...x, objective: v } : x) });
+                            }}
+                            className="flex-1 text-sm font-medium resize-y border-b border-transparent focus:border-primary outline-none bg-transparent" />
+                          <button onClick={() => void onSaveFields(role, { okrs: role.okrs.filter((_, j) => j !== i) })}
+                            className="text-muted-foreground hover:text-destructive p-0.5 opacity-0 group-hover:opacity-100">×</button>
+                        </div>
+                        <textarea defaultValue={o.key_results.join("\n")} rows={Math.max(2, o.key_results.length)}
+                          onBlur={e => {
+                            const krs = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
+                            if (krs.join("\n") === o.key_results.join("\n")) return;
+                            void onSaveFields(role, { okrs: role.okrs.map((x, j) => j === i ? { ...x, key_results: krs } : x) });
+                          }}
+                          placeholder="One key result per line"
+                          className="w-full text-xs text-muted-foreground mt-1 resize-y border-b border-transparent focus:border-primary outline-none bg-transparent" />
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
-                        <span>{fmtDate(t.due_date)}</span>
-                        {overdue && <span className="text-red-600 font-semibold">overdue</span>}
-                        {!overdue && dDays >= 0 && dDays <= 1 && <span className="text-amber-600 font-semibold">today/tomorrow</span>}
-                        {t.linked_url && (
-                          <a href={t.linked_url} className="text-primary hover:underline">open →</a>
-                        )}
-                      </div>
-                      {t.note && (
-                        <div className="text-[11px] text-muted-foreground italic mt-0.5">{t.note}</div>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
+                    ))}
+                  <Button size="sm" variant="ghost" className="h-7 text-xs mt-1"
+                    onClick={() => void onSaveFields(role, { okrs: [...role.okrs, { objective: "New objective", key_results: ["KR 1"] }] })}>
+                    <Plus className="w-3 h-3 mr-1" /> Add OKR
+                  </Button>
+                </div>
+              </SectionBlock>
 
-        <div className="flex justify-end mt-6">
-          <Button variant="outline" onClick={onClose}>
+              {/* 3 · Actions (Tasks 10d) */}
+              <SectionBlock
+                icon={<ListTodo className="w-3.5 h-3.5 text-primary" />}
+                label="Actions"
+                count={role.tasks_10d.length}
+                badge={openTasks.filter(t => daysFromNow(t.due_date) < 0).length > 0
+                  ? <span className="text-[9px] bg-red-500 text-white rounded-full px-1.5 py-0.5 ml-1">
+                      {openTasks.filter(t => daysFromNow(t.due_date) < 0).length} overdue
+                    </span> : undefined}
+              >
+                <div className="py-1">
+                  {role.tasks_10d.length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No tasks yet. Daily agent run will populate this.</p>
+                    : (
+                      <ul className="space-y-1.5">
+                        {[...openTasks, ...doneTasks].map(t => {
+                          const dDays = daysFromNow(t.due_date);
+                          const overdue = t.status !== "done" && dDays < 0;
+                          return (
+                            <li key={t.id} className={`flex items-start gap-2 p-2 rounded border ${overdue ? "border-red-300 bg-red-50/50" : "border-border"}`}>
+                              <button onClick={() => onTaskToggle(t, t.status === "done" ? "todo" : "done")} className="mt-0.5">
+                                {taskStatusIcon(t.status)}
+                              </button>
+                              <div className="flex-1 min-w-0">
+                                <div className={`text-sm leading-snug ${t.status === "done" ? "line-through text-muted-foreground" : ""}`}>{t.title}</div>
+                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                                  <span>{fmtDate(t.due_date)}</span>
+                                  {overdue && <span className="text-red-600 font-semibold">overdue</span>}
+                                  {!overdue && dDays >= 0 && dDays <= 1 && <span className="text-amber-600 font-semibold">due soon</span>}
+                                  {t.linked_url && <a href={t.linked_url} className="text-primary hover:underline">open →</a>}
+                                </div>
+                                {t.note && <div className="text-[11px] text-muted-foreground italic mt-0.5">{t.note}</div>}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                </div>
+              </SectionBlock>
+
+              {/* 4 · Brain (pasted notes / uploaded docs) */}
+              <SectionBlock
+                icon={<BookOpen className="w-3.5 h-3.5 text-primary" />}
+                label="Brain"
+                count={brain.length}
+                extra={
+                  <div className="flex items-center gap-1 ml-auto" onClick={e => e.stopPropagation()}>
+                    <label className="cursor-pointer">
+                      <input type="file" className="hidden" accept=".txt,.md,.pdf,.docx,.pptx,.csv"
+                        onChange={async e => {
+                          const file = e.target.files?.[0]; if (!file) return;
+                          const fd = new FormData(); fd.append("file", file); fd.append("role_key", role.role_key);
+                          await fetch("/api/agent-knowledge/upload", { method: "POST", credentials: "include", body: fd });
+                          window.location.reload();
+                        }} />
+                      <span className="inline-flex items-center gap-1 h-6 px-2 text-[10px] rounded border border-input bg-background hover:bg-accent cursor-pointer">
+                        <Plus className="w-3 h-3" /> Upload
+                      </span>
+                    </label>
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={onAddKnowledgeFromDialog}>
+                      <Plus className="w-3 h-3 mr-0.5" /> Paste
+                    </Button>
+                  </div>
+                }
+              >
+                <NoteList notes={brain} onArchive={onArchiveKnowledge} />
+              </SectionBlock>
+
+              {/* 5 · Sources (Excel reputable sources, tagged Must/Should/Nice) */}
+              <SectionBlock
+                icon={<PackageOpen className="w-3.5 h-3.5 text-primary" />}
+                label="Sources"
+                count={sources.length}
+              >
+                <NoteList notes={sources} onArchive={onArchiveKnowledge} showTags />
+              </SectionBlock>
+
+              {/* 6 · Skills (AIOS spec: deliverables, skills, training, domain knowledge) */}
+              {aiosAgent && (
+                <SectionBlock
+                  icon={<Lightbulb className="w-3.5 h-3.5 text-primary" />}
+                  label="Skills & Profile"
+                  count={(aiosAgent.deliverables?.length ?? 0) + (aiosAgent.skills?.length ?? 0) + (aiosAgent.training?.length ?? 0)}
+                >
+                  <div className="space-y-1 py-1">
+                    {aiosAgent.function_area && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge variant="secondary" className="text-[10px]">{aiosAgent.function_area}</Badge>
+                        {aiosAgent.role_title && <span className="text-[11px] text-muted-foreground">{aiosAgent.role_title}</span>}
+                      </div>
+                    )}
+                    {aiosAgent.job_description && (
+                      <SpecGroup icon={<Briefcase className="w-3 h-3 text-slate-500 shrink-0" />} label="Job Description" items={[aiosAgent.job_description]} />
+                    )}
+                    <SpecGroup icon={<PackageOpen className="w-3 h-3 text-blue-500 shrink-0" />} label="Deliverables" items={aiosAgent.deliverables ?? []} defaultOpen />
+                    <SpecGroup icon={<Lightbulb className="w-3 h-3 text-amber-500 shrink-0" />} label="Skills" items={aiosAgent.skills ?? []} />
+                    <SpecGroup icon={<BookOpen className="w-3 h-3 text-emerald-500 shrink-0" />} label="Domain Knowledge" items={aiosAgent.knowledge ?? []} />
+                    <SpecGroup icon={<GraduationCap className="w-3 h-3 text-purple-500 shrink-0" />} label="Training" items={aiosAgent.training ?? []} />
+                  </div>
+                </SectionBlock>
+              )}
+
+            </div>
+          );
+        })()}
+
+        <div className="flex justify-end mt-4">
+          <Button variant="outline" size="sm" onClick={onClose}>
             <X className="w-4 h-4 mr-1" /> Close
           </Button>
         </div>
@@ -1346,152 +1365,94 @@ function RoleDetailDialog({
   );
 }
 
-// ── Knowledge block: collapsed-by-title list + add (paste) + upload (file).
-// Clicking a row toggles the body. The first paste creates a new agent
-// _knowledge row via POST /api/agent-knowledge; uploads go through
-// /api/agent-knowledge/upload which extracts text server-side from
-// .txt / .md / .pdf / .pptx / .docx and stores it in the same table.
-//
-// Persistence model the user asked about: documents land in this table
-// → loaded on every brief / agent run as part of the role's prompt.
-// LLMs don't fine-tune; "learning" = same context every time.
-function KnowledgeBlock({
-  knowledge,
-  roleKey,
-  onAddKnowledgeFromDialog,
-  onArchiveKnowledge,
+// ── SectionBlock — uniform collapsible section header ─────────────────
+function SectionBlock({
+  icon, label, count, badge, extra, children, defaultOpen = false,
 }: {
-  knowledge: KnowledgeNote[];
-  roleKey: string;
-  onAddKnowledgeFromDialog: () => void;
-  onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
+  icon: React.ReactNode;
+  label: string;
+  count?: number;
+  badge?: React.ReactNode;
+  extra?: React.ReactNode;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border rounded-md overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 bg-muted/10 hover:bg-muted/30 text-left transition-colors"
+      >
+        {open
+          ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+          : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />}
+        {icon}
+        <span className="text-sm font-semibold">{label}</span>
+        {count !== undefined && (
+          <span className="text-[11px] text-muted-foreground font-normal">({count})</span>
+        )}
+        {badge}
+        {extra}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 border-t bg-background">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── NoteList — compact accordion list of knowledge/source notes ────────
+function NoteList({
+  notes, onArchive, showTags = false,
+}: {
+  notes: KnowledgeNote[];
+  onArchive: (n: KnowledgeNote) => Promise<void>;
+  showTags?: boolean;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-
-  function toggle(id: number) {
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setUploadError(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("role_key", roleKey);
-      const r = await fetch("/api/agent-knowledge/upload", {
-        method: "POST", credentials: "include",
-        body: fd,
-      });
-      if (!r.ok) {
-        const errBody = await r.json().catch(() => ({}));
-        throw new Error(errBody.message ?? `HTTP ${r.status}`);
-      }
-      // Hard reload so parent re-fetches knowledge list.
-      window.location.reload();
-    } catch (err) {
-      setUploadError((err as Error).message);
-      setUploading(false);
-    } finally {
-      e.target.value = ""; // allow re-upload of the same file
-    }
-  }
-
+  const toggle = (id: number) => setExpandedIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+  });
+  if (notes.length === 0) return <p className="text-xs text-muted-foreground italic py-2">None yet.</p>;
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <h4 className="font-semibold text-sm flex items-center gap-2">
-          <BookOpen className="w-4 h-4 text-primary" />
-          Knowledge / instructions
-          <span className="text-xs font-normal text-muted-foreground">({knowledge.length})</span>
-        </h4>
-        <div className="flex items-center gap-1">
-          {/* Upload — accepts text + Office docs; server extracts text. */}
-          <label className="cursor-pointer">
-            <input
-              type="file"
-              className="hidden"
-              accept=".txt,.md,.pdf,.docx,.pptx,.csv"
-              onChange={handleFile}
-              disabled={uploading}
-            />
-            <span className="inline-flex items-center gap-1 h-7 px-2 text-xs rounded border border-input bg-background hover:bg-accent">
-              {uploading ? "Uploading…" : <><Plus className="w-3 h-3" /> Upload doc</>}
-            </span>
-          </label>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onAddKnowledgeFromDialog}>
-            <Plus className="w-3 h-3 mr-1" /> Paste text
-          </Button>
-        </div>
-      </div>
-
-      {uploadError && (
-        <p className="text-[10px] text-destructive italic mb-2">Upload failed: {uploadError}</p>
-      )}
-
-      {knowledge.length === 0 ? (
-        <p className="text-xs text-muted-foreground italic px-1">
-          No knowledge yet. <strong>Paste text</strong> for instructions / playbooks, or <strong>Upload doc</strong> for PDFs / PPTX / DOCX / TXT — text is extracted server-side and persisted so the agent reads it on every run.
-        </p>
-      ) : (
-        <div className="space-y-1">
-          {knowledge.map(n => {
-            const isOpen = expandedIds.has(n.id);
-            return (
-              <div key={n.id} className="border rounded bg-muted/20 text-xs overflow-hidden">
-                {/* Title row — click to toggle body. */}
-                <button
-                  type="button"
-                  onClick={() => toggle(n.id)}
-                  className="w-full flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-muted/40 text-left"
-                >
-                  <div className="flex items-center gap-2 flex-wrap min-w-0">
-                    <span className="text-muted-foreground shrink-0">{isOpen ? "▾" : "▸"}</span>
-                    <span className="font-semibold truncate">{n.title || "(untitled)"}</span>
-                    <Badge variant="outline" className="text-[9px] py-0 h-4 shrink-0">{n.source}</Badge>
-                    <span className="text-[10px] text-muted-foreground shrink-0">{fmtDate(n.created_at)}</span>
-                  </div>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => { e.stopPropagation(); void onArchiveKnowledge(n); }}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void onArchiveKnowledge(n); } }}
-                    className="cursor-pointer text-muted-foreground hover:text-foreground p-1 shrink-0"
-                    title="Archive (kept in log)"
-                  ><Archive className="w-3 h-3" /></span>
-                </button>
-                {/* Body — only when expanded. */}
-                {isOpen && (
-                  <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed px-2 pb-2 border-t">
-                    {n.content}
-                  </pre>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Persistence note — answers the user's question: how does an LLM
-          agent's "learning" persist? Documents stored here are loaded on
-          every brief run as context. There is NO fine-tuning — the agent
-          re-reads this every time. Limit: total tokens per role × every
-          brief. ~50-100 pages per role is the practical ceiling before
-          context-window compression kicks in. */}
-      {knowledge.length > 0 && (
-        <p className="text-[10px] text-muted-foreground italic mt-2">
-          Persistence: every paste / upload is stored in <code>agent_knowledge</code> and re-read by the agent on every run. No fine-tuning happens — the agent reads this same text every time it wakes.
-        </p>
-      )}
+    <div className="space-y-0.5 py-1">
+      {notes.map(n => {
+        const isOpen = expandedIds.has(n.id);
+        return (
+          <div key={n.id} className="border rounded text-xs overflow-hidden">
+            <button type="button" onClick={() => toggle(n.id)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-muted/30 text-left">
+              {isOpen
+                ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+                : <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />}
+              <span className="font-medium truncate flex-1">{n.title || "(untitled)"}</span>
+              {showTags && n.tags.length > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${
+                  n.tags[1] === "Must"  ? "bg-red-100 text-red-700"
+                  : n.tags[1] === "Should" ? "bg-amber-100 text-amber-700"
+                  : "bg-slate-100 text-slate-600"
+                }`}>{n.tags[1]}</span>
+              )}
+              {!showTags && <span className="text-[10px] text-muted-foreground shrink-0">{fmtDate(n.created_at)}</span>}
+              <span role="button" tabIndex={0}
+                onClick={e => { e.stopPropagation(); void onArchive(n); }}
+                onKeyDown={e => { if (e.key === "Enter") { e.stopPropagation(); void onArchive(n); } }}
+                className="cursor-pointer text-muted-foreground hover:text-foreground p-1 shrink-0" title="Archive">
+                <Archive className="w-3 h-3" />
+              </span>
+            </button>
+            {isOpen && (
+              <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed px-2 pb-2 border-t text-muted-foreground">
+                {n.content}
+              </pre>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1531,63 +1492,5 @@ function SpecGroup({
   );
 }
 
-function AgentSpecSection({ agent }: { agent: AiosAgent }) {
-  const [jdOpen, setJdOpen] = useState(false);
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-2">
-        <Briefcase className="w-4 h-4 text-primary" />
-        <h4 className="font-semibold text-sm">Agent Profile</h4>
-        {agent.function_area && (
-          <Badge variant="secondary" className="text-[10px]">{agent.function_area}</Badge>
-        )}
-        {agent.role_title && (
-          <span className="text-xs text-muted-foreground">{agent.role_title}</span>
-        )}
-      </div>
-
-      {/* Mission / Job Description — collapsed by default */}
-      {agent.job_description && (
-        <div className="border rounded bg-muted/10 overflow-hidden mb-1.5">
-          <button
-            type="button"
-            onClick={() => setJdOpen(o => !o)}
-            className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-muted/30 text-left"
-          >
-            {jdOpen ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />}
-            <span className="text-xs font-semibold">Job Description</span>
-          </button>
-          {jdOpen && (
-            <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed px-3 pb-2 border-t text-muted-foreground">
-              {agent.job_description}
-            </pre>
-          )}
-        </div>
-      )}
-
-      <div className="space-y-1">
-        <SpecGroup
-          icon={<PackageOpen className="w-3 h-3 text-blue-500 shrink-0" />}
-          label="Deliverables"
-          items={agent.deliverables ?? []}
-          defaultOpen={true}
-        />
-        <SpecGroup
-          icon={<Lightbulb className="w-3 h-3 text-amber-500 shrink-0" />}
-          label="Skills"
-          items={agent.skills ?? []}
-        />
-        <SpecGroup
-          icon={<BookOpen className="w-3 h-3 text-emerald-500 shrink-0" />}
-          label="Domain Knowledge"
-          items={agent.knowledge ?? []}
-        />
-        <SpecGroup
-          icon={<GraduationCap className="w-3 h-3 text-purple-500 shrink-0" />}
-          label="Training"
-          items={agent.training ?? []}
-        />
-      </div>
-    </div>
-  );
-}
+// AgentSpecSection removed — spec data now rendered inline inside
+// SectionBlock("Skills & Profile") within RoleDetailDialog.
