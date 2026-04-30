@@ -33,13 +33,13 @@ interface OrgTreeProps {
 // Top-down layout: root at top, children spread horizontally below.
 // Each depth level occupies one row. Leaves get one slot each; parents
 // are centred over their children span (Reingold-Tilford style).
-const CARD_W  = 176;
-const CARD_H  = 58;
-const H_GAP   = 12;          // horizontal gap between sibling cards
-const V_GAP   = 40;          // vertical space between card bottom and next card top
-const X_STEP  = CARD_W + H_GAP;  // 188 px per leaf slot
-const Y_STEP  = CARD_H + V_GAP;  // 98  px per depth level
-const PAD_X   = 24;
+const CARD_W  = 200;
+const CARD_H  = 72;
+const H_GAP   = 8;           // horizontal gap between sibling cards
+const V_GAP   = 30;          // vertical space between card bottom and next card top
+const X_STEP  = CARD_W + H_GAP;  // 208 px per leaf slot
+const Y_STEP  = CARD_H + V_GAP;  // 102 px per depth level
+const PAD_X   = 20;
 const PAD_TOP = 14;
 const PAD_BOT = 28;
 const PEER_GAP = 18;         // above-root vertical gap for peer cards
@@ -89,15 +89,15 @@ function NodeCard({
       {/* Top accent stripe */}
       <div className={`absolute inset-x-0 top-0 h-[3px] ${accent.stripe}`} />
 
-      <div className="flex items-center h-full pl-2 pr-6 gap-2 pt-[4px]">
+      <div className="flex items-center h-full pl-3 pr-8 gap-2.5 pt-[5px]">
         {/* Avatar */}
         <div className="relative shrink-0">
-          <div className={`w-8 h-8 rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold text-[11px]`}>
-            {node.type === "agent" ? <Bot className="w-4 h-4" /> : initialsOf(node.name)}
+          <div className={`w-10 h-10 rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold text-[12px]`}>
+            {node.type === "agent" ? <Bot className="w-5 h-5" /> : initialsOf(node.name)}
           </div>
           {(node.overdueCount ?? 0) > 0 && (
             <span
-              className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-1 ring-card"
+              className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500 ring-1 ring-card"
               title={`${node.overdueCount} overdue`}
             />
           )}
@@ -106,14 +106,14 @@ function NodeCard({
         {/* Text */}
         <div className="flex-1 min-w-0">
           <div
-            className={`font-semibold text-[12px] leading-tight ${accent.name}`}
+            className={`font-semibold text-[13px] leading-snug ${accent.name}`}
             style={{ display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}
           >
             {headline}
           </div>
           {sub && (
             <div
-              className="text-[10px] text-muted-foreground leading-tight mt-px"
+              className="text-[11px] text-muted-foreground leading-tight mt-0.5"
               style={{ display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}
             >
               {sub}
@@ -127,13 +127,13 @@ function NodeCard({
         {/* Knowledge button — hover-reveal */}
         <Button
           size="sm" variant="ghost"
-          className="absolute top-0.5 right-0.5 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-1 right-1 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
           title="Add knowledge"
         >
-          <BookOpen className="w-2.5 h-2.5" />
+          <BookOpen className="w-3 h-3" />
           {(node.knowledgeCount ?? 0) > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 text-[7px] bg-primary text-primary-foreground rounded-full w-2.5 h-2.5 flex items-center justify-center font-semibold leading-none">
+            <span className="absolute -top-0.5 -right-0.5 text-[7px] bg-primary text-primary-foreground rounded-full w-3 h-3 flex items-center justify-center font-semibold leading-none">
               {(node.knowledgeCount ?? 0) > 9 ? "9+" : node.knowledgeCount}
             </span>
           )}

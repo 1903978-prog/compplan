@@ -225,8 +225,16 @@ export default function OrgChart() {
       setAcceptanceStats(stats);
       setAiosAgents(aios);
 
-      // Start fully expanded so every agent is visible on load.
-      setCollapsedKeys(new Set());
+      // Start with CEO's direct reports collapsed so the initial view shows
+      // only 3 levels (President → CEO → CXOs). Cards fill the viewport at
+      // ~90% zoom, matching the reference org-chart proportions. Users click
+      // the + toggle on any card to expand its subtree.
+      const depth2Keys = new Set<string>(
+        (orgs as OrgRole[])
+          .filter(r => r.parent_role_key === "ceo")
+          .map(r => r.role_key)
+      );
+      setCollapsedKeys(depth2Keys);
 
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
