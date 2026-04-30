@@ -3,6 +3,7 @@ import { roleGridEntries, appSettings, employees } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { SEED_PROPOSALS } from "./seedProposals";
+import { AGENT_SPECS } from "./agentSpecsData";
 
 const SEED_EMPLOYEES = [
   {
@@ -1787,6 +1788,42 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     WHERE role_key = 'cco' AND person_name = 'Indra Nooyi'
   `);
 
+  // Idempotent typo fix: "Head of Partenrships" → "Head of Hiring Partnerships".
+  // Two roles with similar intent existed in the live DB:
+  //   - "Head of Partnerships" under VP Sales (BD partners)
+  //   - "Head of Partenrships" under CHRO (recruitment partners)
+  // The CHRO-side row had a typo AND an identical display name. Rename to
+  // disambiguate it as a distinct seat for hiring partners. role_key is
+  // updated to match. Idempotent — only fires while the typo is present.
+  await db.execute(sql`
+    UPDATE org_agents
+    SET role_name = 'Head of Hiring Partnerships',
+        role_key  = 'head-of-hiring-partnerships',
+        updated_at = ${_orgNow}
+    WHERE role_name ILIKE 'Head of Partenrships'
+       OR role_key  = 'head-of-partenrships'
+  `);
+  // Migrate dependent FKs (parent_role_key, dotted_parent_role_keys,
+  // agent_knowledge.role_key, agent_proposals.role_key) so nothing is
+  // orphaned by the rename.
+  await db.execute(sql`
+    UPDATE org_agents SET parent_role_key = 'head-of-hiring-partnerships', updated_at = ${_orgNow}
+    WHERE parent_role_key = 'head-of-partenrships'
+  `);
+  await db.execute(sql`
+    UPDATE org_agents
+    SET dotted_parent_role_keys = (
+      SELECT jsonb_agg(CASE WHEN x #>> '{}' = 'head-of-partenrships'
+                            THEN '"head-of-hiring-partnerships"'::jsonb
+                            ELSE x END)
+      FROM jsonb_array_elements(dotted_parent_role_keys) AS x
+    ),
+    updated_at = ${_orgNow}
+    WHERE dotted_parent_role_keys @> '["head-of-partenrships"]'::jsonb
+  `);
+  await db.execute(sql`UPDATE agent_knowledge  SET role_key = 'head-of-hiring-partnerships' WHERE role_key = 'head-of-partenrships'`);
+  await db.execute(sql`UPDATE agent_proposals  SET role_key = 'head-of-hiring-partnerships' WHERE role_key = 'head-of-partenrships'`);
+
   for (const a of _orgSeed) {
     await db.execute(sql`
       INSERT INTO org_agents (role_key, role_name, parent_role_key, person_name, status, goals, okrs, tasks_10d, sort_order, created_at, updated_at)
@@ -1818,6 +1855,72 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
              AND goals::text NOT LIKE '%[Enables €3M%')
     `);
   }
+
+  // ── Sub-agent seed: BD Agent, Proposal Agent, CKO, L&D Manager, AR Agent,
+  //    Partnership Agent — created via seedSources.js (one-time script) but
+  //    their OKRs/goals were left empty. This migration idempotently back-fills
+  //    goals and OKRs from AGENT_SPECS so the org-chart popup shows them.
+  const _SUB_AGENT_ROLE_KEYS: Record<string, { roleKey: string; parentKey: string; sort: number }> = {
+    "BD Agent":          { roleKey: "bd-agent",          parentKey: "cco",             sort: 20 },
+    "Proposal Agent":    { roleKey: "proposal-agent",    parentKey: "cco",             sort: 21 },
+    "CKO":               { roleKey: "cko",               parentKey: "ceo",             sort: 22 },
+    "L&D Manager":       { roleKey: "ld-manager",        parentKey: "hiring-manager",  sort: 23 },
+    "AR Agent":          { roleKey: "ar-agent",          parentKey: "cfo",             sort: 24 },
+    "Partnership Agent": { roleKey: "partnership-agent", parentKey: "cco",             sort: 25 },
+  };
+  for (const spec of AGENT_SPECS) {
+    const mapping = _SUB_AGENT_ROLE_KEYS[spec.name];
+    if (!mapping) continue;
+    const { roleKey, parentKey, sort } = mapping;
+    const goals = spec.responsibilities.slice(0, 4)
+      .map(r => r.replace(/^\[(AUTONOMOUS|HUMAN-APPROVED)\]\s*/i, ""));
+    const okrs = spec.okrs.map(o => ({ objective: o.objective, key_results: o.krs }));
+    // Create if missing (idempotent — handles fresh deploys without seedSources.js).
+    await db.execute(sql`
+      INSERT INTO org_agents (role_key, role_name, parent_role_key, person_name, status,
+        goals, okrs, tasks_10d, dotted_parent_role_keys, sort_order, created_at, updated_at)
+      SELECT ${roleKey}, ${spec.name}, ${parentKey}, NULL, 'active',
+             ${JSON.stringify(goals)}::jsonb, ${JSON.stringify(okrs)}::jsonb,
+             '[]'::jsonb, '[]'::jsonb, ${sort}, ${_orgNow}, ${_orgNow}
+      WHERE NOT EXISTS (SELECT 1 FROM org_agents WHERE role_key = ${roleKey})
+    `);
+    // Backfill goals + OKRs for rows that still have empty arrays.
+    await db.execute(sql`
+      UPDATE org_agents
+      SET goals = ${JSON.stringify(goals)}::jsonb,
+          okrs  = ${JSON.stringify(okrs)}::jsonb,
+          updated_at = ${_orgNow}
+      WHERE role_key = ${roleKey} AND okrs = '[]'::jsonb
+    `);
+  }
+
+  // ── Data fix: remove duplicate "L&D Manager" ─────────────────────────
+  // Two rows with role_name = 'L&D Manager' exist under hiring-manager:
+  //   id=24 key='ld-manager'  (seeded by the sub-agent pass above — keep)
+  //   id=10 key='l-d-manager' (older manual entry — remove)
+  // Migrate any knowledge/proposals linked to the stale key first, then delete.
+  await db.execute(sql`
+    UPDATE agent_knowledge SET role_key = 'ld-manager'
+    WHERE role_key = 'l-d-manager'
+  `);
+  await db.execute(sql`
+    UPDATE agent_proposals SET role_key = 'ld-manager'
+    WHERE role_key = 'l-d-manager'
+  `);
+  await db.execute(sql`
+    DELETE FROM org_agents WHERE role_key = 'l-d-manager'
+  `);
+
+  // ── Data fix: Henry Kissinger "Advisor" parent ─────────────────────────
+  // The Advisor row had parent_role_key = 'president'. Since president is
+  // treated as a governance peer (excluded from the tree), Advisor rendered
+  // as a floating second root. Re-parent to 'ceo' so Advisor appears as a
+  // direct report of CEO.
+  await db.execute(sql`
+    UPDATE org_agents
+    SET parent_role_key = 'ceo', updated_at = ${_orgNow}
+    WHERE role_key = 'advisor' AND parent_role_key = 'president'
+  `);
 
   // Seed settings if empty
   const existingSettings = await db.select().from(appSettings);
@@ -3170,11 +3273,24 @@ Sequential IDs: PAR-001.
         ON CONFLICT DO NOTHING
       `);
     }
+  }
 
-    // ── AIOS Cycle tables ─────────────────────────────────────────────────────
+  // ── AIOS Cycle tables — always run (idempotent IF NOT EXISTS clauses).
+  // Previously wedged inside the `raciCount === 0` block above, which meant
+  // every new schema change was silently skipped on second-and-later boots
+  // (e.g. the structured agent-spec columns added in the spec-applier
+  // below). Now lifted out so additions always reach existing databases.
+  {
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS role_title TEXT`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS job_description TEXT`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS function_area TEXT`);
+    // Structured spec arrays (sourced from server/agentSpecsData.ts).
+    // jsonb arrays so the UI / other agents can iterate them directly
+    // without parsing the long-form JD blob. Idempotent — only added.
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS deliverables JSONB`);
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS skills JSONB`);
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge JSONB`);
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS training JSONB`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS aios_cycles (
         id SERIAL PRIMARY KEY,
@@ -3526,5 +3642,95 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
       created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+  // ── Apply structured agent specs from agentSpecsData.ts ──────────────
+  // Match by exact name (cards.json was authored to match agents.name 1:1).
+  // For each spec we:
+  //   - Fill `mission` with the subtitle (one-line tagline) when blank
+  //   - OVERWRITE deliverables / skills / knowledge / training (these are
+  //     authored as the source of truth — the spec doc is the spec)
+  //   - Build decision_rights_autonomous / _livio from the bracketed
+  //     responsibilities ([AUTONOMOUS] vs [HUMAN-APPROVED])
+  //   - OVERWRITE job_description with a comprehensive Markdown JD
+  //     compiled from every section (mission + responsibilities +
+  //     deliverables + OKRs + skills + knowledge + training). Old
+  //     hand-written JDs from agentJDs above are intentionally replaced —
+  //     the spec doc is now the authority.
+  //   - Insert each OKR's objective + key results into the AIOS objectives
+  //     and key_results tables, deduped by (agent_id, title).
+  for (const spec of AGENT_SPECS) {
+    const auto = spec.responsibilities.filter(r => r.includes("[AUTONOMOUS]")).map(r => r.replace(/\[AUTONOMOUS\]\s*/, "")).join("\n");
+    const livio = spec.responsibilities.filter(r => r.includes("[HUMAN-APPROVED]")).map(r => r.replace(/\[HUMAN-APPROVED\]\s*/, "")).join("\n");
+    const jd = [
+      `## ${spec.name}`,
+      `*${spec.subtitle}*`,
+      ``,
+      `### Mission`,
+      spec.role,
+      ``,
+      `### Responsibilities`,
+      ...spec.responsibilities.map(r => `- ${r}`),
+      ``,
+      `### Deliverables`,
+      ...spec.deliverables.map(d => `- ${d}`),
+      ``,
+      `### OKRs`,
+      ...spec.okrs.flatMap(o => [`**${o.objective}**`, ...o.krs.map(k => `- ${k}`), ``]),
+      `### Required Skills`,
+      ...spec.skills.map(s => `- ${s}`),
+      ``,
+      `### Required Knowledge`,
+      ...spec.knowledge.map(k => `- ${k}`),
+      ``,
+      `### Training Curriculum`,
+      ...spec.training.map(t => `- ${t}`),
+    ].join("\n");
+
+    await db.execute(sql`
+      UPDATE agents
+      SET
+        mission                      = COALESCE(mission, ${spec.subtitle}),
+        deliverables                 = ${JSON.stringify(spec.deliverables)}::jsonb,
+        skills                       = ${JSON.stringify(spec.skills)}::jsonb,
+        knowledge                    = ${JSON.stringify(spec.knowledge)}::jsonb,
+        training                     = ${JSON.stringify(spec.training)}::jsonb,
+        decision_rights_autonomous   = ${auto},
+        decision_rights_livio        = ${livio},
+        skill_gaps                   = ${spec.skills.join("\n")},
+        training_plan                = ${spec.training.join("\n")},
+        job_description              = ${jd},
+        updated_at                   = ${new Date().toISOString()}
+      WHERE name = ${spec.name}
+    `);
+
+    // Seed objectives + key_results, deduped by (agent_id, title).
+    const agentRow = await db.execute(sql`SELECT id FROM agents WHERE name = ${spec.name} LIMIT 1`);
+    const rows = (agentRow as any).rows ?? agentRow;
+    const agentId = rows[0]?.id;
+    if (!agentId) continue;
+    for (const okr of spec.okrs) {
+      const existing = await db.execute(sql`SELECT id FROM objectives WHERE agent_id = ${agentId} AND title = ${okr.objective} LIMIT 1`);
+      const exRows = (existing as any).rows ?? existing;
+      let objId: number | undefined = exRows[0]?.id;
+      if (!objId) {
+        const ins = await db.execute(sql`
+          INSERT INTO objectives (agent_id, title, status, created_at)
+          VALUES (${agentId}, ${okr.objective}, 'open', ${new Date().toISOString()})
+          RETURNING id
+        `);
+        const insRows = (ins as any).rows ?? ins;
+        objId = insRows[0]?.id;
+      }
+      if (!objId) continue;
+      for (const kr of okr.krs) {
+        await db.execute(sql`
+          INSERT INTO key_results (objective_id, title, created_at)
+          SELECT ${objId}, ${kr}, ${new Date().toISOString()}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM key_results WHERE objective_id = ${objId} AND title = ${kr}
+          )
+        `);
+      }
+    }
+  }
   }
 }

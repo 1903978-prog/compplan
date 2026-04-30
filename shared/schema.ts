@@ -1198,6 +1198,20 @@ export const agents = pgTable("agents", {
   skill_gaps: text("skill_gaps"),
   training_plan: text("training_plan"),
   readiness_scores: text("readiness_scores"),   // JSON: { role_clarity, data_access, skill_knowledge, output_quality, decision_discipline, okr_progress }
+  // Job-description trio added in earlier AIOS migrations (seed.ts).
+  // Now mirrored in the Drizzle schema so SELECT returns them via the API.
+  role_title: text("role_title"),
+  function_area: text("function_area"),
+  job_description: text("job_description"),
+  // Structured spec arrays sourced from server/agentSpecsData.ts. The
+  // role JD (job_description column added later in the migrations) gets
+  // a long-form Markdown rollup of all of these for human reading; these
+  // columns hold the original arrays so other agents / tooling can iterate
+  // them programmatically without re-parsing free text.
+  deliverables: jsonb("deliverables").$type<string[]>(),
+  skills: jsonb("skills").$type<string[]>(),
+  knowledge: jsonb("knowledge").$type<string[]>(),
+  training: jsonb("training").$type<string[]>(),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });

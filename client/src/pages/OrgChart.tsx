@@ -1,11 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Archive, User, Bot, Mail, UserPlus } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import OrgTree, { type OrgTreeNode } from "@/components/OrgTree";
+
+// ── AIOS role-key ↔ agent name map ────────────────────────────────────
+const AIOS_NAME_BY_ROLE_KEY: Record<string, string> = {
+  "ceo": "CEO", "coo": "COO", "cfo": "CFO", "cco": "CCO",
+  "hiring-manager": "CHRO", "marketing-manager": "CMO",
+  "cko": "CKO", "delivery-director": "Delivery Officer",
+  "pricing-director": "Pricing Agent", "proposal-agent": "Proposal Agent",
+  "bd-agent": "BD Agent", "ar-agent": "AR Agent",
+  "partnership-agent": "Partnership Agent", "ld-manager": "L&D Manager",
+};
+
+interface AiosAgent {
+  id: number;
+  name: string;
+  mission: string | null;
+  role_title: string | null;
+  function_area: string | null;
+  job_description: string | null;
+  deliverables: string[] | null;
+  skills: string[] | null;
+  knowledge: string[] | null;
+  training: string[] | null;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface OkrItem { objective: string; key_results: string[] }
@@ -125,6 +149,18 @@ export default function OrgChart() {
   });
 
   const [showStartAgents, setShowStartAgents] = useState(false);
+  const [aiosAgents, setAiosAgents] = useState<AiosAgent[]>([]);
+
+  // Collapse state — set of role_keys whose children are hidden.
+  // Seeded on data load: all depth-1 nodes (direct reports of root) are
+  // collapsed so depth ≥ 2 starts hidden. User can expand subtrees with the
+  // +/– toggle that appears on each connector.
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
+  const toggleCollapse = (key: string) => setCollapsedKeys(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
 
   // Copy helper for committee prompts (also used by Start Agents dialog).
   const copyToClipboard = async (text: string, label = "Copied") => {
@@ -181,11 +217,32 @@ export default function OrgChart() {
       fetch("/api/agent-proposals?status=pending", { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/agent-knowledge?status=active", { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/agent-proposals/acceptance-stats", { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([orgs, props, kn, stats]) => {
+      fetch("/api/agentic/agents", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([orgs, props, kn, stats, aios]) => {
       setRoles(orgs);
       setProposals(props);
       setKnowledge(kn);
       setAcceptanceStats(stats);
+      setAiosAgents(aios);
+
+      // Seed initial collapsed state: collapse all depth-1 nodes so
+      // depth ≥ 2 (grandchildren of root) starts hidden on first render.
+      const _PEER_RX = /^(president|founder|chairman|board)$/i;
+      const _depths = new Map<string, number>();
+      const _q: { key: string; d: number }[] = (orgs as OrgRole[])
+        .filter(r => !r.parent_role_key && !_PEER_RX.test(r.role_key))
+        .map(r => ({ key: r.role_key, d: 0 }));
+      for (let _i = 0; _i < _q.length; _i++) {
+        const { key, d } = _q[_i];
+        if (_depths.has(key)) continue;
+        _depths.set(key, d);
+        for (const child of (orgs as OrgRole[]).filter(r => r.parent_role_key === key && !_PEER_RX.test(r.role_key)))
+          _q.push({ key: child.role_key, d: d + 1 });
+      }
+      const _initCollapsed = new Set<string>();
+      _depths.forEach((depth, key) => { if (depth === 1) _initCollapsed.add(key); });
+      setCollapsedKeys(_initCollapsed);
+
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
   }, [toast]);
@@ -386,7 +443,7 @@ export default function OrgChart() {
   };
 
   return (
-    <div className="container mx-auto py-6 max-w-7xl">
+    <div className="container mx-auto py-6 w-full max-w-none px-6">
       <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
         <div className="flex items-center gap-3">
           <Network className="w-7 h-7 text-primary" />
@@ -514,117 +571,47 @@ export default function OrgChart() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Top of hierarchy: President (if exists) sits ABOVE CEO.
-          Livio is the owner/boss; the dashed vertical line signals the
-          human-over-AI governance relationship. CEO is centered below. */}
+      {/* ── Org tree — d3-hierarchy tidy-tree layout with SVG elbow
+          connectors. Replaces the previous nested CSS layout that produced
+          row misalignment, dual-root ambiguity and overlapping cards.
+          Peer roles (President / Founder / Chairman / Board) render to
+          the left of CEO with a dotted governance edge. */}
       {ceo && (() => {
-        const president = roles.find(r => /^(president|founder|chairman|board)$/i.test(r.role_key));
-        if (!president) {
-          return (
-            <div className="flex flex-col items-center mb-3">
-              <RoleCard
-                role={ceo} highlight
-                knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
-                onClick={() => setOpenRole(ceo)}
-                onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
-              />
-            </div>
-          );
-        }
+        const peerRx = PEER_ROLE_RX;
+        const peerIds = roles.filter(r => peerRx.test(r.role_key)).map(r => r.role_key);
+        const orgNodes: OrgTreeNode[] = roles.map(r => ({
+          id: r.role_key,
+          name: r.person_name ?? "",
+          title: r.role_name,
+          type: (r.kind ?? "agent") as "agent" | "human",
+          vacant: r.status === "vacant",
+          onboarding: r.status === "onboarding",
+          fired: r.status === "fired",
+          // Peer roles get null primary boss so they don't clutter the
+          // tree; they're rendered separately at level 0 next to the CEO.
+          primaryBossId: peerRx.test(r.role_key) ? null : (r.parent_role_key ?? null),
+          matrixBossIds: r.dotted_parent_role_keys ?? [],
+          knowledgeCount: knowledge.filter(k => k.role_key === r.role_key).length,
+          overdueCount: r.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length,
+          highlight: r.role_key === "ceo" || peerRx.test(r.role_key),
+          email: r.email ?? undefined,
+        }));
         return (
-          <div className="flex flex-col items-center mb-3">
-            {/* President — apex of the hierarchy */}
-            <RoleCard
-              role={president} highlight
-              knowledgeCount={knowledge.filter(k => k.role_key === president.role_key).length}
-              onClick={() => setOpenRole(president)}
-              onAddKnowledge={() => setAddKnowledgeForRole(president)}
+          <div className="mb-3">
+            <OrgTree
+              nodes={orgNodes}
+              peerIds={peerIds}
+              collapsedIds={collapsedKeys}
+              onToggleCollapse={toggleCollapse}
+              onOpen={(id) => {
+                const r = roles.find(x => x.role_key === id);
+                if (r) setOpenRole(r);
+              }}
+              onAddKnowledge={(id) => {
+                const r = roles.find(x => x.role_key === id);
+                if (r) setAddKnowledgeForRole(r);
+              }}
             />
-            {/* Dashed vertical connector: human principal → AI CEO */}
-            <div className="h-4 border-l-2 border-dashed border-foreground/50" />
-            {/* CEO sits directly below President */}
-            <RoleCard
-              role={ceo} highlight
-              knowledgeCount={knowledge.filter(k => k.role_key === ceo.role_key).length}
-              onClick={() => setOpenRole(ceo)}
-              onAddKnowledge={() => setAddKnowledgeForRole(ceo)}
-            />
-          </div>
-        );
-      })()}
-
-      {/* ── Direct reports + full recursive subtree ─────────────────────
-          All children render in a horizontal row at each level (no wrap).
-          overflow-x-auto on the outer div allows scrolling if the chart
-          is wider than the viewport. */}
-      {ceo && directReports.length > 0 && (
-        <div className="w-full overflow-x-auto pb-4">
-          <div className="flex flex-col items-center min-w-max mx-auto">
-            {/* Solid vertical line down from CEO to the horizontal busbar */}
-            <div className="w-0.5 h-3 bg-foreground/60" />
-            {/* Horizontal busbar + children row */}
-            <div className="relative w-full">
-              <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
-              <div className="flex flex-nowrap justify-center gap-3 pt-3">
-                {directReports.map(r => (
-                  <RoleSubtree
-                    key={r.id}
-                    role={r}
-                    childrenOf={childrenOf}
-                    knowledge={knowledge}
-                    onOpen={setOpenRole}
-                    onAddKnowledge={setAddKnowledgeForRole}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Orphaned agents — not connected to the main tree ─────────────
-          Roles whose parent_role_key is null, empty, or points to a role
-          that doesn't exist in the dataset. Shown in a muted row so
-          nothing is invisible. */}
-      {(() => {
-        const reachableKeys = new Set<string>();
-        const PEER_KEYS = new Set(
-          roles.filter(r => /^(president|founder|chairman|board)$/i.test(r.role_key)).map(r => r.role_key)
-        );
-        const allKeys = new Set(roles.map(r => r.role_key));
-        // BFS from CEO
-        if (ceo) {
-          const queue = [ceo.role_key];
-          while (queue.length) {
-            const k = queue.shift()!;
-            if (reachableKeys.has(k)) continue;
-            reachableKeys.add(k);
-            for (const child of childrenOf(k)) queue.push(child.role_key);
-          }
-        }
-        const orphans = roles.filter(r =>
-          !reachableKeys.has(r.role_key) &&
-          !PEER_KEYS.has(r.role_key) &&
-          r.status !== "fired"
-        );
-        if (orphans.length === 0) return null;
-        return (
-          <div className="mt-8 pt-4 border-t">
-            <p className="text-xs text-muted-foreground italic mb-3 flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3 text-amber-500" />
-              {orphans.length} agent{orphans.length > 1 ? "s" : ""} not connected to the org tree — check their "Reports to" field.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {orphans.map(r => (
-                <RoleCard
-                  key={r.id}
-                  role={r}
-                  knowledgeCount={knowledge.filter(k => k.role_key === r.role_key).length}
-                  onClick={() => setOpenRole(r)}
-                  onAddKnowledge={() => setAddKnowledgeForRole(r)}
-                />
-              ))}
-            </div>
           </div>
         );
       })()}
@@ -799,6 +786,7 @@ export default function OrgChart() {
         role={openRole}
         knowledge={openRole ? knowledge.filter(k => k.role_key === openRole.role_key) : []}
         allRoles={roles}
+        aiosAgent={openRole ? (aiosAgents.find(a => a.name === AIOS_NAME_BY_ROLE_KEY[openRole.role_key]) ?? undefined) : undefined}
         onUpdateReportsTo={updateReportsTo}
         onSaveFields={saveRoleFields}
         onCascade={cascadeToReports}
@@ -827,127 +815,260 @@ export default function OrgChart() {
 }
 
 // ── Role card ─────────────────────────────────────────────────────────
-// Fixed 152 × 80 px so every tile is identical in size.
-function RoleCard({ role, highlight, knowledgeCount, onClick, onAddKnowledge }: {
+// 240 × 72 px tile in the SmartDraw / OrgChart-Plus style:
+//   - Coloured top accent stripe (blue for top tiers, orange for leaves
+//     and deeper roles), driven by the `depth` prop the parent passes.
+//   - Circular avatar on the left (initials for humans, bot icon for AI).
+//   - Bold coloured name on top, muted role title below.
+//   - Status / overdue indicators are dots in the corners (small, quiet).
+//   - Add-knowledge button is hover-revealed top-right.
+//
+// Goals / OKRs / open-task counts have moved to the detail dialog (which
+// already shows them in full) — the tile stays clean and readable when
+// the chart spans many roles. Underlying data is untouched.
+function initialsOf(name: string | null): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0][0]!.toUpperCase();
+  return (parts[0][0]! + parts[parts.length - 1]![0]!).toUpperCase();
+}
+
+function RoleCard({ role, highlight, knowledgeCount, depth = 0, onClick, onAddKnowledge }: {
   role: OrgRole;
   highlight?: boolean;
   knowledgeCount: number;
+  depth?: number;
   onClick: () => void;
   onAddKnowledge: () => void;
 }) {
-  const openTasks = role.tasks_10d.filter(t => t.status === "todo" || t.status === "in_progress").length;
-  const overdue   = role.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
-  const isPeer    = /^(president|founder|chairman|board)$/i.test(role.role_key);
+  const overdue = role.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
+
+  // Depth-driven accent colour — matches the reference screenshot:
+  // depth 0 (CEO/President) and depth 1 (CXOs / direct reports) = blue,
+  // depth ≥ 2 (deeper layers) = orange.
+  const isUpperTier = depth <= 1;
+  const accent = isUpperTier
+    ? { stripe: "bg-sky-500",    name: "text-sky-600",    avatarBg: "bg-sky-100",    avatarFg: "text-sky-700" }
+    : { stripe: "bg-orange-500", name: "text-orange-600", avatarBg: "bg-orange-100", avatarFg: "text-orange-700" };
+
+  // Display name: prefer the person's name if present, fall back to the
+  // role title. Sub-line shows whichever the headline didn't already use.
+  const headline = role.person_name?.trim() ? role.person_name : role.role_name;
+  const sub      = role.person_name?.trim() ? role.role_name : (role.email || "");
+
+  // Status pip — vacant=red, onboarding=amber, fired=slate, active=none
+  const statusPipClass =
+    role.status === "vacant"     ? "bg-red-500"
+  : role.status === "onboarding" ? "bg-amber-500"
+  : role.status === "fired"      ? "bg-slate-500"
+                                 : "";
 
   return (
     <Card
       onClick={onClick}
-      className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/40 w-[112px] h-[58px] overflow-hidden shrink-0 ${
-        highlight ? "border-2 border-primary/40 ring-2 ring-primary/10" : ""
+      className={`group relative cursor-pointer transition-all hover:shadow-md w-[240px] h-[72px] overflow-hidden shrink-0 bg-card border-slate-200 dark:border-slate-700 rounded-md ${
+        highlight ? "ring-2 ring-sky-300/60" : ""
       }`}
     >
-      <div className="p-1.5 flex flex-col h-full">
-        {/* Row 1 — kind icon · role name · knowledge btn */}
-        <div className="flex items-center gap-0.5 min-w-0">
-          {role.kind === "human" ? (
-            <span title="Human" className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-100 text-blue-700 shrink-0">
-              <User className="w-1.5 h-1.5" />
-            </span>
-          ) : (
-            <span title="AI agent" className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-violet-100 text-violet-700 shrink-0">
-              <Bot className="w-1.5 h-1.5" />
-            </span>
-          )}
-          <h3 className="font-semibold text-[9px] leading-tight truncate flex-1">{role.role_name}</h3>
-          <Button
-            size="sm" variant="ghost"
-            className="h-3.5 w-3.5 p-0 shrink-0"
-            onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
-            title={`Add knowledge for ${role.role_name}`}
-          >
-            <BookOpen className="w-2 h-2" />
-          </Button>
-        </div>
+      {/* Top accent stripe — full width, colour driven by depth. */}
+      <div className={`absolute inset-x-0 top-0 h-[3px] ${accent.stripe}`} />
 
-        {/* Row 2 — non-active status badge + optional person name (hidden for peers) */}
-        <div className="flex items-center gap-0.5 mt-0.5 min-w-0">
-          {role.status !== "active" && statusBadge(role.status)}
-          {!isPeer && role.person_name && (
-            <span className="text-[8px] text-muted-foreground truncate">{role.person_name}</span>
-          )}
-        </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Row 3 — stats */}
-        <div className="flex items-center justify-between border-t pt-0.5 text-[8px] text-muted-foreground">
-          <div className="flex items-center gap-1">
-            {role.goals.length > 0 && (
-              <span className="flex items-center gap-0.5"><Target className="w-1.5 h-1.5" />{role.goals.length}</span>
-            )}
-            {role.okrs.length > 0 && (
-              <span className="flex items-center gap-0.5"><Sparkles className="w-1.5 h-1.5" />{role.okrs.length}</span>
-            )}
-            <span className="flex items-center gap-0.5"><ListTodo className="w-1.5 h-1.5" />{openTasks}</span>
-            {knowledgeCount > 0 && (
-              <span className="flex items-center gap-0.5"><BookOpen className="w-1.5 h-1.5" />{knowledgeCount}</span>
-            )}
+      <div className="flex items-center h-full pl-3 pr-3 pt-[6px] pb-1 gap-3">
+        {/* Avatar — initials for humans, bot icon for AI agents. */}
+        <div className="relative shrink-0">
+          <div className={`w-12 h-12 rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold text-sm`}>
+            {role.kind === "agent" ? <Bot className="w-5 h-5" /> : initialsOf(role.person_name)}
           </div>
+          {/* Overdue indicator — a small red dot on the avatar's corner. */}
           {overdue > 0 && (
-            <Badge variant="destructive" className="text-[7px] h-3 px-0.5">{overdue}!</Badge>
+            <span
+              className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-red-500 ring-2 ring-card"
+              title={`${overdue} overdue task${overdue !== 1 ? "s" : ""}`}
+            />
           )}
         </div>
+
+        {/* Name + sub */}
+        <div className="flex-1 min-w-0">
+          <div className={`font-semibold text-[13px] leading-tight truncate ${accent.name}`}>{headline}</div>
+          {sub && (
+            <div className="text-[11px] text-muted-foreground leading-tight truncate mt-0.5">{sub}</div>
+          )}
+          {/* Status badge under the sub-line, only when not active. */}
+          {statusPipClass && (
+            <div className="flex items-center gap-1 mt-1">
+              <span className={`inline-block w-1.5 h-1.5 rounded-full ${statusPipClass}`} />
+              <span className="text-[9px] uppercase tracking-wide text-muted-foreground">{role.status}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Hover-revealed knowledge button — top-right. */}
+        <Button
+          size="sm" variant="ghost"
+          className="absolute top-1 right-1 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
+          title={`Add knowledge for ${role.role_name}`}
+        >
+          <BookOpen className="w-3 h-3" />
+          {knowledgeCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 text-[8px] bg-primary text-primary-foreground rounded-full w-3 h-3 flex items-center justify-center font-semibold">
+              {knowledgeCount > 9 ? "9+" : knowledgeCount}
+            </span>
+          )}
+        </Button>
       </div>
     </Card>
   );
 }
 
-// ── Recursive role subtree — renders a card + its children at any depth ──
-// All siblings always on a SINGLE horizontal line (flex-nowrap).
-// The outer page wraps in overflow-x-auto to allow scrolling.
+// ── Recursive role subtree — adaptive layout ─────────────────────────
+// Layout rule (matches modern org-chart tools — Pingboard, Sift, Lucidchart):
+//   - 0-2 direct reports → render them HORIZONTALLY below the parent
+//     (classic top-down org chart). Compact when few reports, easy to read.
+//   - 3+ direct reports → render them VERTICALLY to the RIGHT of the
+//     parent with a bracket connector. Saves enormous horizontal space
+//     so the whole org fits on one page even at depth.
+// Cards stay 240×72 in both modes — the user explicitly asked for tiles
+// not to grow. The ± toggle stays clickable in both layouts.
 function RoleSubtree({
   role, childrenOf, knowledge, onOpen, onAddKnowledge,
+  depth = 1, collapsedKeys, onToggleCollapse,
 }: {
   role: OrgRole;
   childrenOf: (key: string) => OrgRole[];
   knowledge: KnowledgeNote[];
   onOpen: (r: OrgRole) => void;
   onAddKnowledge: (r: OrgRole) => void;
+  depth?: number;
+  collapsedKeys: Set<string>;
+  onToggleCollapse: (key: string) => void;
 }) {
   const children = childrenOf(role.role_key);
+  const collapsed = collapsedKeys.has(role.role_key);
+  const hasChildren = children.length > 0;
+  // Right-stack for ≥3 reports. Threshold matches Livio's brief — three
+  // is the point at which a horizontal row starts wasting page width.
+  const useVerticalStack = children.length >= 3;
+
+  // Card height = 72px. Card center (when there's a 16px drop above) = 16+36 = 52px.
+  // For the right-stack mode the parent column has NO drop above it (drops belong
+  // to the rendering caller), so the parent card center is at y=36 from the row top.
+  // We keep things aligned by putting `pt-4` (16px) on the right side to match a
+  // 16px drop above the parent card — see how this component is invoked.
+
+  // Card-on-top rendering used by both layouts.
+  const card = (
+    <RoleCard
+      role={role}
+      depth={depth}
+      knowledgeCount={knowledge.filter(k => k.role_key === role.role_key).length}
+      onClick={() => onOpen(role)}
+      onAddKnowledge={() => onAddKnowledge(role)}
+    />
+  );
+
+  // Toggle button shared by both layouts (same look, different position).
+  const toggleBtn = (
+    <button
+      type="button"
+      onClick={() => onToggleCollapse(role.role_key)}
+      className="w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow transition-colors shrink-0"
+      title={collapsed ? `Expand ${role.role_name}'s reports` : `Collapse ${role.role_name}'s reports`}
+    >
+      {collapsed
+        ? <Plus className="w-2.5 h-2.5 text-slate-600" />
+        : <Minus className="w-2.5 h-2.5 text-slate-600" />}
+    </button>
+  );
+
+  // ── VERTICAL right-stack layout (≥3 reports) ───────────────────────
+  if (useVerticalStack) {
+    return (
+      <div className="flex flex-col items-start">
+        {/* Drop line from busbar above — centered above the parent card. */}
+        <div className="w-px h-4 bg-slate-300 self-start ml-[120px]" />
+        <div className="flex items-start">
+          {/* Parent card */}
+          {card}
+          {/* Bracket area — toggle, then (when expanded) children stack on the right.
+              `pt-[28px]` aligns the horizontal stub with the parent card's vertical
+              centre (card is 72px tall so centre = 36px; the stub element has height
+              ~16px so we offset by 36-8 = 28px). */}
+          <div className="flex items-start pt-[28px]">
+            {/* Horizontal stub from parent's right edge to the toggle */}
+            <div className="w-3 h-px bg-slate-300 mt-2" />
+            {toggleBtn}
+            {!collapsed && (
+              <>
+                <div className="w-3 h-px bg-slate-300 mt-2" />
+                {/* Bracket: children column with vertical bus on the left */}
+                <div className="relative flex flex-col gap-3 -mt-[28px]">
+                  {/* Vertical bus from the centre of the first child to centre of the last.
+                      Each child is at least 72px tall (cards) and uses gap-3 (12px). The
+                      first child's vertical centre lands at y=52 from the top of this column
+                      (16 drop + 36 half-card). The last child's centre lands at
+                      y=(total - 36 - 16). Easier expressed with inset-y-[52px] which works
+                      because every child uses the same 16/72 pattern. */}
+                  <div className="absolute left-0 top-[52px] bottom-[52px] w-px bg-slate-300" />
+                  {children.map(c => (
+                    <div key={c.id} className="relative pl-3">
+                      {/* Horizontal stub into this child, at child's vertical centre. */}
+                      <div className="absolute left-0 top-[52px] w-3 h-px bg-slate-300" />
+                      <RoleSubtree
+                        role={c}
+                        depth={depth + 1}
+                        childrenOf={childrenOf}
+                        knowledge={knowledge}
+                        onOpen={onOpen}
+                        onAddKnowledge={onAddKnowledge}
+                        collapsedKeys={collapsedKeys}
+                        onToggleCollapse={onToggleCollapse}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── HORIZONTAL below-parent layout (0-2 reports — original behaviour) ──
   return (
-    // flex-col items-center: card sits centered above its children row
     <div className="flex flex-col items-center">
-      {/* Vertical drop from the busbar above this tile */}
-      <div className="w-0.5 h-3 bg-foreground/60" />
-      <RoleCard
-        role={role}
-        knowledgeCount={knowledge.filter(k => k.role_key === role.role_key).length}
-        onClick={() => onOpen(role)}
-        onAddKnowledge={() => onAddKnowledge(role)}
-      />
-      {children.length > 0 && (
+      <div className="w-px h-4 bg-slate-300" />
+      {card}
+      {hasChildren && (
         <div className="flex flex-col items-center w-full">
-          {/* Vertical line from card down to horizontal bus */}
-          <div className="w-0.5 h-3 bg-foreground/60" />
-          {/* Horizontal bus — spans full width of this subtree */}
-          <div className="relative w-full">
-            <div className="absolute inset-x-0 top-0 h-0.5 bg-foreground/60" />
-            {/* Children — always on a single line, no wrapping */}
-            <div className="flex flex-nowrap justify-center gap-2 pt-3">
-              {children.map(c => (
-                <RoleSubtree
-                  key={c.id}
-                  role={c}
-                  childrenOf={childrenOf}
-                  knowledge={knowledge}
-                  onOpen={onOpen}
-                  onAddKnowledge={onAddKnowledge}
-                />
-              ))}
+          <div className="relative w-px h-5 bg-slate-300">
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+              {toggleBtn}
             </div>
           </div>
+          {!collapsed && (
+            <div className="relative w-full">
+              <div className="absolute inset-x-0 top-0 h-px bg-slate-300" />
+              <div className="flex flex-nowrap justify-center gap-4 pt-0">
+                {children.map(c => (
+                  <RoleSubtree
+                    key={c.id}
+                    role={c}
+                    depth={depth + 1}
+                    childrenOf={childrenOf}
+                    knowledge={knowledge}
+                    onOpen={onOpen}
+                    onAddKnowledge={onAddKnowledge}
+                    collapsedKeys={collapsedKeys}
+                    onToggleCollapse={onToggleCollapse}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -959,6 +1080,7 @@ function RoleDetailDialog({
   role,
   knowledge,
   allRoles,
+  aiosAgent,
   onUpdateReportsTo,
   onSaveFields,
   onCascade,
@@ -970,6 +1092,7 @@ function RoleDetailDialog({
   role: OrgRole | null;
   knowledge: KnowledgeNote[];
   allRoles: OrgRole[];
+  aiosAgent?: AiosAgent;
   onUpdateReportsTo: (role: OrgRole, newParent: string | null) => Promise<void>;
   onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs">>) => Promise<void>;
   onCascade: (role: OrgRole) => Promise<void>;
@@ -1059,175 +1182,201 @@ function RoleDetailDialog({
           </Button>
         </section>
 
-        {/* Knowledge / instructions — COLLAPSIBLE-BY-TITLE.
-            Each note shows just the title + metadata; click the row to
-            expand the body. Click again to collapse. + Add (paste) and
-            📎 Upload (file → server-side text extraction) buttons. */}
-        <section className="mt-4">
-          <KnowledgeBlock
-            knowledge={knowledge}
-            roleKey={role.role_key}
-            onAddKnowledgeFromDialog={onAddKnowledgeFromDialog}
-            onArchiveKnowledge={onArchiveKnowledge}
-          />
-        </section>
+        {/* ── Ordered sections — all collapsed by default ── */}
+        {(() => {
+          const PRIORITY_SET = new Set(["Must", "Should", "Nice"]);
+          const isSource = (n: KnowledgeNote) => Array.isArray(n.tags) && n.tags.some(t => PRIORITY_SET.has(t));
+          const brain   = knowledge.filter(n => !isSource(n));
+          const sources = knowledge.filter(isSource);
+          const hasDRs  = allRoles.some(r => r.parent_role_key === role.role_key);
 
-        {/* Goals — editable. One textarea per goal, +Add button at the
-            bottom, ✕ to remove. Saves on blur via onSaveFields. */}
-        <section className="mt-4">
-          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-            <h4 className="font-semibold text-sm flex items-center gap-2">
-              <Target className="w-4 h-4 text-primary" /> Goals
-              <span className="text-xs font-normal text-muted-foreground">({role.goals.length})</span>
-            </h4>
-            {/* Cascade button — pushes goals + OKRs to direct reports
-                routed by topic keyword (finance→CFO, sales→Sales, etc.) */}
-            {allRoles.some(r => r.parent_role_key === role.role_key) && (
-              <Button
-                size="sm" variant="outline" className="h-7 text-xs"
-                onClick={() => onCascade(role)}
-                title="Cascade goals + OKRs to direct reports, routed by topic keyword"
+          return (
+            <div className="mt-4 space-y-1.5">
+
+              {/* 1 · Goals */}
+              <SectionBlock
+                icon={<Target className="w-3.5 h-3.5 text-primary" />}
+                label="Goals"
+                count={role.goals.length}
+                extra={hasDRs && (
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2 ml-auto"
+                    onClick={e => { e.stopPropagation(); void onCascade(role); }}>
+                    <Sparkles className="w-3 h-3 mr-1" /> Cascade
+                  </Button>
+                )}
               >
-                <Sparkles className="w-3 h-3 mr-1" /> Cascade to DRs
-              </Button>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            {role.goals.map((g, i) => (
-              <div key={i} className="flex gap-1 items-start">
-                <span className="text-muted-foreground pt-2">•</span>
-                <textarea
-                  defaultValue={g}
-                  rows={Math.max(1, Math.ceil(g.length / 80))}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v === g) return;
-                    const next = v ? role.goals.map((x, j) => j === i ? v : x) : role.goals.filter((_, j) => j !== i);
-                    void onSaveFields(role, { goals: next });
-                  }}
-                  className="flex-1 text-sm leading-snug resize-y border-b border-transparent focus:border-primary outline-none bg-transparent py-1"
-                />
-                <button
-                  onClick={() => void onSaveFields(role, { goals: role.goals.filter((_, j) => j !== i) })}
-                  className="text-muted-foreground hover:text-destructive p-1"
-                  title="Remove goal"
-                >×</button>
-              </div>
-            ))}
-            <Button
-              size="sm" variant="ghost" className="h-7 text-xs"
-              onClick={() => void onSaveFields(role, { goals: [...role.goals, "New goal"] })}
-            >
-              <Plus className="w-3 h-3 mr-1" /> Add goal
-            </Button>
-          </div>
-        </section>
-
-        {/* OKRs — editable. Each objective is a textarea; KRs are one per
-            line in their own textarea. ✕ removes the OKR. */}
-        <section className="mt-5">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="font-semibold text-sm flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" /> OKRs
-              <span className="text-xs font-normal text-muted-foreground">({role.okrs.length})</span>
-            </h4>
-          </div>
-          <div className="space-y-3">
-            {role.okrs.map((o, i) => (
-              <div key={i} className="border-l-2 border-primary/30 pl-3 py-1 group">
-                <div className="flex items-start gap-1">
-                  <span className="text-sm font-medium pt-1 shrink-0">{i + 1}.</span>
-                  <textarea
-                    defaultValue={o.objective}
-                    rows={Math.max(1, Math.ceil(o.objective.length / 70))}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v === o.objective) return;
-                      const next = role.okrs.map((x, j) => j === i ? { ...x, objective: v } : x);
-                      void onSaveFields(role, { okrs: next });
-                    }}
-                    className="flex-1 text-sm font-medium resize-y border-b border-transparent focus:border-primary outline-none bg-transparent"
-                  />
-                  <button
-                    onClick={() => void onSaveFields(role, { okrs: role.okrs.filter((_, j) => j !== i) })}
-                    className="text-muted-foreground hover:text-destructive p-0.5 opacity-0 group-hover:opacity-100"
-                    title="Remove OKR"
-                  >×</button>
+                <div className="space-y-1.5 py-1">
+                  {role.goals.length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No goals yet.</p>
+                    : role.goals.map((g, i) => (
+                      <div key={i} className="flex gap-1 items-start">
+                        <span className="text-muted-foreground pt-1.5 shrink-0">•</span>
+                        <textarea defaultValue={g} rows={Math.max(1, Math.ceil(g.length / 80))}
+                          onBlur={e => {
+                            const v = e.target.value.trim(); if (v === g) return;
+                            const next = v ? role.goals.map((x, j) => j === i ? v : x) : role.goals.filter((_, j) => j !== i);
+                            void onSaveFields(role, { goals: next });
+                          }}
+                          className="flex-1 text-sm leading-snug resize-y border-b border-transparent focus:border-primary outline-none bg-transparent py-1" />
+                        <button onClick={() => void onSaveFields(role, { goals: role.goals.filter((_, j) => j !== i) })}
+                          className="text-muted-foreground hover:text-destructive p-1 shrink-0">×</button>
+                      </div>
+                    ))}
+                  <Button size="sm" variant="ghost" className="h-7 text-xs mt-1"
+                    onClick={() => void onSaveFields(role, { goals: [...role.goals, "New goal"] })}>
+                    <Plus className="w-3 h-3 mr-1" /> Add goal
+                  </Button>
                 </div>
-                <textarea
-                  defaultValue={o.key_results.join("\n")}
-                  rows={Math.max(2, o.key_results.length)}
-                  onBlur={(e) => {
-                    const krs = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
-                    if (krs.join("\n") === o.key_results.join("\n")) return;
-                    const next = role.okrs.map((x, j) => j === i ? { ...x, key_results: krs } : x);
-                    void onSaveFields(role, { okrs: next });
-                  }}
-                  placeholder="One key result per line"
-                  className="w-full text-xs text-muted-foreground space-y-0.5 mt-1 resize-y border-b border-transparent focus:border-primary outline-none bg-transparent"
-                />
-              </div>
-            ))}
-            <Button
-              size="sm" variant="ghost" className="h-7 text-xs"
-              onClick={() => void onSaveFields(role, {
-                okrs: [...role.okrs, { objective: "New objective", key_results: ["KR 1"] }],
-              })}
-            >
-              <Plus className="w-3 h-3 mr-1" /> Add OKR
-            </Button>
-          </div>
-        </section>
+              </SectionBlock>
 
-        {/* Tasks 10d */}
-        <section className="mt-5">
-          <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-            <ListTodo className="w-4 h-4 text-primary" /> Tasks · next 10 days
-            <span className="text-xs text-muted-foreground font-normal ml-auto">
-              {openTasks.length} open · {doneTasks.length} done
-            </span>
-          </h4>
-          {role.tasks_10d.length === 0 ? (
-            <p className="text-sm text-muted-foreground italic px-1">No tasks set yet. The role's daily cron run will populate this.</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {[...openTasks, ...doneTasks].map(t => {
-                const dDays = daysFromNow(t.due_date);
-                const overdue = t.status !== "done" && dDays < 0;
-                return (
-                  <li key={t.id} className={`flex items-start gap-2 p-2 rounded border ${overdue ? "border-red-300 bg-red-50/50 dark:bg-red-950/20" : "border-border"}`}>
-                    <button
-                      onClick={() => onTaskToggle(t, t.status === "done" ? "todo" : "done")}
-                      className="mt-0.5 hover:opacity-70 transition-opacity"
-                      title={t.status === "done" ? "Mark as todo" : "Mark as done"}
-                    >
-                      {taskStatusIcon(t.status)}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-sm leading-snug ${t.status === "done" ? "line-through text-muted-foreground" : ""}`}>
-                        {t.title}
+              {/* 2 · OKRs */}
+              <SectionBlock
+                icon={<Sparkles className="w-3.5 h-3.5 text-primary" />}
+                label="OKRs"
+                count={role.okrs.length}
+              >
+                <div className="space-y-3 py-1">
+                  {role.okrs.length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No OKRs yet.</p>
+                    : role.okrs.map((o, i) => (
+                      <div key={i} className="border-l-2 border-primary/30 pl-3 py-1 group">
+                        <div className="flex items-start gap-1">
+                          <span className="text-sm font-medium pt-1 shrink-0">{i + 1}.</span>
+                          <textarea defaultValue={o.objective} rows={Math.max(1, Math.ceil(o.objective.length / 70))}
+                            onBlur={e => {
+                              const v = e.target.value.trim(); if (v === o.objective) return;
+                              void onSaveFields(role, { okrs: role.okrs.map((x, j) => j === i ? { ...x, objective: v } : x) });
+                            }}
+                            className="flex-1 text-sm font-medium resize-y border-b border-transparent focus:border-primary outline-none bg-transparent" />
+                          <button onClick={() => void onSaveFields(role, { okrs: role.okrs.filter((_, j) => j !== i) })}
+                            className="text-muted-foreground hover:text-destructive p-0.5 opacity-0 group-hover:opacity-100">×</button>
+                        </div>
+                        <textarea defaultValue={o.key_results.join("\n")} rows={Math.max(2, o.key_results.length)}
+                          onBlur={e => {
+                            const krs = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
+                            if (krs.join("\n") === o.key_results.join("\n")) return;
+                            void onSaveFields(role, { okrs: role.okrs.map((x, j) => j === i ? { ...x, key_results: krs } : x) });
+                          }}
+                          placeholder="One key result per line"
+                          className="w-full text-xs text-muted-foreground mt-1 resize-y border-b border-transparent focus:border-primary outline-none bg-transparent" />
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
-                        <span>{fmtDate(t.due_date)}</span>
-                        {overdue && <span className="text-red-600 font-semibold">overdue</span>}
-                        {!overdue && dDays >= 0 && dDays <= 1 && <span className="text-amber-600 font-semibold">today/tomorrow</span>}
-                        {t.linked_url && (
-                          <a href={t.linked_url} className="text-primary hover:underline">open →</a>
-                        )}
-                      </div>
-                      {t.note && (
-                        <div className="text-[11px] text-muted-foreground italic mt-0.5">{t.note}</div>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
+                    ))}
+                  <Button size="sm" variant="ghost" className="h-7 text-xs mt-1"
+                    onClick={() => void onSaveFields(role, { okrs: [...role.okrs, { objective: "New objective", key_results: ["KR 1"] }] })}>
+                    <Plus className="w-3 h-3 mr-1" /> Add OKR
+                  </Button>
+                </div>
+              </SectionBlock>
 
-        <div className="flex justify-end mt-6">
-          <Button variant="outline" onClick={onClose}>
+              {/* 3 · Actions (Tasks 10d) */}
+              <SectionBlock
+                icon={<ListTodo className="w-3.5 h-3.5 text-primary" />}
+                label="Actions"
+                count={role.tasks_10d.length}
+                badge={openTasks.filter(t => daysFromNow(t.due_date) < 0).length > 0
+                  ? <span className="text-[9px] bg-red-500 text-white rounded-full px-1.5 py-0.5 ml-1">
+                      {openTasks.filter(t => daysFromNow(t.due_date) < 0).length} overdue
+                    </span> : undefined}
+              >
+                <div className="py-1">
+                  {role.tasks_10d.length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No tasks yet. Daily agent run will populate this.</p>
+                    : (
+                      <ul className="space-y-1.5">
+                        {[...openTasks, ...doneTasks].map(t => {
+                          const dDays = daysFromNow(t.due_date);
+                          const overdue = t.status !== "done" && dDays < 0;
+                          return (
+                            <li key={t.id} className={`flex items-start gap-2 p-2 rounded border ${overdue ? "border-red-300 bg-red-50/50" : "border-border"}`}>
+                              <button onClick={() => onTaskToggle(t, t.status === "done" ? "todo" : "done")} className="mt-0.5">
+                                {taskStatusIcon(t.status)}
+                              </button>
+                              <div className="flex-1 min-w-0">
+                                <div className={`text-sm leading-snug ${t.status === "done" ? "line-through text-muted-foreground" : ""}`}>{t.title}</div>
+                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                                  <span>{fmtDate(t.due_date)}</span>
+                                  {overdue && <span className="text-red-600 font-semibold">overdue</span>}
+                                  {!overdue && dDays >= 0 && dDays <= 1 && <span className="text-amber-600 font-semibold">due soon</span>}
+                                  {t.linked_url && <a href={t.linked_url} className="text-primary hover:underline">open →</a>}
+                                </div>
+                                {t.note && <div className="text-[11px] text-muted-foreground italic mt-0.5">{t.note}</div>}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                </div>
+              </SectionBlock>
+
+              {/* 4 · Brain (pasted notes / uploaded docs) */}
+              <SectionBlock
+                icon={<BookOpen className="w-3.5 h-3.5 text-primary" />}
+                label="Brain"
+                count={brain.length}
+                extra={
+                  <div className="flex items-center gap-1 ml-auto" onClick={e => e.stopPropagation()}>
+                    <label className="cursor-pointer">
+                      <input type="file" className="hidden" accept=".txt,.md,.pdf,.docx,.pptx,.csv"
+                        onChange={async e => {
+                          const file = e.target.files?.[0]; if (!file) return;
+                          const fd = new FormData(); fd.append("file", file); fd.append("role_key", role.role_key);
+                          await fetch("/api/agent-knowledge/upload", { method: "POST", credentials: "include", body: fd });
+                          window.location.reload();
+                        }} />
+                      <span className="inline-flex items-center gap-1 h-6 px-2 text-[10px] rounded border border-input bg-background hover:bg-accent cursor-pointer">
+                        <Plus className="w-3 h-3" /> Upload
+                      </span>
+                    </label>
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={onAddKnowledgeFromDialog}>
+                      <Plus className="w-3 h-3 mr-0.5" /> Paste
+                    </Button>
+                  </div>
+                }
+              >
+                <NoteList notes={brain} onArchive={onArchiveKnowledge} />
+              </SectionBlock>
+
+              {/* 5 · Sources (Excel reputable sources, tagged Must/Should/Nice) */}
+              <SectionBlock
+                icon={<PackageOpen className="w-3.5 h-3.5 text-primary" />}
+                label="Sources"
+                count={sources.length}
+              >
+                <NoteList notes={sources} onArchive={onArchiveKnowledge} showTags />
+              </SectionBlock>
+
+              {/* 6 · Skills (AIOS spec: deliverables, skills, training, domain knowledge) */}
+              {aiosAgent && (
+                <SectionBlock
+                  icon={<Lightbulb className="w-3.5 h-3.5 text-primary" />}
+                  label="Skills & Profile"
+                  count={(aiosAgent.deliverables?.length ?? 0) + (aiosAgent.skills?.length ?? 0) + (aiosAgent.training?.length ?? 0)}
+                >
+                  <div className="space-y-1 py-1">
+                    {aiosAgent.function_area && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge variant="secondary" className="text-[10px]">{aiosAgent.function_area}</Badge>
+                        {aiosAgent.role_title && <span className="text-[11px] text-muted-foreground">{aiosAgent.role_title}</span>}
+                      </div>
+                    )}
+                    {aiosAgent.job_description && (
+                      <SpecGroup icon={<Briefcase className="w-3 h-3 text-slate-500 shrink-0" />} label="Job Description" items={[aiosAgent.job_description]} />
+                    )}
+                    <SpecGroup icon={<PackageOpen className="w-3 h-3 text-blue-500 shrink-0" />} label="Deliverables" items={aiosAgent.deliverables ?? []} defaultOpen />
+                    <SpecGroup icon={<Lightbulb className="w-3 h-3 text-amber-500 shrink-0" />} label="Skills" items={aiosAgent.skills ?? []} />
+                    <SpecGroup icon={<BookOpen className="w-3 h-3 text-emerald-500 shrink-0" />} label="Domain Knowledge" items={aiosAgent.knowledge ?? []} />
+                    <SpecGroup icon={<GraduationCap className="w-3 h-3 text-purple-500 shrink-0" />} label="Training" items={aiosAgent.training ?? []} />
+                  </div>
+                </SectionBlock>
+              )}
+
+            </div>
+          );
+        })()}
+
+        <div className="flex justify-end mt-4">
+          <Button variant="outline" size="sm" onClick={onClose}>
             <X className="w-4 h-4 mr-1" /> Close
           </Button>
         </div>
@@ -1236,152 +1385,132 @@ function RoleDetailDialog({
   );
 }
 
-// ── Knowledge block: collapsed-by-title list + add (paste) + upload (file).
-// Clicking a row toggles the body. The first paste creates a new agent
-// _knowledge row via POST /api/agent-knowledge; uploads go through
-// /api/agent-knowledge/upload which extracts text server-side from
-// .txt / .md / .pdf / .pptx / .docx and stores it in the same table.
-//
-// Persistence model the user asked about: documents land in this table
-// → loaded on every brief / agent run as part of the role's prompt.
-// LLMs don't fine-tune; "learning" = same context every time.
-function KnowledgeBlock({
-  knowledge,
-  roleKey,
-  onAddKnowledgeFromDialog,
-  onArchiveKnowledge,
+// ── SectionBlock — uniform collapsible section header ─────────────────
+function SectionBlock({
+  icon, label, count, badge, extra, children, defaultOpen = false,
 }: {
-  knowledge: KnowledgeNote[];
-  roleKey: string;
-  onAddKnowledgeFromDialog: () => void;
-  onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
+  icon: React.ReactNode;
+  label: string;
+  count?: number;
+  badge?: React.ReactNode;
+  extra?: React.ReactNode;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
 }) {
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-
-  function toggle(id: number) {
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setUploadError(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("role_key", roleKey);
-      const r = await fetch("/api/agent-knowledge/upload", {
-        method: "POST", credentials: "include",
-        body: fd,
-      });
-      if (!r.ok) {
-        const errBody = await r.json().catch(() => ({}));
-        throw new Error(errBody.message ?? `HTTP ${r.status}`);
-      }
-      // Hard reload so parent re-fetches knowledge list.
-      window.location.reload();
-    } catch (err) {
-      setUploadError((err as Error).message);
-      setUploading(false);
-    } finally {
-      e.target.value = ""; // allow re-upload of the same file
-    }
-  }
-
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <h4 className="font-semibold text-sm flex items-center gap-2">
-          <BookOpen className="w-4 h-4 text-primary" />
-          Knowledge / instructions
-          <span className="text-xs font-normal text-muted-foreground">({knowledge.length})</span>
-        </h4>
-        <div className="flex items-center gap-1">
-          {/* Upload — accepts text + Office docs; server extracts text. */}
-          <label className="cursor-pointer">
-            <input
-              type="file"
-              className="hidden"
-              accept=".txt,.md,.pdf,.docx,.pptx,.csv"
-              onChange={handleFile}
-              disabled={uploading}
-            />
-            <span className="inline-flex items-center gap-1 h-7 px-2 text-xs rounded border border-input bg-background hover:bg-accent">
-              {uploading ? "Uploading…" : <><Plus className="w-3 h-3" /> Upload doc</>}
-            </span>
-          </label>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onAddKnowledgeFromDialog}>
-            <Plus className="w-3 h-3 mr-1" /> Paste text
-          </Button>
+    <div className="border rounded-md overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 bg-muted/10 hover:bg-muted/30 text-left transition-colors"
+      >
+        {open
+          ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+          : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />}
+        {icon}
+        <span className="text-sm font-semibold">{label}</span>
+        {count !== undefined && (
+          <span className="text-[11px] text-muted-foreground font-normal">({count})</span>
+        )}
+        {badge}
+        {extra}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 border-t bg-background">
+          {children}
         </div>
-      </div>
-
-      {uploadError && (
-        <p className="text-[10px] text-destructive italic mb-2">Upload failed: {uploadError}</p>
-      )}
-
-      {knowledge.length === 0 ? (
-        <p className="text-xs text-muted-foreground italic px-1">
-          No knowledge yet. <strong>Paste text</strong> for instructions / playbooks, or <strong>Upload doc</strong> for PDFs / PPTX / DOCX / TXT — text is extracted server-side and persisted so the agent reads it on every run.
-        </p>
-      ) : (
-        <div className="space-y-1">
-          {knowledge.map(n => {
-            const isOpen = expandedIds.has(n.id);
-            return (
-              <div key={n.id} className="border rounded bg-muted/20 text-xs overflow-hidden">
-                {/* Title row — click to toggle body. */}
-                <button
-                  type="button"
-                  onClick={() => toggle(n.id)}
-                  className="w-full flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-muted/40 text-left"
-                >
-                  <div className="flex items-center gap-2 flex-wrap min-w-0">
-                    <span className="text-muted-foreground shrink-0">{isOpen ? "▾" : "▸"}</span>
-                    <span className="font-semibold truncate">{n.title || "(untitled)"}</span>
-                    <Badge variant="outline" className="text-[9px] py-0 h-4 shrink-0">{n.source}</Badge>
-                    <span className="text-[10px] text-muted-foreground shrink-0">{fmtDate(n.created_at)}</span>
-                  </div>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => { e.stopPropagation(); void onArchiveKnowledge(n); }}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void onArchiveKnowledge(n); } }}
-                    className="cursor-pointer text-muted-foreground hover:text-foreground p-1 shrink-0"
-                    title="Archive (kept in log)"
-                  ><Archive className="w-3 h-3" /></span>
-                </button>
-                {/* Body — only when expanded. */}
-                {isOpen && (
-                  <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed px-2 pb-2 border-t">
-                    {n.content}
-                  </pre>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Persistence note — answers the user's question: how does an LLM
-          agent's "learning" persist? Documents stored here are loaded on
-          every brief run as context. There is NO fine-tuning — the agent
-          re-reads this every time. Limit: total tokens per role × every
-          brief. ~50-100 pages per role is the practical ceiling before
-          context-window compression kicks in. */}
-      {knowledge.length > 0 && (
-        <p className="text-[10px] text-muted-foreground italic mt-2">
-          Persistence: every paste / upload is stored in <code>agent_knowledge</code> and re-read by the agent on every run. No fine-tuning happens — the agent reads this same text every time it wakes.
-        </p>
       )}
     </div>
   );
 }
+
+// ── NoteList — compact accordion list of knowledge/source notes ────────
+function NoteList({
+  notes, onArchive, showTags = false,
+}: {
+  notes: KnowledgeNote[];
+  onArchive: (n: KnowledgeNote) => Promise<void>;
+  showTags?: boolean;
+}) {
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const toggle = (id: number) => setExpandedIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+  });
+  if (notes.length === 0) return <p className="text-xs text-muted-foreground italic py-2">None yet.</p>;
+  return (
+    <div className="space-y-0.5 py-1">
+      {notes.map(n => {
+        const isOpen = expandedIds.has(n.id);
+        return (
+          <div key={n.id} className="border rounded text-xs overflow-hidden">
+            <button type="button" onClick={() => toggle(n.id)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-muted/30 text-left">
+              {isOpen
+                ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+                : <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />}
+              <span className="font-medium truncate flex-1">{n.title || "(untitled)"}</span>
+              {showTags && n.tags.length > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${
+                  n.tags[1] === "Must"  ? "bg-red-100 text-red-700"
+                  : n.tags[1] === "Should" ? "bg-amber-100 text-amber-700"
+                  : "bg-slate-100 text-slate-600"
+                }`}>{n.tags[1]}</span>
+              )}
+              {!showTags && <span className="text-[10px] text-muted-foreground shrink-0">{fmtDate(n.created_at)}</span>}
+              <span role="button" tabIndex={0}
+                onClick={e => { e.stopPropagation(); void onArchive(n); }}
+                onKeyDown={e => { if (e.key === "Enter") { e.stopPropagation(); void onArchive(n); } }}
+                className="cursor-pointer text-muted-foreground hover:text-foreground p-1 shrink-0" title="Archive">
+                <Archive className="w-3 h-3" />
+              </span>
+            </button>
+            {isOpen && (
+              <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed px-2 pb-2 border-t text-muted-foreground">
+                {n.content}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Agent Spec Section ────────────────────────────────────────────────
+// Renders the structured AIOS spec for the role: function area, job
+// description, deliverables, skills, training. Each sub-section is
+// independently collapsible so the dialog doesn't feel overwhelming.
+function SpecGroup({
+  icon, label, items, defaultOpen = false,
+}: { icon: React.ReactNode; label: string; items: string[]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="border rounded bg-muted/10 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-muted/30 text-left"
+      >
+        {open ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />}
+        {icon}
+        <span className="text-xs font-semibold">{label}</span>
+        <span className="text-[10px] text-muted-foreground ml-auto">{items.length} items</span>
+      </button>
+      {open && (
+        <ul className="px-3 pb-2 pt-0.5 space-y-0.5">
+          {items.map((item, i) => (
+            <li key={i} className="text-[11px] text-muted-foreground leading-relaxed flex gap-1.5">
+              <span className="text-muted-foreground/50 mt-0.5 shrink-0">•</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// AgentSpecSection removed — spec data now rendered inline inside
+// SectionBlock("Skills & Profile") within RoleDetailDialog.
