@@ -223,7 +223,7 @@ export default function AgentDetail() {
       {/* 2. Boss / DRs */}
       <Section title="Boss & direct reports" icon={<Activity className="w-4 h-4" />}>
         <div className="text-sm space-y-1">
-          <div><span className="text-muted-foreground">Reports to:</span> <strong>{boss?.name ?? "Livio"}</strong></div>
+          <div><span className="text-muted-foreground">Reports to:</span> <strong>{boss?.name ?? "President"}</strong></div>
           <div>
             <span className="text-muted-foreground">Direct reports:</span>{" "}
             {directReports.length === 0 ? <span className="italic text-muted-foreground">none</span> : directReports.map(d => (
@@ -372,7 +372,7 @@ export default function AgentDetail() {
                   : t.approval_level === "ceo" ? "border-orange-300 text-orange-700"
                   : t.approval_level === "boss" ? "border-amber-300 text-amber-700"
                   : "border-emerald-300 text-emerald-700"
-                }`}>{t.approval_level}</Badge>
+                }`}>{t.approval_level === "livio" ? "president" : t.approval_level}</Badge>
                 {t.approval_status !== "not_required" && (
                   <Badge variant="outline" className="text-[10px]">{t.approval_status}</Badge>
                 )}
@@ -389,7 +389,7 @@ export default function AgentDetail() {
             { key: "decision_rights_autonomous", label: "Autonomous (no approval)",  tone: "border-emerald-300" },
             { key: "decision_rights_boss",       label: "Boss approval",              tone: "border-amber-300" },
             { key: "decision_rights_ceo",        label: "CEO approval",               tone: "border-orange-300" },
-            { key: "decision_rights_livio",      label: "Livio approval",             tone: "border-red-300" },
+            { key: "decision_rights_livio",      label: "President approval",         tone: "border-red-300" },
           ].map(({ key, label, tone }) => (
             <div key={key} className={`border-2 rounded p-2 ${tone}`}>
               <div className="text-[10px] uppercase font-bold text-muted-foreground mb-1">{label}</div>

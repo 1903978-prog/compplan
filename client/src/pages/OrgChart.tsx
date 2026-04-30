@@ -292,12 +292,13 @@ export default function OrgChart() {
   // their parent in row 3+. Use a recursive helper.
   // Special governance/peer roles render side-by-side with CEO, NOT in
   // the standard directReports row.
-  const PEER_ROLE_RX = /^(president|founder|chairman|board)$/i;
+  // "president" removed — President is now a regular tree root that CEO reports to.
+  const PEER_ROLE_RX = /^(founder|chairman|board)$/i;
   const isPeerRole = (key: string) => PEER_ROLE_RX.test(key);
   const childrenOf = (key: string): OrgRole[] =>
     roles
       .filter(r => r.parent_role_key === key && !isPeerRole(r.role_key))
-      .sort((a, b) => a.sort_order - b.sort_order);
+      .sort((a, b) => a.role_name.localeCompare(b.role_name));
   const directReports = ceo ? childrenOf(ceo.role_key) : [];
 
   const updateReportsTo = async (role: OrgRole, newParent: string | null) => {
@@ -529,7 +530,7 @@ export default function OrgChart() {
                 <select value={newRole.parent_role_key}
                   onChange={e => setNewRole(r => ({ ...r, parent_role_key: e.target.value }))}
                   className="w-full h-8 mt-1 px-2 text-sm border rounded bg-background">
-                  {roles.sort((a, b) => a.sort_order - b.sort_order).map(r => (
+                  {[...roles].sort((a, b) => a.role_name.localeCompare(b.role_name)).map(r => (
                     <option key={r.role_key} value={r.role_key}>
                       {r.role_name}{r.person_name ? ` (${r.person_name})` : ""}
                     </option>
@@ -578,7 +579,7 @@ export default function OrgChart() {
           matrixBossIds: r.dotted_parent_role_keys ?? [],
           knowledgeCount: knowledge.filter(k => k.role_key === r.role_key).length,
           overdueCount: r.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length,
-          highlight: r.role_key === "ceo" || peerRx.test(r.role_key),
+          highlight: !r.parent_role_key || peerRx.test(r.role_key),
           email: r.email ?? undefined,
         }));
         return (
@@ -933,8 +934,7 @@ function RoleSubtree({
   const children = childrenOf(role.role_key);
   const collapsed = collapsedKeys.has(role.role_key);
   const hasChildren = children.length > 0;
-  // Right-stack for ≥3 reports. Threshold matches Livio's brief — three
-  // is the point at which a horizontal row starts wasting page width.
+  // Right-stack for ≥3 reports — three is the point where a horizontal row wastes width.
   const useVerticalStack = children.length >= 3;
 
   // Card height = 72px. Card center (when there's a 16px drop above) = 16+36 = 52px.
@@ -1119,7 +1119,7 @@ function RoleDetailDialog({
             >
               {allRoles
                 .filter(r => r.role_key !== role.role_key)
-                .sort((a, b) => a.sort_order - b.sort_order)
+                .sort((a, b) => a.role_name.localeCompare(b.role_name))
                 .map(r => (
                   <option key={r.role_key} value={r.role_key}>
                     {r.role_name}{r.person_name ? ` (${r.person_name})` : ""}

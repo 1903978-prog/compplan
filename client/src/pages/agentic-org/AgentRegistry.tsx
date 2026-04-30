@@ -116,7 +116,7 @@ export default function AgentRegistry() {
               {a.mission && <span className="text-[11px] text-muted-foreground truncate max-w-md">{a.mission}</span>}
             </div>
             <div className="text-xs text-muted-foreground">
-              {a.boss_id ? bossById.get(a.boss_id) ?? `#${a.boss_id}` : <span className="italic">Livio</span>}
+              {a.boss_id ? bossById.get(a.boss_id) ?? `#${a.boss_id}` : <span className="italic">President</span>}
             </div>
             <div>
               <Badge variant="outline" className={
