@@ -151,9 +151,10 @@ export default function OrgChart() {
   const [showStartAgents, setShowStartAgents] = useState(false);
   const [aiosAgents, setAiosAgents] = useState<AiosAgent[]>([]);
 
-  // Collapse state — set of role_keys whose children are hidden. Toggled by
-  // the small ± circle that sits on the connector between a parent and its
-  // children. Default is "all expanded" — explicit clicks add to this set.
+  // Collapse state — set of role_keys whose children are hidden.
+  // Seeded on data load: all depth-1 nodes (direct reports of root) are
+  // collapsed so depth ≥ 2 starts hidden. User can expand subtrees with the
+  // +/– toggle that appears on each connector.
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
   const toggleCollapse = (key: string) => setCollapsedKeys(prev => {
     const next = new Set(prev);
@@ -223,6 +224,25 @@ export default function OrgChart() {
       setKnowledge(kn);
       setAcceptanceStats(stats);
       setAiosAgents(aios);
+
+      // Seed initial collapsed state: collapse all depth-1 nodes so
+      // depth ≥ 2 (grandchildren of root) starts hidden on first render.
+      const _PEER_RX = /^(president|founder|chairman|board)$/i;
+      const _depths = new Map<string, number>();
+      const _q: { key: string; d: number }[] = (orgs as OrgRole[])
+        .filter(r => !r.parent_role_key && !_PEER_RX.test(r.role_key))
+        .map(r => ({ key: r.role_key, d: 0 }));
+      for (let _i = 0; _i < _q.length; _i++) {
+        const { key, d } = _q[_i];
+        if (_depths.has(key)) continue;
+        _depths.set(key, d);
+        for (const child of (orgs as OrgRole[]).filter(r => r.parent_role_key === key && !_PEER_RX.test(r.role_key)))
+          _q.push({ key: child.role_key, d: d + 1 });
+      }
+      const _initCollapsed = new Set<string>();
+      for (const [key, depth] of _depths) { if (depth === 1) _initCollapsed.add(key); }
+      setCollapsedKeys(_initCollapsed);
+
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
   }, [toast]);

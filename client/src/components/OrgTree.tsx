@@ -260,6 +260,7 @@ export default function OrgTree({
   nodes, peerIds = [], collapsedIds, onToggleCollapse, onOpen, onAddKnowledge,
 }: OrgTreeProps) {
   const [zoom, setZoom]       = useState(1);
+  const [fitZoom, setFitZoom] = useState(1);   // last auto-fit value; "Fit" button restores this
   const [pan, setPan]         = useState({ x: 0, y: 0 });
   const [isPanning, setIsPan] = useState(false);
   const panStart = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
@@ -294,8 +295,9 @@ export default function OrgTree({
 
     const scaleX = cw / totalW;
     const scaleY = ch / layout.height;
-    const fit    = Math.min(scaleX, scaleY, 1) * 0.93;
-    setZoom(Math.max(0.25, fit));
+    const fit    = Math.max(0.25, Math.min(scaleX, scaleY, 1) * 0.93);
+    setFitZoom(fit);
+    setZoom(fit);
     setPan({ x: 0, y: 0 });
   }, [layout?.width, layout?.height, peerIds.length]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -359,7 +361,7 @@ export default function OrgTree({
     setPan({ x: panStart.current.px + (e.clientX - panStart.current.x), y: panStart.current.py + (e.clientY - panStart.current.y) });
   };
   const stopPan = () => { setIsPan(false); panStart.current = null; };
-  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+  const resetView = () => { setZoom(fitZoom); setPan({ x: 0, y: 0 }); };
 
   return (
     <div className="relative">
@@ -371,9 +373,9 @@ export default function OrgTree({
         <button
           onClick={resetView}
           className="text-[11px] px-1.5 tabular-nums text-muted-foreground hover:text-foreground"
-          title="Reset view"
+          title="Reset to fit"
         >
-          {Math.round(zoom * 100)}%
+          {zoom === fitZoom ? "Fit" : `${Math.round(zoom * 100)}%`}
         </button>
         <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setZoom(z => Math.min(2, z + 0.1))} title="Zoom in">
           <Plus className="w-3 h-3" />

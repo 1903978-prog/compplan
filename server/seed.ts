@@ -1894,6 +1894,34 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     `);
   }
 
+  // ── Data fix: remove duplicate "L&D Manager" ─────────────────────────
+  // Two rows with role_name = 'L&D Manager' exist under hiring-manager:
+  //   id=24 key='ld-manager'  (seeded by the sub-agent pass above — keep)
+  //   id=10 key='l-d-manager' (older manual entry — remove)
+  // Migrate any knowledge/proposals linked to the stale key first, then delete.
+  await db.execute(sql`
+    UPDATE agent_knowledge SET role_key = 'ld-manager'
+    WHERE role_key = 'l-d-manager'
+  `);
+  await db.execute(sql`
+    UPDATE agent_proposals SET role_key = 'ld-manager'
+    WHERE role_key = 'l-d-manager'
+  `);
+  await db.execute(sql`
+    DELETE FROM org_agents WHERE role_key = 'l-d-manager'
+  `);
+
+  // ── Data fix: Henry Kissinger "Advisor" parent ─────────────────────────
+  // The Advisor row had parent_role_key = 'president'. Since president is
+  // treated as a governance peer (excluded from the tree), Advisor rendered
+  // as a floating second root. Re-parent to 'ceo' so Advisor appears as a
+  // direct report of CEO.
+  await db.execute(sql`
+    UPDATE org_agents
+    SET parent_role_key = 'ceo', updated_at = ${_orgNow}
+    WHERE role_key = 'advisor' AND parent_role_key = 'president'
+  `);
+
   // Seed settings if empty
   const existingSettings = await db.select().from(appSettings);
   if (existingSettings.length === 0) {
