@@ -72,8 +72,11 @@ function NodeCard({
     ? { stripe: "bg-sky-500",    name: "text-sky-600",    avatarBg: "bg-sky-100",    avatarFg: "text-sky-700" }
     : { stripe: "bg-orange-500", name: "text-orange-600", avatarBg: "bg-orange-100", avatarFg: "text-orange-700" };
 
-  const headline = node.name?.trim() ? node.name : node.title;
-  const sub      = node.name?.trim() ? node.title : "";
+  // Role title is the headline (CFO, COO, etc.); person name is the
+  // smaller grey sub-line below. Falls back to person-name as headline
+  // for nodes that have no role title.
+  const headline = node.title?.trim() ? node.title : (node.name ?? "");
+  const sub      = node.title?.trim() && node.name?.trim() ? node.name : "";
 
   const statusDot =
     node.vacant     ? "bg-red-500"
@@ -200,17 +203,26 @@ function computeLayout(
   if (visible.length === 0) return null;
   const visibleIds = new Set(visible.map(n => n.id));
 
-  // Build tree map
+  // Dotted-only nodes: no solid parent but at least one dotted parent.
+  // These are NOT placed in the main tree — they're rendered alongside
+  // their dotted boss at the boss's row, offset to the right.
+  const isDottedOnly = (n: OrgTreeNode) =>
+    !n.primaryBossId && (n.matrixBossIds?.length ?? 0) > 0;
+  const dottedOnly = visible.filter(isDottedOnly);
+  const treeNodes  = visible.filter(n => !isDottedOnly(n));
+
+  // Build tree map (only main-tree nodes)
   const tmap = new Map<string, TNode>();
   const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null, _slots: 0, _cy: 0, _depth: 0 };
   tmap.set(ROOT_ID, vRoot);
-  for (const n of visible) {
+  for (const n of treeNodes) {
     tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null, _slots: 1, _cy: 0, _depth: 0 });
   }
 
-  for (const n of visible) {
+  const treeIds = new Set(treeNodes.map(n => n.id));
+  for (const n of treeNodes) {
     const node = tmap.get(n.id)!;
-    const pid  = (n.primaryBossId && visibleIds.has(n.primaryBossId)) ? n.primaryBossId : ROOT_ID;
+    const pid  = (n.primaryBossId && treeIds.has(n.primaryBossId)) ? n.primaryBossId : ROOT_ID;
     node.parentId = pid;
     tmap.get(pid)?.children.push(node);
   }
@@ -271,8 +283,38 @@ function computeLayout(
 
   if (points.length === 0) return null;
 
-  // Canvas size — width grows by depth, height grows by leaf count
-  const width  = (maxDepth + 1) * X_STEP - H_GAP + PAD_X * 2;
+  // Place dotted-only nodes adjacent to their dotted boss: same row,
+  // offset to the right. The existing matrix-edge renderer will draw
+  // the dotted connector from boss to satellite.
+  const SAT_GAP = 24;  // horizontal gap between boss and satellite card
+  const ptById = new Map(points.map(p => [p.id, p]));
+  for (const n of dottedOnly) {
+    const bossId = (n.matrixBossIds ?? [])[0];
+    if (!bossId) continue;
+    const bossPt = ptById.get(bossId);
+    if (!bossPt) continue;          // boss hidden / not in tree
+    const px = bossPt.x + CARD_W + SAT_GAP;
+    const py = bossPt.y;
+    points.push({
+      id:       n.id,
+      data:     n,
+      depth:    bossPt.depth,       // inherits boss's depth for colour tier
+      x:        px,
+      y:        py,
+      cx:       px + CARD_W / 2,
+      cy:       py + CARD_H / 2,
+      parentId: null,
+    });
+  }
+
+  // Canvas size — width grows by depth (plus any dotted satellites),
+  // height grows by leaf count.
+  let maxRight = (maxDepth + 1) * X_STEP - H_GAP + PAD_X;
+  for (const p of points) {
+    const r = p.x + CARD_W;
+    if (r > maxRight) maxRight = r;
+  }
+  const width  = maxRight + PAD_X;
   const height = vRoot._slots * Y_STEP - V_GAP + PAD_TOP + PAD_BOT;
 
   return { points, width, height, maxDepth };

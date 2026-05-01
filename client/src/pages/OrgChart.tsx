@@ -309,17 +309,25 @@ export default function OrgChart() {
       .sort((a, b) => a.role_name.localeCompare(b.role_name));
   const directReports = ceo ? childrenOf(ceo.role_key) : [];
 
-  const updateReportsTo = async (role: OrgRole, newParent: string | null) => {
+  // updateReportsTo handles BOTH solid and dotted-line relationships.
+  //   isDotted=false → parent_role_key = newParent,  dotted_parent_role_keys = []
+  //   isDotted=true  → parent_role_key = null,       dotted_parent_role_keys = [newParent]
+  // A dotted-only node is rendered at the boss's row, offset to the right
+  // (instead of below the boss as a child).
+  const updateReportsTo = async (role: OrgRole, newParent: string | null, isDotted = false) => {
+    const body = isDotted
+      ? { parent_role_key: null, dotted_parent_role_keys: newParent ? [newParent] : [] }
+      : { parent_role_key: newParent, dotted_parent_role_keys: [] };
     const r = await fetch(`/api/org-chart/${role.id}`, {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parent_role_key: newParent }),
+      body: JSON.stringify(body),
     });
     if (r.ok) {
       const updated = await r.json();
       setRoles(prev => prev.map(x => x.id === updated.id ? updated : x));
       if (openRole?.id === updated.id) setOpenRole(updated);
-      toast({ title: "Reports-to updated" });
+      toast({ title: isDotted ? "Set as dotted line" : "Reports-to updated" });
     } else {
       toast({ title: "Failed to update", variant: "destructive" });
     }
@@ -1086,7 +1094,7 @@ function RoleDetailDialog({
   knowledge: KnowledgeNote[];
   allRoles: OrgRole[];
   aiosAgent?: AiosAgent;
-  onUpdateReportsTo: (role: OrgRole, newParent: string | null) => Promise<void>;
+  onUpdateReportsTo: (role: OrgRole, newParent: string | null, isDotted?: boolean) => Promise<void>;
   onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs">>) => Promise<void>;
   onCascade: (role: OrgRole) => Promise<void>;
   onClose: () => void;
@@ -1115,27 +1123,41 @@ function RoleDetailDialog({
           </div>
         </DialogHeader>
 
-        {/* Reports to — dropdown lets co-CEO move a role under a different
-            parent (e.g. Pricing under CFO). CEO has no parent. */}
-        {role.role_key !== "ceo" && (
-          <section className="mt-3 flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Reports to:</span>
-            <select
-              className="h-7 px-2 text-xs border rounded bg-background"
-              value={role.parent_role_key ?? ""}
-              onChange={e => onUpdateReportsTo(role, e.target.value || null)}
-            >
-              {allRoles
-                .filter(r => r.role_key !== role.role_key)
-                .sort((a, b) => a.role_name.localeCompare(b.role_name))
-                .map(r => (
-                  <option key={r.role_key} value={r.role_key}>
-                    {r.role_name}{r.person_name ? ` (${r.person_name})` : ""}
-                  </option>
-                ))}
-            </select>
-          </section>
-        )}
+        {/* Reports to — dropdown moves the role under a different parent.
+            "Dotted line" toggles between SOLID (normal subordinate, indented
+            under boss) and DOTTED (advisor/matrix — placed at boss's row,
+            offset to the right). CEO has no parent. */}
+        {role.role_key !== "ceo" && (() => {
+          const isDottedNow = !role.parent_role_key && (role.dotted_parent_role_keys?.length ?? 0) > 0;
+          const currentBoss = role.parent_role_key ?? role.dotted_parent_role_keys?.[0] ?? "";
+          return (
+            <section className="mt-3 flex items-center gap-2 text-xs flex-wrap">
+              <span className="text-muted-foreground">Reports to:</span>
+              <select
+                className="h-7 px-2 text-xs border rounded bg-background"
+                value={currentBoss}
+                onChange={e => onUpdateReportsTo(role, e.target.value || null, isDottedNow)}
+              >
+                {allRoles
+                  .filter(r => r.role_key !== role.role_key)
+                  .sort((a, b) => a.role_name.localeCompare(b.role_name))
+                  .map(r => (
+                    <option key={r.role_key} value={r.role_key}>
+                      {r.role_name}{r.person_name ? ` (${r.person_name})` : ""}
+                    </option>
+                  ))}
+              </select>
+              <label className="flex items-center gap-1 cursor-pointer ml-2">
+                <input
+                  type="checkbox"
+                  checked={isDottedNow}
+                  onChange={e => onUpdateReportsTo(role, currentBoss || null, e.target.checked)}
+                />
+                <span className="text-muted-foreground">Dotted line (advisor/matrix — same row, offset right)</span>
+              </label>
+            </section>
+          );
+        })()}
 
         {/* + Add direct report — quick-create a role under THIS one without
             leaving the dialog. Uses the same /api/org-chart POST as the
