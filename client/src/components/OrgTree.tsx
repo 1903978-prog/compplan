@@ -30,18 +30,15 @@ interface OrgTreeProps {
 }
 
 // ─── Layout constants ─────────────────────────────────────────────────
-// TOP-DOWN INDENTED TREE (file-explorer style) — IMMUTABLE.
-// Per CLAUDE.md rule 10: each child must be BELOW its parent. Direct-
-// reports groups stack vertically as a column, never horizontally.
-//   • X = depth * INDENT_X + PAD_X        (deeper = small right indent)
-//   • Y = rowCounter * Y_STEP + PAD_TOP   (DFS pre-order assigns rows)
-// Every visible node occupies one row; siblings appear in successive
-// rows below the parent, indented by a fixed step. Vertical bracket
-// connector emerges from each parent's bottom and turns right into
-// each child's left edge — the classic file-explorer tree.
+// HYBRID TOP-DOWN LAYOUT — see CLAUDE.md rule 10. Two exceptions to the
+// default vertical indented tree:
+//   • CEO's solid-line children: horizontal spread on a single row.
+//   • Dotted-only nodes: horizontal next to their dotted boss.
+// Everyone else stacks vertically below their parent (indented tree).
 const CARD_W   = 200;
 const CARD_H   = 72;
-const INDENT_X = 32;          // horizontal indent per depth level
+const INDENT_X = 32;          // indent per depth in the vertical indented tree
+const COL_GAP  = 16;          // gap between CEO-child columns (horizontal exception)
 const V_GAP    = 12;          // vertical gap between successive rows
 const Y_STEP   = CARD_H + V_GAP;  // 84 px per row
 const PAD_X    = 20;
@@ -49,6 +46,7 @@ const PAD_TOP  = 14;
 const PAD_BOT  = 28;
 const PEER_GAP = 18;          // above-root vertical gap for peer cards
 const ELBOW_R  = 5;
+const CEO_ID   = "ceo";       // children of this node spread horizontally
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 function initialsOf(name: string | undefined | null): string {
@@ -226,25 +224,41 @@ function computeLayout(
     tmap.get(pid)?.children.push(node);
   }
 
-  // DFS pre-order: each node gets its own row, in the order it's visited.
-  // Parent visited before children → parent.y < first-child.y.
-  // Sibling subtrees stack: child[i+1].y is below child[i]'s entire subtree.
-  const points: LayoutPoint[] = [];
-  let rowCounter = 0;
-  let maxDepth   = 0;
+  // Helpers used by the layout — width & row count of a subtree, used
+  // to size CEO's horizontal columns.
+  const subtreeMaxIndent = (n: TNode): number => {
+    let m = 0;
+    const dfs = (node: TNode, d: number) => {
+      if (d > m) m = d;
+      for (const c of node.children) dfs(c, d + 1);
+    };
+    dfs(n, 0);
+    return m;
+  };
+  const subtreeWidth = (n: TNode) => CARD_W + subtreeMaxIndent(n) * INDENT_X;
 
-  const collect = (n: TNode, depth: number) => {
+  // Hybrid layout:
+  //   • Default: indented-tree (each child below parent, indented INDENT_X
+  //     to the right). DFS pre-order assigns rows.
+  //   • CEO's children: spread horizontally on a single row, each child
+  //     occupying its own column wide enough for that child's whole
+  //     subtree (which then continues vertically).
+  // collect() returns the next available row AFTER placing the subtree.
+  const points: LayoutPoint[] = [];
+  let maxDepth = 0;
+
+  const collect = (n: TNode, depth: number, x: number, row: number): number => {
     if (n.id === ROOT_ID) {
       n._depth = -1;
-      for (const c of n.children) collect(c, 0);
-      return;
+      let r = row;
+      for (const c of n.children) r = collect(c, 0, x, r);
+      return r;
     }
     n._depth = depth;
     if (depth > maxDepth) maxDepth = depth;
 
-    const px = depth * INDENT_X + PAD_X;
-    const py = rowCounter * Y_STEP + PAD_TOP;
-    rowCounter++;
+    const px = x;
+    const py = row * Y_STEP + PAD_TOP;
 
     points.push({
       id:       n.id,
@@ -256,9 +270,31 @@ function computeLayout(
       cy:       py + CARD_H / 2,
       parentId: n.parentId === ROOT_ID ? null : n.parentId,
     });
-    for (const c of n.children) collect(c, depth + 1);
+
+    if (n.data?.id === CEO_ID && n.children.length > 0) {
+      // Exception 2 in rule 10: CEO's children spread horizontally on
+      // row+1. Each child occupies its own column whose width equals
+      // that child's subtree width.
+      let cx = x;
+      let maxR = row + 1;
+      for (const c of n.children) {
+        const w = subtreeWidth(c);
+        const r = collect(c, depth + 1, cx, row + 1);
+        if (r > maxR) maxR = r;
+        cx += w + COL_GAP;
+      }
+      return maxR;
+    }
+
+    // Default: vertical indented tree — each child below previous sibling's
+    // subtree, indented one INDENT_X step to the right.
+    let r = row + 1;
+    for (const c of n.children) {
+      r = collect(c, depth + 1, x + INDENT_X, r);
+    }
+    return r;
   };
-  collect(vRoot, 0);
+  const totalRows = collect(vRoot, 0, PAD_X, 0);
 
   if (points.length === 0) return null;
 
@@ -285,15 +321,14 @@ function computeLayout(
     });
   }
 
-  // Canvas size — width = deepest column + card width (or rightmost
-  // satellite); height = total visible row count.
-  let maxRight = maxDepth * INDENT_X + CARD_W + PAD_X;
+  // Canvas size — width = rightmost card edge; height = total rows used.
+  let maxRight = PAD_X + CARD_W;
   for (const p of points) {
     const r = p.x + CARD_W;
     if (r > maxRight) maxRight = r;
   }
   const width  = maxRight + PAD_X;
-  const height = rowCounter * Y_STEP - V_GAP + PAD_TOP + PAD_BOT;
+  const height = totalRows * Y_STEP - V_GAP + PAD_TOP + PAD_BOT;
 
   return { points, width, height, maxDepth };
 }
@@ -312,6 +347,26 @@ function vBracket(brkX: number, py: number, clx: number, cy: number): string {
     `V${cy - r}`,
     `Q${brkX},${cy} ${brkX + r},${cy}`,
     `H${clx}`,
+  ].join(" ");
+}
+
+// Top-down bracket (used only for CEO → its horizontally-spread children):
+// parent bottom-centre → down to mid-Y → horizontal across to child centre-X
+// → down to child top-centre. Classic top-down org-chart connector.
+function tBracket(pcx: number, py: number, ccx: number, cy: number): string {
+  if (Math.abs(ccx - pcx) < 0.5) {
+    return `M${pcx},${py} V${cy}`;
+  }
+  const midYV = (py + cy) / 2;
+  const r     = ELBOW_R;
+  const sign  = ccx > pcx ? 1 : -1;
+  return [
+    `M${pcx},${py}`,
+    `V${midYV - r}`,
+    `Q${pcx},${midYV} ${pcx + sign * r},${midYV}`,
+    `H${ccx - sign * r}`,
+    `Q${ccx},${midYV} ${ccx},${midYV + r}`,
+    `V${cy}`,
   ].join(" ");
 }
 
@@ -469,16 +524,24 @@ export default function OrgTree({
             className="absolute inset-0 pointer-events-none"
             style={{ zIndex: 1 }}
           >
-            {/* Solid primary edges — indented-tree bracket connectors */}
-            {primaryEdges.map(({ from, to }, i) => (
-              <path
-                key={`p-${i}`}
-                d={vBracket(brkX(from), bottomY(from), leftCX(to), midY(to))}
-                className="stroke-slate-400 dark:stroke-slate-500"
-                fill="none"
-                strokeWidth={1.5}
-              />
-            ))}
+            {/* Solid primary edges. CEO→children uses a top-down bracket
+                (horizontal spread); everything else uses the indented-tree
+                vertical bracket. */}
+            {primaryEdges.map(({ from, to }, i) => {
+              const isCeoTopDown = from.data.id === CEO_ID;
+              const d = isCeoTopDown
+                ? tBracket(from.cx, bottomY(from), to.cx, to.y + treeOffY)
+                : vBracket(brkX(from), bottomY(from), leftCX(to), midY(to));
+              return (
+                <path
+                  key={`p-${i}`}
+                  d={d}
+                  className="stroke-slate-400 dark:stroke-slate-500"
+                  fill="none"
+                  strokeWidth={1.5}
+                />
+              );
+            })}
 
             {/* Amber dotted matrix edges. Two cases:
                 • Dotted-only satellite (same row, offset right) → straight
@@ -553,13 +616,17 @@ export default function OrgTree({
             </div>
           ))}
 
-          {/* Collapse/expand toggles — sit on the bracket line just below
-              each parent card that has children. */}
+          {/* Collapse/expand toggles. CEO uses a centred toggle below the
+              card (top-down bracket). Everyone else uses a left-aligned
+              toggle on the indented-tree bracket line. */}
           {points
             .filter(p => hasChildren.has(p.id))
             .map(p => {
-              const tx = p.x + INDENT_X / 2 - 8;                  // on the bracket vertical line
-              const ty = p.y + treeOffY + CARD_H + 2;             // just below parent bottom
+              const isCeoTopDown = p.data.id === CEO_ID;
+              const tx = isCeoTopDown
+                ? p.cx - 8                          // centred under card
+                : p.x + INDENT_X / 2 - 8;           // on the indented bracket line
+              const ty = p.y + treeOffY + CARD_H + 2;
               const collapsed = collapsedIds.has(p.id);
               return (
                 <button

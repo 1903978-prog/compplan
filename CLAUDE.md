@@ -91,4 +91,12 @@ Most `/api/*` is gated. **Some endpoints are deliberately public** to serve the 
 7. **Public endpoints are deliberate.** Don't change auth on `/api/ceo-brief` or any other endpoint Cowork relies on without confirmation.
 8. **`npm run db:push` is destructive on column drops/renames.** Pure additions are fine; drops/renames need a yes and a backup plan. New tables and new columns are always safe — just do it.
 9. **Ask permission before using the computer.** Before driving the desktop / opening apps / clicking / typing via the computer-use MCP, stop and ask. This is a hard gate — even if a task seems to need it, ask first. (Browser MCP and code/file edits inside this repo are unaffected.)
-10. **Org chart layout is TOP-DOWN VERTICAL — each SOLID-LINE child must be below its parent.** Children stack vertically below the parent in an indented-tree (file-explorer) pattern: every node on its own row, indented by depth, with a vertical bracket connector. Direct-reports groups are a vertical column, never a horizontal row. **Exception — dotted-line children are HORIZONTAL.** A node with no solid parent but a dotted (matrix/advisor) parent is placed on the SAME ROW as its dotted boss, offset to the RIGHT, with a dashed connector. This is the only horizontal placement allowed. This is final — do not flip dotted nodes to vertical, do not flip solid nodes to horizontal.
+10. **Org chart layout is TOP-DOWN with two specific exceptions.** Locked in. Do not "fix" or flip these.
+
+    **Default (everyone except CEO's children and dotted nodes):** SOLID-line children sit BELOW the parent in an indented-tree (file-explorer) pattern — every node on its own row, indented by depth, vertical bracket connector. Direct-reports groups are a vertical column.
+
+    **Exception 1 — CEO's solid-line children are HORIZONTAL.** The immediate solid-line children of the CEO (role_key === "ceo") spread horizontally on a single row below the CEO, like a classic top-down org chart at that one level. Each of those children's own subtrees revert to the default (indented vertical column below them).
+
+    **Exception 2 — Dotted-line nodes are HORIZONTAL.** A node with no solid parent but a dotted (matrix/advisor) parent is placed on the SAME ROW as its dotted boss, offset to the RIGHT, dashed connector.
+
+    These two are the ONLY horizontal placements allowed. Solid grandchildren of CEO and below stay vertical. Dotted nodes stay horizontal. Do not change this.
