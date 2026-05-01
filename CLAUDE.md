@@ -90,3 +90,4 @@ Most `/api/*` is gated. **Some endpoints are deliberately public** to serve the 
 6. **Secrets:** never log, echo, or write `ANTHROPIC_API_KEY`, `DATABASE_URL`, auth cookies/tokens, or any other env var.
 7. **Public endpoints are deliberate.** Don't change auth on `/api/ceo-brief` or any other endpoint Cowork relies on without confirmation.
 8. **`npm run db:push` is destructive on column drops/renames.** Pure additions are fine; drops/renames need a yes and a backup plan. New tables and new columns are always safe — just do it.
+9. **Ask permission before using the computer.** Before driving the desktop / opening apps / clicking / typing via the computer-use MCP, stop and ask. This is a hard gate — even if a task seems to need it, ask first. (Browser MCP and code/file edits inside this repo are unaffected.)
