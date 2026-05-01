@@ -30,23 +30,24 @@ interface OrgTreeProps {
 }
 
 // ─── Layout constants ─────────────────────────────────────────────────
-// Right-stack (indented-tree) layout: root on the left, children stack
-// VERTICALLY to the right of their parent with a bracket connector.
-// Every direct-reports group is a vertical column — at every level.
-//   • X = depth * X_STEP + PAD_X         (deeper = further right)
-//   • Y = (n._cy - 0.5) * Y_STEP + PAD_TOP  (slot-based vertical position)
-// Each leaf occupies exactly one vertical slot; parents are vertically
-// centred over their children's slot range.
-const CARD_W  = 200;
-const CARD_H  = 72;
-const H_GAP   = 32;          // horizontal indent between parent and child column
-const V_GAP   = 12;          // vertical gap between sibling cards
-const X_STEP  = CARD_W + H_GAP;  // 232 px per depth column
-const Y_STEP  = CARD_H + V_GAP;  // 84 px per leaf slot
-const PAD_X   = 20;
-const PAD_TOP = 14;
-const PAD_BOT = 28;
-const PEER_GAP = 18;         // above-root vertical gap for peer cards
+// TOP-DOWN INDENTED TREE (file-explorer style) — IMMUTABLE.
+// Per CLAUDE.md rule 10: each child must be BELOW its parent. Direct-
+// reports groups stack vertically as a column, never horizontally.
+//   • X = depth * INDENT_X + PAD_X        (deeper = small right indent)
+//   • Y = rowCounter * Y_STEP + PAD_TOP   (DFS pre-order assigns rows)
+// Every visible node occupies one row; siblings appear in successive
+// rows below the parent, indented by a fixed step. Vertical bracket
+// connector emerges from each parent's bottom and turns right into
+// each child's left edge — the classic file-explorer tree.
+const CARD_W   = 200;
+const CARD_H   = 72;
+const INDENT_X = 32;          // horizontal indent per depth level
+const V_GAP    = 12;          // vertical gap between successive rows
+const Y_STEP   = CARD_H + V_GAP;  // 84 px per row
+const PAD_X    = 20;
+const PAD_TOP  = 14;
+const PAD_BOT  = 28;
+const PEER_GAP = 18;          // above-root vertical gap for peer cards
 const ELBOW_R  = 5;
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -151,14 +152,11 @@ function NodeCard({
 }
 
 // ─── Layout algorithm ─────────────────────────────────────────────────
-// Right-stack (vertical) layout:
-//   • Every leaf node is assigned exactly one vertical slot.
-//   • Internal nodes are centred over their children's vertical slot range.
-//   • X = depth * X_STEP + PAD_X        (depth = column index, root = col 0)
-//   • Y = (n._cy - 0.5) * Y_STEP + PAD_TOP   (cy is a fractional slot index)
-//
-// Result: indented-tree look — every direct-reports group stacks as a
-// vertical column to the right of its parent, with a bracket connector.
+// TOP-DOWN INDENTED TREE — DFS pre-order assigns each node its own row.
+//   • X = depth * INDENT_X + PAD_X
+//   • Y = rowCounter * Y_STEP + PAD_TOP
+// Children always appear BELOW their parent (greater Y) and indented
+// to the right (greater X). Siblings stack vertically as a column.
 interface LayoutPoint {
   id: string;
   data: OrgTreeNode;
@@ -166,7 +164,7 @@ interface LayoutPoint {
   x: number;   // left edge of card
   y: number;   // top edge of card
   cx: number;  // centre-x of card
-  cy: number;  // centre-y of card (for vertical-bracket connectors)
+  cy: number;  // centre-y of card
   parentId: string | null;
 }
 
@@ -175,8 +173,6 @@ interface TNode {
   data: OrgTreeNode | null;
   children: TNode[];
   parentId: string | null;
-  _slots: number;   // leaf count in subtree (vertical slots needed)
-  _cy: number;      // fractional slot-centre (0 = topmost slot centre)
   _depth: number;
 }
 
@@ -213,10 +209,10 @@ function computeLayout(
 
   // Build tree map (only main-tree nodes)
   const tmap = new Map<string, TNode>();
-  const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null, _slots: 0, _cy: 0, _depth: 0 };
+  const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null, _depth: 0 };
   tmap.set(ROOT_ID, vRoot);
   for (const n of treeNodes) {
-    tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null, _slots: 1, _cy: 0, _depth: 0 });
+    tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null, _depth: 0 });
   }
 
   const treeIds = new Set(treeNodes.map(n => n.id));
@@ -227,33 +223,12 @@ function computeLayout(
     tmap.get(pid)?.children.push(node);
   }
 
-  // Pass 1: compute leaf-slot counts bottom-up
-  const countSlots = (n: TNode): number => {
-    if (n.children.length === 0) { n._slots = 1; return 1; }
-    n._slots = n.children.reduce((s, c) => s + countSlots(c), 0);
-    return n._slots;
-  };
-  countSlots(vRoot);
-
-  // Pass 2: assign centre-y positions (in slot units) top-down
-  const assignCy = (n: TNode, slotStart: number): void => {
-    if (n.children.length === 0) {
-      n._cy = slotStart + 0.5;
-      return;
-    }
-    let s = slotStart;
-    for (const c of n.children) {
-      assignCy(c, s);
-      s += c._slots;
-    }
-    // Centre parent over first-to-last child range
-    n._cy = (n.children[0]._cy + n.children[n.children.length - 1]._cy) / 2;
-  };
-  assignCy(vRoot, 0);
-
-  // Pass 3: assign depth and collect points
+  // DFS pre-order: each node gets its own row, in the order it's visited.
+  // Parent visited before children → parent.y < first-child.y.
+  // Sibling subtrees stack: child[i+1].y is below child[i]'s entire subtree.
   const points: LayoutPoint[] = [];
-  let maxDepth = 0;
+  let rowCounter = 0;
+  let maxDepth   = 0;
 
   const collect = (n: TNode, depth: number) => {
     if (n.id === ROOT_ID) {
@@ -264,8 +239,9 @@ function computeLayout(
     n._depth = depth;
     if (depth > maxDepth) maxDepth = depth;
 
-    const px = depth * X_STEP + PAD_X;            // left edge: depth column
-    const py = (n._cy - 0.5) * Y_STEP + PAD_TOP;  // top edge: slot centre - half card
+    const px = depth * INDENT_X + PAD_X;
+    const py = rowCounter * Y_STEP + PAD_TOP;
+    rowCounter++;
 
     points.push({
       id:       n.id,
@@ -307,35 +283,32 @@ function computeLayout(
     });
   }
 
-  // Canvas size — width grows by depth (plus any dotted satellites),
-  // height grows by leaf count.
-  let maxRight = (maxDepth + 1) * X_STEP - H_GAP + PAD_X;
+  // Canvas size — width = deepest column + card width; height = total
+  // visible row count.
+  let maxRight = maxDepth * INDENT_X + CARD_W + PAD_X;
   for (const p of points) {
     const r = p.x + CARD_W;
     if (r > maxRight) maxRight = r;
   }
   const width  = maxRight + PAD_X;
-  const height = vRoot._slots * Y_STEP - V_GAP + PAD_TOP + PAD_BOT;
+  const height = rowCounter * Y_STEP - V_GAP + PAD_TOP + PAD_BOT;
 
   return { points, width, height, maxDepth };
 }
 
-// Right-stack elbow: right-edge of parent (at parent's mid-Y) → left-edge
-// of child (at child's mid-Y). Straight horizontal when same Y; otherwise
-// step via midX with rounded corners.
-function hElbow(prx: number, py: number, clx: number, cy: number): string {
-  if (Math.abs(cy - py) < 0.5) {
-    return `M${prx},${py} H${clx}`;
+// Indented-tree bracket: from parent's bottom (at the bracket-X column)
+// straight DOWN, then turn RIGHT at child's mid-Y into the child's left
+// edge. The vertical line gets re-drawn for each child but they overlap
+// to look like a single bracket — classic file-explorer connector.
+function vBracket(brkX: number, py: number, clx: number, cy: number): string {
+  const r = ELBOW_R;
+  if (Math.abs(clx - brkX) < r) {
+    return `M${brkX},${py} V${cy}`;
   }
-  const midX = (prx + clx) / 2;
-  const r    = ELBOW_R;
-  const sign = cy > py ? 1 : -1;
   return [
-    `M${prx},${py}`,
-    `H${midX - r}`,
-    `Q${midX},${py} ${midX},${py + sign * r}`,
-    `V${cy - sign * r}`,
-    `Q${midX},${cy} ${midX + r},${cy}`,
+    `M${brkX},${py}`,
+    `V${cy - r}`,
+    `Q${brkX},${cy} ${brkX + r},${cy}`,
     `H${clx}`,
   ].join(" ");
 }
@@ -421,11 +394,13 @@ export default function OrgTree({
     }
   }
 
-  // Anchor helpers for right-stack connectors:
-  // parent's right-edge X at parent's mid-Y → child's left-edge X at child's mid-Y.
-  const rightCX = (p: LayoutPoint) => p.x + CARD_W;                  // right edge X
-  const leftCX  = (p: LayoutPoint) => p.x;                           // left edge X
-  const midY    = (p: LayoutPoint) => p.y + treeOffY + CARD_H / 2;   // vertical centre
+  // Anchor helpers for indented-tree bracket connectors:
+  // parent's bracket-X (offset INDENT_X/2 from left edge) at parent's bottom Y
+  //   → child's left-edge X at child's mid-Y.
+  const brkX    = (p: LayoutPoint) => p.x + INDENT_X / 2;            // bracket vertical-line X
+  const bottomY = (p: LayoutPoint) => p.y + treeOffY + CARD_H;       // parent bottom edge Y
+  const leftCX  = (p: LayoutPoint) => p.x;                           // child left edge X
+  const midY    = (p: LayoutPoint) => p.y + treeOffY + CARD_H / 2;   // child mid Y
 
   // ─ Pan + zoom ─────────────────────────────────────────────────────
   const onWheel = (e: React.WheelEvent) => {
@@ -492,11 +467,11 @@ export default function OrgTree({
             className="absolute inset-0 pointer-events-none"
             style={{ zIndex: 1 }}
           >
-            {/* Solid primary edges — right-stack elbow connectors */}
+            {/* Solid primary edges — indented-tree bracket connectors */}
             {primaryEdges.map(({ from, to }, i) => (
               <path
                 key={`p-${i}`}
-                d={hElbow(rightCX(from), midY(from), leftCX(to), midY(to))}
+                d={vBracket(brkX(from), bottomY(from), leftCX(to), midY(to))}
                 className="stroke-slate-400 dark:stroke-slate-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -507,7 +482,7 @@ export default function OrgTree({
             {matrixEdges.map(({ from, to }, i) => (
               <path
                 key={`m-${i}`}
-                d={hElbow(rightCX(from), midY(from), leftCX(to), midY(to))}
+                d={vBracket(brkX(from), bottomY(from), leftCX(to), midY(to))}
                 className="stroke-amber-500"
                 fill="none"
                 strokeWidth={1.5}
@@ -566,14 +541,13 @@ export default function OrgTree({
             </div>
           ))}
 
-          {/* Collapse/expand toggles — centred to the RIGHT of each card that
-              has children, sitting on the bracket connector that exits the
-              card's right edge. */}
+          {/* Collapse/expand toggles — sit on the bracket line just below
+              each parent card that has children. */}
           {points
             .filter(p => hasChildren.has(p.id))
             .map(p => {
-              const tx = p.x + CARD_W + H_GAP / 2 - 8;           // midpoint of horizontal gap (toggle = 16px wide)
-              const ty = p.y + treeOffY + CARD_H / 2 - 8;        // vertically centred on card
+              const tx = p.x + INDENT_X / 2 - 8;                  // on the bracket vertical line
+              const ty = p.y + treeOffY + CARD_H + 2;             // just below parent bottom
               const collapsed = collapsedIds.has(p.id);
               return (
                 <button

@@ -333,9 +333,10 @@ export default function OrgChart() {
     }
   };
 
-  // Save edited goals / OKRs back to the role. Used by the dialog's
-  // inline-editable Goals + OKRs sections.
-  const saveRoleFields = async (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs">>) => {
+  // Save edited goals / OKRs / role_name back to the role. Used by the
+  // dialog's inline-editable sections (and the editable title in the
+  // dialog header).
+  const saveRoleFields = async (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name">>) => {
     const r = await fetch(`/api/org-chart/${role.id}`, {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -1095,7 +1096,7 @@ function RoleDetailDialog({
   allRoles: OrgRole[];
   aiosAgent?: AiosAgent;
   onUpdateReportsTo: (role: OrgRole, newParent: string | null, isDotted?: boolean) => Promise<void>;
-  onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs">>) => Promise<void>;
+  onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name">>) => Promise<void>;
   onCascade: (role: OrgRole) => Promise<void>;
   onClose: () => void;
   onAddKnowledgeFromDialog: () => void;
@@ -1111,9 +1112,27 @@ function RoleDetailDialog({
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-start justify-between gap-2">
-            <div>
+            <div className="flex-1 min-w-0">
               <DialogTitle className="flex items-center gap-2">
-                {role.role_name}
+                {/* Editable role title — click to edit, blur or Enter to save. */}
+                <input
+                  type="text"
+                  defaultValue={role.role_name}
+                  onBlur={e => {
+                    const v = e.target.value.trim();
+                    if (v && v !== role.role_name) void onSaveFields(role, { role_name: v });
+                    else e.target.value = role.role_name;
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") {
+                      (e.target as HTMLInputElement).value = role.role_name;
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  className="bg-transparent border-b border-transparent focus:border-primary outline-none text-lg font-semibold flex-1 min-w-0 px-0.5"
+                  title="Click to edit role title"
+                />
                 {statusBadge(role.status)}
               </DialogTitle>
               <DialogDescription className="mt-1">
