@@ -199,28 +199,29 @@ function computeLayout(
   if (visible.length === 0) return null;
   const visibleIds = new Set(visible.map(n => n.id));
 
-  // Per CLAUDE.md rule 10: every child sits BELOW its parent, vertically.
-  // Even nodes whose only relationship is dotted (matrixBossIds, no
-  // primaryBossId) are positioned as a child of their dotted boss in the
-  // tree — they just render with a dashed bracket connector instead of
-  // a solid one. NEVER place a node to the right of its boss.
+  // Per CLAUDE.md rule 10:
+  //   • SOLID-line children → BELOW parent in the indented tree (vertical).
+  //   • DOTTED-only children → SAME ROW as boss, offset to the RIGHT
+  //     (the one horizontal exception, for matrix / advisor relationships).
+  // A "dotted-only" node has no solid primary boss but at least one
+  // dotted (matrix) boss. These are pulled out of the main tree and
+  // placed alongside their dotted boss after the layout pass.
+  const isDottedOnly = (n: OrgTreeNode) =>
+    !n.primaryBossId && (n.matrixBossIds?.length ?? 0) > 0;
+  const dottedOnly = visible.filter(isDottedOnly);
+  const treeNodes  = visible.filter(n => !isDottedOnly(n));
+
   const tmap = new Map<string, TNode>();
   const vRoot: TNode = { id: ROOT_ID, data: null, children: [], parentId: null, _depth: 0 };
   tmap.set(ROOT_ID, vRoot);
-  for (const n of visible) {
+  for (const n of treeNodes) {
     tmap.set(n.id, { id: n.id, data: n, children: [], parentId: null, _depth: 0 });
   }
 
-  for (const n of visible) {
+  const treeIds = new Set(treeNodes.map(n => n.id));
+  for (const n of treeNodes) {
     const node = tmap.get(n.id)!;
-    let pid: string = ROOT_ID;
-    if (n.primaryBossId && visibleIds.has(n.primaryBossId)) {
-      pid = n.primaryBossId;
-    } else if (!n.primaryBossId && (n.matrixBossIds?.length ?? 0) > 0) {
-      // Dotted-only — fall back to first matrix boss for positioning.
-      const db = n.matrixBossIds!.find(id => visibleIds.has(id));
-      if (db) pid = db;
-    }
+    const pid  = (n.primaryBossId && treeIds.has(n.primaryBossId)) ? n.primaryBossId : ROOT_ID;
     node.parentId = pid;
     tmap.get(pid)?.children.push(node);
   }
@@ -261,8 +262,31 @@ function computeLayout(
 
   if (points.length === 0) return null;
 
-  // Canvas size — width = deepest column + card width; height = total
-  // visible row count.
+  // Place dotted-only nodes on the SAME ROW as their dotted boss,
+  // offset to the right (per rule 10 exception). The existing matrix-
+  // edge renderer draws the dashed connector between them.
+  const SAT_GAP = 24;
+  const ptByIdLayout = new Map(points.map(p => [p.id, p]));
+  for (const n of dottedOnly) {
+    const bossId = (n.matrixBossIds ?? []).find(id => ptByIdLayout.has(id));
+    if (!bossId) continue;
+    const bossPt = ptByIdLayout.get(bossId)!;
+    const px = bossPt.x + CARD_W + SAT_GAP;
+    const py = bossPt.y;
+    points.push({
+      id:       n.id,
+      data:     n,
+      depth:    bossPt.depth,
+      x:        px,
+      y:        py,
+      cx:       px + CARD_W / 2,
+      cy:       py + CARD_H / 2,
+      parentId: null,
+    });
+  }
+
+  // Canvas size — width = deepest column + card width (or rightmost
+  // satellite); height = total visible row count.
   let maxRight = maxDepth * INDENT_X + CARD_W + PAD_X;
   for (const p of points) {
     const r = p.x + CARD_W;
@@ -359,11 +383,7 @@ export default function OrgTree({
   interface Edge { from: LayoutPoint; to: LayoutPoint }
   const primaryEdges: Edge[] = [];
   for (const p of points) {
-    if (!p.parentId) continue;
-    // Dotted-only nodes (no solid boss) get a DASHED matrix edge instead
-    // of a solid bracket — skip the solid edge for them. The matrix-edge
-    // loop below draws the dashed connector from their dotted boss.
-    if (!p.data.primaryBossId) continue;
+    if (!p.parentId) continue;        // dotted-only satellites have parentId=null
     const parent = ptById.get(p.parentId);
     if (parent) primaryEdges.push({ from: parent, to: p });
   }
@@ -460,17 +480,27 @@ export default function OrgTree({
               />
             ))}
 
-            {/* Amber dotted matrix edges */}
-            {matrixEdges.map(({ from, to }, i) => (
-              <path
-                key={`m-${i}`}
-                d={vBracket(brkX(from), bottomY(from), leftCX(to), midY(to))}
-                className="stroke-amber-500"
-                fill="none"
-                strokeWidth={1.5}
-                strokeDasharray="5 4"
-              />
-            ))}
+            {/* Amber dotted matrix edges. Two cases:
+                • Dotted-only satellite (same row, offset right) → straight
+                  horizontal line from boss right-edge to satellite left-edge.
+                • Cross-tree dotted relationship (different rows) → standard
+                  vertical bracket from boss bottom to target left-mid. */}
+            {matrixEdges.map(({ from, to }, i) => {
+              const sameRow = Math.abs(from.y - to.y) < 0.5 && to.x > from.x;
+              const d = sameRow
+                ? `M${from.x + CARD_W},${midY(from)} H${leftCX(to)}`
+                : vBracket(brkX(from), bottomY(from), leftCX(to), midY(to));
+              return (
+                <path
+                  key={`m-${i}`}
+                  d={d}
+                  className="stroke-amber-500"
+                  fill="none"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 4"
+                />
+              );
+            })}
 
             {/* Dashed connector from each peer card's bottom to root's top */}
             {peerNodes.map((peer, i) => {
