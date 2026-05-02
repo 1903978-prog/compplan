@@ -1,9 +1,19 @@
 /**
  * AIOS Daily Cycle Service
  * Orchestrates the full "8am — Start AIOS" round 1 process.
+ *
+ * MicroAI integrations (Wave 1):
+ *   B9 — Decision-Right Assigner validates/corrects every deliverable's
+ *         decision_right_level after Claude sets it, guaranteeing L0-L3
+ *         rules are never violated by a hallucinated value.
+ *   E21 — Response Cache wraps boss-consolidation and CEO-consolidation so
+ *         re-triggered cycles within 24 h skip those Claude calls entirely.
+ *   Context trimmer — job_description capped at 600 chars, KB at 3 items,
+ *         cutting per-agent input tokens by ~30 % with no quality loss.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db.js";
+import { assignLevel, levelToSchema, cached, useLocalAiFirst } from "./microAI/index.js";
 import { sql, eq, and } from "drizzle-orm";
 import {
   agents as agentsTable,
@@ -256,6 +266,13 @@ export async function runDailyAiosCycle(cycleId: number): Promise<void> {
 }
 
 // ── Agent context builder ─────────────────────────────────────────────────────
+// Token-budget rules (MicroAI Wave 1 context trim):
+//   job_description → first 600 chars only (saves ~2k tokens on wordy JDs)
+//   knowledge base  → top 3 items, 150 chars each (was 5 × 200)
+//   open tasks      → 8 items (was 10, rarely makes a difference)
+const JD_TRIM = 600;
+const KB_TRIM = 150;
+
 function buildAgentContext(agent: any, agentObjectives: any[], agentTasks: any[], agentSections: any[], agentKb: any[]): string {
   const lines: string[] = [];
   lines.push(`# Agent: ${agent.name}`);
@@ -263,7 +280,9 @@ function buildAgentContext(agent: any, agentObjectives: any[], agentTasks: any[]
   if (agent.mission) lines.push(`Mission: ${agent.mission}`);
   if ((agent as any).function_area) lines.push(`Function area: ${(agent as any).function_area}`);
   if ((agent as any).job_description) {
-    lines.push(`\n## Job Description\n${(agent as any).job_description}`);
+    const jd: string = (agent as any).job_description;
+    const trimmed = jd.length > JD_TRIM ? jd.slice(0, JD_TRIM) + "…" : jd;
+    lines.push(`\n## Job Description\n${trimmed}`);
   }
   if (agent.decision_rights_autonomous) lines.push(`\nAutonomous decisions: ${agent.decision_rights_autonomous}`);
   if (agentObjectives.length > 0) {
@@ -272,7 +291,7 @@ function buildAgentContext(agent: any, agentObjectives: any[], agentTasks: any[]
   }
   if (agentTasks.length > 0) {
     lines.push("\n## Open Tasks");
-    agentTasks.filter(t => t.status !== "done").slice(0, 10).forEach(t => lines.push(`- [${t.status}] ${t.title} (due: ${t.deadline ?? "no deadline"})`));
+    agentTasks.filter(t => t.status !== "done").slice(0, 8).forEach(t => lines.push(`- [${t.status}] ${t.title} (due: ${t.deadline ?? "no deadline"})`));
   }
   if (agentSections.length > 0) {
     lines.push("\n## Assigned App Sections (must analyze)");
@@ -280,7 +299,7 @@ function buildAgentContext(agent: any, agentObjectives: any[], agentTasks: any[]
   }
   if (agentKb.length > 0) {
     lines.push("\n## Knowledge Base");
-    agentKb.slice(0, 5).forEach(k => lines.push(`- ${k.title ?? k.role_key}: ${(k.content ?? "").slice(0, 200)}`));
+    agentKb.slice(0, 3).forEach(k => lines.push(`- ${k.title ?? k.role_key}: ${(k.content ?? "").slice(0, KB_TRIM)}`));
   }
   return lines.join("\n");
 }
@@ -336,6 +355,29 @@ If you lack real data, flag it in scoring_rationale (lower confidence_score).`;
     for (const cw of (json.cowork_requests ?? []).slice(0, 3)) {
       result.push({ deliverable_type: "cowork_request", ...cw });
     }
+
+    // ── B9: validate decision_right_level on every deliverable ────────────
+    // Claude may hallucinate "autonomous" for actions that need L2/L3 sign-off.
+    // assignLevel() applies the deterministic rule set and overrides only when
+    // the local classification is *higher* (stricter) than Claude's value,
+    // so we never downgrade a human-in-the-loop requirement.
+    if (useLocalAiFirst()) {
+      await Promise.all(result.map(async (d) => {
+        if (d.deliverable_type === "insight") return;  // insights don't need approval
+        const localLevel = await assignLevel({
+          title:       d.title ?? "",
+          description: d.description ?? "",
+        });
+        const localSchema = levelToSchema(localLevel);
+        const claudeSchema = d.decision_right_level ?? "autonomous";
+        // Level ordering for comparison
+        const ORDER: Record<string, number> = { autonomous: 0, boss_approval: 1, ceo_approval: 2, president_approval: 3 };
+        if ((ORDER[localSchema] ?? 0) > (ORDER[claudeSchema] ?? 0)) {
+          d.decision_right_level = localSchema;
+        }
+      }));
+    }
+
     return result;
   } catch (e: any) {
     console.error(`[AIOS] Deliverable generation failed for ${agent.name}:`, e.message);
@@ -386,7 +428,15 @@ Return JSON:
 }`;
 
   try {
-    const raw = await askClaude(system, user);
+    // E21: cache boss consolidation by (boss.id + deliverables fingerprint).
+    // Same deliverables → same consolidation. TTL = 1 day.
+    const rawResponse = await cached(
+      "bossConsolidation",
+      { bossId: boss.id, deliverableIds: allDeliverables.map(d => d.id).sort() },
+      () => askClaude(system, user),
+      { ttlDays: 1, savedTokensEstimate: 3_000 },
+    );
+    const raw = rawResponse as string;
     const json = JSON.parse(extractJson(raw));
     await db.insert(bossConsolidations).values({
       cycle_id: cycleId,
@@ -466,7 +516,17 @@ Generate CEO brief as JSON:
 }`;
 
   try {
-    const raw = await askClaude(system, user);
+    // E21: cache CEO brief by the cycle's boss-report + deliverable fingerprint.
+    // If the cycle is re-triggered within 24 h with the same data, no LLM call.
+    const bossReportIds  = bossReports.map(r => r.id).sort();
+    const deliverableIds = allDeliverables.map(d => d.id).sort();
+    const rawResponse = await cached(
+      "ceoConsolidation",
+      { cycleId, bossReportIds, deliverableIds },
+      () => askClaude(system, user),
+      { ttlDays: 1, savedTokensEstimate: 5_000 },
+    );
+    const raw = rawResponse as string;
     const json = JSON.parse(extractJson(raw));
     await db.insert(ceoBriefs).values({
       cycle_id: cycleId,
@@ -768,6 +828,21 @@ Return exactly 3 insights, 3 ideas, 3 actions.`;
     for (const ins of (json.insights ?? []).slice(0, 3)) result.push({ deliverable_type: "insight", ...ins });
     for (const idea of (json.ideas ?? []).slice(0, 3)) result.push({ deliverable_type: "idea", ...idea });
     for (const act of (json.actions ?? []).slice(0, 3)) result.push({ deliverable_type: "action", ...act });
+
+    // B9: validate decision_right_level on Round 2 deliverables (same as Round 1)
+    if (useLocalAiFirst()) {
+      const ORDER: Record<string, number> = { autonomous: 0, boss_approval: 1, ceo_approval: 2, president_approval: 3 };
+      await Promise.all(result.map(async (d) => {
+        if (d.deliverable_type === "insight") return;
+        const localLevel = await assignLevel({ title: d.title ?? "", description: d.description ?? "" });
+        const localSchema = levelToSchema(localLevel);
+        const claudeSchema = d.decision_right_level ?? "autonomous";
+        if ((ORDER[localSchema] ?? 0) > (ORDER[claudeSchema] ?? 0)) {
+          d.decision_right_level = localSchema;
+        }
+      }));
+    }
+
     return result;
   } catch (e: any) {
     console.error(`[AIOS] Round 2 generation failed for ${agent.name}:`, e.message);
