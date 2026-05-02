@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw, Printer, Mail, User } from "lucide-react";
+import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw, Printer, Mail, User, UserX, ChevronUp, ChevronDown } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -407,12 +407,13 @@ const ROLE_RANK: Record<string, number> = {
 
 
 export default function EmployeeList() {
-  const { employees, addEmployee, updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
+  const { employees, addEmployee, updateEmployee, deleteEmployee, retireEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
   const [mainTab, setMainTab] = useState<"employees" | "tdl" | "performance" | "external">("employees");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
+  const [showFormer, setShowFormer] = useState(false);
   const { toast } = useToast();
 
   // ── TDL state ─────────────────────────────────────────────────────────────
@@ -781,11 +782,15 @@ Thanks,`;
   };
 
   const filteredEmployees = useMemo(() => {
-    // Sort alphabetically by name (case-insensitive, locale-aware).
-    // Was previously sorted by role rank desc — switched per user
-    // request to make the roster easier to scan when looking up
-    // someone by name.
     return employees
+      .filter(e => (e as any).status !== "former")
+      .filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  }, [employees, search]);
+
+  const formerEmployees = useMemo(() => {
+    return employees
+      .filter(e => (e as any).status === "former")
       .filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   }, [employees, search]);
@@ -1489,6 +1494,48 @@ Thanks,`;
       </Card>
       )}
 
+      {/* ── Former Employees ────────────────────────────────────────────────── */}
+      {formerEmployees.length > 0 && (
+        <Card className="border-slate-200">
+          <button
+            onClick={() => setShowFormer(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <UserX className="w-4 h-4" />
+              Former Employees ({formerEmployees.length})
+            </span>
+            {showFormer ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          {showFormer && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Hire Date</TableHead>
+                  <TableHead>Retired</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {formerEmployees.map(emp => (
+                  <TableRow
+                    key={emp.id}
+                    className="cursor-pointer hover:bg-muted/50 text-muted-foreground"
+                    onClick={() => setSelectedEmpId(emp.id)}
+                  >
+                    <TableCell className="font-medium">{emp.name}</TableCell>
+                    <TableCell>{emp.current_role_code}</TableCell>
+                    <TableCell>{emp.hire_date}</TableCell>
+                    <TableCell>{(emp as any).retired_at ?? "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+      )}
+
       <EmployeeDialog
         open={isDialogOpen}
         onOpenChange={setIsDialogOpen}
@@ -1499,7 +1546,7 @@ Thanks,`;
 }
 
 function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onBack: () => void }) {
-  const { updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
+  const { updateEmployee, retireEmployee, roleGrid, settings } = useStore();
   const { toast } = useToast();
   const metrics = calculateEmployeeMetrics(employee, roleGrid, settings);
 
@@ -1698,10 +1745,10 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee.id]);
 
-  const handleDetailDelete = async () => {
-    if (confirm("Are you sure you want to delete this employee?")) {
-      await deleteEmployee(employee.id);
-      toast({ title: "Employee deleted" });
+  const handleRetire = async () => {
+    if (confirm(`Retire ${employee.name}? They will be moved to Former Employees. No data is deleted.`)) {
+      await retireEmployee(employee.id);
+      toast({ title: `${employee.name} retired`, description: "Moved to Former Employees. All data retained." });
       onBack();
     }
   };
@@ -2870,9 +2917,10 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
 
         {/* Save + Delete buttons */}
         <div className="flex justify-between items-center pt-4 border-t">
-          <Button type="button" variant="destructive" onClick={handleDetailDelete}>
-            <Trash2 className="w-4 h-4 mr-2" />
-            Delete Employee
+          <Button type="button" variant="outline" onClick={handleRetire}
+            className="text-slate-600 border-slate-300 hover:border-slate-400 hover:bg-slate-50">
+            <UserX className="w-4 h-4 mr-2" />
+            Retire Employee
           </Button>
           <Button type="submit" disabled={saveState !== "idle"}
             className={saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : ""}>

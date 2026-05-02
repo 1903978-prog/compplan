@@ -3284,6 +3284,9 @@ Sequential IDs: PAR-001.
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS role_title TEXT`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS job_description TEXT`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS function_area TEXT`);
+    // Employee retirement columns
+    await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
+    await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS retired_at TEXT`);
     // Structured spec arrays (sourced from server/agentSpecsData.ts).
     // jsonb arrays so the UI / other agents can iterate them directly
     // without parsing the long-form JD blob. Idempotent — only added.

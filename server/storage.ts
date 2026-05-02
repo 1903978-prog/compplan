@@ -24,6 +24,7 @@ export interface IStorage {
   createEmployee(emp: InsertEmployee): Promise<Employee>;
   updateEmployee(id: string, emp: Partial<InsertEmployee>): Promise<Employee>;
   deleteEmployee(id: string): Promise<void>;
+  retireEmployee(id: string): Promise<void>;
 
   // Role grid
   getRoleGrid(): Promise<RoleGridRow[]>;
@@ -86,6 +87,12 @@ export class DatabaseStorage implements IStorage {
 
   async deleteEmployee(id: string): Promise<void> {
     await db.delete(employees).where(eq(employees.id, id));
+  }
+
+  async retireEmployee(id: string): Promise<void> {
+    await db.update(employees)
+      .set({ status: "former", retired_at: new Date().toISOString().slice(0, 10) } as any)
+      .where(eq(employees.id, id));
   }
 
   async getRoleGrid(): Promise<RoleGridRow[]> {

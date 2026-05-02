@@ -913,6 +913,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
+  // PATCH /api/employees/:id/retire — mark as former employee (non-destructive)
+  app.patch("/api/employees/:id/retire", requireAuth, async (req, res) => {
+    try {
+      await storage.retireEmployee(req.params.id);
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── Asset types (admin-managed taxonomy: PC, ThinkCell, Monitor, …) ─────
   app.get("/api/asset-types", requireAuth, async (_req, res) => {
     try {

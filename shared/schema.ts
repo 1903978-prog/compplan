@@ -186,6 +186,8 @@ export const employees = pgTable("employees", {
   onboarding_ratings: jsonb("onboarding_ratings").$type<OnboardingWeek[]>().default([]),
   yearly_reviews: jsonb("yearly_reviews").$type<YearlyReview[]>().default([]),
   comex_areas: jsonb("comex_areas").$type<ComexAreas>().default({}),
+  status: text("status").notNull().default("active"),    // "active" | "former"
+  retired_at: text("retired_at"),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
