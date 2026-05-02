@@ -178,7 +178,7 @@ export default function Executive() {
       <div className="flex items-center gap-3">
         <Briefcase className="w-7 h-7 text-primary" />
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Atlas</p>
           <h1 className="text-2xl font-bold tracking-tight">OKR Center</h1>
           <p className="text-sm text-muted-foreground">Top-level OKRs · agent-section mapping · RACI · CoWork + Claude Code prompt generators · Import CoWork output</p>
         </div>

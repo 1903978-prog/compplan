@@ -158,7 +158,7 @@ export default function KnowledgeBase() {
         <div className="flex items-center gap-3">
           <BookOpen className="w-7 h-7 text-primary" />
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS · PHASE 3</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Atlas · PHASE 3</p>
             <h1 className="text-2xl font-bold tracking-tight">Project Knowledge Base</h1>
             <p className="text-sm text-muted-foreground">
               {projects.length} projects · {published} published · {draft_count} draft

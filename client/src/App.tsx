@@ -327,12 +327,12 @@ function Navigation() {
                   cycle, agent coordination, OKR tracking, decision proposals,
                   and execution conversion. */}
               <NavDropdown
-                label="AIOS"
+                label="Atlas"
                 icon={Cpu}
                 basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map", "/exec/excom", "/agentic/aios-cycle", "/ceo-brief"]}
                 items={[
                   { href: "/agentic",            label: "Executive Dashboard", icon: Cpu },
-                  { href: "/agentic/aios-cycle", label: "8am AIOS Cycle",      icon: Zap },
+                  { href: "/agentic/aios-cycle", label: "8am Atlas Cycle",     icon: Zap },
                   { href: "/ceo-brief",          label: "CEO Brief",           icon: Newspaper },
                   { href: "/ceo-brief/history",  label: "Brief History",       icon: History },
                   { href: "/exec/org-chart",     label: "Org Chart",           icon: Network },

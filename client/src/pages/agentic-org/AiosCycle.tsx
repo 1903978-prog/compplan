@@ -201,7 +201,7 @@ export default function AiosCycle() {
       const { cycleId } = await r.json();
       await loadLatestCycle();
       startPolling(cycleId);
-      toast({ title: "AIOS cycle started", description: `Cycle #${cycleId} running. Watch the activity log.` });
+      toast({ title: "Atlas cycle started", description: `Cycle #${cycleId} running. Watch the activity log.` });
     } catch (e: any) {
       toast({ title: "Failed to start", description: e.message, variant: "destructive" });
     }
@@ -297,14 +297,14 @@ export default function AiosCycle() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Zap className="w-4 h-4 text-amber-500" /> AIOS Daily Control Panel
+              <Zap className="w-4 h-4 text-amber-500" /> Atlas Daily Control Panel
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
               <Button onClick={startCycle} disabled={starting || anyRunning || isPaused} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                 {starting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sun className="w-4 h-4 mr-2" />}
-                8am — Start AIOS
+                8am — Start Atlas
               </Button>
               <Button onClick={startCycle} disabled={starting || anyRunning || isPaused} variant="outline">
                 <Play className="w-4 h-4 mr-2" /> Start Work
@@ -316,7 +316,7 @@ export default function AiosCycle() {
               )}
               {isPaused && (
                 <Button onClick={resumeCycle} className="bg-blue-600 hover:bg-blue-700 text-white">
-                  <Play className="w-4 h-4 mr-2" /> Resume AIOS
+                  <Play className="w-4 h-4 mr-2" /> Resume Atlas
                 </Button>
               )}
               {canRunR2 && (
@@ -427,7 +427,7 @@ export default function AiosCycle() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between text-sm">
-                <span>Current AIOS Cycle — #{cycle.id} · {cycle.cycle_date}</span>
+                <span>Current Atlas Cycle — #{cycle.id} · {cycle.cycle_date}</span>
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${CYCLE_STATUS_BADGE[cycle.status] ?? "bg-slate-100 text-slate-600"}`}>
                   {cycle.status.replace(/_/g, " ")}
                 </span>
@@ -682,7 +682,7 @@ export default function AiosCycle() {
           <div className="flex-1 overflow-y-auto">
             <div className="p-2 space-y-1 font-mono text-[11px]">
               {logs.length === 0 && (
-                <div className="text-slate-500 italic p-2">No activity yet. Click "8am — Start AIOS" to begin.</div>
+                <div className="text-slate-500 italic p-2">No activity yet. Click "8am — Start Atlas" to begin.</div>
               )}
               {logs.map(l => (
                 <div key={l.id} className={`flex gap-2 items-start leading-snug ${l.severity === "critical" ? "text-red-400" : l.severity === "warning" ? "text-amber-400" : "text-slate-300"}`}>

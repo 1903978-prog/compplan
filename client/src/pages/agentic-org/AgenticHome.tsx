@@ -324,7 +324,7 @@ export default function AgenticHome() {
         <div className="flex items-center gap-3">
           <Sun className="w-7 h-7 text-primary" />
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS · AUTONOMOUS INTELLIGENCE OPERATING SYSTEM</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Atlas · AUTONOMOUS INTELLIGENCE OPERATING SYSTEM</p>
             <h1 className="text-2xl font-bold tracking-tight">Executive Dashboard</h1>
             <p className="text-sm text-muted-foreground italic">
               From OKRs to execution, on autopilot.
@@ -341,23 +341,23 @@ export default function AgenticHome() {
       <Card className="p-4">
         <div className="flex gap-2 flex-wrap">
           <Button size="lg" onClick={generate8am} className="flex-1 min-w-[200px]" disabled={paused}>
-            <Sun className="w-5 h-5 mr-2" /> 8am — Start AIOS
+            <Sun className="w-5 h-5 mr-2" /> 8am — Start Atlas
           </Button>
           <Button size="lg" onClick={kickAgents} className="flex-1 min-w-[200px] bg-emerald-600 hover:bg-emerald-700" disabled={paused}>
             <Zap className="w-5 h-5 mr-2" /> Make agents start work
           </Button>
           <Button size="lg" variant={paused ? "default" : "outline"} onClick={toggleCoffee} className="flex-1 min-w-[160px]">
-            <Coffee className="w-5 h-5 mr-2" /> {paused ? "Resume AIOS" : "Pause AIOS"}
+            <Coffee className="w-5 h-5 mr-2" /> {paused ? "Resume Atlas" : "Pause Atlas"}
           </Button>
           <Button size="lg" variant="outline" onClick={callCommittee} className="flex-1 min-w-[220px]" disabled={paused}>
-            <Users className="w-5 h-5 mr-2" /> Call AIOS Executive Committee
+            <Users className="w-5 h-5 mr-2" /> Call Atlas Executive Committee
           </Button>
           <Button size="lg" variant="outline" onClick={runBoardMeeting} className="flex-1 min-w-[200px]" disabled={paused}>
-            <Users className="w-5 h-5 mr-2" /> Run AIOS Board Meeting
+            <Users className="w-5 h-5 mr-2" /> Run Atlas Board Meeting
           </Button>
         </div>
         <p className="text-[11px] text-muted-foreground mt-2">
-          <strong>Start AIOS</strong> gathers live state into the CoWork prompt — paste into Claude CoWork, reasoning happens there, paste output back at <button onClick={() => navigate("/executive")} className="underline text-primary">OKR Center</button>.
+          <strong>Start Atlas</strong> gathers live state into the CoWork prompt — paste into Claude CoWork, reasoning happens there, paste output back at <button onClick={() => navigate("/executive")} className="underline text-primary">OKR Center</button>.
           <strong> Executive Committee</strong> = daily cross-agent reasoning trigger. <strong>Board Meeting</strong> = monthly review (strategy / hires / OKR cascades).
         </p>
       </Card>
@@ -368,7 +368,7 @@ export default function AgenticHome() {
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold flex items-center gap-2">
               <Sparkles className="w-4 h-4" />
-              {generatedKind === "committee" ? "AIOS Executive Committee Prompt" : generatedKind === "board" ? "AIOS Board Meeting Prompt" : "AIOS CoWork Prompt"} — copy + paste
+              {generatedKind === "committee" ? "Atlas Executive Committee Prompt" : generatedKind === "board" ? "Atlas Board Meeting Prompt" : "Atlas CoWork Prompt"} — copy + paste
             </h2>
             <Button size="sm" onClick={() => copy(generated)}>
               <Download className="w-3.5 h-3.5 mr-1" /> Copy to clipboard

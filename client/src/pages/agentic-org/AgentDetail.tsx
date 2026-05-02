@@ -220,9 +220,9 @@ export default function AgentDetail() {
       </Section>
 
       {/* 1b. Job Description — read by AIOS cycle */}
-      <Section title="Job Description (AIOS)" icon={<BookOpen className="w-4 h-4" />}>
+      <Section title="Job Description (Atlas)" icon={<BookOpen className="w-4 h-4" />}>
         <p className="text-[11px] text-muted-foreground mb-2">
-          Read by the AIOS 8am cycle. Include: mandatory daily activities, KPIs, decision rights, professional behaviour, escalation rules. The richer this is, the better the agent's daily deliverables.
+          Read by the Atlas 8am cycle. Include: mandatory daily activities, KPIs, decision rights, professional behaviour, escalation rules. The richer this is, the better the agent's daily deliverables.
         </p>
         <Textarea
           defaultValue={agent.job_description ?? ""}

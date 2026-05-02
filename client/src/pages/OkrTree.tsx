@@ -778,7 +778,7 @@ function NodeSidePanel({
           {agenticAgent && (
             <section className="border-t pt-4 space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
-                <Bot className="w-3.5 h-3.5" /> AIOS · {agenticAgent.name}
+                <Bot className="w-3.5 h-3.5" /> Atlas · {agenticAgent.name}
               </h3>
 
               {/* Top 3 ideas */}
