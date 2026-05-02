@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw, TrendingUp, GraduationCap } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw, TrendingUp, GraduationCap, Brain, Library, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Agent {
@@ -23,6 +23,16 @@ interface Agent {
   role_title: string | null;
   job_description: string | null;
   function_area: string | null;
+  // Structured spec arrays seeded from agentSpecsData.ts
+  knowledge: string[] | null;
+  training: string[] | null;
+  skills: string[] | null;
+  deliverables: string[] | null;
+}
+
+interface AgentSource {
+  id: number; role_key: string; title: string; content: string;
+  tags: string[] | null; source: string; status: string; created_at: string;
 }
 
 const READINESS_DIMS = [
@@ -64,6 +74,7 @@ export default function AgentDetail() {
   // Section map
   const [sectionsPrimary, setSectionsPrimary]   = useState<SectionMapRow[]>([]);
   const [sectionsSecondary, setSectionsSecondary] = useState<SectionMapRow[]>([]);
+  const [sources, setSources]                   = useState<AgentSource[]>([]);
   // Re-route modal
   const [rerouteRow, setRerouteRow]             = useState<SectionMapRow | null>(null);
   const [rerouteDraft, setRerouteDraft]         = useState("");
@@ -71,13 +82,14 @@ export default function AgentDetail() {
   async function load() {
     if (!id) return;
     try {
-      const [a, all, objs, ideasRes, tasksRes, logRes] = await Promise.all([
+      const [a, all, objs, ideasRes, tasksRes, logRes, srcs] = await Promise.all([
         fetch(`/api/agentic/agents/${id}`,                   { credentials: "include" }).then(r => r.ok ? r.json() : null),
         fetch(`/api/agentic/agents`,                          { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch(`/api/agentic/objectives?agent_id=${id}`,       { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch(`/api/agentic/ideas?agent_id=${id}`,            { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch(`/api/agentic/tasks?agent_id=${id}`,            { credentials: "include" }).then(r => r.ok ? r.json() : []),
         fetch(`/api/agentic/log?agent_id=${id}`,              { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        fetch(`/api/agentic/agent-sources?agent_id=${id}`,   { credentials: "include" }).then(r => r.ok ? r.json() : []),
       ]);
       setAgent(a);
       setAllAgents(Array.isArray(all) ? all : []);
@@ -85,6 +97,7 @@ export default function AgentDetail() {
       setIdeas(Array.isArray(ideasRes) ? ideasRes : []);
       setTasks(Array.isArray(tasksRes) ? tasksRes : []);
       setLog(Array.isArray(logRes) ? logRes : []);
+      setSources(Array.isArray(srcs) ? srcs : []);
       // Pull KRs for these objectives.
       if (Array.isArray(objs) && objs.length > 0) {
         const krRows = await Promise.all((objs as Objective[]).map(o =>
@@ -285,6 +298,57 @@ export default function AgentDetail() {
               </div>
             ))}
           </div>
+        )}
+      </Section>
+
+      {/* 4b. Knowledge base */}
+      <Section
+        title={`Knowledge base (${(agent.knowledge?.length ?? 0) + (agent.training?.length ?? 0)})`}
+        icon={<Brain className="w-4 h-4" />}
+      >
+        {(!agent.knowledge?.length && !agent.training?.length) ? (
+          <p className="text-xs text-muted-foreground italic">No knowledge entries yet.</p>
+        ) : (
+          <div className="space-y-4">
+            {agent.knowledge && agent.knowledge.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase font-bold text-muted-foreground mb-1.5">Domain knowledge</div>
+                <ul className="space-y-1">
+                  {agent.knowledge.map((k, i) => (
+                    <li key={i} className="text-xs flex gap-2">
+                      <span className="text-primary shrink-0 font-bold">·</span>
+                      <span>{k}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {agent.training && agent.training.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase font-bold text-muted-foreground mb-1.5">Training curriculum</div>
+                <ul className="space-y-1">
+                  {agent.training.map((t, i) => (
+                    <li key={i} className="text-xs flex gap-2">
+                      <span className="text-primary shrink-0 font-bold">·</span>
+                      <span>{t}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </Section>
+
+      {/* 4c. Sources */}
+      <Section
+        title={`Sources (${sources.length})`}
+        icon={<Library className="w-4 h-4" />}
+      >
+        {sources.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No sources yet.</p>
+        ) : (
+          <SourcesPanel sources={sources} />
         )}
       </Section>
 
@@ -667,6 +731,67 @@ function PerformanceReviewSection({ agent, tasks, ideas, objectives, krs, onSave
         </div>
       )}
     </Section>
+  );
+}
+
+// ── SourcesPanel ─────────────────────────────────────────────────────────────
+const SRC_PRIORITY = new Set(["Must", "Should", "Nice"]);
+function parseSrcTags(tags: string[] | null) {
+  const t = tags ?? [];
+  const priority = t.find(x => SRC_PRIORITY.has(x)) ?? "";
+  const category = t.find(x => !SRC_PRIORITY.has(x)) ?? "";
+  const cost = [...t].reverse().find(x => !SRC_PRIORITY.has(x) && x !== category) ?? "";
+  return { priority, category, cost };
+}
+function SourcesPanel({ sources }: { sources: AgentSource[] }) {
+  const [filter, setFilter] = useState<string>("");
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const filtered = filter ? sources.filter(s => parseSrcTags(s.tags).priority === filter) : sources;
+  const counts = { Must: 0, Should: 0, Nice: 0 } as Record<string, number>;
+  sources.forEach(s => { const p = parseSrcTags(s.tags).priority; if (p) counts[p] = (counts[p] ?? 0) + 1; });
+
+  function toggle(id: number) {
+    setExpanded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-1 mb-2 flex-wrap">
+        {([["", "All", sources.length], ["Must", "Must", counts.Must], ["Should", "Should", counts.Should], ["Nice", "Nice", counts.Nice]] as [string, string, number][]).map(([f, label, cnt]) => (
+          <button key={f} onClick={() => setFilter(f)}
+            className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-muted-foreground/30"}`}>
+            {label} <span className="opacity-60">({cnt})</span>
+          </button>
+        ))}
+      </div>
+      <div className="space-y-0.5">
+        {filtered.map(s => {
+          const { priority, category, cost } = parseSrcTags(s.tags);
+          const isOpen = expanded.has(s.id);
+          const prStyle = priority === "Must" ? "border-red-300 text-red-700 bg-red-50"
+            : priority === "Should" ? "border-amber-300 text-amber-700 bg-amber-50"
+            : "border-gray-300 text-gray-600";
+          return (
+            <div key={s.id} className="border rounded overflow-hidden">
+              <button onClick={() => toggle(s.id)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-muted/20 transition-colors">
+                <ChevronRight className={`w-3 h-3 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                <span className="text-xs flex-1 font-medium">{s.title}</span>
+                {priority && <span className={`text-[10px] px-1.5 py-0.5 rounded border shrink-0 ${prStyle}`}>{priority}</span>}
+                {category && <span className="text-[10px] text-muted-foreground shrink-0 hidden sm:inline">{category}</span>}
+                {cost && <span className="text-[10px] text-muted-foreground shrink-0">{cost}</span>}
+              </button>
+              {isOpen && (
+                <div className="px-3 py-2 text-xs bg-muted/10 border-t whitespace-pre-wrap leading-relaxed">
+                  {s.content.replace(/^\*\*[^*]+\*\*\n?/, "")}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

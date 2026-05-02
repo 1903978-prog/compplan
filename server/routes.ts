@@ -5315,6 +5315,40 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── /api/agentic/agent-sources ──────────────────────────────────────────
+  // Returns agent_knowledge rows (sourced from srcs.xlsx via seedSources.js)
+  // for a given AIOS agents.id by mapping agents.name → org_agents.role_key.
+  const _AIOS_NAME_TO_ROLE_KEY: Record<string, string> = {
+    "CEO":              "ceo",
+    "COO":              "coo",
+    "CFO":              "cfo",
+    "SVP Sales / BD":   "cco",
+    "CMO":              "marketing-manager",
+    "CHRO":             "hiring-manager",
+    "CKO":              "cko",
+    "L&D Manager":      "ld-manager",
+    "BD Agent":         "bd-agent",
+    "Proposal Agent":   "proposal-agent",
+    "Pricing Agent":    "pricing-director",
+    "Delivery Officer": "delivery-director",
+    "AR Agent":         "ar-agent",
+    "Partnership Agent":"partnership-agent",
+  };
+  app.get("/api/agentic/agent-sources", requireAuth, async (req, res) => {
+    try {
+      const agent_id = req.query.agent_id ? safeInt(String(req.query.agent_id)) : null;
+      if (!agent_id) { res.status(400).json({ message: "agent_id required" }); return; }
+      const agentRows = await db.select({ name: agentsTable.name }).from(agentsTable).where(eq(agentsTable.id, agent_id));
+      if (!agentRows[0]) { res.json([]); return; }
+      const roleKey = _AIOS_NAME_TO_ROLE_KEY[agentRows[0].name];
+      if (!roleKey) { res.json([]); return; }
+      const rows = await db.select().from(agentKnowledge)
+        .where(and(eq(agentKnowledge.role_key, roleKey), eq(agentKnowledge.status, "active")))
+        .orderBy(agentKnowledge.id);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── /api/agentic/ideas ──────────────────────────────────────────────────
   app.get("/api/agentic/ideas", requireAuth, async (req, res) => {
     try {
