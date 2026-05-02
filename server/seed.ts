@@ -3732,5 +3732,75 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
       }
     }
   }
+
+  // ── Agent section map seed (idempotent — only inserts if table empty) ─────
+  {
+    const existing = await db.execute(sql`SELECT COUNT(*) AS c FROM agent_section_map`);
+    const count = parseInt((existing as any).rows?.[0]?.c ?? "0", 10);
+    if (count === 0) {
+      const now = new Date().toISOString();
+      type SectionRow = {
+        module: string; section: string; subsection: string;
+        primary_agent: string; secondary_agents: string; why: string; frequency: string;
+      };
+      const rows: SectionRow[] = [
+        // ── Executive Module ─────────────────────────────────────────────────
+        { module: "Executive", section: "Dashboard", subsection: "Company KPIs & Metrics Overview", primary_agent: "CEO", secondary_agents: "COO,CFO", why: "CEO must monitor top-line KPIs daily to steer the company.", frequency: "Daily" },
+        { module: "Executive", section: "Dashboard", subsection: "Active Project Revenue & Pipeline", primary_agent: "CEO", secondary_agents: "CFO,BD", why: "Revenue health requires CEO attention daily.", frequency: "Daily" },
+        { module: "Executive", section: "OKR Center", subsection: "Company OKR Progress & Key Results", primary_agent: "CEO", secondary_agents: "COO", why: "CEO owns OKR accountability and must review progress.", frequency: "Daily" },
+        { module: "Executive", section: "OKR Tree", subsection: "Agent-Level OKR Drill-Down", primary_agent: "COO", secondary_agents: "CEO", why: "COO manages cross-agent OKR alignment.", frequency: "Daily" },
+        { module: "Executive", section: "EXCOM", subsection: "EXCOM Meeting Agenda & Decisions", primary_agent: "COO", secondary_agents: "CEO", why: "COO prepares and follows up on EXCOM outcomes.", frequency: "Daily" },
+        { module: "Executive", section: "CEO Brief", subsection: "Daily CEO Brief Generation & Quality", primary_agent: "CEO", secondary_agents: "COO", why: "CEO must validate brief accuracy and completeness.", frequency: "Daily" },
+        { module: "Executive", section: "Decisions", subsection: "Pending Decisions & Approval Queue", primary_agent: "CEO", secondary_agents: "COO", why: "CEO must clear decision bottlenecks daily.", frequency: "Daily" },
+        { module: "Executive", section: "Decision Log", subsection: "Past Decision Audit Trail", primary_agent: "COO", secondary_agents: "CEO", why: "COO tracks decision implementation.", frequency: "Weekly" },
+        { module: "Executive", section: "AIOS Cycle", subsection: "Cycle Quality, Coverage & Gaps", primary_agent: "COO", secondary_agents: "CEO", why: "COO owns AIOS system improvement.", frequency: "Daily" },
+        { module: "Executive", section: "Section Map", subsection: "Agent-Section Assignment Coverage", primary_agent: "COO", secondary_agents: "", why: "COO ensures every app section has an agent owner.", frequency: "Weekly" },
+        { module: "Executive", section: "Org Chart", subsection: "Org Structure & Reporting Lines", primary_agent: "COO", secondary_agents: "CEO,CHRO", why: "COO maintains org design accuracy.", frequency: "Weekly" },
+        { module: "Executive", section: "Agent Registry", subsection: "Agent Status, Missions & Job Descriptions", primary_agent: "COO", secondary_agents: "CEO", why: "COO ensures agents are properly configured.", frequency: "Daily" },
+        { module: "Executive", section: "Knowledge Base", subsection: "Agent Knowledge Base Coverage & Freshness", primary_agent: "COO", secondary_agents: "", why: "COO ensures KB is up to date for all agents.", frequency: "Weekly" },
+        { module: "Executive", section: "Skill Factory", subsection: "Agent Skills & CoWork Capabilities", primary_agent: "COO", secondary_agents: "", why: "COO develops agent capabilities over time.", frequency: "Weekly" },
+
+        // ── People Module ────────────────────────────────────────────────────
+        { module: "People", section: "Employees", subsection: "Headcount, Roles & Compensation Overview", primary_agent: "CHRO", secondary_agents: "COO,CFO", why: "CHRO owns people data accuracy and compensation compliance.", frequency: "Daily" },
+        { module: "People", section: "Employees", subsection: "Promotion Eligibility & Track Assignments", primary_agent: "CHRO", secondary_agents: "COO", why: "CHRO must surface promotion decisions proactively.", frequency: "Weekly" },
+        { module: "People", section: "Role Grid", subsection: "Role Band Calibration & Pay Ranges", primary_agent: "CHRO", secondary_agents: "CFO", why: "CHRO ensures role grid reflects market positioning.", frequency: "Weekly" },
+        { module: "People", section: "Staffing Gantt", subsection: "Project Staffing Coverage & Gaps", primary_agent: "COO", secondary_agents: "CHRO,BD", why: "COO ensures delivery capacity matches pipeline.", frequency: "Daily" },
+        { module: "People", section: "Days Off", subsection: "Leave Planning & Capacity Impact", primary_agent: "CHRO", secondary_agents: "COO", why: "CHRO monitors leave patterns affecting delivery.", frequency: "Weekly" },
+        { module: "People", section: "Time Tracker", subsection: "Billable vs Non-Billable Hours Mix", primary_agent: "CHRO", secondary_agents: "CFO", why: "CHRO tracks utilization and identifies overwork signals.", frequency: "Weekly" },
+
+        // ── Proposals Module ─────────────────────────────────────────────────
+        { module: "Proposals", section: "Proposals", subsection: "Open Proposals — Status, Win Probability & Actions", primary_agent: "Proposal", secondary_agents: "BD,CEO", why: "Proposal Agent drives active proposal quality and momentum.", frequency: "Daily" },
+        { module: "Proposals", section: "Proposals", subsection: "Won / Lost Outcomes & Lessons Learned", primary_agent: "Proposal", secondary_agents: "BD", why: "Proposal Agent continuously improves win rate from past data.", frequency: "Weekly" },
+        { module: "Proposals", section: "Pricing Cases", subsection: "Pricing Waterfall — NET1 to GROSS1 Calibration", primary_agent: "Proposal", secondary_agents: "CFO,BD", why: "Proposal Agent ensures pricing is competitive and margin-safe.", frequency: "Daily" },
+        { module: "Proposals", section: "Pricing Cases", subsection: "Benchmark Win Rate by Price Band", primary_agent: "BD", secondary_agents: "Proposal,CEO", why: "BD Agent monitors price acceptance vs. market.", frequency: "Weekly" },
+        { module: "Proposals", section: "Knowledge Center", subsection: "Proposal Content Library & Methodology Gaps", primary_agent: "Proposal", secondary_agents: "", why: "Proposal Agent maintains content quality.", frequency: "Weekly" },
+        { module: "Proposals", section: "Slide Methodology", subsection: "Slide Logic, Narrative Structure & Template Quality", primary_agent: "Proposal", secondary_agents: "", why: "Proposal Agent owns slide quality standards.", frequency: "Weekly" },
+
+        // ── Hiring Module ────────────────────────────────────────────────────
+        { module: "Hiring", section: "Pipeline", subsection: "Candidate Pipeline — Stages & Velocity", primary_agent: "CHRO", secondary_agents: "CEO", why: "CHRO drives hiring velocity and quality.", frequency: "Daily" },
+        { module: "Hiring", section: "Candidate Scoring", subsection: "Score Distribution & Assessment Coverage", primary_agent: "CHRO", secondary_agents: "", why: "CHRO ensures objective, consistent candidate assessment.", frequency: "Weekly" },
+        { module: "Hiring", section: "Scoreboard", subsection: "Top Candidates & Offer Readiness", primary_agent: "CHRO", secondary_agents: "CEO", why: "CHRO surfaces top candidates for CEO decision.", frequency: "Weekly" },
+
+        // ── Finance Module ───────────────────────────────────────────────────
+        { module: "Finance", section: "Invoicing", subsection: "Overdue Invoices & Cash Collection Risk", primary_agent: "CFO", secondary_agents: "BD,CEO", why: "CFO must track cash collection and flag overdue items.", frequency: "Daily" },
+        { module: "Finance", section: "Invoicing", subsection: "Revenue Recognition & Monthly Close", primary_agent: "CFO", secondary_agents: "COO", why: "CFO ensures accurate revenue reporting.", frequency: "Weekly" },
+        { module: "Finance", section: "Client Ledger", subsection: "Client Revenue, Margin & Payment History", primary_agent: "CFO", secondary_agents: "BD,CEO", why: "CFO monitors client-level P&L health.", frequency: "Weekly" },
+
+        // ── Sales Module ─────────────────────────────────────────────────────
+        { module: "Sales", section: "BD Pipeline", subsection: "Lead Volume, Stage Progression & Deal Velocity", primary_agent: "BD", secondary_agents: "CEO,COO", why: "BD Agent manages the full sales funnel.", frequency: "Daily" },
+        { module: "Sales", section: "BD Pipeline", subsection: "At-Risk Deals & Required Actions", primary_agent: "BD", secondary_agents: "CEO", why: "BD Agent flags deals requiring CEO intervention.", frequency: "Daily" },
+        { module: "Sales", section: "BD Pipeline", subsection: "Win Rate by Service Type & Client Segment", primary_agent: "BD", secondary_agents: "Proposal,CEO", why: "BD Agent calibrates targeting and messaging.", frequency: "Weekly" },
+        { module: "Sales", section: "Client Ledger", subsection: "Upsell & Expansion Signals", primary_agent: "BD", secondary_agents: "CFO", why: "BD Agent identifies revenue expansion opportunities.", frequency: "Weekly" },
+      ];
+
+      for (const r of rows) {
+        await db.execute(sql`
+          INSERT INTO agent_section_map (module, section, subsection, primary_agent, secondary_agents, why, frequency, created_at, updated_at)
+          VALUES (${r.module}, ${r.section}, ${r.subsection}, ${r.primary_agent}, ${r.secondary_agents}, ${r.why}, ${r.frequency}, ${now}, ${now})
+        `);
+      }
+      console.log(`[seed] Seeded ${rows.length} agent section map entries.`);
+    }
+  }
   }
 }
