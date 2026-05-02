@@ -225,16 +225,8 @@ export default function OrgChart() {
       setAcceptanceStats(stats);
       setAiosAgents(aios);
 
-      // Start with CEO's direct reports collapsed so the initial view shows
-      // only 3 levels (President → CEO → CXOs). Cards fill the viewport at
-      // ~90% zoom, matching the reference org-chart proportions. Users click
-      // the + toggle on any card to expand its subtree.
-      const depth2Keys = new Set<string>(
-        (orgs as OrgRole[])
-          .filter(r => r.parent_role_key === "ceo")
-          .map(r => r.role_key)
-      );
-      setCollapsedKeys(depth2Keys);
+      // Always fully expanded (per user spec — no +/− toggles).
+      setCollapsedKeys(new Set<string>());
 
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
@@ -446,23 +438,21 @@ export default function OrgChart() {
   };
 
   return (
-    <div className="container mx-auto py-6 w-full max-w-none px-6">
-      <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
-        <div className="flex items-center gap-3">
-          <Network className="w-7 h-7 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Org Chart</h1>
-            <p className="text-sm text-muted-foreground">
-              <Bot className="w-3 h-3 inline" /> AI agent · <User className="w-3 h-3 inline" /> human · solid line = primary boss · dotted line = matrix.
-            </p>
-          </div>
+    <div className="container mx-auto pt-2 pb-6 w-full max-w-none px-6">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Network className="w-4 h-4 text-primary shrink-0" />
+          <h1 className="text-base font-semibold tracking-tight">Org Chart</h1>
+          <span className="text-[11px] text-muted-foreground">
+            <Bot className="w-3 h-3 inline" /> AI · <User className="w-3 h-3 inline" /> human · solid = primary · dotted = matrix
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setShowStartAgents(true)}>
-            <Sparkles className="w-4 h-4 mr-1" /> Start agents
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowStartAgents(true)}>
+            <Sparkles className="w-3.5 h-3.5 mr-1" /> Start agents
           </Button>
-          <Button size="sm" onClick={() => setShowAddRole(true)}>
-            <Plus className="w-4 h-4 mr-1" /> Add role
+          <Button size="sm" className="h-7 text-xs" onClick={() => setShowAddRole(true)}>
+            <Plus className="w-3.5 h-3.5 mr-1" /> Add role
           </Button>
         </div>
       </div>

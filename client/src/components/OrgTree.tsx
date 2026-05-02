@@ -639,33 +639,9 @@ export default function OrgTree({
             </div>
           ))}
 
-          {/* Collapse/expand toggles. CEO uses a centred toggle below the
-              card (top-down bracket). Everyone else uses a left-aligned
-              toggle on the indented-tree bracket line. */}
-          {points
-            .filter(p => hasChildren.has(p.id))
-            .map(p => {
-              const isCeoTopDown = p.data.id === CEO_ID;
-              const tx = isCeoTopDown
-                ? p.cx - 8                          // centred under card
-                : p.x + INDENT_X / 2 - 8;           // on the indented bracket line
-              const ty = p.y + treeOffY + p.h + 1;
-              const collapsed = collapsedIds.has(p.id);
-              return (
-                <button
-                  key={`tg-${p.id}`}
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onToggleCollapse(p.id); }}
-                  title={collapsed ? "Expand" : "Collapse"}
-                  className="absolute z-10 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow"
-                  style={{ left: tx, top: ty }}
-                >
-                  {collapsed
-                    ? <Plus  className="w-2.5 h-2.5 text-slate-600" />
-                    : <Minus className="w-2.5 h-2.5 text-slate-600" />}
-                </button>
-              );
-            })}
+          {/* Collapse/expand toggles intentionally NOT rendered — chart is
+              always fully expanded per user spec. Removed from the DOM
+              entirely. */}
         </div>
       </div>
 
