@@ -1577,3 +1577,48 @@ export const ceoBriefRunDecisions = pgTable("ceo_brief_run_decisions", {
 });
 export type CeoBriefRunDecision = typeof ceoBriefRunDecisions.$inferSelect;
 
+// ── Micro-AI modules (Wave 1) ────────────────────────────────────────────────
+
+// SHA-256 keyed response cache — 30-day TTL by default.
+// Wraps any deterministic function so identical inputs never recompute.
+export const aiResponseCache = pgTable("ai_response_cache", {
+  id:          serial("id").primaryKey(),
+  input_hash:  text("input_hash").notNull(),    // SHA-256(module+input)
+  module_name: text("module_name").notNull(),
+  output_json: text("output_json").notNull(),
+  created_at:  text("created_at").notNull(),
+  expires_at:  text("expires_at").notNull(),
+});
+export type AiResponseCache = typeof aiResponseCache.$inferSelect;
+
+// Per-call telemetry for every micro-AI module — powers the admin savings dashboard.
+export const microAiLog = pgTable("micro_ai_log", {
+  id:                    serial("id").primaryKey(),
+  module_name:           text("module_name").notNull(),
+  called_at:             text("called_at").notNull(),
+  latency_ms:            integer("latency_ms").default(0),
+  hit_cache:             integer("hit_cache").notNull().default(0),    // 0=false 1=true
+  saved_tokens_estimate: integer("saved_tokens_estimate").notNull().default(0),
+  fallback_to_claude:    integer("fallback_to_claude").notNull().default(0),
+});
+export type MicroAiLog = typeof microAiLog.$inferSelect;
+
+// Pricing rules for the local B8 pricing reasoner.
+// Seeded from Eendigo's fee corridor knowledge; editable by Pricing Agent.
+export const pricingRules = pgTable("pricing_rules", {
+  id:           serial("id").primaryKey(),
+  rule_name:    text("rule_name").notNull(),
+  geography:    text("geography"),       // NL | BE | DE | FR | UK | other
+  client_size:  text("client_size"),     // small | mid | large | enterprise
+  complexity:   text("complexity"),      // low | medium | high
+  pe_owned:     integer("pe_owned").default(0),   // 0=no 1=yes
+  fee_min:      integer("fee_min"),      // EUR/week
+  fee_mid:      integer("fee_mid"),
+  fee_max:      integer("fee_max"),
+  rationale:    text("rationale"),
+  is_active:    integer("is_active").notNull().default(1),
+  created_at:   text("created_at").notNull(),
+  updated_at:   text("updated_at").notNull(),
+});
+export type PricingRule = typeof pricingRules.$inferSelect;
+

@@ -2,17 +2,18 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, microAiLog, aiResponseCache, pricingRules } from "@shared/schema";
 import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
 import { runCeoBrief } from "./ceoBriefRunner";
 import { ceoBriefRuns, ceoBriefRunDecisions } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, gte, count, sum } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import { MODULE_REGISTRY, pruneExpiredCache, useLocalAiFirst } from "./microAI/index.js";
 
 function safeInt(val: string): number {
   const n = parseInt(val, 10);
@@ -7563,6 +7564,117 @@ RULES:
         res.status(404).json({ message: "Decision not found" });
         return;
       }
+      res.json(updated[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── Micro-AI Admin ─────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/admin/micro-ai/stats
+   * Returns per-module telemetry aggregates + overall token savings for the
+   * requested window (default: last 7 days).
+   */
+  app.get("/api/admin/micro-ai/stats", requireAuth, async (req, res) => {
+    try {
+      const days   = Math.min(Number(req.query.days ?? 7), 90);
+      const since  = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+      // Per-module aggregates
+      const rows = await db
+        .select({
+          module_name:           microAiLog.module_name,
+          calls:                 count(microAiLog.id),
+          total_latency_ms:      sum(microAiLog.latency_ms),
+          total_tokens_saved:    sum(microAiLog.saved_tokens_estimate),
+          cache_hits:            sum(microAiLog.hit_cache),
+          claude_fallbacks:      sum(microAiLog.fallback_to_claude),
+        })
+        .from(microAiLog)
+        .where(gte(microAiLog.called_at, since))
+        .groupBy(microAiLog.module_name);
+
+      // Cache table size
+      const [cacheStats] = await db
+        .select({ total_entries: count(aiResponseCache.id) })
+        .from(aiResponseCache);
+
+      // Feature flag state
+      const localAiFirst = useLocalAiFirst();
+
+      // Annotate rows with MODULE_REGISTRY metadata
+      const modules = rows.map(r => {
+        const meta = MODULE_REGISTRY.find(m => m.file.replace(".js", "") === r.module_name);
+        return {
+          ...r,
+          id:          meta?.id,
+          displayName: meta?.name ?? r.module_name,
+          category:    meta?.category,
+          wave:        meta?.wave,
+        };
+      });
+
+      // Overall totals
+      const totalTokensSaved = modules.reduce((s, m) => s + Number(m.total_tokens_saved ?? 0), 0);
+      // Claude Sonnet 4: ~$3/M input tokens
+      const estimatedCostSavedUsd = (totalTokensSaved / 1_000_000) * 3;
+
+      res.json({
+        days,
+        since,
+        localAiFirst,
+        modules,
+        cacheEntries: cacheStats?.total_entries ?? 0,
+        totals: {
+          tokensSaved:          totalTokensSaved,
+          estimatedCostSavedUsd: Math.round(estimatedCostSavedUsd * 100) / 100,
+          totalCalls:           modules.reduce((s, m) => s + Number(m.calls ?? 0), 0),
+          claudeFallbacks:      modules.reduce((s, m) => s + Number(m.claude_fallbacks ?? 0), 0),
+        },
+        registry: MODULE_REGISTRY,
+      });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/admin/micro-ai/cache/prune
+   * Deletes expired rows from ai_response_cache.
+   */
+  app.post("/api/admin/micro-ai/cache/prune", requireAuth, async (req, res) => {
+    try {
+      const deleted = await pruneExpiredCache();
+      res.json({ deleted, message: `Pruned ${deleted} expired cache entries.` });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * GET /api/admin/micro-ai/pricing-rules
+   * Returns all pricing rules (for the admin page table).
+   */
+  app.get("/api/admin/micro-ai/pricing-rules", requireAuth, async (_req, res) => {
+    try {
+      const rules = await db.select().from(pricingRules).orderBy(desc(pricingRules.id));
+      res.json(rules);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * PATCH /api/admin/micro-ai/pricing-rules/:id
+   * Toggle is_active or update fee corridor for a rule.
+   */
+  app.patch("/api/admin/micro-ai/pricing-rules/:id", requireAuth, async (req, res) => {
+    try {
+      const id   = safeInt(req.params.id);
+      const body = req.body as Record<string, unknown>;
+      const allowed: (keyof typeof pricingRules.$inferInsert)[] = [
+        "is_active", "fee_min", "fee_mid", "fee_max", "rationale",
+      ];
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      for (const k of allowed) {
+        if (body[k] !== undefined) patch[k] = body[k];
+      }
+      const updated = await db.update(pricingRules).set(patch as any).where(eq(pricingRules.id, id)).returning();
+      if (updated.length === 0) { res.status(404).json({ message: "Rule not found" }); return; }
       res.json(updated[0]);
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
