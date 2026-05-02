@@ -1,4 +1,5 @@
 import { generateJSON, resolveActiveModel, MissingApiKeyError, ProviderError, type ProviderId } from "./aiProviders";
+import { cached } from "./microAI/index.js";
 
 interface ProposalInput {
   company_name: string;
@@ -185,16 +186,38 @@ Guidelines:
   const userMessage = contextParts.join("\n\n");
 
   try {
-    const out = await generateJSON<ProposalAnalysis>({
+    // E21: cache by (company + key inputs). Identical re-submissions skip Claude.
+    // TTL = 1 day — fresh analysis available next business day automatically.
+    const cacheKey = {
+      company_name: input.company_name,
+      website:      input.website ?? null,
+      revenue:      input.revenue ?? null,
+      ebitda_margin: input.ebitda_margin ?? null,
+      objective:    input.objective ?? null,
+      scope:        input.scope_perimeter ?? null,
+      urgency:      input.urgency ?? null,
+      // Include first 500 chars of transcript/notes in key — long-form content
+      // identifies unique sessions without bloating the hash input.
+      transcript_prefix: (input.transcript ?? "").slice(0, 500),
+      notes_prefix:      (input.notes ?? "").slice(0, 500),
       provider: active.provider,
-      model: active.model,
-      system: systemPrompt,
-      prompt: userMessage,
-      toolName: ANALYSIS_TOOL.name,
-      toolDescription: ANALYSIS_TOOL.description,
-      schema: ANALYSIS_TOOL.input_schema,
-      maxTokens: 4096,
-    });
+      model:    active.model,
+    };
+    const out = await cached<Awaited<ReturnType<typeof generateJSON<ProposalAnalysis>>>>(
+      "proposalAnalysis",
+      cacheKey,
+      () => generateJSON<ProposalAnalysis>({
+        provider: active.provider,
+        model: active.model,
+        system: systemPrompt,
+        prompt: userMessage,
+        toolName: ANALYSIS_TOOL.name,
+        toolDescription: ANALYSIS_TOOL.description,
+        schema: ANALYSIS_TOOL.input_schema,
+        maxTokens: 4096,
+      }),
+      { ttlDays: 1, savedTokensEstimate: 4_000 },
+    );
     // Minimal shape validation — if the model skipped required fields,
     // fall back to mock so the caller doesn't crash on undefined.
     if (!out.data || !Array.isArray((out.data as any).options)) {
