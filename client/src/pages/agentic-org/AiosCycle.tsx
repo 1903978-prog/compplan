@@ -35,6 +35,10 @@ interface CeoBrief {
   top_cowork_requests: any[]; conflicts: any[]; decisions_required: any[];
   autonomous_actions: any[]; coo_proposals: any[]; cowork_prompt?: string;
 }
+interface CoworkLetter {
+  id: number; cycle_id: number; agent_name?: string;
+  raw_letter_text: string; status: string;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
@@ -75,6 +79,8 @@ export default function AiosCycle() {
   const [logs, setLogs]             = useState<AiosLog[]>([]);
   const [deliverables, setDeliverables] = useState<AiosDeliverable[]>([]);
   const [ceoBrief, setCeoBrief]     = useState<CeoBrief | null>(null);
+  const [coworkLetters, setCoworkLetters] = useState<CoworkLetter[]>([]);
+  const [expandedLetters, setExpandedLetters] = useState<Set<number>>(new Set());
   const [starting, setStarting]     = useState(false);
   const [showPaste, setShowPaste]   = useState(false);
   const [pasteDraft, setPasteDraft] = useState("");
@@ -105,26 +111,31 @@ export default function AiosCycle() {
     setLogs([]);
     setDeliverables([]);
     setCeoBrief(null);
+    setCoworkLetters([]);
     lastLogId.current = 0;
     setShowHistory(false);
-    const [logs, d, b] = await Promise.all([
+    const [logs, d, b, ltrs] = await Promise.all([
       fetch(`/api/aios/cycles/${c.id}/logs`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(`/api/aios/cycles/${c.id}/deliverables`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(`/api/aios/cycles/${c.id}/ceo-brief`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`/api/aios/cycles/${c.id}/cowork-letters`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
     ]);
     setLogs(logs);
     if (logs.length > 0) lastLogId.current = logs[logs.length - 1].id;
     setDeliverables(d);
     if (b) setCeoBrief(b);
+    setCoworkLetters(ltrs);
   }, []);
 
   const loadCycleData = useCallback(async (id: number) => {
-    const [d, b] = await Promise.all([
+    const [d, b, ltrs] = await Promise.all([
       fetch(`/api/aios/cycles/${id}/deliverables`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(`/api/aios/cycles/${id}/ceo-brief`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`/api/aios/cycles/${id}/cowork-letters`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
     ]);
     setDeliverables(d);
     if (b) setCeoBrief(b);
+    setCoworkLetters(ltrs);
   }, []);
 
   const stopPolling = useCallback(() => {
@@ -582,6 +593,48 @@ export default function AiosCycle() {
         )}
 
         {/* CoWork Prompt Box */}
+        {/* CoWork Letters (parsed from pasted output) */}
+        {coworkLetters.length > 0 && (
+          <Card className="border-indigo-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm text-indigo-700">
+                <FileText className="w-4 h-4" /> CoWork Letters — {coworkLetters.length} parsed
+                <span className="text-[10px] text-muted-foreground font-normal ml-auto">Click to expand</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {coworkLetters.map(l => {
+                const open = expandedLetters.has(l.id);
+                return (
+                  <div key={l.id} className="border-b last:border-b-0">
+                    <button
+                      onClick={() => setExpandedLetters(prev => {
+                        const s = new Set(prev);
+                        if (s.has(l.id)) s.delete(l.id); else s.add(l.id);
+                        return s;
+                      })}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-xs hover:bg-muted/20 text-left"
+                    >
+                      {open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                      <span className="font-medium">Letter to {l.agent_name ?? "Unknown"}</span>
+                      <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-semibold ${l.status === "round2_processed" ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600"}`}>
+                        {l.status}
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="px-6 pb-3">
+                        <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono bg-slate-50 border rounded p-2 max-h-[300px] overflow-y-auto">
+                          {l.raw_letter_text}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+
         {cycle?.cowork_prompt && (
           <Card>
             <CardHeader className="pb-2">

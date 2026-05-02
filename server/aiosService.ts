@@ -4,7 +4,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db.js";
-import { sql, eq, and } from "drizzle-orm";
+import { sql, eq, and, inArray } from "drizzle-orm";
 import {
   agents as agentsTable,
   objectives,
@@ -720,7 +720,15 @@ export async function runRound2(cycleId: number): Promise<void> {
         `${agent.name} Round 2: ${deliverables.length} updated deliverables.`, "completed", "info");
     }
 
-    await db.update(aiosCycles).set({ status: "round2_completed", updated_at: nowStr() } as any).where(eq(aiosCycles.id, cycleId));
+    // Regenerate CEO brief incorporating Round 2 deliverables
+    await log(cycleId, "system", null, "round2_ceo_brief", "Updating CEO brief with Round 2 findings.", "working", "info");
+    await db.delete(ceoBriefs).where(eq(ceoBriefs.cycle_id, cycleId));
+    const allAgentsForCeo = await db.select().from(agentsTable);
+    await runCeoConsolidation(cycleId, allAgentsForCeo);
+    const newPrompt = await generateCoworkPrompt(cycleId);
+    await log(cycleId, "system", null, "round2_ceo_brief_done", "CEO brief updated.", "completed", "info");
+
+    await db.update(aiosCycles).set({ status: "round2_completed", updated_at: nowStr(), cowork_prompt: newPrompt } as any).where(eq(aiosCycles.id, cycleId));
     await log(cycleId, "system", null, "round2_finished",
       `Round 2 complete — ${total} updated deliverables generated.`, "completed", "info");
     pushSSE(cycleId, { type: "status", status: "round2_completed" });
