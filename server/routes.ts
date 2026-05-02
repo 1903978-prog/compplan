@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, agentKpis } from "@shared/schema";
 import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
 import { runCeoBrief } from "./ceoBriefRunner";
 import { ceoBriefRuns, ceoBriefRunDecisions } from "@shared/schema";
@@ -7449,6 +7449,41 @@ RULES:
       const id = parseInt((req.params as any).id);
       res.json({ ok: true, cycleId: id });
       runRound2(id).catch(e => console.error("[AIOS] runRound2 uncaught:", e));
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/agent-kpis/:agentName — last 10 KPI rows for a given agent (both rounds)
+  app.get("/api/aios/agent-kpis/:agentName", requireAuth, async (req, res) => {
+    try {
+      const name = decodeURIComponent(String((req.params as any).agentName));
+      const rows = await db
+        .select()
+        .from(agentKpis)
+        .where(eq(agentKpis.agent_name, name))
+        .orderBy(desc(agentKpis.id))
+        .limit(20);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/agent-kpis — latest cycle KPIs for all agents (round1 only, most recent cycle)
+  app.get("/api/aios/agent-kpis", requireAuth, async (req, res) => {
+    try {
+      // Find the latest cycle that has KPI rows
+      const [latest] = await db
+        .select({ cycle_id: agentKpis.cycle_id })
+        .from(agentKpis)
+        .orderBy(desc(agentKpis.id))
+        .limit(1);
+      if (!latest) return res.json([]);
+      const rows = await db
+        .select()
+        .from(agentKpis)
+        .where(and(
+          eq(agentKpis.cycle_id, latest.cycle_id),
+          eq(agentKpis.round, "round1")
+        ));
+      res.json(rows);
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

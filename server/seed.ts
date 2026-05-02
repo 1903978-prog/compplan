@@ -3419,6 +3419,23 @@ Sequential IDs: PAR-001.
       )
     `);
 
+  await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_kpis (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        agent_name TEXT NOT NULL,
+        round TEXT NOT NULL DEFAULT 'round1',
+        deliverable_count INTEGER NOT NULL DEFAULT 0,
+        insight_count INTEGER NOT NULL DEFAULT 0,
+        idea_count INTEGER NOT NULL DEFAULT 0,
+        action_count INTEGER NOT NULL DEFAULT 0,
+        avg_total_score REAL,
+        insight_score REAL,
+        action_score REAL,
+        created_at TEXT NOT NULL
+      )
+    `);
+
   // ── Seed job descriptions for known agents (idempotent — only sets when NULL) ──
   type AgentJd = { name_fragment: string; role_title: string; function_area: string; jd: string };
   const agentJDs: AgentJd[] = [

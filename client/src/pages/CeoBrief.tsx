@@ -316,6 +316,11 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [data, setData] = useState<BriefResponse>({ brief: null, decisions: [] });
+  const [cycleKpis, setCycleKpis] = useState<Array<{
+    agent_name: string; deliverable_count: number;
+    insight_count: number; idea_count: number; action_count: number;
+    avg_total_score: number | null;
+  }>>([]);
   const [filters, setFilters] = useState<Filters>({
     agents: [], types: [], approvalLevels: [], statuses: [],
   });
@@ -337,6 +342,14 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
   }, [briefIdFromUrl, toast]);
 
   useEffect(() => { fetchBrief(); }, [fetchBrief]);
+
+  // Load latest-cycle KPIs for header row
+  useEffect(() => {
+    fetch("/api/aios/agent-kpis", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => setCycleKpis(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+  }, []);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -442,6 +455,21 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
               {stats.pending} pending · {stats.approved} approved · {stats.rejected} rejected · {stats.postponed} postponed
               {brief.generatedBy === "scheduled" && <span className="ml-2 text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">scheduled</span>}
             </p>
+          )}
+          {cycleKpis.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {cycleKpis.map(k => (
+                <span
+                  key={k.agent_name}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200"
+                  title={`${k.insight_count} insights · ${k.idea_count} ideas · ${k.action_count} actions${k.avg_total_score != null ? ` · avg score ${k.avg_total_score.toFixed(1)}` : ""}`}
+                >
+                  <span className="font-semibold">{k.agent_name.replace(" Agent", "")}</span>
+                  <span className="opacity-60">·</span>
+                  <span>{k.deliverable_count} deliverables</span>
+                </span>
+              ))}
+            </div>
           )}
         </div>
         {!readOnly && (

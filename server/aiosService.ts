@@ -19,6 +19,7 @@ import {
   ceoBriefs,
   coworkOutputs,
   coworkLetters,
+  agentKpis,
 } from "../shared/schema.js";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -110,6 +111,35 @@ export async function resumeAiosCycle(cycleId: number) {
   await db.update(aiosCycles).set({ status: "running", updated_at: now } as any).where(eq(aiosCycles.id, cycleId));
   await log(cycleId, "system", null, "cycle_resumed", "Cycle resumed by President.", "working", "info");
   pushSSE(cycleId, { type: "status", status: "running" });
+}
+
+// ── Agent KPI recorder ────────────────────────────────────────────────────────
+async function recordAgentKpi(
+  cycleId: number,
+  agentName: string,
+  deliverables: any[],
+  round: "round1" | "round2"
+) {
+  const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const insights = deliverables.filter(d => d.deliverable_type === "insight");
+  const ideas    = deliverables.filter(d => d.deliverable_type === "idea");
+  const actions  = deliverables.filter(d => d.deliverable_type === "action");
+  const allScores     = deliverables.map(d => d.total_score).filter((s): s is number => s != null);
+  const insightScores = insights.map(d => d.total_score).filter((s): s is number => s != null);
+  const actionScores  = actions.map(d => d.total_score).filter((s): s is number => s != null);
+  await db.insert(agentKpis).values({
+    cycle_id:          cycleId,
+    agent_name:        agentName,
+    round,
+    deliverable_count: deliverables.length,
+    insight_count:     insights.length,
+    idea_count:        ideas.length,
+    action_count:      actions.length,
+    avg_total_score:   avg(allScores),
+    insight_score:     avg(insightScores),
+    action_score:      avg(actionScores),
+    created_at:        new Date().toISOString(),
+  } as any);
 }
 
 // ── Main orchestration ────────────────────────────────────────────────────────
@@ -207,6 +237,8 @@ export async function runDailyAiosCycle(cycleId: number): Promise<void> {
       await log(cycleId, "agent", agent.name, "agent_completed",
         `${agent.name} completed: ${insights.length} insights, ${ideas.length} ideas, ${actions.length} actions, ${cowork.length} CoWork requests.`,
         "completed", "info");
+
+      await recordAgentKpi(cycleId, agent.name, deliverables, "round1");
 
       // Update cycle counters
       await db.update(aiosCycles).set({
@@ -718,6 +750,8 @@ export async function runRound2(cycleId: number): Promise<void> {
 
       await log(cycleId, "agent", agent.name, "round2_agent_completed",
         `${agent.name} Round 2: ${deliverables.length} updated deliverables.`, "completed", "info");
+
+      await recordAgentKpi(cycleId, agent.name, deliverables, "round2");
     }
 
     // Regenerate CEO brief incorporating Round 2 deliverables
