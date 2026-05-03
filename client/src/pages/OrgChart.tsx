@@ -55,6 +55,7 @@ interface OrgRole {
   goals: string[];
   okrs: OkrItem[];
   tasks_10d: TaskItem[];
+  templates: string[];
   sort_order: number;
   updated_at: string;
 }
@@ -333,7 +334,7 @@ export default function OrgChart() {
   // Save edited goals / OKRs / role_name back to the role. Used by the
   // dialog's inline-editable sections (and the editable title in the
   // dialog header).
-  const saveRoleFields = async (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name">>) => {
+  const saveRoleFields = async (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name" | "templates">>) => {
     const r = await fetch(`/api/org-chart/${role.id}`, {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -1179,9 +1180,28 @@ function RoleDetailDialog({
   onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
   onTaskToggle: (task: TaskItem, newStatus: TaskItem["status"]) => Promise<void>;
 }) {
+  const { toast } = useToast();
+  const [startingWork, setStartingWork] = useState(false);
+  const [workStarted, setWorkStarted] = useState(false);
+
   if (!role) return null;
   const openTasks = role.tasks_10d.filter(t => t.status !== "done");
   const doneTasks = role.tasks_10d.filter(t => t.status === "done");
+
+  const handleStartWork = async () => {
+    if (!aiosAgent) return;
+    setStartingWork(true);
+    try {
+      const res = await fetch(`/api/agentic/agents/${aiosAgent.id}/run`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      setWorkStarted(true);
+      toast({ title: `${aiosAgent.name} started`, description: "Agent routine is running in the background. Deliverables will appear in AIOS." });
+    } catch (err: any) {
+      toast({ title: "Failed to start work", description: err.message, variant: "destructive" });
+    } finally {
+      setStartingWork(false);
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1215,6 +1235,25 @@ function RoleDetailDialog({
                 {role.person_name ?? "(unfilled)"} · last updated {fmtDate(role.updated_at)}
               </DialogDescription>
             </div>
+            {/* Start work button — only for AI agent roles that have an AIOS entry */}
+            {aiosAgent && (
+              <Button
+                size="sm"
+                className={workStarted
+                  ? "shrink-0 bg-emerald-600/20 text-emerald-400 border border-emerald-600/40 hover:bg-emerald-600/30"
+                  : "shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white"}
+                onClick={handleStartWork}
+                disabled={startingWork || workStarted}
+              >
+                {startingWork ? (
+                  <><span className="animate-spin mr-1.5">⚙</span> Starting…</>
+                ) : workStarted ? (
+                  <><Check className="w-3.5 h-3.5 mr-1.5" /> Running</>
+                ) : (
+                  <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Start work</>
+                )}
+              </Button>
+            )}
           </div>
         </DialogHeader>
 
@@ -1456,7 +1495,39 @@ function RoleDetailDialog({
                 <NoteList notes={sources} onArchive={onArchiveKnowledge} showTags />
               </SectionBlock>
 
-              {/* 6 · Skills (AIOS spec: deliverables, skills, training, domain knowledge) */}
+              {/* 6 · Templates (editable list for any role kind) */}
+              <SectionBlock
+                icon={<FileText className="w-3.5 h-3.5 text-rose-500" />}
+                label="Templates"
+                count={(role.templates ?? []).length}
+              >
+                <div className="space-y-1.5 py-1">
+                  {(role.templates ?? []).length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No templates yet.</p>
+                    : (role.templates ?? []).map((t, i) => (
+                      <div key={i} className="flex gap-1 items-start">
+                        <span className="text-muted-foreground pt-1.5 shrink-0">•</span>
+                        <textarea defaultValue={t} rows={Math.max(1, Math.ceil(t.length / 80))}
+                          onBlur={e => {
+                            const v = e.target.value.trim(); if (v === t) return;
+                            const next = v
+                              ? (role.templates ?? []).map((x, j) => j === i ? v : x)
+                              : (role.templates ?? []).filter((_, j) => j !== i);
+                            void onSaveFields(role, { templates: next });
+                          }}
+                          className="flex-1 text-sm leading-snug resize-y border-b border-transparent focus:border-primary outline-none bg-transparent py-1" />
+                        <button onClick={() => void onSaveFields(role, { templates: (role.templates ?? []).filter((_, j) => j !== i) })}
+                          className="text-muted-foreground hover:text-destructive p-1 shrink-0">×</button>
+                      </div>
+                    ))}
+                  <Button size="sm" variant="ghost" className="h-7 text-xs mt-1"
+                    onClick={() => void onSaveFields(role, { templates: [...(role.templates ?? []), "New template"] })}>
+                    <Plus className="w-3 h-3 mr-1" /> Add template
+                  </Button>
+                </div>
+              </SectionBlock>
+
+              {/* 7 · Skills (AIOS spec: deliverables, skills, training, domain knowledge) */}
               {aiosAgent && (
                 <SectionBlock
                   icon={<Lightbulb className="w-3.5 h-3.5 text-primary" />}

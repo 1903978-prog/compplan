@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
 import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, agentKpis, kmSessions, kmOutputs, invoiceSnapshots, bdDeals, employees, pricingCases } from "@shared/schema";
-import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
+import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2, runSingleAgent } from "./aiosService";
 import { runKmCycle, getKmSessions, getKmSessionDetail } from "./kmService";
 import { runCeoBrief } from "./ceoBriefRunner";
 import { listTemplates, loadTemplate, loadTemplateRaw, render as renderTemplate, saveTemplate } from "./microAI/templateEngine";
@@ -807,7 +807,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Whitelist editable fields. role_key, parent_role_key, sort_order are
       // structural and shouldn't be changed via this endpoint (use a
       // dedicated migration if the org tree shape changes).
-      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d", "parent_role_key", "kind", "email", "dotted_parent_role_keys"]) {
+      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d", "parent_role_key", "kind", "email", "dotted_parent_role_keys", "templates"]) {
         if (k in req.body) allowed[k] = req.body[k];
       }
       // Validate kind
@@ -5412,6 +5412,18 @@ RULES:
       const id = safeInt(req.params.id);
       await db.delete(agentsTable).where(eq(agentsTable.id, id));
       res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // POST /api/agentic/agents/:id/run — trigger one agent's daily routine on-demand
+  app.post("/api/agentic/agents/:id/run", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      // Fire-and-forget: return immediately, run in background
+      res.json({ started: true, agentId: id });
+      runSingleAgent(id).catch(err =>
+        console.error(`[AIOS] Background single-agent run failed for agent ${id}:`, err)
+      );
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
