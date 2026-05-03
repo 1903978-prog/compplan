@@ -1737,8 +1737,6 @@ export default function PricingTool() {
                         {p.name}{p.sublabel ? ` · ${p.sublabel}` : ""}
                       </SelectItem>
                     ))}
-                      </SelectItem>
-                    ))}
                     <SelectItem value="__other__">— Other (type a name) —</SelectItem>
                   </SelectContent>
                 </Select>
