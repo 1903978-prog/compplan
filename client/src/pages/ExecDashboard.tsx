@@ -143,11 +143,20 @@ const DASH_CACHE_KEY = "exec_dashboard_cache";
 // manually cleared localStorage.
 const DASH_CACHE_TTL_MS = 10 * 60 * 1000;
 
-function readCache(): { candidates: Candidate[]; invoices: Invoice[]; proposals: PricingProposal[]; wonProjects: WonProject[]; ts: string } | null {
+interface DashCache {
+  employees: any[];
+  candidates: Candidate[];
+  invoices: Invoice[];
+  proposals: PricingProposal[];
+  wonProjects: WonProject[];
+  ts: string;
+}
+
+function readCache(): DashCache | null {
   try {
     const raw = localStorage.getItem(DASH_CACHE_KEY);
     if (!raw) return null;
-    const cached = JSON.parse(raw) as { candidates: Candidate[]; invoices: Invoice[]; proposals: PricingProposal[]; wonProjects: WonProject[]; ts: string };
+    const cached = JSON.parse(raw) as DashCache;
     const ts = cached?.ts ? new Date(cached.ts).getTime() : 0;
     if (!ts || Date.now() - ts > DASH_CACHE_TTL_MS) {
       localStorage.removeItem(DASH_CACHE_KEY);
@@ -157,9 +166,13 @@ function readCache(): { candidates: Candidate[]; invoices: Invoice[]; proposals:
   } catch { return null; }
 }
 
-function writeCache(candidates: Candidate[], invoices: Invoice[], proposals: PricingProposal[], wonProjects: WonProject[]) {
+function writeCache(employees: any[], candidates: Candidate[], invoices: Invoice[], proposals: PricingProposal[], wonProjects: WonProject[]) {
+  // Guard: never poison the cache with an all-empty payload. A transient
+  // API failure returns [] for every array — if we cached that, the next
+  // cold load would show zeroes until the 10-minute TTL expired.
+  if (employees.length === 0 && candidates.length === 0 && wonProjects.length === 0) return;
   try {
-    localStorage.setItem(DASH_CACHE_KEY, JSON.stringify({ candidates, invoices, proposals, wonProjects, ts: new Date().toISOString() }));
+    localStorage.setItem(DASH_CACHE_KEY, JSON.stringify({ employees, candidates, invoices, proposals, wonProjects, ts: new Date().toISOString() }));
   } catch { /* quota exceeded — ignore */ }
 }
 
@@ -174,7 +187,9 @@ export default function ExecDashboard() {
   // empty (e.g. its loadData() failed at app boot due to a transient 401 /
   // 5xx). Without this the dashboard would show Headcount=0 / Payroll=€0
   // forever, since loadData() runs once and never retries.
-  const [directEmployees, setDirectEmployees] = useState<typeof storeEmployees>([]);
+  // Employees are now cached alongside the other dashboard data so the last
+  // known headcount is available instantly even before the fetch completes.
+  const [directEmployees, setDirectEmployees] = useState<typeof storeEmployees>(cached?.employees ?? []);
   const [candidates, setCandidates] = useState<Candidate[]>(cached?.candidates ?? []);
   const [invoices, setInvoices] = useState<Invoice[]>(cached?.invoices ?? []);
   const [proposals, setProposals] = useState<PricingProposal[]>(cached?.proposals ?? []);
@@ -221,7 +236,7 @@ export default function ExecDashboard() {
         const roles = Array.isArray(settingsRes?.roles) ? settingsRes.roles : [];
         setPricingRoles(roles.map((r: any) => ({ id: r.id, default_daily_rate: Number(r.default_daily_rate ?? 0) })));
         setLastFetch(new Date());
-        writeCache(c, i, p, w);
+        writeCache(emp, c, i, p, w);
       } catch (e) {
         console.error("[ExecDashboard] fetch failed", e);
       }
@@ -238,7 +253,10 @@ export default function ExecDashboard() {
   // and never retried, leaving Headcount=0 / Payroll=€0 forever.
   const employees = (storeEmployees.length > 0 ? storeEmployees : directEmployees) as typeof storeEmployees;
   const hr = useMemo(() => {
-    const active = employees;
+    // Exclude former employees (retired via the Retire Employee feature).
+    // Former employees remain in the DB for payroll history but should not
+    // count toward active headcount or monthly payroll cost.
+    const active = employees.filter(e => ((e as any).status ?? "active") !== "former");
     // Consultants = billable staff only; Interns (INT) and Back Office (BO)
     // are excluded from supply headcount and the capacity gap calculator.
     const EXCLUDED_ROLES = new Set(["INT", "BO"]);
@@ -382,7 +400,12 @@ export default function ExecDashboard() {
 
   // ─── Active projects from wonProjects ────────────────────────────────
   const active = useMemo(() => {
-    const list = wonProjects.filter(p => (p.status ?? "").toLowerCase() === "active");
+    // Treat null/missing status as "active" — the DB default is 'active' and
+    // null should never occur, but this guards against stale pre-migration rows.
+    const list = wonProjects.filter(p => {
+      const s = (p.status ?? "active").toLowerCase();
+      return s === "active";
+    });
     const value = list.reduce((s, p) => s + toEUR(p.total_amount, p.currency), 0);
     return { count: list.length, value };
   }, [wonProjects]);
