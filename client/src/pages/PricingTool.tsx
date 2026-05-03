@@ -734,9 +734,42 @@ export default function PricingTool() {
   // /api/employees endpoint is unreachable (auth/503) — the team picker
   // then shows an empty dropdown with a hint to check the connection.
   const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>([]);
-  // External contacts — freelancers + partners. Loaded alongside employees
-  // so the Manager (EM) dropdown shows all eligible people in one list.
+  // External contacts (partners / freelancers) — used by the Manager (EM)
+  // and Team picker dropdowns so the user can assign people who aren't on
+  // the /employees rich roster.
   const [externalContacts, setExternalContacts] = useState<Array<{ id: number; name: string; kind: string }>>([]);
+
+  // Unified people list for the Manager (EM) dropdown.
+  // Tier 1 = internal EM1/EM2 employees + external partners (alphabetical)
+  // Tier 2 = external freelancers (alphabetical)
+  // Dedup by name — if a person appears in both employees and external_contacts
+  // the employee entry wins.
+  const peopleOptions = useMemo(() => {
+    type Person = { name: string; kind: "employee" | "partner" | "freelancer" | "other"; sublabel?: string };
+    const byName = new Map<string, Person>();
+    // Only EM1/EM2 and Partner-role employees are eligible to lead a project
+    for (const e of employees) {
+      const code = (e.current_role_code ?? "").toUpperCase();
+      const isEligible = code === "EM1" || code === "EM2" || code.includes("PARTNER");
+      if (!isEligible) continue;
+      byName.set(e.name, { name: e.name, kind: "employee", sublabel: e.current_role_code });
+    }
+    for (const c of externalContacts) {
+      if (byName.has(c.name)) continue; // employee entry wins
+      const k = (c.kind || "").toLowerCase();
+      const kind: Person["kind"] =
+        k === "partner"    ? "partner"
+      : k === "freelancer" ? "freelancer"
+                           : "other";
+      byName.set(c.name, { name: c.name, kind, sublabel: c.kind });
+    }
+    const all = Array.from(byName.values());
+    const tier1 = all.filter(p => p.kind === "employee" || p.kind === "partner")
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const tier2 = all.filter(p => p.kind === "freelancer")
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { tier1, tier2 };
+  }, [employees, externalContacts]);
   // Which proposal row is currently having its team edited (Past Projects
   // → click "Pick team" / current roster button → opens the dialog).
   // Null = dialog closed. Holds a draft so dialog edits don't mutate the
@@ -920,6 +953,20 @@ export default function PricingTool() {
         : []);
     } catch (err: any) {
       console.warn("[PricingTool] employees/contacts load failed (team-picker will be empty):", err);
+    }
+
+    // External contacts — partners, freelancers, interns, external
+    // managers. Used by the Manager (EM) and Team picker dropdowns so
+    // people who aren't in the rich /employees roster can still be
+    // assigned to a project. Best-effort: if it fails, dropdowns just
+    // fall back to employees only.
+    try {
+      const xData = await loadOne<any[]>("/api/external-contacts");
+      setExternalContacts(Array.isArray(xData)
+        ? xData.map(x => ({ id: x.id, name: x.name, kind: (x.kind ?? "freelancer") }))
+        : []);
+    } catch (err: any) {
+      console.warn("[PricingTool] external-contacts load failed:", err);
     }
 
     // Proposals — preserve previous on failure, do NOT reset to []
@@ -1344,21 +1391,54 @@ export default function PricingTool() {
     setSavingProposal(true);
     try {
       const payload = { ...historyForm, pe_owned: historyForm.pe_owned ? 1 : 0 };
+      let r: Response;
       if (editingProposalId) {
-        await fetch(`/api/pricing/proposals/${editingProposalId}`, {
+        r = await fetch(`/api/pricing/proposals/${editingProposalId}`, {
           method: "PUT", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        // Auto-sync client fields to sibling projects
-        const synced = await syncClientFields(historyForm);
-        toast({ title: "Proposal updated", description: synced > 0 ? `${synced} sibling project${synced > 1 ? "s" : ""} synced.` : undefined });
       } else {
-        await fetch("/api/pricing/proposals", {
+        r = await fetch("/api/pricing/proposals", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+      }
+      // Verify save actually succeeded — without this the toast would
+      // claim success even on 401/5xx and the user would think their
+      // edits (e.g. end_date) persisted when they hadn't.
+      if (!r.ok) {
+        const errBody = await r.text().catch(() => "");
+        console.error("[PricingTool] save proposal failed:", r.status, errBody);
+        toast({
+          title: `Save failed (HTTP ${r.status})`,
+          description: errBody.slice(0, 200) || "See console for details.",
+          variant: "destructive",
+        });
+        return;  // keep the form open so the user can retry / copy values
+      }
+      // Read back the saved row so we know the server actually persisted
+      // every field. Drives the "Proposal updated/saved" toast below and
+      // the subsequent loadAll() refresh.
+      const saved = await r.json().catch(() => null);
+      if (editingProposalId) {
+        const synced = await syncClientFields(historyForm);
+        const droppedFields: string[] = [];
+        if (historyForm.end_date && saved?.end_date !== historyForm.end_date) droppedFields.push("end_date");
+        if (historyForm.start_date && saved?.start_date !== historyForm.start_date) droppedFields.push("start_date");
+        if (historyForm.manager_name && saved?.manager_name !== historyForm.manager_name) droppedFields.push("manager_name");
+        if (droppedFields.length > 0) {
+          toast({
+            title: "Saved, but some fields didn't persist",
+            description: `Server dropped: ${droppedFields.join(", ")}. Check console.`,
+            variant: "destructive",
+          });
+          console.warn("[PricingTool] fields dropped on PUT:", droppedFields, { sent: historyForm, saved });
+        } else {
+          toast({ title: "Proposal updated", description: synced > 0 ? `${synced} sibling project${synced > 1 ? "s" : ""} synced.` : undefined });
+        }
+      } else {
         toast({ title: "Proposal saved" });
       }
       setShowHistoryForm(false);
@@ -1366,8 +1446,9 @@ export default function PricingTool() {
       setEditingProposalId(null);
       setHistoryForm(emptyProposal());
       loadAll();
-    } catch {
-      toast({ title: "Failed to save", variant: "destructive" });
+    } catch (e: any) {
+      console.error("[PricingTool] save proposal threw:", e);
+      toast({ title: "Failed to save", description: String(e?.message ?? e), variant: "destructive" });
     } finally {
       setSavingProposal(false);
     }
@@ -1608,19 +1689,11 @@ export default function PricingTool() {
         <div className="space-y-1">
           <Label className="text-xs">Manager (EM)</Label>
           {(() => {
-            // Eligible internal employees: EM1, EM2, or any role containing "Partner"
-            const emEmployees = employees.filter(e =>
-              e.current_role_code === "EM1" ||
-              e.current_role_code === "EM2" ||
-              (e.current_role_code ?? "").toLowerCase().includes("partner")
-            );
-            // All external freelancers + partners from external_contacts
-            const allEligible: { name: string; subtitle: string }[] = [
-              ...emEmployees.map(e => ({ name: e.name, subtitle: e.current_role_code ?? "" })),
-              ...externalContacts.map(c => ({ name: c.name, subtitle: c.kind === "partner" ? "Partner" : "Freelancer" })),
-            ];
-            const eligibleNames = new Set(allEligible.map(x => x.name));
-            const managerInList = !!historyForm.manager_name && eligibleNames.has(historyForm.manager_name);
+            const allNames = new Set([
+              ...peopleOptions.tier1.map(p => p.name),
+              ...peopleOptions.tier2.map(p => p.name),
+            ]);
+            const managerInList = !!historyForm.manager_name && allNames.has(historyForm.manager_name);
             const isCustom = !!historyForm.manager_name && !managerInList;
             return (
               <div className="space-y-1">
@@ -1639,14 +1712,31 @@ export default function PricingTool() {
                   <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick manager…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— none —</SelectItem>
-                    {allEligible.length === 0 && (
+                    {peopleOptions.tier1.length === 0 && peopleOptions.tier2.length === 0 && (
                       <div className="px-2 py-2 text-[11px] text-muted-foreground italic">
-                        No eligible managers — add EM/Partner employees or external contacts.
+                        No eligible managers — add EM/Partner employees or freelancers.
                       </div>
                     )}
-                    {allEligible.map((p, i) => (
-                      <SelectItem key={i} value={p.name}>
-                        {p.name}{p.subtitle ? ` · ${p.subtitle}` : ""}
+                    {peopleOptions.tier1.length > 0 && (
+                      <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Managers &amp; Partners
+                      </div>
+                    )}
+                    {peopleOptions.tier1.map(p => (
+                      <SelectItem key={`t1-${p.name}`} value={p.name}>
+                        {p.name}{p.sublabel ? ` · ${p.sublabel}` : ""}
+                      </SelectItem>
+                    ))}
+                    {peopleOptions.tier2.length > 0 && (
+                      <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground border-t border-slate-200 mt-1">
+                        Freelancers
+                      </div>
+                    )}
+                    {peopleOptions.tier2.map(p => (
+                      <SelectItem key={`t2-${p.name}`} value={p.name}>
+                        {p.name}{p.sublabel ? ` · ${p.sublabel}` : ""}
+                      </SelectItem>
+                    ))}
                       </SelectItem>
                     ))}
                     <SelectItem value="__other__">— Other (type a name) —</SelectItem>
@@ -1658,7 +1748,7 @@ export default function PricingTool() {
                     value={historyForm.manager_name ?? ""}
                     onChange={e => setHistoryForm(f => ({ ...f, manager_name: e.target.value || null }))}
                     className="h-7 text-xs"
-                    placeholder="Custom name (e.g. external partner)"
+                    placeholder="Custom name"
                   />
                 )}
               </div>
