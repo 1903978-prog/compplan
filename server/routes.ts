@@ -410,17 +410,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // A3 NER: auto-extract entity tags from content so knowledge is
       // searchable by people, orgs, dates, and amounts. Best-effort.
       let autoTags: string[] = Array.isArray(b.tags) ? (b.tags as unknown[]).slice(0, 20).map(String) : [];
+
+      // E22 dedup: embed the incoming content and compare against the last
+      // 50 active entries for this role. Reject (409) if cosine similarity ≥ 0.92.
+      // This prevents the knowledge base from filling up with paraphrased duplicates.
       try {
-        const { extractEntities, useLocalAiFirst } = await import("./microAI/index.js");
+        const { embedCached, cosineSimilarity, extractEntities, useLocalAiFirst } = await import("./microAI/index.js");
         if (useLocalAiFirst()) {
-          const entities = await extractEntities(content.slice(0, 2000));
+          // Run NER + dedup embedding in parallel
+          const [entities, newVec] = await Promise.all([
+            extractEntities(content.slice(0, 2000)).catch(() => ({ people: [], organisations: [], dates: [], amounts: [], places: [] })),
+            embedCached(content.slice(0, 500)),
+          ]);
+
+          // NER tags
           const nerTags = [
             ...entities.people.slice(0, 5),
             ...entities.organisations.slice(0, 5),
           ].map(t => t.toLowerCase().replace(/\s+/g, "_")).filter(Boolean);
           autoTags = Array.from(new Set([...autoTags, ...nerTags])).slice(0, 30);
+
+          // Dedup: load recent knowledge for this role and check similarity
+          const existing = await db.select({ id: agentKnowledge.id, content: agentKnowledge.content })
+            .from(agentKnowledge)
+            .where(and(eq(agentKnowledge.role_key, role_key), eq(agentKnowledge.status, "active")))
+            .orderBy(desc(agentKnowledge.created_at))
+            .limit(50);
+
+          for (const ex of existing) {
+            const exVec = await embedCached((ex.content ?? "").slice(0, 500)).catch(() => null);
+            if (!exVec) continue;
+            const sim = cosineSimilarity(newVec, exVec);
+            if (sim >= 0.92) {
+              res.status(409).json({
+                message: "Near-duplicate knowledge entry detected (similarity ≥ 92%). Update the existing entry instead.",
+                duplicate_id: ex.id,
+                similarity: Math.round(sim * 1000) / 1000,
+              });
+              return;
+            }
+          }
         }
-      } catch { /* NER failure is non-fatal */ }
+      } catch (nerErr) {
+        // NER/dedup failure is non-fatal — proceed without enrichment
+        console.warn("[agent-knowledge POST] NER/dedup skipped:", (nerErr as Error).message);
+      }
 
       const row = {
         role_key,
