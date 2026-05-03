@@ -3733,6 +3733,7 @@ export default function PricingTool() {
                         {sortHeader("currency", "Cur.")}
                         {sortHeader("weekly_price", "NET1/wk")}
                         {sortHeader("total_fee", "NET1 Total (k€)")}
+                        <TableHead className="text-right whitespace-nowrap" title="Total fee ÷ duration weeks — raw blended weekly, no team-size normalisation">Total÷Wks</TableHead>
                         {sortHeader("outcome", "Outcome")}
                         {sortHeader("end_date", "End date")}
                         <TableHead className="w-24">Actions</TableHead>
@@ -3810,6 +3811,11 @@ export default function PricingTool() {
                             <TableCell className="font-semibold text-sm font-mono text-right">
                               {proposalNet1Total(p) > 0
                                 ? `${Math.round(proposalNet1Total(p) / 1000).toLocaleString("it-IT")}`
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="font-semibold text-sm font-mono text-right text-slate-500">
+                              {p.total_fee && (p.duration_weeks ?? 0) > 0
+                                ? fmt(Math.round(p.total_fee / p.duration_weeks!))
                                 : "—"}
                             </TableCell>
                             <TableCell>
@@ -6864,13 +6870,17 @@ export default function PricingTool() {
                                   const net1wk  = proposalNet1(p);
                                   const net1tot = Math.round(net1wk * (p.duration_weeks ?? 0));
                                   const year = (p.proposal_date ?? "").slice(0, 4) || "—";
+                                  const outcomeColor =
+                                    p.outcome === "won"  ? "text-emerald-600" :
+                                    p.outcome === "lost" ? "text-red-500" :
+                                    "text-amber-500"; // tbd / null
                                   return (
                                     <TableRow key={p.id ?? i}>
-                                      <TableCell className="text-[11px] font-semibold py-1">{p.project_name}</TableCell>
-                                      <TableCell className="text-[11px] text-center py-1 text-muted-foreground">{year}</TableCell>
-                                      <TableCell className="text-[11px] text-center py-1">{p.duration_weeks ?? "—"}</TableCell>
-                                      <TableCell className="text-[11px] text-right py-1 font-mono font-semibold text-emerald-700">{fmtC(net1tot)}</TableCell>
-                                      <TableCell className="text-[11px] text-right py-1 font-mono text-emerald-600">{fmtC(net1wk)}</TableCell>
+                                      <TableCell className={`text-[11px] font-semibold py-1 ${outcomeColor}`}>{p.project_name}</TableCell>
+                                      <TableCell className={`text-[11px] text-center py-1 ${outcomeColor}`}>{year}</TableCell>
+                                      <TableCell className={`text-[11px] text-center py-1 ${outcomeColor}`}>{p.duration_weeks ?? "—"}</TableCell>
+                                      <TableCell className={`text-[11px] text-right py-1 font-mono font-semibold ${outcomeColor}`}>{fmtC(net1tot)}</TableCell>
+                                      <TableCell className={`text-[11px] text-right py-1 font-mono font-semibold ${outcomeColor}`}>{fmtC(net1wk)}</TableCell>
                                     </TableRow>
                                   );
                                 })}
@@ -7676,6 +7686,15 @@ export default function PricingTool() {
             </DialogDescription>
           </DialogHeader>
 
+          {/* datalist for native browser autocomplete — employees + freelancer hint */}
+          <datalist id="team-picker-names">
+            {employees.map(e => (
+              <option key={e.id} value={e.name}>
+                {e.current_role_code ? `${e.name} · ${e.current_role_code}` : e.name}
+              </option>
+            ))}
+          </datalist>
+
           <div className="space-y-4 py-2">
             {/* Manager — required for open engagements */}
             <div className="space-y-1">
@@ -7683,27 +7702,21 @@ export default function PricingTool() {
                 Manager (EM)
                 <span className="text-red-500">*</span>
               </Label>
-              <Select
-                value={teamDraftManager || "__none__"}
-                onValueChange={(v) => setTeamDraftManager(v === "__none__" ? "" : v)}
-              >
-                <SelectTrigger className="h-8 text-sm">
-                  <SelectValue placeholder="Select manager…" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— none —</SelectItem>
-                  {employees.length === 0 && (
-                    <div className="px-2 py-3 text-[11px] text-muted-foreground italic">
-                      No employees loaded. Check connection or visit /employees.
-                    </div>
-                  )}
-                  {employees.map(e => (
-                    <SelectItem key={e.id} value={e.name}>
-                      {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Free-text input backed by datalist — works even when roster
+                  fails to load, and allows typing any freelancer name. */}
+              <Input
+                list="team-picker-names"
+                value={teamDraftManager}
+                onChange={e => setTeamDraftManager(e.target.value)}
+                placeholder="Type or pick from roster…"
+                className="h-8 text-sm"
+                autoComplete="off"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                {employees.length > 0
+                  ? `${employees.length} roster member${employees.length === 1 ? "" : "s"} available — or type any name for a freelancer`
+                  : "Type any name (roster not loaded — freelancers always accepted)"}
+              </p>
             </div>
 
             {/* Associates — optional, multi-add */}
@@ -7717,25 +7730,15 @@ export default function PricingTool() {
                 )}
                 {teamDraftAssociates.map((a, i) => (
                   <div key={i} className="flex gap-1.5 items-center">
-                    <Select
-                      value={a.name || "__none__"}
-                      onValueChange={(v) => setTeamDraftAssociates(prev =>
-                        prev.map((x, j) => j === i
-                          ? { ...x, name: v === "__none__" ? "" : v }
-                          : x))}
-                    >
-                      <SelectTrigger className="h-8 text-sm flex-1">
-                        <SelectValue placeholder="Select associate…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">— none —</SelectItem>
-                        {employees.map(e => (
-                          <SelectItem key={e.id} value={e.name}>
-                            {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      list="team-picker-names"
+                      value={a.name}
+                      onChange={(e) => setTeamDraftAssociates(prev =>
+                        prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                      placeholder="Name (roster or freelancer)…"
+                      className="h-8 text-sm flex-1"
+                      autoComplete="off"
+                    />
                     <Input
                       type="text"
                       value={a.role}
@@ -7755,7 +7758,7 @@ export default function PricingTool() {
                 <Button
                   type="button" size="sm" variant="outline"
                   className="h-7 text-xs"
-                  onClick={() => setTeamDraftAssociates(prev => [...prev, { role: "ASC", name: "" }])}
+                  onClick={() => setTeamDraftAssociates(prev => [...prev, { role: "Associate", name: "" }])}
                 >+ Add associate</Button>
               </div>
             </div>

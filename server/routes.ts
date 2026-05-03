@@ -7932,5 +7932,109 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── /api/agentic/data-health ─────────────────────────────────────────────
+  // Cross-table consistency check used by the COO "Start Work" daily routine.
+  // Returns color-coded findings (ok / warn / error) across employees,
+  // pricing_proposals, org_agents, and agents tables.
+  app.get("/api/agentic/data-health", requireAuth, async (_req, res) => {
+    try {
+      const now = new Date();
+      const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+        .toISOString().slice(0, 10);
+
+      // ── Employees ──────────────────────────────────────────────────────
+      // Note: employees table has no status column — count all employees
+      const empR = await db.execute(sql`
+        SELECT
+          COUNT(*) AS total_count,
+          SUM(CASE WHEN current_gross_fixed_year IS NULL OR current_gross_fixed_year = 0 THEN 1 ELSE 0 END) AS zero_salary,
+          SUM(CASE WHEN current_role_code IS NULL OR current_role_code = '' THEN 1 ELSE 0 END) AS no_role
+        FROM employees
+      `);
+      const empRow = (empR.rows[0] ?? {}) as Record<string, unknown>;
+
+      // ── Pricing proposals ─────────────────────────────────────────────
+      const propR = await db.execute(sql`
+        SELECT
+          SUM(CASE WHEN total_fee IS NULL OR total_fee = 0 THEN 1 ELSE 0 END) AS zero_fee,
+          SUM(CASE WHEN outcome = 'pending' AND proposal_date <= ${ninetyDaysAgo} THEN 1 ELSE 0 END) AS stale_pending,
+          SUM(CASE WHEN outcome = 'won' AND end_date IS NULL THEN 1 ELSE 0 END) AS won_no_end,
+          SUM(CASE WHEN outcome = 'won' AND (manager_name IS NULL OR manager_name = '') THEN 1 ELSE 0 END) AS won_no_mgr
+        FROM pricing_proposals
+      `);
+      const propRow = (propR.rows[0] ?? {}) as Record<string, unknown>;
+
+      // ── Org roles ─────────────────────────────────────────────────────
+      const orgR = await db.execute(sql`
+        SELECT
+          SUM(CASE WHEN status = 'vacant' THEN 1 ELSE 0 END) AS vacant,
+          SUM(CASE WHEN goals = '[]'::jsonb OR goals IS NULL THEN 1 ELSE 0 END) AS no_goals,
+          SUM(CASE WHEN okrs = '[]'::jsonb OR okrs IS NULL THEN 1 ELSE 0 END) AS no_okrs
+        FROM org_agents
+      `);
+      const orgRow = (orgR.rows[0] ?? {}) as Record<string, unknown>;
+
+      // ── AIOS agents ───────────────────────────────────────────────────
+      const agR = await db.execute(sql`
+        SELECT
+          SUM(CASE WHEN status = 'active' AND (mission IS NULL OR mission = '') THEN 1 ELSE 0 END) AS no_mission
+        FROM agents
+      `);
+      const agRow = (agR.rows[0] ?? {}) as Record<string, unknown>;
+
+      const n = (v: unknown) => Number(v ?? 0);
+      type CS = "ok" | "warn" | "error";
+      interface HC { area: string; label: string; status: CS; value: string; count: number }
+      const checks: HC[] = [];
+
+      // Employees
+      checks.push({ area: "Employees", label: "Total headcount", status: "ok",
+        value: `${n(empRow.total_count)} employees`, count: n(empRow.total_count) });
+      checks.push({ area: "Employees", label: "Missing salary (€0)",
+        status: n(empRow.zero_salary) > 0 ? "error" : "ok",
+        value: `${n(empRow.zero_salary)} with €0 or missing salary`, count: n(empRow.zero_salary) });
+      if (n(empRow.no_role) > 0) checks.push({ area: "Employees", label: "Missing role code",
+        status: "error", value: `${n(empRow.no_role)} without a role code`, count: n(empRow.no_role) });
+
+      // Proposals
+      checks.push({ area: "Proposals", label: "Missing total fee",
+        status: n(propRow.zero_fee) > 0 ? "warn" : "ok",
+        value: `${n(propRow.zero_fee)} with no total fee`, count: n(propRow.zero_fee) });
+      checks.push({ area: "Proposals", label: "Stale pending (90 d+)",
+        status: n(propRow.stale_pending) > 0 ? "warn" : "ok",
+        value: `${n(propRow.stale_pending)} pending for 90+ days`, count: n(propRow.stale_pending) });
+      checks.push({ area: "Proposals", label: "Won — missing end date",
+        status: n(propRow.won_no_end) > 0 ? "warn" : "ok",
+        value: `${n(propRow.won_no_end)} won proposals missing end date`, count: n(propRow.won_no_end) });
+      checks.push({ area: "Proposals", label: "Won — missing manager",
+        status: n(propRow.won_no_mgr) > 0 ? "warn" : "ok",
+        value: `${n(propRow.won_no_mgr)} won proposals missing manager`, count: n(propRow.won_no_mgr) });
+
+      // Org
+      checks.push({ area: "Org", label: "Vacant roles",
+        status: n(orgRow.vacant) > 0 ? "warn" : "ok",
+        value: `${n(orgRow.vacant)} vacant roles`, count: n(orgRow.vacant) });
+      checks.push({ area: "Org", label: "Roles without goals",
+        status: n(orgRow.no_goals) > 0 ? "warn" : "ok",
+        value: `${n(orgRow.no_goals)} roles with no goals`, count: n(orgRow.no_goals) });
+      checks.push({ area: "Org", label: "Roles without OKRs",
+        status: n(orgRow.no_okrs) > 0 ? "warn" : "ok",
+        value: `${n(orgRow.no_okrs)} roles with no OKRs`, count: n(orgRow.no_okrs) });
+
+      // Agents
+      checks.push({ area: "Agents", label: "Agents without mission",
+        status: n(agRow.no_mission) > 0 ? "warn" : "ok",
+        value: `${n(agRow.no_mission)} active agents missing mission`, count: n(agRow.no_mission) });
+
+      const errors = checks.filter(c => c.status === "error").length;
+      const warns  = checks.filter(c => c.status === "warn").length;
+      const score  = Math.max(0, 100 - errors * 20 - warns * 5);
+
+      res.json({ ok: errors === 0, score, errors, warns, checks, checked_at: now.toISOString() });
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
   return httpServer;
 }

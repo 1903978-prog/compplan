@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen, Play, XCircle } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import OrgTree, { type OrgTreeNode } from "@/components/OrgTree";
 
@@ -150,6 +150,11 @@ export default function OrgChart() {
 
   const [showStartAgents, setShowStartAgents] = useState(false);
   const [aiosAgents, setAiosAgents] = useState<AiosAgent[]>([]);
+
+  // Side panel for the depth-cap "show direct reports" chevron.
+  // When set to a role, a slide-in panel on the right lists that
+  // role's direct reports (the depth-4+ nodes hidden from the chart).
+  const [subtreeFor, setSubtreeFor] = useState<OrgRole | null>(null);
 
   // Collapse state — set of role_keys whose children are hidden.
   // Seeded on data load: all depth-1 nodes (direct reports of root) are
@@ -614,6 +619,10 @@ export default function OrgChart() {
                 const r = roles.find(x => x.role_key === id);
                 if (r) setAddKnowledgeForRole(r);
               }}
+              onShowSubtree={(id) => {
+                const r = roles.find(x => x.role_key === id);
+                if (r) setSubtreeFor(r);
+              }}
             />
           </div>
         );
@@ -813,6 +822,79 @@ export default function OrgChart() {
           }
         }}
       />
+
+      {/* Direct-reports side panel — opens when the user clicks the chevron
+          on a depth-3 card. Lists everyone reporting (primary boss) to that
+          role; click any item to open its detail dialog. */}
+      {subtreeFor && (() => {
+        const reports = roles
+          .filter(r => r.parent_role_key === subtreeFor.role_key)
+          .sort((a, b) => a.sort_order - b.sort_order);
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/20"
+              onClick={() => setSubtreeFor(null)}
+            />
+            <div className="fixed top-0 right-0 z-50 h-full w-[380px] max-w-[90vw] bg-card border-l border-slate-200 dark:border-slate-700 shadow-xl flex flex-col">
+              <div className="flex items-start justify-between gap-2 p-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Direct reports of</div>
+                  <div className="text-base font-semibold truncate">{subtreeFor.role_name}</div>
+                  {subtreeFor.person_name && (
+                    <div className="text-xs text-muted-foreground truncate">{subtreeFor.person_name}</div>
+                  )}
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => setSubtreeFor(null)} className="h-7 w-7 p-0 shrink-0">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {reports.length === 0 && (
+                  <div className="text-sm text-muted-foreground italic text-center py-8">
+                    No direct reports.
+                  </div>
+                )}
+                {reports.map(r => {
+                  const overdue = r.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
+                  const knowledgeCount = knowledge.filter(k => k.role_key === r.role_key).length;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => { setOpenRole(r); setSubtreeFor(null); }}
+                      className="w-full text-left flex items-start gap-3 p-2.5 rounded-md border border-slate-200 dark:border-slate-700 hover:border-slate-400 hover:shadow-sm bg-card"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center font-semibold text-xs shrink-0">
+                        {(r.kind ?? "agent") === "agent" ? <Bot className="w-4 h-4" /> : initialsOf(r.person_name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm leading-tight truncate">{r.role_name}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {r.person_name || (r.status === "vacant" ? "Vacant" : "—")}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {statusBadge(r.status)}
+                          {overdue > 0 && (
+                            <Badge className="bg-red-100 text-red-700 border-red-200 text-[10px]">{overdue} overdue</Badge>
+                          )}
+                          {knowledgeCount > 0 && (
+                            <Badge variant="secondary" className="text-[10px]">{knowledgeCount} 📚</Badge>
+                          )}
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="p-3 border-t border-slate-100 dark:border-slate-800 text-[11px] text-muted-foreground">
+                Roles below depth 3 live here to keep the chart compact.
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -1103,9 +1185,73 @@ function RoleDetailDialog({
   onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
   onTaskToggle: (task: TaskItem, newStatus: TaskItem["status"]) => Promise<void>;
 }) {
+  // ── Start Work state — hooks must be declared before early returns ────────
+  const [swOpen, setSwOpen] = useState(false);
+  const [swLoading, setSwLoading] = useState(false);
+  const [healthData, setHealthData] = useState<{
+    ok: boolean; score: number; errors: number; warns: number; checked_at: string;
+    checks: { area: string; label: string; status: "ok" | "warn" | "error"; value: string; count: number }[];
+  } | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [swPrompt, setSwPrompt] = useState<string | null>(null);
+
+  // Reset panel when a different role is opened
+  useEffect(() => {
+    setSwOpen(false);
+    setSwLoading(false);
+    setHealthData(null);
+    setHealthError(null);
+    setSwPrompt(null);
+  }, [role?.role_key]);
+
   if (!role) return null;
   const openTasks = role.tasks_10d.filter(t => t.status !== "done");
   const doneTasks = role.tasks_10d.filter(t => t.status === "done");
+  const isCoo = role.role_key === "coo";
+
+  async function handleStartWork() {
+    if (isCoo) {
+      setSwOpen(true);
+      setSwLoading(true);
+      setHealthData(null);
+      setHealthError(null);
+      try {
+        const r = await fetch("/api/agentic/data-health", { credentials: "include" });
+        if (!r.ok) throw new Error(await r.text());
+        setHealthData(await r.json());
+      } catch (e) {
+        setHealthError((e as Error).message);
+      } finally {
+        setSwLoading(false);
+      }
+    } else {
+      const today = new Date().toLocaleDateString("en-GB", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const agentName = AIOS_NAME_BY_ROLE_KEY[role.role_key] ?? role.role_name;
+      const prompt = [
+        `=== ${agentName} — Daily Work Brief ===`,
+        `Date: ${today}`,
+        ``,
+        `MISSION`,
+        aiosAgent?.mission ?? "(no mission defined)",
+        ``,
+        `GOALS`,
+        role.goals.length > 0 ? role.goals.map((g, i) => `${i + 1}. ${g}`).join("\n") : "(no goals set)",
+        ``,
+        `OPEN TASKS (next 10 days)`,
+        openTasks.length > 0 ? openTasks.map(t => `- [${t.status}] ${t.title} (due ${t.due_date})`).join("\n") : "(no open tasks)",
+        ``,
+        `INSTRUCTIONS`,
+        `Review your priority tasks above. For each open task:`,
+        `1. Update status if completed or blocked`,
+        `2. Surface any risks or blockers to the COO`,
+        `3. Propose any new tasks or actions arising from today's context`,
+        ``,
+        `Start your response with a brief status summary, then address each task.`,
+      ].join("\n");
+      setSwPrompt(prompt);
+      setSwOpen(true);
+    }
+  }
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1139,8 +1285,111 @@ function RoleDetailDialog({
                 {role.person_name ?? "(unfilled)"} · last updated {fmtDate(role.updated_at)}
               </DialogDescription>
             </div>
+            {/* ── Start Work button ── */}
+            <Button
+              size="sm"
+              variant={swOpen ? "default" : "outline"}
+              className="h-8 text-xs shrink-0 gap-1.5 mt-0.5"
+              onClick={handleStartWork}
+            >
+              <Play className="w-3 h-3" />
+              Start Work
+            </Button>
           </div>
         </DialogHeader>
+
+        {/* ── Start Work panel ─────────────────────────────────────────────── */}
+        {swOpen && (
+          <div className="mt-3 border rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/40">
+              <span className="text-sm font-semibold flex items-center gap-1.5">
+                <Play className="w-3.5 h-3.5 text-primary" />
+                {isCoo ? "Data Health Check" : `${AIOS_NAME_BY_ROLE_KEY[role.role_key] ?? role.role_name} — Daily Brief`}
+              </span>
+              <button onClick={() => setSwOpen(false)} className="text-muted-foreground hover:text-foreground p-0.5">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {isCoo ? (
+              swLoading ? (
+                <div className="px-4 py-6 text-center text-sm text-muted-foreground animate-pulse">
+                  Running consistency checks…
+                </div>
+              ) : healthError ? (
+                <div className="px-4 py-4 text-sm text-red-600 flex items-center gap-2">
+                  <XCircle className="w-4 h-4 shrink-0" /> {healthError}
+                </div>
+              ) : healthData ? (
+                <div className="p-3 space-y-2">
+                  {/* Score bar */}
+                  <div className="flex items-center gap-3 pb-2 border-b">
+                    <span className={`text-3xl font-bold tabular-nums ${
+                      healthData.score >= 80 ? "text-emerald-600" :
+                      healthData.score >= 60 ? "text-amber-600" : "text-red-600"
+                    }`}>{healthData.score}<span className="text-base font-normal text-muted-foreground">/100</span></span>
+                    <div className="text-xs space-y-0.5">
+                      <div>
+                        <span className="text-red-600 font-semibold">{healthData.errors} error{healthData.errors !== 1 ? "s" : ""}</span>
+                        {" · "}
+                        <span className="text-amber-600 font-semibold">{healthData.warns} warning{healthData.warns !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="text-muted-foreground">Checked at {new Date(healthData.checked_at).toLocaleTimeString()}</div>
+                    </div>
+                    <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs" onClick={handleStartWork}>
+                      ↺ Refresh
+                    </Button>
+                  </div>
+                  {/* Per-area checks */}
+                  {(["Employees", "Proposals", "Org", "Agents"] as const).map(area => {
+                    const areaChecks = healthData.checks.filter(c => c.area === area);
+                    if (areaChecks.length === 0) return null;
+                    return (
+                      <div key={area}>
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground px-1 mb-0.5">{area}</div>
+                        <div className="space-y-0.5">
+                          {areaChecks.map((c, i) => (
+                            <div key={i} className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${
+                              c.status === "ok"   ? "bg-emerald-50 text-emerald-800" :
+                              c.status === "warn" ? "bg-amber-50 text-amber-800" :
+                                                    "bg-red-50 text-red-800"
+                            }`}>
+                              {c.status === "ok"
+                                ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                                : c.status === "warn"
+                                ? <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                                : <XCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />}
+                              <span className="flex-1">{c.label}</span>
+                              <span className="text-[10px] font-mono opacity-80">{c.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null
+            ) : (
+              /* Non-COO: copyable Cowork prompt */
+              <div className="p-3">
+                <p className="text-xs text-muted-foreground mb-2">Copy this prompt into Cowork to start your daily brief:</p>
+                <Textarea
+                  readOnly
+                  value={swPrompt ?? ""}
+                  rows={12}
+                  className="text-xs font-mono resize-y"
+                  onClick={e => (e.target as HTMLTextAreaElement).select()}
+                />
+                <Button
+                  size="sm" variant="outline" className="mt-2 h-7 text-xs"
+                  onClick={() => navigator.clipboard.writeText(swPrompt ?? "")}
+                >
+                  Copy to clipboard
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Reports to — dropdown moves the role under a different parent.
             "Dotted line" toggles between SOLID (normal subordinate, indented

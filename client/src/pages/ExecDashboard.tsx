@@ -3,7 +3,6 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Link } from "wouter";
-import { useStore } from "@/hooks/use-store";
 import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
@@ -22,6 +21,22 @@ import {
 // fetched once on mount and cached in local state; hitting refresh in
 // the browser re-runs the fetches.
 // -----------------------------------------------------------------------
+
+// Minimal employee shape — only the fields used by ExecDashboard KPIs.
+// Fetched directly from /api/employees so the dashboard is self-contained
+// and doesn't rely on the app-level Zustand store being populated.
+interface Employee {
+  id: string;
+  name: string;
+  current_role_code: string | null;
+  current_gross_fixed_year: number | null;
+  meal_voucher_daily: number | null;
+  date_of_birth: string | null;
+  hire_date: string | null;
+  last_promo_date: string | null;
+  performance_score: number | null;
+  monthly_ratings: { month?: string; date?: string }[];
+}
 
 interface Candidate {
   id: number;
@@ -52,20 +67,14 @@ interface PricingProposal {
   duration_weeks: number | null;
   outcome: "pending" | "won" | "lost" | null;
   proposal_date: string | null;
+  start_date?: string | null;
   region: string | null;
   currency: string | null;
   end_date?: string | null;
   last_invoice_at?: string | null;
-}
-
-interface WonProject {
-  id: number;
-  client_name: string | null;
-  project_name: string | null;
-  total_amount: number | null;
-  won_date: string | null;
-  status: string | null;
-  currency: string | null;
+  manager_name?: string | null;
+  team_members?: { role: string; name: string }[] | null;
+  win_probability?: number | null;
 }
 
 // EUR conversion helpers — rough, UI-only. Real reporting uses backend.
@@ -137,9 +146,16 @@ function FunnelRow({ label, count, max, tone }: {
 
 // LocalStorage cache key — stores the last successful dashboard payload
 // so the page renders instantly on revisit, then silently refreshes.
-const DASH_CACHE_KEY = "exec_dashboard_cache";
+// Bump the key any time the cache shape changes, to avoid stale data.
+const DASH_CACHE_KEY = "exec_dashboard_cache_v3";
 
-function readCache(): { candidates: Candidate[]; invoices: Invoice[]; proposals: PricingProposal[]; wonProjects: WonProject[]; ts: string } | null {
+function readCache(): {
+  employees: Employee[];
+  candidates: Candidate[];
+  invoices: Invoice[];
+  proposals: PricingProposal[];
+  ts: string;
+} | null {
   try {
     const raw = localStorage.getItem(DASH_CACHE_KEY);
     if (!raw) return null;
@@ -147,23 +163,32 @@ function readCache(): { candidates: Candidate[]; invoices: Invoice[]; proposals:
   } catch { return null; }
 }
 
-function writeCache(candidates: Candidate[], invoices: Invoice[], proposals: PricingProposal[], wonProjects: WonProject[]) {
+function writeCache(
+  employees: Employee[],
+  candidates: Candidate[],
+  invoices: Invoice[],
+  proposals: PricingProposal[],
+) {
   try {
-    localStorage.setItem(DASH_CACHE_KEY, JSON.stringify({ candidates, invoices, proposals, wonProjects, ts: new Date().toISOString() }));
+    localStorage.setItem(
+      DASH_CACHE_KEY,
+      JSON.stringify({ employees, candidates, invoices, proposals, ts: new Date().toISOString() }),
+    );
   } catch { /* quota exceeded — ignore */ }
 }
 
 export default function ExecDashboard() {
-  const { employees } = useStore();
-
   // ── Instant render from localStorage cache, then refresh in background ──
-  // On first mount, read the last successful payload from localStorage
-  // so the page paints in <50ms instead of waiting 1-3s for 4 API calls.
+  // ExecDashboard is FULLY SELF-CONTAINED — it fetches every data source it
+  // needs directly (including /api/employees) rather than relying on the
+  // app-level Zustand store. This prevents headcount/payroll showing 0 when
+  // the store resets (e.g. Vite HMR) or when the dashboard is opened before
+  // the store's loadData() completes.
   const cached = readCache();
+  const [employees, setEmployees] = useState<Employee[]>(cached?.employees ?? []);
   const [candidates, setCandidates] = useState<Candidate[]>(cached?.candidates ?? []);
   const [invoices, setInvoices] = useState<Invoice[]>(cached?.invoices ?? []);
   const [proposals, setProposals] = useState<PricingProposal[]>(cached?.proposals ?? []);
-  const [wonProjects, setWonProjects] = useState<WonProject[]>(cached?.wonProjects ?? []);
   // Active pricing cases — used by the "Commercial Options (3 timelines)"
   // card to preview each deal's Net fee across its configured timelines.
   const [pricingCases, setPricingCases] = useState<any[]>([]);
@@ -182,28 +207,28 @@ export default function ExecDashboard() {
       // already has content and we're just silently refreshing.
       if (!cached) setLoading(true);
       try {
-        const [cRes, iRes, pRes, wRes, casesRes, settingsRes] = await Promise.all([
+        const [empRes, cRes, iRes, pRes, casesRes, settingsRes] = await Promise.all([
+          fetch("/api/employees",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/hiring/candidates",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/harvest/invoices",   { credentials: "include" }).then(r => r.ok ? r.json().then(d => d.invoices ?? []) : []),
           fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-          fetch("/api/won-projects",       { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/pricing/cases",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/pricing/settings",   { credentials: "include" }).then(r => r.ok ? r.json() : null),
         ]);
         if (cancelled) return;
+        const emp = Array.isArray(empRes) ? empRes : [];
         const c = Array.isArray(cRes) ? cRes : [];
         const i = Array.isArray(iRes) ? iRes : [];
         const p = Array.isArray(pRes) ? pRes : [];
-        const w = Array.isArray(wRes) ? wRes : [];
+        setEmployees(emp);
         setCandidates(c);
         setInvoices(i);
         setProposals(p);
-        setWonProjects(w);
         setPricingCases(Array.isArray(casesRes) ? casesRes : []);
         const roles = Array.isArray(settingsRes?.roles) ? settingsRes.roles : [];
         setPricingRoles(roles.map((r: any) => ({ id: r.id, default_daily_rate: Number(r.default_daily_rate ?? 0) })));
         setLastFetch(new Date());
-        writeCache(c, i, p, w);
+        writeCache(emp, c, i, p);
       } catch (e) {
         console.error("[ExecDashboard] fetch failed", e);
       }
@@ -364,12 +389,13 @@ export default function ExecDashboard() {
     };
   }, [proposals, dashNet1Map]);
 
-  // ─── Active projects from wonProjects ────────────────────────────────
+  // ─── Active projects from proposals (won) ────────────────────────────
+  // Proposals are the single source of truth — wonProjects table is not used.
   const active = useMemo(() => {
-    const list = wonProjects.filter(p => (p.status ?? "").toLowerCase() === "active");
-    const value = list.reduce((s, p) => s + toEUR(p.total_amount, p.currency), 0);
+    const list = proposals.filter(p => p.outcome === "won");
+    const value = list.reduce((s, p) => s + propNet1Total(p), 0);
     return { count: list.length, value };
-  }, [wonProjects]);
+  }, [proposals, dashNet1Map]);
 
   // ─── Ongoing projects from pricing_proposals (won + end_date in future) ───
   // A proposal becomes "ongoing" once the user enters an end_date that's in
@@ -483,15 +509,20 @@ export default function ExecDashboard() {
         signals.length === 1 ? "medium" :
         "low";
 
-      return { id: emp.id, name: emp.name, role: emp.current_role_code, signals, level };
+      return { id: emp.id, name: emp.name, role: emp.current_role_code ?? "—", signals, level };
     }).filter(r => r.level !== "low");
   }, [employees]);
 
-  // ─── Recent BD activity — last 10 proposals ──────────────────────────
-  const recentBD = useMemo(() => {
-    return [...proposals]
-      .sort((a, b) => String(b.proposal_date ?? "").localeCompare(String(a.proposal_date ?? "")))
-      .slice(0, 8);
+  // ─── All proposals sorted by date (TBD first, then most recent) ─────
+  const allProposals = useMemo(() => {
+    return [...proposals].sort((a, b) => {
+      // TBD first, then Won, then Lost — within each group: newest first
+      const order = (o: string | null | undefined) =>
+        o === "pending" || !o ? 0 : o === "won" ? 1 : 2;
+      const oDiff = order(a.outcome) - order(b.outcome);
+      if (oDiff !== 0) return oDiff;
+      return String(b.proposal_date ?? "").localeCompare(String(a.proposal_date ?? ""));
+    });
   }, [proposals]);
 
   const maxFunnel = Math.max(1, hiring.potential, hiring.after_intro, hiring.after_csi_asc, hiring.after_csi_lm, hiring.hired, hiring.out);
@@ -845,56 +876,104 @@ export default function ExecDashboard() {
         </Card>
       </div>
 
-      {/* ── Row 3: Recent BD + Top overdue invoices ───────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-                <TrendingUp className="w-4 h-4 text-blue-600" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold">Recent proposals</h3>
-                <p className="text-[11px] text-muted-foreground">Last 8 by date</p>
-              </div>
+      {/* ── All Proposals (single source of truth for projects) ──────── */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+              <TrendingUp className="w-4 h-4 text-blue-600" />
             </div>
-            <Link href="/bd" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
-              all <ArrowUpRight className="w-3 h-3" />
-            </Link>
+            <div>
+              <h3 className="text-sm font-semibold">All proposals</h3>
+              <p className="text-[11px] text-muted-foreground">
+                {allProposals.length} total · TBD first, then Won, then Lost
+              </p>
+            </div>
           </div>
-          {recentBD.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic text-center py-6">No proposals yet.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {recentBD.map(p => {
-                const tone =
-                  p.outcome === "won"  ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-                  p.outcome === "lost" ? "bg-red-50 border-red-200 text-red-700" :
-                                         "bg-slate-50 border-slate-200 text-slate-700";
-                const icon =
-                  p.outcome === "won"  ? <CheckCircle2 className="w-3 h-3" /> :
-                  p.outcome === "lost" ? <TrendingDown className="w-3 h-3" /> :
-                                         <Clock className="w-3 h-3" />;
-                return (
-                  <div key={p.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
-                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase ${tone}`}>
-                      {icon}{p.outcome === "won" ? "won" : p.outcome === "lost" ? "lost" : "tbd"}
-                    </span>
-                    <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
-                      <span className="font-medium">{p.client_name ?? "—"}</span>
-                      <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
-                    </span>
-                    <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
-                      {eur(propNet1Total(p))}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
+          <Link href="/pricing" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+            manage <ArrowUpRight className="w-3 h-3" />
+          </Link>
+        </div>
+        {allProposals.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic text-center py-6">No proposals yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-left text-[10px] uppercase text-muted-foreground tracking-wide">
+                <tr className="border-b">
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Project</th>
+                  <th className="py-2 pr-3">Client</th>
+                  <th className="py-2 pr-3">Start date</th>
+                  <th className="py-2 pr-3">End date</th>
+                  <th className="py-2 pr-3">Team booked</th>
+                  <th className="py-2 text-right">NET1 total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allProposals.map(p => {
+                  const isWon  = p.outcome === "won";
+                  const isLost = p.outcome === "lost";
+                  const isTbd  = !isWon && !isLost;
+                  const rowCls = isWon ? "border-emerald-100" : isLost ? "border-red-100" : "border-amber-100";
+                  const badgeCls = isWon
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                    : isLost
+                    ? "bg-red-50 border-red-200 text-red-700"
+                    : "bg-amber-50 border-amber-200 text-amber-700";
+                  const badgeIcon = isWon
+                    ? <CheckCircle2 className="w-3 h-3" />
+                    : isLost
+                    ? <TrendingDown className="w-3 h-3" />
+                    : <Clock className="w-3 h-3" />;
+                  const badgeLabel = isWon ? "Won" : isLost ? "Lost" : "TBD";
+                  const teamBooked = !!(p.manager_name || (p.team_members && p.team_members.length > 0));
+                  const teamLabel = teamBooked
+                    ? (p.manager_name ?? "") + (p.team_members && p.team_members.length > 0 ? ` +${p.team_members.length}` : "")
+                    : null;
+                  return (
+                    <tr key={p.id} className={`border-b last:border-0 hover:bg-muted/20 ${rowCls}`}>
+                      <td className="py-1.5 pr-3">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-bold uppercase whitespace-nowrap ${badgeCls}`}>
+                          {badgeIcon}{badgeLabel}
+                        </span>
+                      </td>
+                      <td className="py-1.5 pr-3 font-mono font-semibold whitespace-nowrap">
+                        <Link href="/pricing" className="hover:underline">{p.project_name ?? "—"}</Link>
+                      </td>
+                      <td className="py-1.5 pr-3 text-muted-foreground max-w-[140px] truncate" title={p.client_name ?? ""}>
+                        {p.client_name ?? "—"}
+                      </td>
+                      <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">
+                        {p.start_date ?? <span className="text-muted-foreground italic">—</span>}
+                      </td>
+                      <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">
+                        {p.end_date ?? <span className="text-muted-foreground italic">—</span>}
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        {teamBooked ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold whitespace-nowrap">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span className="truncate max-w-[110px]" title={teamLabel ?? ""}>{teamLabel}</span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground italic">not booked</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right font-mono font-semibold tabular-nums" data-privacy="blur">
+                        {propNet1Total(p) > 0 ? eur(propNet1Total(p)) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
-        {/* Top overdue invoices */}
+      {/* ── Top overdue invoices ─────────────────────────────────── */}
+      {(() => { return (
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -955,7 +1034,7 @@ export default function ExecDashboard() {
             );
           })()}
         </Card>
-      </div>
+      ); })()}
 
       {/* Commercial Options — three-timeline preview per active pricing case.
           Mirrors the block rendered inside each case so leadership sees the
