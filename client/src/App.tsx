@@ -61,7 +61,7 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
   items: { href: string; label: string; icon: React.ElementType }[];
   basePaths: string[];
 }) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const isActive = basePaths.some(p => location === p || location.startsWith(p + "/"));
@@ -77,7 +77,12 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={() => {
+          // Clicking the label always navigates to the first sub-page.
+          // The dropdown also opens so the user can pick a different section.
+          navigate(items[0].href);
+          setOpen(v => !v);
+        }}
         className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-accent ${
           isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground"
         }`}
