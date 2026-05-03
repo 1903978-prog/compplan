@@ -951,37 +951,67 @@ export default function ExecDashboard() {
           </div>
         </div>
 
-        {/* Deal list — one row per project, sorted most-recent first */}
-        {recentBD.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic text-center py-4">No proposals yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0">
-            {recentBD.map(p => {
-              const badgeCls =
-                p.outcome === "won"  ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-                p.outcome === "lost" ? "bg-red-50 border-red-200 text-red-700" :
-                                       "bg-amber-50 border-amber-200 text-amber-700";
-              const icon =
-                p.outcome === "won"  ? <CheckCircle2 className="w-3 h-3" /> :
-                p.outcome === "lost" ? <TrendingDown className="w-3 h-3" /> :
-                                       <Clock className="w-3 h-3" />;
-              return (
-                <div key={p.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-muted/40 last:border-0">
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase ${badgeCls}`}>
-                    {icon}{p.outcome === "won" ? "won" : p.outcome === "lost" ? "lost" : "tbd"}
-                  </span>
-                  <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
-                    <span className="font-medium">{p.client_name ?? "—"}</span>
-                    <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
-                  </span>
-                  <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
-                    {eur(propNet1Total(p))}
-                  </span>
-                </div>
-              );
-            })}
+        {/* Two-column layout: TBD proposals left, Ongoing projects right */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
+          {/* Left: TBD / pending proposals */}
+          <div>
+            <div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+              <Clock className="w-3 h-3" /> TBD · {bd.pendingList.length}
+            </div>
+            {bd.pendingList.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No pending proposals.</p>
+            ) : (
+              <div>
+                {bd.pendingList.slice(0, 8).map(p => (
+                  <div key={p.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-muted/40 last:border-0">
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase bg-amber-50 border-amber-200 text-amber-700 shrink-0">
+                      tbd
+                    </span>
+                    <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
+                      <span className="font-medium">{p.client_name ?? "—"}</span>
+                      <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
+                    </span>
+                    <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
+                      {eur(propNet1Total(p))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Right: Ongoing projects (won + end_date in future) */}
+          <div>
+            <div className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" /> Ongoing · {ongoing.list.length}
+            </div>
+            {ongoing.list.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No ongoing projects.</p>
+            ) : (
+              <div>
+                {ongoing.list.slice(0, 8).map(p => {
+                  const todayMs = Date.now();
+                  const end = p.end_date ? new Date(p.end_date) : null;
+                  const wksLeft = end ? Math.max(0, Math.round((end.getTime() - todayMs) / (7 * 86_400_000))) : null;
+                  return (
+                    <div key={p.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-muted/40 last:border-0">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase bg-emerald-50 border-emerald-200 text-emerald-700 shrink-0">
+                        live
+                      </span>
+                      <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
+                        <span className="font-medium">{p.client_name ?? "—"}</span>
+                        <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
+                      </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {wksLeft != null ? `${wksLeft}w` : p.end_date ?? "—"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       </Card>
 
       {/* Commercial Options — three-timeline preview per active pricing case.
