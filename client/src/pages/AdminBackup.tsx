@@ -295,7 +295,7 @@ export default function AdminBackup() {
             tip-of-master, no node_modules / dist / .env. Useful as a quick offline
             snapshot or to seed a new Claude Code session on another machine.
           </p>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               onClick={() => { window.location.href = "/api/code-download"; }}
               size="lg"
@@ -304,6 +304,15 @@ export default function AdminBackup() {
             >
               <Download className="w-4 h-4 mr-2" />
               Download code (zip)
+            </Button>
+            <Button
+              onClick={() => { window.location.href = "/api/admin/download-backup"; }}
+              size="lg"
+              variant="outline"
+              data-testid="button-download-db"
+            >
+              <Database className="w-4 h-4 mr-2" />
+              Download all DB
             </Button>
             <span className="text-xs text-muted-foreground">
               The fastest official copy is <code className="text-xs bg-muted px-1 py-0.5 rounded">git clone https://github.com/1903978-prog/compplan</code>
