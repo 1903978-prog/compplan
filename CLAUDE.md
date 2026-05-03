@@ -29,6 +29,7 @@ When proposing a change, ask: does this serve consolidation, analysis, or agency
 - **LLM integration:** `@anthropic-ai/sdk` via `server/aiProviders.ts`. Used by `proposalAI.ts`, `proposalBriefs.ts`, brief runs, agent proposals, agent knowledge.
 - **Auth:** cookie-based (`cookie-parser`) + bearer where appropriate. Public endpoints (e.g. `/api/ceo-brief`) are explicitly marked.
 - **Other server modules:** `hiringSync.ts`, `proposalDeck.ts`, `slideImageExporter.ts`, `readAISeed.ts`, `seedProposals.ts`.
+- **Micro-AI layer:** `server/microAI/` — 12 local modules that handle NLP, scoring, pricing, and caching without LLM calls. See section below.
 
 ## Repo layout
 
@@ -52,11 +53,56 @@ server/
   hiringSync.ts     Hiring candidate sync
   static.ts         Serves built client in prod
   vite.ts           Vite middleware in dev
+  microAI/          Wave 1 Micro-AI modules (see below)
+    index.ts        Registry + re-exports
+    embedder.ts     A1 — local 384-dim embeddings (Xenova/all-MiniLM-L6-v2)
+    classifier.ts   A2 — keyword lexicon + zero-shot intent/sentiment/urgency
+    ner.ts          A3 — NER via compromise.js (people, orgs, dates, money)
+    scoring.ts      B7 — pure SQL 6-dim agent scorecard (zero LLM)
+    pricingReasoner.ts  B8 — decision-tree fee corridors from pricing_rules DB
+    decisionRights.ts   B9 — L0-L3 approval level via regex rules
+    emailComposer.ts    C13 — 20 slot-based email templates
+    commitmentExtractor.ts  D17 — regex + NER commitment extraction
+    replyClassifier.ts      D18 — inbound reply classification
+    cache.ts            E21 — SHA-256 keyed DB response cache
+    contextLoader.ts    E23 — memoised agent context pre-loader
+    logger.ts           Telemetry writer (micro_ai_log table)
 shared/schema.ts    Drizzle tables (very large — read before changing)
 script/build.ts     Vite + esbuild
 scripts/            Standalone scripts (DB ops, migrations, etc.)
 docs/               Internal docs
 ```
+
+## Micro-AI layer (Wave 1)
+
+All 12 modules live in `server/microAI/`. The registry is `MODULE_REGISTRY` in `index.ts`.
+
+**Env vars:**
+| Var | Default | Effect |
+|-----|---------|--------|
+| `USE_LOCAL_AI_FIRST` | `true` | When `true`, all micro-AI modules run before any Claude call. Set `false` to bypass (testing). |
+
+**New DB tables added (Wave 1):**
+- `ai_response_cache` — SHA-256 keyed E21 cache, 30-day TTL default
+- `micro_ai_log` — per-call telemetry (module, latency_ms, saved_tokens, cache_hit)
+- `pricing_rules` — 20 seeded rules for B8 fee corridors, editable via `/admin/micro-ai`
+
+**Admin UI:** `/admin/micro-ai` — token savings, cache stats, module call counts, pricing rule editor.
+
+**Wired callsites:**
+- `proposalAI.ts` — B8 fee suggestion runs in parallel with Claude; E21 caches full analysis (TTL 1d)
+- `proposalBriefs.ts` — E21 caches slide briefs, project approach, single slide (TTL 1d)
+- `aiosService.ts` — B9 post-processes every deliverable; E21 caches boss + CEO consolidations; E23 pre-loads agent context
+- `GET /api/agent-knowledge?q=` — A1 semantic re-rank via cosine similarity
+- `POST /api/agent-knowledge` — A3 auto-tags NER entities; E22 rejects near-duplicates (cosine ≥ 0.92)
+- `POST /api/brief-runs/:id/events` — D17 extracts commitments; D18 classifies `inbound_reply` events
+- `POST /api/agentic/log` — D17 + D18 on `inbound_reply`; A2 urgency/sentiment on all text events
+- `GET /api/agentic/agents/:id/score?days=7` — B7 pure SQL scorecard
+- `GET /api/agentic/agents/scores?days=7` — B7 all-active-agent overview
+- `GET /api/pricing/fee-suggest` — B8 standalone fee corridor query
+- `POST /api/agentic/extract-commitments` — D17 standalone
+- `POST /api/agentic/classify-reply` — D18 standalone
+- `POST /api/agentic/classify-text` — A2 standalone
 
 ## Scripts
 
