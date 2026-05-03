@@ -912,6 +912,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (Array.isArray(allowed.goals)) allowed.goals = (allowed.goals as unknown[]).slice(0, 30);
       if (Array.isArray(allowed.okrs)) allowed.okrs = (allowed.okrs as unknown[]).slice(0, 10);
       if (Array.isArray(allowed.tasks_10d)) allowed.tasks_10d = (allowed.tasks_10d as unknown[]).slice(0, 50);
+      if (Array.isArray(allowed.templates)) allowed.templates = (allowed.templates as unknown[]).slice(0, 50);
       allowed.updated_at = new Date().toISOString();
       const rows = await db.update(orgAgents).set(allowed as any).where(eq(orgAgents.id, id)).returning();
       if (rows.length === 0) { res.status(404).json({ message: "Role not found" }); return; }

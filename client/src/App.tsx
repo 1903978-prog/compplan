@@ -1,4 +1,4 @@
-import { Switch, Route, Link, useLocation } from "wouter";
+import { Switch, Route, Link, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -341,7 +341,7 @@ function Navigation() {
                 <div className="text-[13px] font-black tracking-widest text-primary uppercase whitespace-nowrap">Eendigo</div>
                 <div className="text-[9px] font-semibold tracking-[0.2em] text-muted-foreground uppercase whitespace-nowrap">Command Center</div>
               </div>
-              <span className="text-[9px] font-mono text-muted-foreground/50 self-end mb-0.5">v24Mar</span>
+              <span className="text-[9px] font-mono text-muted-foreground/50 self-end mb-0.5">{typeof __BUILD_LABEL__ !== "undefined" ? __BUILD_LABEL__ : "vDev"}</span>
             </div>
             <div className="flex items-center gap-1">
               {/* Executive area — single-screen rollup + the org chart
@@ -536,6 +536,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/exec" component={ExecDashboard} />
       <Route path="/exec/org-chart" component={OrgChart} />
+      <Route path="/org-chart"><Redirect to="/exec/org-chart" /></Route>
       <Route path="/exec/okr" component={OkrTree} />
       <Route path="/exec/staffing" component={StaffingGantt} />
       <Route path="/exec/brief-stream" component={BriefStream} />

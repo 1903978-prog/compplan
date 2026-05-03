@@ -1,5 +1,7 @@
 import { type Request, type Response, type NextFunction } from "express";
 import cookieParser from "cookie-parser";
+import { rateLimit } from "express-rate-limit";
+import { timingSafeEqual } from "crypto";
 
 const SESSION_COOKIE = "compplan_session";
 const SESSION_VALUE = "authenticated";
@@ -21,10 +23,18 @@ function passwordMissingAllowedInDev(): boolean {
   return true;
 }
 
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, message: "Too many login attempts — try again in 15 minutes." },
+});
+
 export function setupAuth(app: import("express").Express) {
   app.use(cookieParser());
 
-  app.post("/api/auth/login", (req: Request, res: Response) => {
+  app.post("/api/auth/login", loginLimiter, (req: Request, res: Response) => {
     const { password } = req.body as { password?: string };
     const appPassword = process.env.APP_PASSWORD;
 
@@ -40,7 +50,9 @@ export function setupAuth(app: import("express").Express) {
       return;
     }
 
-    if (password === appPassword) {
+    const a = Buffer.from(String(password ?? ""));
+    const b = Buffer.from(appPassword);
+    if (a.length === b.length && timingSafeEqual(a, b)) {
       res.cookie(SESSION_COOKIE, SESSION_VALUE, {
         httpOnly: true,
         secure: isProd,
