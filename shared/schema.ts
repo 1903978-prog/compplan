@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, real, jsonb, uuid, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, real, jsonb, uuid, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -1214,6 +1214,9 @@ export const agents = pgTable("agents", {
   skills: jsonb("skills").$type<string[]>(),
   knowledge: jsonb("knowledge").$type<string[]>(),
   training: jsonb("training").$type<string[]>(),
+  // KM agent extensions (additive — existing AIOS agents default to 'aios_classic')
+  agent_type: text("agent_type").notNull().default("aios_classic"),   // aios_classic | km_specialist | km_router
+  knowledge_base_path: text("knowledge_base_path"),                    // relative path within KM root
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -1552,6 +1555,34 @@ export const agentKpis = pgTable("agent_kpis", {
   created_at:        text("created_at").notNull(),
 });
 export type AgentKpi = typeof agentKpis.$inferSelect;
+
+// ── KM Query Sessions ─────────────────────────────────────────────────────────
+// One row per user question sent to runKmCycle(). Stores router decision,
+// all specialist outputs (in km_outputs), and the final synthesised answer.
+export const kmSessions = pgTable("km_sessions", {
+  id:              uuid("id").primaryKey().defaultRandom(),
+  user_query:      text("user_query").notNull(),
+  router_output:   jsonb("router_output").$type<{ agents_to_call: string[]; reasoning: string } | null>().default(null),
+  status:          text("status").notNull().default("pending"), // pending | running | completed | failed
+  final_answer:    text("final_answer"),
+  total_sources:   jsonb("total_sources").$type<string[]>().default([]),
+  error:           text("error"),
+  created_at:      text("created_at").notNull(),
+  completed_at:    text("completed_at"),
+});
+export type KmSession = typeof kmSessions.$inferSelect;
+
+export const kmOutputs = pgTable("km_outputs", {
+  id:           serial("id").primaryKey(),
+  session_id:   uuid("session_id").notNull(),
+  agent_name:   text("agent_name").notNull(),
+  answer:       text("answer"),
+  sources:      jsonb("sources").$type<string[]>().default([]),
+  confidence:   text("confidence"),                              // high | medium | low
+  raw_response: text("raw_response"),
+  created_at:   text("created_at").notNull(),
+});
+export type KmOutput = typeof kmOutputs.$inferSelect;
 
 // ── CEO Brief Runs (in-app CEO Brief feature) ────────────────────────────────
 // Separate from the AIOS ceo_briefs table above (which is tied to aios_cycles).

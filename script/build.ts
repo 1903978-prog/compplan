@@ -6,6 +6,9 @@ import { rm, readFile } from "fs/promises";
 // which helps cold start times
 const allowlist = [
   "@anthropic-ai/sdk",
+  "mammoth",
+  "pdf-parse",
+  "unzipper",
   "@google/generative-ai",
   "axios",
   "connect-pg-simple",

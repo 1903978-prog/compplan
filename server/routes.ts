@@ -2,8 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, agentKpis } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, agentKpis, kmSessions, kmOutputs } from "@shared/schema";
 import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
+import { runKmCycle, getKmSessions, getKmSessionDetail } from "./kmService";
 import { runCeoBrief } from "./ceoBriefRunner";
 import { ceoBriefRuns, ceoBriefRunDecisions } from "@shared/schema";
 import { db } from "./db";
@@ -7607,6 +7608,39 @@ RULES:
         return;
       }
       res.json(updated[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── KM Agent Routes ────────────────────────────────────────────────────────
+
+  // POST /api/km/query — run a KM query cycle
+  app.post("/api/km/query", requireAuth, async (req, res) => {
+    try {
+      const { query } = req.body ?? {};
+      if (!query || typeof query !== "string" || !query.trim()) {
+        res.status(400).json({ message: "query is required" });
+        return;
+      }
+      const result = await runKmCycle(query.trim());
+      res.json(result);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/km/sessions — list recent KM sessions
+  app.get("/api/km/sessions", requireAuth, async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(String(req.query.limit ?? "20"), 10) || 20, 100);
+      const sessions = await getKmSessions(limit);
+      res.json(sessions);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/km/sessions/:id — session detail + specialist outputs
+  app.get("/api/km/sessions/:id", requireAuth, async (req, res) => {
+    try {
+      const detail = await getKmSessionDetail(req.params.id);
+      if (!detail.session) { res.status(404).json({ message: "Session not found" }); return; }
+      res.json(detail);
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

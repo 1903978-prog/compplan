@@ -3436,6 +3436,71 @@ Sequential IDs: PAR-001.
       )
     `);
 
+  // ── KM agent extensions on agents table ──────────────────────────────────────
+  await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS agent_type          TEXT NOT NULL DEFAULT 'aios_classic'`);
+  await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge_base_path TEXT`);
+
+  // ── KM sessions + outputs tables ─────────────────────────────────────────────
+  await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS km_sessions (
+        id            UUID  PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_query    TEXT  NOT NULL,
+        router_output JSONB,
+        status        TEXT  NOT NULL DEFAULT 'pending',
+        final_answer  TEXT,
+        total_sources JSONB DEFAULT '[]',
+        error         TEXT,
+        created_at    TEXT  NOT NULL,
+        completed_at  TEXT
+      )
+    `);
+  await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS km_outputs (
+        id           SERIAL PRIMARY KEY,
+        session_id   UUID   NOT NULL REFERENCES km_sessions(id) ON DELETE CASCADE,
+        agent_name   TEXT   NOT NULL,
+        answer       TEXT,
+        sources      JSONB  DEFAULT '[]',
+        confidence   TEXT,
+        raw_response TEXT,
+        created_at   TEXT   NOT NULL
+      )
+    `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS km_outputs_session_idx ON km_outputs(session_id)`);
+
+  // ── Seed 16 KM agents (idempotent — skip if name already exists) ─────────────
+  {
+    const kmAgentDefs = [
+      { name: "diagnostic-agent",       mission: "Diagnostic & Due Diligence specialist. Methodology, frameworks, commercial DD, and past project references.", agent_type: "km_specialist", knowledge_base_path: "01. By topic/01. Diagnostic & DD/"          },
+      { name: "strategy-gtm-agent",     mission: "Strategy & GTM specialist. Strategic planning, marketing, distributor management, and past projects.",         agent_type: "km_specialist", knowledge_base_path: "01. By topic/02. Strategy & Marketing/"        },
+      { name: "sfe-agent",              mission: "Sales Force Effectiveness specialist. SFE diagnostic, account planning, forecasting, CRM, coaching, KPIs.",   agent_type: "km_specialist", knowledge_base_path: "01. By topic/03. SFE & Sales Effectiveness/"    },
+      { name: "hunting-capdb-agent",    mission: "CAPDB & Hunting specialist. Account plans, segmentation, cross-sell, calibration workshops.",                  agent_type: "km_specialist", knowledge_base_path: "01. By topic/04. CAPDB & Hunting/"              },
+      { name: "pricing-agent",          mission: "Pricing specialist. Pricing strategy, GTN, distribution, diagnostics, tenders, past projects.",               agent_type: "km_specialist", knowledge_base_path: "01. By topic/05. Pricing/"                      },
+      { name: "incentives-agent",       mission: "Incentives & OKR specialist. Incentive plan design, OKR frameworks, performance mechanics.",                  agent_type: "km_specialist", knowledge_base_path: "01. By topic/06. Incentives/"                    },
+      { name: "org-governance-agent",   mission: "Organization & Governance specialist. Org design, RACI, job descriptions, assessment, coaching, comms.",      agent_type: "km_specialist", knowledge_base_path: "01. By topic/07. Organization & Governance/"    },
+      { name: "transformation-agent",   mission: "Transformation & Change specialist. Change management, PMI, transformation methodology.",                     agent_type: "km_specialist", knowledge_base_path: "01. By topic/08. Transformation & Change/"        },
+      { name: "digital-ai-agent",       mission: "Digital & AI specialist. AI strategy, digital strategy, advanced analytics, multichannel, past projects.",    agent_type: "km_specialist", knowledge_base_path: "01. By topic/09. AI Digital Analytics/"          },
+      { name: "war-room-agent",         mission: "War Room specialist. War room methodology, execution discipline, past project references.",                    agent_type: "km_specialist", knowledge_base_path: "01. By topic/10. War rooms/"                      },
+      { name: "operations-agent",       mission: "Operations specialist. Operational processes and operational excellence frameworks.",                          agent_type: "km_specialist", knowledge_base_path: "01. By topic/11. Operations/"                     },
+      { name: "pmo-agent",              mission: "PMO & Action Plans specialist. PMO templates, action plans, email templates, project management.",            agent_type: "km_specialist", knowledge_base_path: "01. By topic/12. PMO & Action plans/"              },
+      { name: "project-closeout-agent", mission: "Project Closeout specialist. Closeout methodology, end-of-project action plans, lessons learned.",           agent_type: "km_specialist", knowledge_base_path: "01. By topic/13. Project closeout/"              },
+      { name: "comex-playbooks-agent",  mission: "COMEX Playbooks specialist. General playbooks and engagement-specific playbooks (Sandoz, Syngenta, PIF).",   agent_type: "km_specialist", knowledge_base_path: "01. By topic/14. Comex playbooks/"              },
+      { name: "misc-agent",             mission: "Miscellaneous KM specialist. Catch-all for topics not covered by dedicated specialist agents.",              agent_type: "km_specialist", knowledge_base_path: "01. By topic/15. Misc/"                           },
+      { name: "km-router-agent",        mission: "KM Router. Receives any user question and routes to the 1-3 most relevant KM specialist agents.",           agent_type: "km_router",     knowledge_base_path: null                                              },
+    ] as const;
+    const now = new Date().toISOString();
+    for (const def of kmAgentDefs) {
+      const existing = await db.execute(sql`SELECT 1 FROM agents WHERE name = ${def.name} LIMIT 1`);
+      if ((existing as any).rows?.length === 0) {
+        await db.execute(sql`
+            INSERT INTO agents (name, mission, status, agent_type, knowledge_base_path, created_at, updated_at)
+            VALUES (${def.name}, ${def.mission}, 'active', ${def.agent_type}, ${def.knowledge_base_path ?? null}, ${now}, ${now})
+          `);
+        console.log(`[seed] KM agent inserted: ${def.name}`);
+      }
+    }
+  }
+
   // ── Seed job descriptions for known agents (idempotent — only sets when NULL) ──
   type AgentJd = { name_fragment: string; role_title: string; function_area: string; jd: string };
   const agentJDs: AgentJd[] = [
