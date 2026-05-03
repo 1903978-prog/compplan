@@ -867,6 +867,9 @@ export async function seedDatabase() {
   // before a proposal is finalised and moves to pricing_proposals.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS win_probability REAL`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS start_date TEXT`);
+  // outcome = 'won' | 'lost' | null. When set, the case moves to the
+  // "Won/Lost Pricings" tab and is hidden from the active Pricing Cases list.
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS outcome TEXT`);
 
   // (Removed) Seed pricing_cases for specific reference projects (EMV01,
   // SCHA01) — these were development scaffolding for the three-timeline

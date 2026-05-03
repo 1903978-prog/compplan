@@ -75,6 +75,9 @@ interface PricingCase {
   expected_impact_eur?: number | null;    // expected € impact on client's P&L
   win_probability?: number | null;        // 0-100 — Livio's estimate of winning; drives 24-week HR staffing forecast
   start_date?: string | null;             // YYYY-MM-DD expected delivery start
+  // outcome: 'won' | 'lost' | null. Set via "Mark as Won / Lost" inside case.
+  // Cases with an outcome move to the "Won/Lost Pricings" tab.
+  outcome?: string | null;
   // proposal_options_count: 1 = single-option mode (only Option 1 rendered),
   // 3 = full 3-option mode. Hidden options keep their state in case_timelines
   // so toggling back is lossless.
@@ -718,7 +721,7 @@ export default function PricingTool() {
   // 0% commitment whenever the duration changes. Options 2 and 3 stay
   // user-editable. Runs only when duration_weeks actually changes so it
   // doesn't stomp on a user's Option 2/3 edits.
-  const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
+  const [mainTab, setMainTab] = useState<"cases" | "wonlost_cases" | "history" | "winloss">("cases");
   // Won Projects moved to the AR / Invoicing page (Task 11) — no state here.
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
@@ -2366,7 +2369,22 @@ export default function PricingTool() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      toast({ title: `Project marked as ${outcome}`, description: `${payload.project_name} saved to win/loss history` });
+
+      // Stamp the case itself so it moves to the Won/Lost tab.
+      if (form.id) {
+        await fetch(`/api/pricing/cases/${form.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_name: form.project_name, outcome }),
+        });
+      }
+
+      toast({
+        title: `Project marked as ${outcome}`,
+        description: `${displayProjectName(form.project_name, form.revision_letter)} moved to Won/Lost Pricings`,
+      });
+      setView("list");
+      setMainTab("wonlost_cases");
       loadAll();
     } catch {
       toast({ title: "Failed to save", variant: "destructive" });
@@ -2947,10 +2965,20 @@ export default function PricingTool() {
       : canonicalGrossWeekly;
   }, [canonicalGrossWeekly, variableFeePct]);
 
+  // Split cases: active (no outcome) vs resolved (won / lost)
+  const activeCases = cases.filter((c: any) => !c.outcome || (c.outcome !== "won" && c.outcome !== "lost"));
+  const resolvedCases = cases.filter((c: any) => c.outcome === "won" || c.outcome === "lost");
+
+  /** For Won/Lost tab: strip the trailing revision letter (e.g. "RUB07A" → "RUB07"). */
+  const wonDisplayName = (c: any): string => {
+    const full = displayProjectName(c.project_name, c.revision_letter);
+    return full.replace(/[A-Z]$/, "");
+  };
+
   // Stats for list view
-  const avgTarget = cases.length
-    ? cases.filter(c => c.recommendation?.target_weekly).reduce((s, c) => s + (c.recommendation?.target_weekly ?? 0), 0)
-      / cases.filter(c => c.recommendation?.target_weekly).length || 0
+  const avgTarget = activeCases.length
+    ? activeCases.filter((c: any) => c.recommendation?.target_weekly).reduce((s: number, c: any) => s + (c.recommendation?.target_weekly ?? 0), 0)
+      / activeCases.filter((c: any) => c.recommendation?.target_weekly).length || 0
     : 0;
 
   // ── LIST VIEW ───────────────────────────────────────────────────────────────
@@ -3020,9 +3048,10 @@ export default function PricingTool() {
         {/* Tab navigation */}
         <div className="flex gap-1 border-b">
           {([
-            { id: "cases" as const, label: "Pricing Cases", icon: DollarSign, count: cases.length },
-            { id: "history" as const, label: "Past Projects", icon: History, count: proposals.length },
-            { id: "winloss" as const, label: "Win-Loss", icon: TrendingUp, count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
+            { id: "cases" as const,         label: "Pricing Cases",    icon: DollarSign,  count: activeCases.length },
+            { id: "wonlost_cases" as const, label: "Won/Lost Pricings",icon: CheckCircle, count: resolvedCases.length },
+            { id: "history" as const,       label: "Past Projects",    icon: History,     count: proposals.length },
+            { id: "winloss" as const,       label: "Win-Loss",         icon: TrendingUp,  count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
           ]).map(tab => (
             <button
               key={tab.id}
@@ -3047,10 +3076,11 @@ export default function PricingTool() {
             {/* Stats */}
             <div className="grid grid-cols-4 gap-4">
               {[
-                { label: "Total Cases", value: cases.length, icon: Users },
-                { label: "With Recommendations", value: cases.filter(c => c.recommendation).length, icon: TrendingUp },
-                { label: "Avg Target / Week", value: avgTarget > 0 ? fmt(avgTarget) : "—", icon: DollarSign },
-                { label: "Past Proposals", value: proposals.length, icon: TrendingDown },
+                { label: "Total Cases",           value: activeCases.length, icon: Users },
+                { label: "With Recommendations",  value: activeCases.filter((c: any) => c.recommendation).length, icon: TrendingUp },
+                { label: "Avg Target / Week",     value: avgTarget > 0 ? fmt(avgTarget) : "—", icon: DollarSign },
+                // "Proposals" = finalized cases still TBD (Final, no won/lost outcome yet).
+                { label: "Proposals (TBD)",       value: activeCases.filter((c: any) => c.status === "final").length, icon: TrendingDown },
               ].map(stat => (
                 <Card key={stat.label} className="p-4">
                   <div className="flex items-center justify-between">
@@ -3092,13 +3122,13 @@ export default function PricingTool() {
             {/* Cases table */}
             {loading ? (
               <div className="text-center py-12 text-muted-foreground">Loading...</div>
-            ) : cases.length === 0 ? (
+            ) : activeCases.length === 0 ? (
               <Card className="py-16">
                 <CardContent className="flex flex-col items-center gap-4">
                   <DollarSign className="w-12 h-12 text-muted-foreground/30" />
                   <div className="text-center">
-                    <p className="font-semibold text-lg">No pricing cases yet</p>
-                    <p className="text-sm text-muted-foreground">Create your first case to get started</p>
+                    <p className="font-semibold text-lg">No active pricing cases</p>
+                    <p className="text-sm text-muted-foreground">Create a new case, or check the Won/Lost Pricings tab for resolved deals</p>
                   </div>
                   <Button onClick={openNewForm}><Plus className="w-4 h-4 mr-2" /> New Pricing Case</Button>
                 </CardContent>
@@ -3123,7 +3153,7 @@ export default function PricingTool() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {cases.map(c => {
+                    {activeCases.map(c => {
                       // Target/wk = the option that matches THIS case's
                       // duration_weeks. The user's mental model is "what's
                       // the per-week rate I'm actually quoting on this case"
@@ -3403,6 +3433,74 @@ export default function PricingTool() {
               </Card>
             )}
           </>
+        ) : mainTab === "wonlost_cases" ? (
+          /* ── WON / LOST PRICINGS TAB ───────────────────────────────── */
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Pricing cases that have been marked as Won or Lost. The project name is shown without the revision letter.
+              Click a row to re-open the case for reference.
+            </p>
+            {resolvedCases.length === 0 ? (
+              <Card className="py-14">
+                <CardContent className="flex flex-col items-center gap-3 text-center">
+                  <CheckCircle className="w-10 h-10 text-muted-foreground/30" />
+                  <p className="text-sm text-muted-foreground">No cases have been marked Won or Lost yet.</p>
+                  <p className="text-xs text-muted-foreground">Open a pricing case and click "Mark as Won" or "Mark as Lost" to move it here.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Client</TableHead>
+                      <TableHead>Fund</TableHead>
+                      <TableHead>Region</TableHead>
+                      <TableHead>Duration</TableHead>
+                      <TableHead>Target / wk</TableHead>
+                      <TableHead>Outcome</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="w-16">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {resolvedCases.map((c: any) => (
+                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
+                        <TableCell className="font-semibold font-mono">{wonDisplayName(c)}</TableCell>
+                        <TableCell>{c.client_name || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">{c.fund_name || "—"}</TableCell>
+                        <TableCell>{c.region || "—"}</TableCell>
+                        <TableCell>{c.duration_weeks ? `${c.duration_weeks}w` : "—"}</TableCell>
+                        <TableCell className="font-mono text-primary font-semibold">
+                          {c.recommendation?.canonical_net_weekly
+                            ? fmt(c.recommendation.canonical_net_weekly)
+                            : c.recommendation?.target_weekly
+                              ? fmt(c.recommendation.target_weekly)
+                              : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {c.outcome === "won"
+                            ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
+                            : <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-xs">
+                          {c.created_at ? new Date(c.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+                        </TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-1">
+                            <button onClick={() => openCase(c)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Open case">
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            )}
+          </div>
         ) : mainTab === "history" ? (
           /* ── PAST PROJECTS TAB ─────────────────────────────────────── */
           <div className="space-y-4">

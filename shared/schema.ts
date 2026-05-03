@@ -362,6 +362,10 @@ export const pricingCases = pgTable("pricing_cases", {
   // forecast uses created_at as a proxy. Livio sets this when the case is
   // being prepared; confirms it before signing.
   start_date: text("start_date"),
+  // outcome: 'won' | 'lost' | null. Set when the user clicks "Mark as Won/Lost"
+  // on the case. Cases with an outcome are hidden from the active "Pricing Cases"
+  // tab and shown in the "Won/Lost Pricings" tab instead.
+  outcome: text("outcome"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
