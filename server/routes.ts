@@ -5350,6 +5350,38 @@ RULES:
     }
   }
 
+  // ── /api/agentic/data-health ── COO Start Work panel ───────────────────
+  app.get("/api/agentic/data-health", requireAuth, async (_req, res) => {
+    try {
+      const d90 = new Date(Date.now()-90*24*60*60*1000).toISOString().slice(0,10);
+      const empR = await db.execute(sql`SELECT COUNT(*) AS tc, SUM(CASE WHEN current_gross_fixed_year IS NULL OR current_gross_fixed_year=0 THEN 1 ELSE 0 END) AS zs, SUM(CASE WHEN current_role_code IS NULL OR current_role_code='' THEN 1 ELSE 0 END) AS nr FROM employees`);
+      const propR = await db.execute(sql`SELECT SUM(CASE WHEN total_fee IS NULL OR total_fee=0 THEN 1 ELSE 0 END) AS zf, SUM(CASE WHEN outcome='pending' AND proposal_date<=${d90} THEN 1 ELSE 0 END) AS sp, SUM(CASE WHEN outcome='won' AND end_date IS NULL THEN 1 ELSE 0 END) AS we, SUM(CASE WHEN outcome='won' AND (manager_name IS NULL OR manager_name='') THEN 1 ELSE 0 END) AS wm FROM pricing_proposals`);
+      const orgR = await db.execute(sql`SELECT SUM(CASE WHEN status='vacant' THEN 1 ELSE 0 END) AS vc, SUM(CASE WHEN goals='[]'::jsonb OR goals IS NULL THEN 1 ELSE 0 END) AS ng, SUM(CASE WHEN okrs='[]'::jsonb OR okrs IS NULL THEN 1 ELSE 0 END) AS no FROM org_agents`);
+      const agR  = await db.execute(sql`SELECT SUM(CASE WHEN status='active' AND (mission IS NULL OR mission='') THEN 1 ELSE 0 END) AS nm FROM agents`);
+      const n=(v:unknown)=>Number(v??0);
+      type C={area:string;label:string;status:"ok"|"warn"|"error";value:string;count:number};
+      const checks:C[]=[];
+      const e=(empR.rows??empR)[0] as Record<string,unknown>;
+      checks.push({area:"Employees",label:"Total headcount",status:"ok",value:`${n(e.tc)} employees`,count:n(e.tc)});
+      const zs=n(e.zs); checks.push({area:"Employees",label:"Zero / missing salary",status:zs>0?"warn":"ok",value:zs>0?`${zs} employees`:"none",count:zs});
+      const nr=n(e.nr); checks.push({area:"Employees",label:"No role code",status:nr>0?"warn":"ok",value:nr>0?`${nr} employees`:"none",count:nr});
+      const p=(propR.rows??propR)[0] as Record<string,unknown>;
+      const zf=n(p.zf); checks.push({area:"Proposals",label:"Zero / missing fee",status:zf>0?"error":"ok",value:zf>0?`${zf} proposals`:"none",count:zf});
+      const sp=n(p.sp); checks.push({area:"Proposals",label:"Stale pending (>90d)",status:sp>0?"warn":"ok",value:sp>0?`${sp} proposals`:"none",count:sp});
+      const we=n(p.we); checks.push({area:"Proposals",label:"Won without end date",status:we>0?"warn":"ok",value:we>0?`${we} proposals`:"none",count:we});
+      const wm=n(p.wm); checks.push({area:"Proposals",label:"Won without manager",status:wm>0?"warn":"ok",value:wm>0?`${wm} proposals`:"none",count:wm});
+      const o=(orgR.rows??orgR)[0] as Record<string,unknown>;
+      const vc=n(o.vc); checks.push({area:"Org",label:"Vacant roles",status:vc>0?"warn":"ok",value:vc>0?`${vc} roles`:"none",count:vc});
+      const ng=n(o.ng); checks.push({area:"Org",label:"Roles without goals",status:ng>0?"warn":"ok",value:ng>0?`${ng} roles`:"none",count:ng});
+      const nok=n(o.no); checks.push({area:"Org",label:"Roles without OKRs",status:nok>0?"warn":"ok",value:nok>0?`${nok} roles`:"none",count:nok});
+      const ag=(agR.rows??agR)[0] as Record<string,unknown>;
+      const nm=n(ag.nm); checks.push({area:"Agents",label:"Active agents missing mission",status:nm>0?"error":"ok",value:nm>0?`${nm} agents`:"none",count:nm});
+      const errors=checks.filter(c=>c.status==="error").length;
+      const warns=checks.filter(c=>c.status==="warn").length;
+      res.json({ok:errors===0,score:Math.max(0,100-errors*15-warns*5),errors,warns,checked_at:new Date().toISOString(),checks});
+    } catch(e){res.status(500).json({message:(e as Error).message});}
+  });
+
   // ── /api/agentic/agents ─────────────────────────────────────────────────
   app.get("/api/agentic/agents", requireAuth, async (_req, res) => {
     try {
