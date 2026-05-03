@@ -402,6 +402,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Save code zip directly to LOCAL_BACKUP_DIR ──────────────────────
+  // POST /api/admin/save-code-local — runs git archive and writes the zip
+  // to process.env.LOCAL_BACKUP_DIR (set in .env). Returns { saved, path }.
+  // Only meaningful when the server is running on the same machine as the
+  // user (i.e. local dev). On Render LOCAL_BACKUP_DIR is unset → 400.
+  app.post("/api/admin/save-code-local", requireAuth, async (_req, res) => {
+    const dir = process.env.LOCAL_BACKUP_DIR?.trim();
+    if (!dir) {
+      return res.status(400).json({ error: "LOCAL_BACKUP_DIR is not set in .env" });
+    }
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `compplan-code-${date}.zip`;
+      const dest = path.join(dir, filename);
+      const out = fs.createWriteStream(dest);
+      const git = spawn("git", ["archive", "--format=zip", "HEAD"], { cwd: process.cwd() });
+      git.stdout.pipe(out);
+      await new Promise<void>((resolve, reject) => {
+        out.on("finish", resolve);
+        out.on("error", reject);
+        git.on("error", reject);
+        git.on("close", (code) => { if (code !== 0) reject(new Error(`git archive exited ${code}`)); });
+      });
+      res.json({ saved: true, path: dest, filename });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Save DB backup directly to LOCAL_BACKUP_DIR ──────────────────────
+  // POST /api/admin/save-backup-local — same dump as download-backup but
+  // writes directly to LOCAL_BACKUP_DIR instead of streaming to browser.
+  app.post("/api/admin/save-backup-local", requireAuth, async (_req, res) => {
+    const dir = process.env.LOCAL_BACKUP_DIR?.trim();
+    if (!dir) {
+      return res.status(400).json({ error: "LOCAL_BACKUP_DIR is not set in .env" });
+    }
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const { db: localDb } = await import("./db");
+      const { sql: localSql } = await import("drizzle-orm");
+      const dump: Record<string, any[]> = {};
+      for (const t of BACKUP_TABLES) {
+        try {
+          const r = await localDb.execute(localSql.raw(`SELECT * FROM ${t}`));
+          dump[t] = r.rows as any[];
+        } catch {
+          dump[t] = [];
+        }
+      }
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `compplan-backup-${date}.json`;
+      const dest = path.join(dir, filename);
+      fs.writeFileSync(dest, JSON.stringify({ exportedAt: new Date().toISOString(), schemaVersion: 2, tables: dump }, null, 2), "utf8");
+      res.json({ saved: true, path: dest, filename });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Org Chart ────────────────────────────────────────────────────────
   // Powers /exec/org-chart. Returns all roles ordered by sort_order so the
   // CEO comes first and direct reports follow. Editable from the UI; also

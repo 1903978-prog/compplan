@@ -38,6 +38,59 @@ interface ImportReport {
 // Everything here was previously scattered across the top nav and GitHub
 // workflow file; centralising it under Admin makes the disaster-recovery
 // story obvious and reachable from one place.
+// ── Save-to-disk buttons ──────────────────────────────────────────────────────
+// Calls the server-side POST endpoints that write files directly to
+// LOCAL_BACKUP_DIR (set in .env). Shows a toast with the saved path on success.
+function LocalSaveButtons() {
+  const { toast } = useToast();
+  const [savingCode, setSavingCode] = useState(false);
+  const [savingDb,   setSavingDb]   = useState(false);
+
+  async function saveLocal(endpoint: string, label: string, setter: (v: boolean) => void) {
+    setter(true);
+    try {
+      const res = await fetch(endpoint, { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? res.statusText);
+      toast({
+        title: `${label} saved`,
+        description: data.path,
+      });
+    } catch (err: any) {
+      toast({ title: `${label} failed`, description: err.message, variant: "destructive" });
+    } finally {
+      setter(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap gap-3">
+      <Button
+        size="lg"
+        variant="outline"
+        disabled={savingCode}
+        onClick={() => saveLocal("/api/admin/save-code-local", "Code zip", setSavingCode)}
+        data-testid="button-save-code-local"
+      >
+        {savingCode
+          ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Saving…</>
+          : <><FileArchive className="w-4 h-4 mr-2" />Save code (zip)</>}
+      </Button>
+      <Button
+        size="lg"
+        variant="outline"
+        disabled={savingDb}
+        onClick={() => saveLocal("/api/admin/save-backup-local", "DB backup", setSavingDb)}
+        data-testid="button-save-db-local"
+      >
+        {savingDb
+          ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Saving…</>
+          : <><Database className="w-4 h-4 mr-2" />Save all DB</>}
+      </Button>
+    </div>
+  );
+}
+
 export default function AdminBackup() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -283,41 +336,22 @@ export default function AdminBackup() {
         </CardContent>
       </Card>
 
-      {/* ── DOWNLOAD CODE ─────────────────────────────────────────────── */}
+      {/* ── DOWNLOAD CODE + DB ────────────────────────────────────────── */}
       <Card>
         <CardContent className="p-5">
           <div className="flex items-center gap-2 mb-2">
             <Download className="w-5 h-5 text-blue-600" />
-            <h3 className="text-lg font-semibold">Download full code</h3>
+            <h3 className="text-lg font-semibold">Download code &amp; DB</h3>
           </div>
-          <p className="text-sm text-muted-foreground mb-4">
-            Get the entire app source code as a zip — same content as the GitHub repo
-            tip-of-master, no node_modules / dist / .env. Useful as a quick offline
-            snapshot or to seed a new Claude Code session on another machine.
+          <p className="text-sm text-muted-foreground mb-1">
+            Files are saved directly to <code className="text-xs bg-muted px-1 py-0.5 rounded">LOCAL_BACKUP_DIR</code> on
+            the server machine (configured in <code className="text-xs bg-muted px-1 py-0.5 rounded">.env</code>). When running
+            locally this is your OneDrive backup folder.
           </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => { window.location.href = "/api/code-download"; }}
-              size="lg"
-              variant="outline"
-              data-testid="button-download-code"
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Download code (zip)
-            </Button>
-            <Button
-              onClick={() => { window.location.href = "/api/admin/download-backup"; }}
-              size="lg"
-              variant="outline"
-              data-testid="button-download-db"
-            >
-              <Database className="w-4 h-4 mr-2" />
-              Download all DB
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              The fastest official copy is <code className="text-xs bg-muted px-1 py-0.5 rounded">git clone https://github.com/1903978-prog/compplan</code>
-            </span>
-          </div>
+          <p className="text-xs text-muted-foreground mb-4">
+            The fastest code copy is always <code className="text-xs bg-muted px-1 py-0.5 rounded">git clone https://github.com/1903978-prog/compplan</code>
+          </p>
+          <LocalSaveButtons />
         </CardContent>
       </Card>
 
