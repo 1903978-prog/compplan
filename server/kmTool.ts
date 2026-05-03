@@ -167,6 +167,7 @@ export async function readKmFiles(
 ): Promise<{ files: KmFileResult[] }> {
   const absFolder = path.join(KM_ROOT, folderPath);
   if (!fs.existsSync(absFolder)) {
+    console.warn(`[KM] Folder not found: "${absFolder}". Check KM_ROOT env var (currently: "${KM_ROOT}")`);
     return { files: [] };
   }
 
