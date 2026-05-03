@@ -1894,22 +1894,44 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     `);
   }
 
-  // ── Data fix: remove duplicate "L&D Manager" ─────────────────────────
-  // Two rows with role_name = 'L&D Manager' exist under hiring-manager:
+  // ── Data fix: remove duplicate "L&D Manager" (ONE-SHOT) ───────────────
+  // Two rows with role_name = 'L&D Manager' once existed under
+  // hiring-manager:
   //   id=24 key='ld-manager'  (seeded by the sub-agent pass above — keep)
   //   id=10 key='l-d-manager' (older manual entry — remove)
-  // Migrate any knowledge/proposals linked to the stale key first, then delete.
+  // Without a guard, the DELETE below runs on EVERY boot and would
+  // silently nuke any future role with key='l-d-manager' the user
+  // creates. We track this in seed_migrations and skip the block once
+  // it has been applied.
   await db.execute(sql`
-    UPDATE agent_knowledge SET role_key = 'ld-manager'
-    WHERE role_key = 'l-d-manager'
+    CREATE TABLE IF NOT EXISTS seed_migrations (
+      name        TEXT PRIMARY KEY,
+      applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `);
-  await db.execute(sql`
-    UPDATE agent_proposals SET role_key = 'ld-manager'
-    WHERE role_key = 'l-d-manager'
+  const _ldDedupeRows = await db.execute(sql`
+    SELECT 1 FROM seed_migrations WHERE name = 'l-d-manager-dedupe-2026-05'
   `);
-  await db.execute(sql`
-    DELETE FROM org_agents WHERE role_key = 'l-d-manager'
-  `);
+  const _ldDedupeAlreadyApplied = ((_ldDedupeRows as any).rows ?? _ldDedupeRows).length > 0;
+  if (!_ldDedupeAlreadyApplied) {
+    // Migrate any knowledge/proposals linked to the stale key first, then delete.
+    await db.execute(sql`
+      UPDATE agent_knowledge SET role_key = 'ld-manager'
+      WHERE role_key = 'l-d-manager'
+    `);
+    await db.execute(sql`
+      UPDATE agent_proposals SET role_key = 'ld-manager'
+      WHERE role_key = 'l-d-manager'
+    `);
+    await db.execute(sql`
+      DELETE FROM org_agents WHERE role_key = 'l-d-manager'
+    `);
+    await db.execute(sql`
+      INSERT INTO seed_migrations (name) VALUES ('l-d-manager-dedupe-2026-05')
+      ON CONFLICT (name) DO NOTHING
+    `);
+    console.log("[seed] Applied one-shot migration: l-d-manager-dedupe-2026-05");
+  }
 
   // ── Data fix: Henry Kissinger "Advisor" parent ─────────────────────────
   // The Advisor row had parent_role_key = 'president'. Since president is
