@@ -492,7 +492,12 @@ export default function ExecDashboard() {
       signals: string[]; level: "high" | "medium" | "low";
     };
 
-    return employees.map((emp): RiskRow => {
+    // Exclude retired employees — they no longer report to anyone, can't
+    // be promoted, and any signal we'd compute on them is meaningless.
+    // Status defaults to "active" if missing (pre-migration rows).
+    const activeOnly = employees.filter(e => ((e as any).status ?? "active") !== "former");
+
+    return activeOnly.map((emp): RiskRow => {
       const signals: string[] = [];
 
       // 1. Months since last promotion
@@ -772,40 +777,6 @@ export default function ExecDashboard() {
           </p>
         </div>
       </Card>
-
-      {/* ── People Risk ──────────────────────────────────────────── */}
-      {churnRisk.length > 0 && (
-        <Card className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-              <TrendingDown className="w-4 h-4 text-red-600" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold">People Risk</h3>
-              <p className="text-[11px] text-muted-foreground">
-                Attrition / churn signals — {churnRisk.filter(r => r.level === "high").length} high, {churnRisk.filter(r => r.level === "medium").length} medium
-              </p>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            {churnRisk.sort((a, b) => (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1)).map(r => (
-              <div key={r.id} className={`flex items-center gap-2 flex-wrap text-xs rounded px-2 py-1.5 ${
-                r.level === "high" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"
-              }`}>
-                <Badge variant="outline" className={`text-[10px] shrink-0 ${
-                  r.level === "high" ? "border-red-400 text-red-700 bg-red-50" : "border-amber-400 text-amber-700 bg-amber-50"
-                }`}>{r.level}</Badge>
-                <span className="font-semibold" data-privacy="blur">{r.name}</span>
-                <span className="text-muted-foreground">{r.role}</span>
-                <span className="ml-auto text-[10px] text-muted-foreground">{r.signals.join(" · ")}</span>
-              </div>
-            ))}
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-2">
-            Signals: promotion overdue (&gt;24mo), performance &lt;6.5, onboarding (&lt;6mo), no recent rating. CHRO owns resolution.
-          </p>
-        </Card>
-      )}
 
       {/* ── Row 2: Hiring funnel + Top overdue invoices ──────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1122,6 +1093,42 @@ export default function ExecDashboard() {
           </div>
         );
       })()}
+
+      {/* ── People Risk ──────────────────────────────────────────────
+          Lives at the BOTTOM of the page — it's a CHRO concern, not a
+          headline KPI. Excludes retired (status='former') employees. */}
+      {churnRisk.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
+              <TrendingDown className="w-4 h-4 text-red-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">People Risk</h3>
+              <p className="text-[11px] text-muted-foreground">
+                Attrition / churn signals — {churnRisk.filter(r => r.level === "high").length} high, {churnRisk.filter(r => r.level === "medium").length} medium
+              </p>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {churnRisk.sort((a, b) => (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1)).map(r => (
+              <div key={r.id} className={`flex items-center gap-2 flex-wrap text-xs rounded px-2 py-1.5 ${
+                r.level === "high" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"
+              }`}>
+                <Badge variant="outline" className={`text-[10px] shrink-0 ${
+                  r.level === "high" ? "border-red-400 text-red-700 bg-red-50" : "border-amber-400 text-amber-700 bg-amber-50"
+                }`}>{r.level}</Badge>
+                <span className="font-semibold" data-privacy="blur">{r.name}</span>
+                <span className="text-muted-foreground">{r.role}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">{r.signals.join(" · ")}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Signals: promotion overdue (&gt;24mo), performance &lt;6.5, onboarding (&lt;6mo), no recent rating. Retired employees excluded. CHRO owns resolution.
+          </p>
+        </Card>
+      )}
 
       {loading && (
         <p className="text-[11px] text-muted-foreground italic text-center">Loading live data…</p>
