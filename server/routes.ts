@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, agentKpis, kmSessions, kmOutputs } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, agentKpis, kmSessions, kmOutputs, invoiceSnapshots, bdDeals, employees, pricingCases } from "@shared/schema";
 import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
 import { runKmCycle, getKmSessions, getKmSessionDetail } from "./kmService";
 import { runCeoBrief } from "./ceoBriefRunner";
@@ -169,6 +169,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ meta, body });
     } catch (err: any) {
       res.status(400).json({ message: err?.message ?? "Save failed" });
+    }
+  });
+
+  // ── Agent template callsites — 5 high-volume wired endpoints ─────────────
+  // These replace Claude calls for predictable structured deliverables.
+  // Each fetches live data, maps it to template slots, and renders via
+  // templateEngine.render() — zero LLM tokens.
+
+  // 1. AR: generate reminder email for an overdue invoice.
+  //    Picks the right template based on days overdue.
+  //    POST /api/ar/invoices/:invoiceId/generate-reminder
+  app.post("/api/ar/invoices/:invoiceId/generate-reminder", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.invoiceId, 10);
+      const [inv] = await db.select().from(invoiceSnapshots).where(eq(invoiceSnapshots.invoice_id, id));
+      if (!inv) return res.status(404).json({ message: "Invoice not found" });
+      const { contact_name = req.body.contact_name ?? inv.client_name ?? "there",
+              sender_name  = req.body.sender_name  ?? "Livio" } = req.body ?? {};
+      const dueDate = inv.due_date ? new Date(inv.due_date) : null;
+      const daysOverdue = dueDate ? Math.floor((Date.now() - dueDate.getTime()) / 86400000) : 0;
+      let slug = "reminder_t0_gentle";
+      if (daysOverdue >= 60) slug = "escalation_t60";
+      else if (daysOverdue >= 30) slug = "reminder_t30_urgent";
+      else if (daysOverdue >= 15) slug = "reminder_t15_firm";
+      const slots: Record<string, string> = {
+        client_name: inv.client_name ?? "",
+        contact_name,
+        invoice_number: inv.invoice_number ?? String(inv.invoice_id),
+        invoice_date: inv.invoice_created_at?.slice(0, 10) ?? "",
+        amount: `€${((inv.amount ?? 0) / 100).toLocaleString("en-EU")}`,
+        due_date: inv.due_date ?? "",
+        days_overdue: String(daysOverdue),
+        payment_details: req.body.payment_details ?? "IBAN: [see invoice]",
+        sender_name,
+        senior_contact_name: req.body.senior_contact_name ?? contact_name,
+      };
+      const result = renderTemplate("ar_agent", slug, slots);
+      res.json({ ...result, days_overdue: daysOverdue, slug });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 2. BD: generate cold outreach email for a deal.
+  //    Slug determined by contact_count in body (0 = first touch, 1 = second).
+  //    POST /api/bd/deals/:id/generate-outreach
+  app.post("/api/bd/deals/:id/generate-outreach", requireAuth, async (req, res) => {
+    try {
+      const [deal] = await db.select().from(bdDeals).where(eq(bdDeals.id, parseInt(req.params.id, 10)));
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const { touch = 1, sender_name = "Livio", sender_role = "President" } = req.body ?? {};
+      const slug = touch === 2 ? "cold_second_touch"
+                 : touch === 0 ? "warm_intro"
+                 : "cold_first_touch";
+      const slots: Record<string, string> = {
+        prospect_name: deal.contact_name ?? deal.client_name ?? "",
+        prospect_role: req.body.prospect_role ?? "Decision Maker",
+        prospect_company: deal.client_name ?? "",
+        sector: deal.industry ?? req.body.sector ?? "your industry",
+        pain_point: req.body.pain_point ?? "current transformation priorities",
+        our_angle: req.body.our_angle ?? "accelerate your strategic agenda with AI-native consulting",
+        original_angle: req.body.original_angle ?? "AI-native consulting",
+        new_hook: req.body.new_hook ?? "I came across a recent development that may be directly relevant.",
+        referrer_name: req.body.referrer_name ?? "",
+        context: req.body.context ?? "",
+        sender_name,
+        sender_role,
+      };
+      const result = renderTemplate("bd_agent", slug, slots);
+      res.json({ ...result, deal_id: deal.id, slug });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 3. CFO: generate P&L summary. Caller provides all slots in body.
+  //    POST /api/cfo/generate-pnl-summary
+  app.post("/api/cfo/generate-pnl-summary", requireAuth, async (req, res) => {
+    try {
+      const result = renderTemplate("cfo_agent", "pnl_summary", req.body ?? {});
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 4. CHRO: generate 30-60-90 onboarding plan for an employee.
+  //    POST /api/chro/employees/:id/generate-onboarding
+  app.post("/api/chro/employees/:id/generate-onboarding", requireAuth, async (req, res) => {
+    try {
+      const [emp] = await db.select().from(employees).where(eq(employees.id, req.params.id));
+      if (!emp) return res.status(404).json({ message: "Employee not found" });
+      const slots: Record<string, unknown> = {
+        employee: emp.name,
+        role: req.body.role ?? emp.current_role_code ?? "",
+        start_date: emp.hire_date ?? req.body.start_date ?? "",
+        buddy: req.body.buddy ?? "",
+        day30_milestones: req.body.day30_milestones ?? [],
+        day60_milestones: req.body.day60_milestones ?? [],
+        day90_milestones: req.body.day90_milestones ?? [],
+        key_stakeholders: req.body.key_stakeholders ?? [],
+        ...req.body,
+      };
+      const result = renderTemplate("chro_agent", "onboarding_30_60_90", slots);
+      res.json({ ...result, employee_id: emp.id });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 5. Delivery: generate weekly project status report.
+  //    Hydrates project_name and client from pricingCases if project_id given.
+  //    POST /api/delivery/projects/:id/generate-status
+  app.post("/api/delivery/projects/:id/generate-status", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const [project] = await db.select().from(pricingCases).where(eq(pricingCases.id, id));
+      const slots: Record<string, unknown> = {
+        project_name: project?.project_name ?? req.body.project_name ?? "",
+        client: project?.client_name ?? req.body.client ?? "",
+        week: req.body.week ?? new Date().toISOString().slice(0, 10),
+        overall_rag: req.body.overall_rag ?? "🟢 Green",
+        schedule_rag: req.body.schedule_rag ?? "🟢 Green",
+        budget_rag: req.body.budget_rag ?? "🟢 Green",
+        scope_rag: req.body.scope_rag ?? "🟢 Green",
+        budget_used_pct: req.body.budget_used_pct ?? "0",
+        accomplishments: req.body.accomplishments ?? [],
+        next_week: req.body.next_week ?? [],
+        blockers: req.body.blockers ?? [],
+        ...req.body,
+      };
+      const result = renderTemplate("delivery_officer", "project_status", slots);
+      res.json({ ...result, project_id: id });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
     }
   });
 
