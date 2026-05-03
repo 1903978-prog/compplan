@@ -3114,6 +3114,7 @@ export default function PricingTool() {
                       <TableHead>Region</TableHead>
                       <TableHead>Duration</TableHead>
                       <TableHead>Target / wk</TableHead>
+                      <TableHead>Total fees</TableHead>
                       <TableHead className="w-14 text-center">Band</TableHead>
                       <TableHead className="w-16 text-center">Prob %</TableHead>
                       <TableHead>Status</TableHead>
@@ -3328,6 +3329,9 @@ export default function PricingTool() {
                         <TableCell>{c.duration_weeks}w</TableCell>
                         <TableCell className="font-semibold text-emerald-600">
                           {centralWk > 0 ? fmt(centralWk) : "—"}
+                        </TableCell>
+                        <TableCell className="font-semibold text-emerald-600">
+                          {centralWk > 0 && c.duration_weeks ? fmt(Math.round(centralWk * c.duration_weeks)) : "—"}
                         </TableCell>
                         <TableCell className="text-center">
                           {(() => {
