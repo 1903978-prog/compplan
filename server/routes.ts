@@ -1292,9 +1292,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ): number {
     const rec = caseRow.recommendation;
     if (!rec) return 0;
-    // Stored canonical is the cheap path — use it if present and sensible.
-    const stored = Number(rec.canonical_net_weekly);
-    if (isFinite(stored) && stored > 0) return Math.round(stored);
+    // Always recompute from the saved layer_trace + base_weekly + band +
+    // manual_delta. The stored canonical_net_weekly may lag if the case was
+    // edited in the browser without a Save (auto-save keeps it current, but
+    // recomputing here ensures ensureTbdProposalForFinalCase always reflects
+    // the actual engine output rather than a potentially-stale snapshot).
+    // Stored canonical is the FALLBACK (used only when layer_trace / base are
+    // absent — i.e. very old cases that pre-date the layer_trace migration).
 
     // Live recompute path.
     const trace = Array.isArray(rec.layer_trace) ? rec.layer_trace : [];
@@ -1336,7 +1340,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     running += Number(rec.manual_delta ?? 0);
     const result = Math.round(running);
     if (result > 0) return result;
-    // Last-resort fallback to engine's raw target_weekly.
+    // Fallback 1: stored canonical (present on cases saved after auto-save
+    // landed, or after a manual Save & Finalise).
+    const stored = Number(rec.canonical_net_weekly);
+    if (isFinite(stored) && stored > 0) return Math.round(stored);
+    // Fallback 2: engine's raw target_weekly.
     const tw = Number(rec.target_weekly ?? 0);
     return tw > 0 ? Math.round(tw) : 0;
   }

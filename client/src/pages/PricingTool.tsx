@@ -763,6 +763,11 @@ export default function PricingTool() {
   // value while all discount % stay unchanged.
   const [anchorPanel, setAnchorPanel] = useState<{ field: "net1" | "gross1" | "grossv"; draft: string } | null>(null);
   const anchorCancelledRef = useRef(false);
+  // Auto-save tracking: stores the canonical_net_weekly that was last
+  // committed to the server (set on openCase + successful handleSave).
+  // Used to detect drift so the background auto-save only fires when needed.
+  const _lastSavedCanonicalRef = useRef<number>(0);
+  const _autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Inline custom-duration editor (replaces window.prompt for "Other" in waterfall)
   const [durationPanel, setDurationPanel] = useState<string | null>(null);
   // 3-option commercial-proposal block visibility is now driven by the
@@ -1039,6 +1044,9 @@ export default function PricingTool() {
     // Stored in recommendation.manual_delta at save time; defaults to 0 for
     // older cases that pre-date editable NET1.
     setManualDelta(typeof c.recommendation?.manual_delta === "number" ? c.recommendation.manual_delta : 0);
+    // Seed the last-saved canonical so auto-save doesn't fire immediately on open.
+    _lastSavedCanonicalRef.current = typeof c.recommendation?.canonical_net_weekly === "number"
+      ? c.recommendation.canonical_net_weekly : 0;
     setView("form");
     if (c.case_discounts?.length) {
       // Ensure saved cases that pre-date the commitment discount get the new
@@ -2532,6 +2540,7 @@ export default function PricingTool() {
       // used to run alongside it and double-insert the proposal row.)
 
       toast({ title: status === "final" ? "Case finalised" : "Saved as draft" });
+      _lastSavedCanonicalRef.current = canonicalNetWeekly;
       setView("list");
       loadAll();
     } catch {
@@ -2928,6 +2937,54 @@ export default function PricingTool() {
 
     return Math.round(running);
   }, [recommendation, manualDelta, form.region, benchmarks, disabledBars, caseDiscounts]);
+
+  // ── Auto-save: keep the server's canonical_net_weekly in sync with the ──
+  // ── live waterfall NET1. Fires 3 seconds after the last change that    ──
+  // ── makes canonicalNetWeekly drift from what was last committed.       ──
+  // ── Silent (no toast). Only fires when the case is open (form.id set). ──
+  // ── Server runs ensureTbdProposalForFinalCase, propagating the new     ──
+  // ── NET1 to the linked TBD proposal → Past Projects / Exec Dashboard   ──
+  // ── update immediately without the user clicking "Save & Finalise".    ──
+  useEffect(() => {
+    if (!form.id || !recommendation || canonicalNetWeekly <= 0) return;
+    if (canonicalNetWeekly === _lastSavedCanonicalRef.current) return; // already in sync
+    if (_autoSaveTimerRef.current) clearTimeout(_autoSaveTimerRef.current);
+    _autoSaveTimerRef.current = setTimeout(async () => {
+      if (!form.id || !recommendation) return;
+      if (canonicalNetWeekly === _lastSavedCanonicalRef.current) return;
+      try {
+        const payload = {
+          ...form,
+          pe_owned: form.pe_owned ? 1 : 0,
+          recommendation: {
+            ...recommendation,
+            manual_delta: manualDelta,
+            canonical_net_weekly: canonicalNetWeekly,
+            canonical_gross_weekly: canonicalGrossWeekly,
+            admin_fee_pct: adminFeePct,
+            variable_fee_pct: variableFeePct,
+          },
+          case_discounts: caseDiscounts,
+          case_timelines: caseTimelines,
+        };
+        const res = await fetch(`/api/pricing/cases/${form.id}`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          _lastSavedCanonicalRef.current = canonicalNetWeekly;
+          // Refresh cached data so the cases list Target/wk and Past Projects
+          // both reflect the new NET1 without requiring a manual page reload.
+          loadAll();
+        }
+      } catch {
+        // Silent — manual "Save & Finalise" remains the explicit path
+      }
+    }, 3000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canonicalNetWeekly, form.id]);
 
   // Gross weekly = Net × (1+admin) / ∏(1 - NON-COMMITMENT discounts).
   // Commitment discount is INTENTIONALLY excluded here — it lives as a P7

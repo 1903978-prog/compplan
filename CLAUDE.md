@@ -126,6 +126,25 @@ Most `/api/*` is gated. **Some endpoints are deliberately public** to serve the 
 - **Validate at boundaries** with Zod. Trust types internally.
 - **The seed/routes/storage split is load-bearing** — respect it. New domain features get their own server module if they're substantial.
 
+## NET1 — single source of truth (pricing fee invariant)
+
+**NET1** = the weekly fee quoted to the client, before admin markup. It is the **only** fee figure that matters across the app.
+
+| Term | Definition | Where it lives |
+|------|-----------|----------------|
+| **NET1/wk** | Weekly NET1 from the pricing engine waterfall | `pricing_cases.recommendation.canonical_net_weekly` |
+| **NET1 Total** | NET1/wk × duration_weeks | `pricing_proposals.total_fee` |
+| **GROSS1** | NET1 × (1 + admin%) | Never stored as weekly_price; only shown in the pricing case view |
+
+**The invariant (never break this):**
+1. The waterfall in the pricing case editor computes NET1 live from the current form state (team + P1–P6 adjustments + band clamp + manual delta).
+2. The cases-list "Target / wk" column recomputes NET1 live from `recommendation.base_weekly + layer_trace` (same formula, saved data).
+3. Every TBD proposal's `weekly_price = NET1/wk` and `total_fee = NET1 × weeks`. `ensureTbdProposalForFinalCase()` enforces this on every PUT.
+4. All displays (Exec Dashboard, Past Projects, Win-Loss) derive from `total_fee / duration_weeks` → `weekly_price`. Never display raw `weekly_price` if `total_fee` is available.
+5. **Auto-save**: PricingTool.tsx fires a debounced background PUT (3 s) whenever `canonicalNetWeekly` changes while the case is open. This keeps the DB in sync with the live waterfall without requiring a manual "Save & Finalise" click. `_lastSavedCanonicalRef` tracks what is committed.
+
+**Never introduce a display that shows GROSS1 where NET1 is expected.** Never divide NET1 by team_size. Never multiply by (1 + admin%) before storing in `weekly_price` or `total_fee`.
+
 ## Standing rules — strict
 
 1. **Never remove a function, menu, button, route, endpoint, file, table, column, row, employee, candidate, proposal, deal, OKR, agent, knowledge entry, brief, or any data without explicit permission.** This database is the company's memory. Surface and propose; don't delete. Renaming/restructuring is fine; deleting is not.
