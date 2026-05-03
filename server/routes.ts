@@ -329,9 +329,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const event_type = String(b.event_type ?? "").trim().slice(0, 30);
       const summary = String(b.summary ?? "").trim().slice(0, 500);
       if (!role_key || !event_type || !summary) { res.status(400).json({ message: "role_key + event_type + summary required" }); return; }
+
+      // D17: extract commitments from the event summary (fire-and-forget enrichment).
+      // D18: classify the reply if this is an inbound_reply event.
+      // Both run in parallel, best-effort — never block the insert.
+      const { extractCommitments, classifyReply, useLocalAiFirst } = await import("./microAI/index.js");
+      let enrichedPayload = (b.payload && typeof b.payload === "object") ? { ...b.payload } : {} as Record<string, unknown>;
+      if (useLocalAiFirst()) {
+        const [commitments, replyClass] = await Promise.all([
+          extractCommitments(summary).catch(() => [] as any[]),
+          event_type === "inbound_reply"
+            ? classifyReply(summary).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        if (commitments.length > 0) enrichedPayload.commitments = commitments;
+        if (replyClass)             enrichedPayload.reply_classification = replyClass;
+      }
+
       const inserted = await db.insert(briefEvents).values({
         run_id, role_key, event_type, summary,
-        payload: (b.payload && typeof b.payload === "object") ? b.payload : null,
+        payload: Object.keys(enrichedPayload).length > 0 ? enrichedPayload : null,
         created_at: new Date().toISOString(),
       } as any).returning();
       res.status(201).json(inserted[0]);
@@ -5526,11 +5543,45 @@ RULES:
     try {
       const b = req.body as Record<string, unknown>;
       if (!b.event_type) { res.status(400).json({ message: "event_type required" }); return; }
+      const eventType = String(b.event_type);
+
+      // D17/D18: enrich inbound_reply events — extract commitments + classify reply.
+      // A2: enrich any event that has a text field with urgency/sentiment classification.
+      // All best-effort, never block the insert.
+      let enrichedPayload: Record<string, unknown> =
+        (b.payload && typeof b.payload === "object") ? { ...(b.payload as object) } : {};
+
+      const { extractCommitments, classifyReply, classify, useLocalAiFirst } = await import("./microAI/index.js");
+      if (useLocalAiFirst()) {
+        const text = typeof enrichedPayload.text === "string" ? enrichedPayload.text
+                   : typeof b.summary   === "string"          ? b.summary
+                   : "";
+        if (text) {
+          const tasks: Promise<void>[] = [];
+          if (eventType === "inbound_reply") {
+            tasks.push(
+              classifyReply(text).then(c => { enrichedPayload.reply_classification = c; }).catch(() => {}),
+              extractCommitments(text).then(cs => { if (cs.length) enrichedPayload.commitments = cs; }).catch(() => {}),
+            );
+          }
+          tasks.push(
+            Promise.all([
+              classify(text, "urgency").catch(() => null),
+              classify(text, "sentiment").catch(() => null),
+            ]).then(([urgency, sentiment]) => {
+              if (urgency)   enrichedPayload.urgency_label   = urgency.label;
+              if (sentiment) enrichedPayload.sentiment_label = sentiment.label;
+            }).catch(() => {}),
+          );
+          await Promise.all(tasks);
+        }
+      }
+
       const row = {
         timestamp: nowIso(),
         agent_id: typeof b.agent_id === "number" ? b.agent_id : null,
-        event_type: String(b.event_type),
-        payload: b.payload ?? null,
+        event_type: eventType,
+        payload: Object.keys(enrichedPayload).length > 0 ? enrichedPayload : (b.payload ?? null),
         created_at: nowIso(),
       };
       const inserted = await db.insert(executiveLog).values(row as any).returning();

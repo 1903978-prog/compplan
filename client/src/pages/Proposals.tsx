@@ -4456,6 +4456,29 @@ Root cause: Territory allocation..."
               </div>
             </Card>
 
+            {/* B8 Fee Suggestion — local pricing reasoner, zero LLM tokens */}
+            {current.ai_analysis?.feeSuggestion && (() => {
+              const fs = current.ai_analysis.feeSuggestion;
+              const fmt = (n: number) => `€${(n / 1_000).toFixed(0)}k`;
+              return (
+                <Card className="p-4 border-blue-200 bg-blue-50/50">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-blue-800 mb-1">
+                        Fee Corridor <span className="font-normal text-blue-600">(B8 local AI · 0 tokens)</span>
+                      </p>
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm text-blue-700">Min <strong>{fmt(fs.feeMin)}</strong>/wk</span>
+                        <span className="text-sm text-blue-700">Mid <strong className="text-blue-900">{fmt(fs.feeMid)}</strong>/wk</span>
+                        <span className="text-sm text-blue-700">Max <strong>{fmt(fs.feeMax)}</strong>/wk</span>
+                      </div>
+                      <p className="text-xs text-blue-500 mt-1">{fs.rationale}{fs.ruleUsed ? ` · rule: ${fs.ruleUsed}` : ""}</p>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })()}
+
             <h3 className="text-lg font-semibold">Engagement Options</h3>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {(current.options || []).map((opt, optIdx) => (
