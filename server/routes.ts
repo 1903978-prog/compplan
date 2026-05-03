@@ -7560,7 +7560,7 @@ RULES:
                COUNT(*) FILTER (WHERE human_rating = -1)            AS thumbs_down
         FROM aios_deliverables
         WHERE human_rating IS NOT NULL
-          AND created_at > NOW() - INTERVAL '30 days'
+          AND CAST(created_at AS TIMESTAMP) > NOW() - INTERVAL '30 days'
         GROUP BY agent_name
       `);
       res.json((rows as any).rows ?? []);

@@ -44,6 +44,10 @@ async function callRouter(userQuery: string): Promise<RouterOutput> {
     const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const parsed = JSON.parse(clean);
     if (!Array.isArray(parsed.agents_to_call)) throw new Error("bad schema");
+    // Guard: empty array → default to misc-agent
+    if (parsed.agents_to_call.length === 0) {
+      return { agents_to_call: ["misc-agent"], reasoning: "Router returned empty agents list; defaulted to misc-agent." };
+    }
     return parsed as RouterOutput;
   } catch {
     // Fallback: route to misc

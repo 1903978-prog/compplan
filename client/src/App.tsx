@@ -46,6 +46,7 @@ import SectionMap     from "@/pages/agentic-org/SectionMap";
 import ExcomPage      from "@/pages/agentic-org/ExcomPage";
 import AiosCycle     from "@/pages/agentic-org/AiosCycle";
 import DeliverablesAtlas from "@/pages/agentic-org/DeliverablesAtlas";
+import TemplatesAdmin from "@/pages/agentic-org/TemplatesAdmin";
 import BuildUp from "@/pages/BuildUp";
 import CeoBrief from "@/pages/CeoBrief";
 import CeoBriefHistory from "@/pages/CeoBriefHistory";
@@ -331,11 +332,12 @@ function Navigation() {
               <NavDropdown
                 label="Atlas"
                 icon={Cpu}
-                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map", "/exec/excom", "/agentic/aios-cycle", "/agentic/build-up", "/agentic/deliverables", "/ceo-brief"]}
+                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map", "/exec/excom", "/agentic/aios-cycle", "/agentic/build-up", "/agentic/deliverables", "/agentic/templates", "/ceo-brief"]}
                 items={[
                   { href: "/agentic",            label: "Executive Dashboard", icon: Cpu },
                   { href: "/agentic/aios-cycle", label: "8am Atlas Cycle",     icon: Zap },
                   { href: "/agentic/deliverables", label: "Deliverables Atlas", icon: PackageOpen },
+                  { href: "/agentic/templates",   label: "Templates",          icon: FileText },
                   { href: "/ceo-brief",          label: "CEO Brief",           icon: Newspaper },
                   { href: "/ceo-brief/history",  label: "Brief History",       icon: History },
                   { href: "/exec/org-chart",     label: "Org Chart",           icon: Network },
@@ -521,6 +523,7 @@ function Router() {
       <Route path="/agentic/aios-cycle" component={AiosCycle} />
       <Route path="/agentic/build-up" component={BuildUp} />
       <Route path="/agentic/deliverables" component={DeliverablesAtlas} />
+      <Route path="/agentic/templates" component={TemplatesAdmin} />
       <Route path="/ceo-brief/history" component={CeoBriefHistory} />
       <Route path="/ceo-brief/:id">{() => <CeoBrief />}</Route>
       <Route path="/ceo-brief">{() => <CeoBrief />}</Route>

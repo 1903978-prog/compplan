@@ -327,7 +327,7 @@ async function getAgentRatingSignal(agentName: string): Promise<string> {
       FROM aios_deliverables
       WHERE agent_name = ${agentName}
         AND human_rating IS NOT NULL
-        AND created_at > NOW() - INTERVAL '14 days'
+        AND CAST(created_at AS TIMESTAMP) > NOW() - INTERVAL '14 days'
     `);
     const row = (rows as any).rows?.[0];
     const up = Number(row?.up ?? 0);
