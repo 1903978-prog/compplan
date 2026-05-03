@@ -309,10 +309,29 @@ function Navigation() {
     <nav className="border-b bg-background sticky top-0 z-50">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center gap-6">
-            <h1 className="text-xl font-bold tracking-tight text-primary">
-              EENDIGO COMMAND CENTER <span className="text-[10px] font-normal text-muted-foreground ml-1">v24Mar</span>
-            </h1>
+          <div className="flex items-center gap-4">
+            {/* Brand mark + wordmark */}
+            <div className="flex items-center gap-2.5 shrink-0">
+              {/* Hexagonal ECC logo */}
+              <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+                <defs>
+                  <linearGradient id="ecc-grad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#10b981" />
+                    <stop offset="100%" stopColor="#0d9488" />
+                  </linearGradient>
+                </defs>
+                <polygon points="16,2 28,8.5 28,23.5 16,30 4,23.5 4,8.5" fill="url(#ecc-grad)" />
+                {/* Three horizontal bars = E */}
+                <rect x="10" y="10.5" width="12" height="2" rx="1" fill="white" />
+                <rect x="10" y="15" width="9" height="2" rx="1" fill="white" />
+                <rect x="10" y="19.5" width="12" height="2" rx="1" fill="white" />
+              </svg>
+              <div className="leading-none">
+                <div className="text-[13px] font-black tracking-widest text-primary uppercase whitespace-nowrap">Eendigo</div>
+                <div className="text-[9px] font-semibold tracking-[0.2em] text-muted-foreground uppercase whitespace-nowrap">Command Center</div>
+              </div>
+              <span className="text-[9px] font-mono text-muted-foreground/50 self-end mb-0.5">v24Mar</span>
+            </div>
             <div className="flex items-center gap-1">
               {/* Executive area — single-screen rollup + the org chart
                   page that visualises CEO + direct reports, their goals,
