@@ -7710,5 +7710,95 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── Micro-AI Utility Endpoints ─────────────────────────────────────────────
+  //
+  //  B8  GET  /api/pricing/fee-suggest    → fee corridor from rules + decision tree
+  //  D17 POST /api/agentic/extract-commitments → who/what/when from free text
+  //  D18 POST /api/agentic/classify-reply       → intent/sentiment/urgency/next-action
+  //  A2  POST /api/agentic/classify-text        → urgency / sentiment / intent labels
+  //
+  //  All are pure local-AI (zero LLM tokens). The client can call them to enrich
+  //  UI state without touching the Anthropic API.
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/pricing/fee-suggest
+   * B8 Pricing Reasoner — returns a fee corridor (min/mid/max EUR/week) driven
+   * by the pricing_rules table and a hardcoded decision tree. Zero LLM tokens.
+   *
+   * Query params (all optional):
+   *   geography   — NL | BE | DE | FR | UK | other  (default NL)
+   *   clientSize  — small | mid | large | enterprise (default mid)
+   *   complexity  — low | medium | high              (default medium)
+   *   peOwned     — "true" | "false"                 (default false)
+   */
+  app.get("/api/pricing/fee-suggest", requireAuth, async (req, res) => {
+    try {
+      const { suggestFee } = await import("./microAI/index.js");
+      const q = req.query as Record<string, string>;
+      const result = await suggestFee({
+        geography:  q.geography  ?? "NL",
+        clientSize: q.clientSize ?? "mid",
+        complexity: q.complexity ?? "medium",
+        peOwned:    q.peOwned === "true",
+      });
+      res.json(result);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/agentic/extract-commitments
+   * D17 Commitment Extractor — parses free text (email, meeting notes, transcript)
+   * and returns structured commitments: { actor, action, deadline, confidence }.
+   * Body: { text: string }
+   */
+  app.post("/api/agentic/extract-commitments", requireAuth, async (req, res) => {
+    try {
+      const { extractCommitments } = await import("./microAI/index.js");
+      const text = String((req.body as Record<string, unknown>).text ?? "").trim();
+      if (!text) { res.status(400).json({ message: "text required" }); return; }
+      const commitments = await extractCommitments(text);
+      res.json({ commitments, count: commitments.length });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/agentic/classify-reply
+   * D18 Reply Classifier — classifies an inbound email reply: intent, sentiment,
+   * urgency, next_action. Lexicon-based, no LLM.
+   * Body: { text: string }
+   */
+  app.post("/api/agentic/classify-reply", requireAuth, async (req, res) => {
+    try {
+      const { classifyReply } = await import("./microAI/index.js");
+      const text = String((req.body as Record<string, unknown>).text ?? "").trim();
+      if (!text) { res.status(400).json({ message: "text required" }); return; }
+      const classification = await classifyReply(text);
+      res.json(classification);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/agentic/classify-text
+   * A2 Classifier — returns urgency, sentiment, intent, and reply_status labels
+   * for any text. Keyword-lexicon based, zero LLM tokens.
+   * Body: { text: string; labels?: string[] }  (labels = zero-shot hint classes)
+   */
+  app.post("/api/agentic/classify-text", requireAuth, async (req, res) => {
+    try {
+      const { classify } = await import("./microAI/index.js");
+      const b = req.body as Record<string, unknown>;
+      const text   = String(b.text ?? "").trim();
+      const labels = Array.isArray(b.labels) ? (b.labels as unknown[]).map(String) : undefined;
+      if (!text) { res.status(400).json({ message: "text required" }); return; }
+      const [urgency, sentiment, intent] = await Promise.all([
+        classify(text, "urgency",   labels),
+        classify(text, "sentiment", labels),
+        classify(text, "intent",    labels),
+      ]);
+      res.json({ urgency, sentiment, intent });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   return httpServer;
 }
