@@ -360,8 +360,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // reads these on every run before producing a brief or decision.
   app.get("/api/agent-knowledge", requireAuth, async (req, res) => {
     try {
-      const role = req.query.role_key as string | undefined;
-      const status = (req.query.status as string | undefined) ?? "active";
+      const role   = req.query.role_key as string | undefined;
+      const status = (req.query.status  as string | undefined) ?? "active";
+      const searchQ = (req.query.q as string | undefined)?.trim() ?? "";
+
       let q = db.select().from(agentKnowledge).$dynamic();
       if (role && status === "active") {
         q = q.where(and(eq(agentKnowledge.role_key, role), eq(agentKnowledge.status, "active")));
@@ -371,6 +373,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         q = q.where(eq(agentKnowledge.status, status));
       }
       const rows = await q.orderBy(desc(agentKnowledge.created_at));
+
+      // A1: semantic re-rank when ?q= is provided and USE_LOCAL_AI_FIRST is on.
+      // Embed the query, embed each knowledge row's content (via embedCached),
+      // sort descending by cosine similarity, return top 20.
+      if (searchQ && rows.length > 0) {
+        try {
+          const { embedCached, cosineSimilarity, useLocalAiFirst } = await import("./microAI/index.js");
+          if (useLocalAiFirst()) {
+            const queryVec = await embedCached(searchQ);
+            const scored = await Promise.all(rows.map(async r => {
+              try {
+                const vec = await embedCached((r.content ?? "").slice(0, 500));
+                return { row: r, score: cosineSimilarity(queryVec, vec) };
+              } catch { return { row: r, score: 0 }; }
+            }));
+            scored.sort((a, b) => b.score - a.score);
+            return res.json(scored.slice(0, 20).map(s => ({ ...s.row, _similarity: s.score })));
+          }
+        } catch { /* embedder unavailable — return unsorted rows */ }
+      }
+
       res.json(rows);
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
@@ -383,12 +406,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const role_key = String(b.role_key ?? "").trim();
       const content = String(b.content ?? "").trim().slice(0, 12000);
       if (!role_key || !content) { res.status(400).json({ message: "role_key + content required" }); return; }
+
+      // A3 NER: auto-extract entity tags from content so knowledge is
+      // searchable by people, orgs, dates, and amounts. Best-effort.
+      let autoTags: string[] = Array.isArray(b.tags) ? (b.tags as unknown[]).slice(0, 20).map(String) : [];
+      try {
+        const { extractEntities, useLocalAiFirst } = await import("./microAI/index.js");
+        if (useLocalAiFirst()) {
+          const entities = await extractEntities(content.slice(0, 2000));
+          const nerTags = [
+            ...entities.people.slice(0, 5),
+            ...entities.organisations.slice(0, 5),
+          ].map(t => t.toLowerCase().replace(/\s+/g, "_")).filter(Boolean);
+          autoTags = Array.from(new Set([...autoTags, ...nerTags])).slice(0, 30);
+        }
+      } catch { /* NER failure is non-fatal */ }
+
       const row = {
         role_key,
         content,
         title: typeof b.title === "string" ? b.title.slice(0, 200) : null,
         source: ["user", "agent", "web"].includes(String(b.source)) ? String(b.source) : "user",
-        tags: Array.isArray(b.tags) ? (b.tags as unknown[]).slice(0, 20).map(String) : [],
+        tags: autoTags,
         status: "active" as const,
         created_by_role: typeof b.created_by_role === "string" ? b.created_by_role.slice(0, 60) : null,
         created_at: new Date().toISOString(),
