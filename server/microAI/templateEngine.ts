@@ -11,14 +11,14 @@
 // Token economics: render() touches no LLM. Use renderOrFallback (in
 // templateOrClaude.ts) when a slot is genuinely creative and you want
 // to fall back to Claude only for that one missing piece.
+//
+// Path resolution: uses process.cwd() so it works in both dev (tsx/ESM)
+// and the bundled CJS production build on Render.
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import fs from "fs";
+import path from "path";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
-const TEMPLATES_DIR = path.resolve(__dirname, "templates");
+const TEMPLATES_DIR = path.resolve(process.cwd(), "server", "microAI", "templates");
 
 export type TemplateOutput = "markdown" | "email" | "json";
 
@@ -44,12 +44,24 @@ export interface RenderedTemplate {
   missingSlots: string[];
 }
 
-// ─── Frontmatter parser ───────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Sanitise agent/slug to safe filesystem names */
+function safe(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+/** Resolve the absolute path for a template file */
+function templatePath(agent: string, slug: string): string {
+  return path.join(TEMPLATES_DIR, safe(agent), `${safe(slug)}.md`);
+}
+
+// ─── Frontmatter parser ───────────────────────────────────────────────────────
 // Tiny YAML-ish parser tuned to our specific frontmatter shape. We only
 // support `key: value` and `key: [a, b, c]`. Avoids pulling in a YAML
 // dep just for ~5 fields.
 function parseFrontmatter(raw: string): { meta: Omit<TemplateMeta, "slug">; body: string } {
-  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(raw);
+  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
   if (!fmMatch) {
     throw new Error("Template missing YAML frontmatter (--- block)");
   }
@@ -97,9 +109,11 @@ function parseFrontmatter(raw: string): { meta: Omit<TemplateMeta, "slug">; body
   };
 }
 
-// ─── Loaders ──────────────────────────────────────────────────────────
+// ─── Loaders ──────────────────────────────────────────────────────────────────
+
 export function loadTemplate(agent: string, slug: string): { meta: TemplateMeta; body: string } {
-  const file = path.join(TEMPLATES_DIR, agent, `${slug}.md`);
+  const file = templatePath(agent, slug);
+  if (!fs.existsSync(file)) throw new Error(`Template not found: ${agent}/${slug}`);
   const raw  = fs.readFileSync(file, "utf8");
   const { meta, body } = parseFrontmatter(raw);
   return { meta: { ...meta, slug }, body };
@@ -110,10 +124,9 @@ export function listTemplates(agent?: string): TemplateMeta[] {
   const out: TemplateMeta[] = [];
   const agents = agent
     ? [agent]
-    : fs.readdirSync(TEMPLATES_DIR).filter(name => {
-        const p = path.join(TEMPLATES_DIR, name);
-        return fs.statSync(p).isDirectory();
-      });
+    : fs.readdirSync(TEMPLATES_DIR, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
   for (const a of agents) {
     const dir = path.join(TEMPLATES_DIR, a);
     if (!fs.existsSync(dir)) continue;
@@ -133,7 +146,8 @@ export function listTemplates(agent?: string): TemplateMeta[] {
   );
 }
 
-// ─── Validation ───────────────────────────────────────────────────────
+// ─── Validation ───────────────────────────────────────────────────────────────
+
 export function validateSlots(
   meta: TemplateMeta,
   slots: Record<string, unknown>,
@@ -146,7 +160,8 @@ export function validateSlots(
   });
 }
 
-// ─── Renderer ─────────────────────────────────────────────────────────
+// ─── Renderer ─────────────────────────────────────────────────────────────────
+
 function resolvePath(obj: unknown, dotted: string): unknown {
   return dotted.split(".").reduce<unknown>(
     (acc, key) => (acc == null || typeof acc !== "object")
@@ -158,9 +173,6 @@ function resolvePath(obj: unknown, dotted: string): unknown {
 
 function renderBody(template: string, ctx: Record<string, unknown>): string {
   // Process each blocks first. Match outermost {{#each X}}...{{/each}}.
-  // We use a non-greedy match and run iteratively in case of multiple
-  // independent each-blocks. Nested each-blocks: the recursion through
-  // renderBody on the inner content handles those.
   const eachRx = /\{\{#each\s+([\w.]+)\s*\}\}([\s\S]*?)\{\{\/each\}\}/g;
   let out = template.replace(eachRx, (_m, key: string, inner: string) => {
     const list = resolvePath(ctx, key);
@@ -177,7 +189,7 @@ function renderBody(template: string, ctx: Record<string, unknown>): string {
   // Simple substitutions
   out = out.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key: string) => {
     const v = resolvePath(ctx, key);
-    if (v === undefined || v === null) return "";
+    if (v === undefined || v === null) return `{{${key}}}`;
     if (typeof v === "object") return JSON.stringify(v);
     return String(v);
   });
@@ -195,22 +207,23 @@ export function render(
   return { meta, body: rendered, missingSlots };
 }
 
-// ─── Edit (writeback) ─────────────────────────────────────────────────
+// ─── Edit (writeback) ─────────────────────────────────────────────────────────
 // Used by the admin UI's Edit button. In production (Render) writes
 // are ephemeral — they survive until the next deploy. For permanent
 // changes, edit the file in the repo and redeploy.
+
 export function saveTemplate(
   agent: string,
   slug: string,
   rawContent: string,
 ): void {
-  const dir  = path.join(TEMPLATES_DIR, agent);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${slug}.md`);
-  fs.writeFileSync(file, rawContent, "utf8");
+  const p = templatePath(agent, slug);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, rawContent, "utf8");
 }
 
 export function loadTemplateRaw(agent: string, slug: string): string {
-  const file = path.join(TEMPLATES_DIR, agent, `${slug}.md`);
+  const file = templatePath(agent, slug);
+  if (!fs.existsSync(file)) throw new Error(`Template not found: ${agent}/${slug}`);
   return fs.readFileSync(file, "utf8");
 }
