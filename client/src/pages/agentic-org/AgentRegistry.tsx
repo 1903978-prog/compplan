@@ -4,12 +4,13 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Plus, Users, ChevronRight } from "lucide-react";
+import { Plus, Minus, Users, ChevronRight, BookOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Agent {
   id: number; name: string; mission: string | null;
   boss_id: number | null; status: string;
+  agent_type?: string;
 }
 
 export default function AgentRegistry() {
@@ -20,6 +21,7 @@ export default function AgentRegistry() {
   const [taskCounts, setTaskCounts] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
+  const [kmExpanded, setKmExpanded] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -51,6 +53,11 @@ export default function AgentRegistry() {
 
   const bossById = useMemo(() => new Map(agents.map(a => [a.id, a.name])), [agents]);
 
+  // Split into AIOS classic vs KM system agents
+  const classicAgents  = useMemo(() => agents.filter(a => !a.agent_type || a.agent_type === "aios_classic"), [agents]);
+  const kmRouter       = useMemo(() => agents.find(a => a.agent_type === "km_router"), [agents]);
+  const kmSpecialists  = useMemo(() => agents.filter(a => a.agent_type === "km_specialist"), [agents]);
+
   async function addAgent() {
     if (!newName.trim()) return;
     const r = await fetch("/api/agentic/agents", {
@@ -65,6 +72,36 @@ export default function AgentRegistry() {
     } else {
       toast({ title: "Failed to add", variant: "destructive" });
     }
+  }
+
+  const COLS = "grid grid-cols-[1fr_180px_120px_100px_100px_40px] gap-3 px-4";
+
+  function AgentRow({ a, indent = false }: { a: Agent; indent?: boolean }) {
+    return (
+      <button
+        key={a.id}
+        onClick={() => navigate(`/agents/${a.id}`)}
+        className={`w-full ${COLS} py-2.5 border-b text-left hover:bg-muted/40 items-center`}
+      >
+        <div className={`flex flex-col ${indent ? "pl-7" : ""}`}>
+          <span className="font-semibold text-sm">{a.name}</span>
+          {a.mission && <span className="text-[11px] text-muted-foreground truncate max-w-md">{a.mission}</span>}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {a.boss_id ? bossById.get(a.boss_id) ?? `#${a.boss_id}` : <span className="italic">President</span>}
+        </div>
+        <div>
+          <Badge variant="outline" className={
+            a.status === "active"  ? "text-emerald-700 border-emerald-300 bg-emerald-50"
+            : a.status === "paused" ? "text-amber-700 border-amber-300 bg-amber-50"
+            : "text-slate-700 border-slate-300 bg-slate-50"
+          }>{a.status}</Badge>
+        </div>
+        <div className="text-right font-mono text-sm">{ideaCounts[a.id] ?? 0}</div>
+        <div className="text-right font-mono text-sm">{taskCounts[a.id] ?? 0}</div>
+        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+      </button>
+    );
   }
 
   return (
@@ -93,7 +130,8 @@ export default function AgentRegistry() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="grid grid-cols-[1fr_180px_120px_100px_100px_40px] gap-3 px-4 py-2 border-b bg-muted/30 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+        {/* Column headers */}
+        <div className={`${COLS} py-2 border-b bg-muted/30 text-[11px] font-bold uppercase tracking-wide text-muted-foreground`}>
           <div>Name</div>
           <div>Boss</div>
           <div>Status</div>
@@ -101,35 +139,60 @@ export default function AgentRegistry() {
           <div className="text-right">Open tasks</div>
           <div></div>
         </div>
+
         {loading ? (
           <div className="px-4 py-6 text-sm text-muted-foreground italic">Loading…</div>
-        ) : agents.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-muted-foreground italic">No agents yet — boot will seed 8 starter agents on the next deploy.</div>
-        ) : agents.map(a => (
-          <button
-            key={a.id}
-            onClick={() => navigate(`/agents/${a.id}`)}
-            className="w-full grid grid-cols-[1fr_180px_120px_100px_100px_40px] gap-3 px-4 py-2.5 border-b text-left hover:bg-muted/40 items-center"
-          >
-            <div className="flex flex-col">
-              <span className="font-semibold text-sm">{a.name}</span>
-              {a.mission && <span className="text-[11px] text-muted-foreground truncate max-w-md">{a.mission}</span>}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {a.boss_id ? bossById.get(a.boss_id) ?? `#${a.boss_id}` : <span className="italic">President</span>}
-            </div>
-            <div>
-              <Badge variant="outline" className={
-                a.status === "active"  ? "text-emerald-700 border-emerald-300 bg-emerald-50"
-                : a.status === "paused" ? "text-amber-700 border-amber-300 bg-amber-50"
-                : "text-slate-700 border-slate-300 bg-slate-50"
-              }>{a.status}</Badge>
-            </div>
-            <div className="text-right font-mono text-sm">{ideaCounts[a.id] ?? 0}</div>
-            <div className="text-right font-mono text-sm">{taskCounts[a.id] ?? 0}</div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </button>
-        ))}
+        ) : (
+          <>
+            {/* AIOS Classic agents */}
+            {classicAgents.map(a => <AgentRow key={a.id} a={a} />)}
+
+            {/* KM System group — only if KM agents exist */}
+            {(kmRouter || kmSpecialists.length > 0) && (
+              <>
+                {/* KM group header row */}
+                <div className={`${COLS} py-2.5 border-b bg-violet-50/60 items-center`}>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setKmExpanded(v => !v)}
+                      className="flex-shrink-0 w-5 h-5 rounded-full bg-white border border-violet-300 flex items-center justify-center hover:bg-violet-100 transition-colors"
+                      aria-label={kmExpanded ? "Collapse KM agents" : "Expand KM agents"}
+                    >
+                      {kmExpanded
+                        ? <Minus className="w-3 h-3 text-violet-600" />
+                        : <Plus className="w-3 h-3 text-violet-600" />}
+                    </button>
+                    <BookOpen className="w-4 h-4 text-violet-500 flex-shrink-0" />
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-sm text-violet-900">KM Agent System</span>
+                      <span className="text-[11px] text-violet-600">
+                        1 router · {kmSpecialists.length} specialists — knowledge base query layer
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground italic">—</div>
+                  <div>
+                    <Badge variant="outline" className="text-violet-700 border-violet-300 bg-violet-50">
+                      {kmRouter ? kmRouter.status : "active"}
+                    </Badge>
+                  </div>
+                  <div className="text-right font-mono text-sm text-muted-foreground">—</div>
+                  <div className="text-right font-mono text-sm text-muted-foreground">—</div>
+                  <div />
+                </div>
+
+                {/* KM agents — visible only when expanded */}
+                {kmExpanded && (
+                  <>
+                    {kmRouter && <AgentRow a={kmRouter} indent />}
+                    {kmSpecialists.map(a => <AgentRow key={a.id} a={a} indent />)}
+                  </>
+                )}
+              </>
+            )}
+          </>
+        )}
       </Card>
     </div>
   );
