@@ -575,13 +575,18 @@ export async function seedDatabase() {
   // Employees page's "Copy all emails" button.
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS external_contacts (
-      id           SERIAL PRIMARY KEY,
-      name         TEXT NOT NULL,
-      email        TEXT NOT NULL UNIQUE,
-      kind         TEXT NOT NULL DEFAULT 'freelancer',
-      created_at   TEXT NOT NULL
+      id                   SERIAL PRIMARY KEY,
+      name                 TEXT NOT NULL,
+      email                TEXT NOT NULL UNIQUE,
+      kind                 TEXT NOT NULL DEFAULT 'freelancer',
+      created_at           TEXT NOT NULL,
+      daily_rate           NUMERIC,
+      daily_rate_currency  TEXT NOT NULL DEFAULT 'EUR'
     )
   `);
+  // Add daily_rate columns to existing tables (idempotent — IF NOT EXISTS).
+  await db.execute(sql`ALTER TABLE external_contacts ADD COLUMN IF NOT EXISTS daily_rate NUMERIC`);
+  await db.execute(sql`ALTER TABLE external_contacts ADD COLUMN IF NOT EXISTS daily_rate_currency TEXT NOT NULL DEFAULT 'EUR'`);
   // Pre-seed the standing roster on first boot. Idempotent: only inserts
   // when the email isn't already present, so the user can rename/delete
   // freely without the seed re-creating rows.

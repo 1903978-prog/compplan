@@ -457,6 +457,8 @@ export default function EmployeeList() {
   // company-wide mailing list. CRUD via /api/external-contacts.
   type ExternalContact = {
     id: number; name: string; email: string; kind: string; created_at: string;
+    daily_rate?: number | null;
+    daily_rate_currency?: string | null;
     is_employee?: boolean;
     employee_id?: string;
     employee_role_code?: string;
@@ -466,6 +468,14 @@ export default function EmployeeList() {
   const [newExtName, setNewExtName] = useState("");
   const [newExtEmail, setNewExtEmail] = useState("");
   const [newExtKind, setNewExtKind] = useState<string>("freelancer");
+  const [newExtRate, setNewExtRate] = useState<string>("");
+  const [newExtRateCurrency, setNewExtRateCurrency] = useState<string>("EUR");
+  const [editingExtId, setEditingExtId] = useState<number | null>(null);
+  const [editExtName, setEditExtName] = useState<string>("");
+  const [editExtEmail, setEditExtEmail] = useState<string>("");
+  const [editExtKind, setEditExtKind] = useState<string>("freelancer");
+  const [editExtRate, setEditExtRate] = useState<string>("");
+  const [editExtRateCurrency, setEditExtRateCurrency] = useState<string>("EUR");
   const loadExternalContacts = async () => {
     try {
       const r = await fetch("/api/external-contacts", { credentials: "include" });
@@ -483,10 +493,15 @@ export default function EmployeeList() {
       const r = await fetch("/api/external-contacts", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newExtName.trim(), email: newExtEmail.trim(), kind: newExtKind }),
+        body: JSON.stringify({
+          name: newExtName.trim(), email: newExtEmail.trim(), kind: newExtKind,
+          daily_rate: newExtRate ? Number(newExtRate) : null,
+          daily_rate_currency: newExtRateCurrency,
+        }),
       });
       if (r.ok) {
         setNewExtName(""); setNewExtEmail(""); setNewExtKind("freelancer");
+        setNewExtRate(""); setNewExtRateCurrency("EUR");
         loadExternalContacts();
         toast({ title: "Contact added" });
       } else {
@@ -494,6 +509,39 @@ export default function EmployeeList() {
       }
     } catch {
       toast({ title: "Failed to add contact", variant: "destructive" });
+    }
+  };
+
+  const startEditExt = (c: ExternalContact) => {
+    setEditingExtId(c.id);
+    setEditExtName(c.name);
+    setEditExtEmail(c.email);
+    setEditExtKind(c.kind);
+    setEditExtRate(c.daily_rate != null ? String(c.daily_rate) : "");
+    setEditExtRateCurrency(c.daily_rate_currency ?? "EUR");
+  };
+
+  const saveEditExt = async (id: number) => {
+    if (!editExtName.trim() || !editExtEmail.trim()) return;
+    try {
+      const r = await fetch(`/api/external-contacts/${id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editExtName.trim(), email: editExtEmail.trim(), kind: editExtKind,
+          daily_rate: editExtRate ? Number(editExtRate) : null,
+          daily_rate_currency: editExtRateCurrency,
+        }),
+      });
+      if (r.ok) {
+        setEditingExtId(null);
+        loadExternalContacts();
+        toast({ title: "Contact updated" });
+      } else {
+        toast({ title: "Failed to update", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to update", variant: "destructive" });
     }
   };
 
@@ -1256,7 +1304,7 @@ Thanks,`;
             {/* Add form */}
             <div className="p-4 border-b bg-muted/10">
               <div className="flex gap-2 items-end flex-wrap">
-                <div className="min-w-[180px] flex-1">
+                <div className="min-w-[160px] flex-1">
                   <Label className="text-xs mb-1 block">Name</Label>
                   <Input
                     placeholder="e.g. Mario Rossi"
@@ -1265,7 +1313,7 @@ Thanks,`;
                     className="h-9 text-sm"
                   />
                 </div>
-                <div className="min-w-[220px] flex-1">
+                <div className="min-w-[200px] flex-1">
                   <Label className="text-xs mb-1 block">Email</Label>
                   <Input
                     type="email"
@@ -1275,7 +1323,7 @@ Thanks,`;
                     className="h-9 text-sm"
                   />
                 </div>
-                <div className="min-w-[160px]">
+                <div className="min-w-[140px]">
                   <Label className="text-xs mb-1 block">Type</Label>
                   <Select value={newExtKind} onValueChange={v => setNewExtKind(v)}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
@@ -1288,6 +1336,31 @@ Thanks,`;
                       <SelectItem value="advisor">Advisor</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="flex gap-1 items-end">
+                  <div className="w-[90px]">
+                    <Label className="text-xs mb-1 block">Daily rate</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={newExtRate}
+                      onChange={e => setNewExtRate(e.target.value)}
+                      className="h-9 text-sm"
+                    />
+                  </div>
+                  <div className="w-[80px]">
+                    <Label className="text-xs mb-1 block">CCY</Label>
+                    <Select value={newExtRateCurrency} onValueChange={v => setNewExtRateCurrency(v)}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="EUR">EUR</SelectItem>
+                        <SelectItem value="USD">USD</SelectItem>
+                        <SelectItem value="CHF">CHF</SelectItem>
+                        <SelectItem value="GBP">GBP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <Button onClick={addExternalContact} disabled={!newExtName.trim() || !newExtEmail.trim()}>
                   <Plus className="w-4 h-4 mr-1" /> Add
@@ -1306,73 +1379,160 @@ Thanks,`;
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
-                    <TableHead className="w-[140px]">Type</TableHead>
+                    <TableHead className="w-[130px]">Type</TableHead>
+                    <TableHead className="w-[150px]">Daily rate</TableHead>
                     <TableHead className="w-[80px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {[...externalContacts]
                     .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
-                    .map(c => (
-                      <TableRow key={c.id} className="hover:bg-muted/20">
-                        <TableCell className="font-semibold text-sm">{c.name}</TableCell>
-                        <TableCell className="text-xs font-mono">
-                          <a href={`mailto:${c.email}`} className="text-primary hover:underline">
-                            {c.email}
-                          </a>
-                        </TableCell>
-                        <TableCell>
-                          {(() => {
-                            // If a matching employee record exists, show
-                            // the live employee role (e.g. EM1, A2, INT)
-                            // — that's the source of truth. Otherwise
-                            // fall back to the stored kind for true
-                            // externals (founders, partners, advisors).
-                            if (c.is_employee && c.employee_role_code) {
-                              const code = c.employee_role_code.toLowerCase();
-                              const cls =
-                                code.startsWith("em") ? "bg-emerald-100 text-emerald-800" :
-                                code === "int"        ? "bg-amber-100 text-amber-800" :
-                                code.startsWith("a")  ? "bg-blue-100 text-blue-800" :
-                                code.startsWith("p")  ? "bg-violet-100 text-violet-800" :
-                                                        "bg-slate-100 text-slate-800";
-                              return (
-                                <span
-                                  className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium ${cls}`}
-                                  title={c.employee_role_name ?? c.employee_role_code}
+                    .map(c => {
+                      const isEditing = editingExtId === c.id;
+                      if (isEditing) {
+                        return (
+                          <TableRow key={c.id} className="bg-muted/20">
+                            <TableCell>
+                              <Input
+                                value={editExtName}
+                                onChange={e => setEditExtName(e.target.value)}
+                                className="h-8 text-sm w-full"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                type="email"
+                                value={editExtEmail}
+                                onChange={e => setEditExtEmail(e.target.value)}
+                                className="h-8 text-xs font-mono w-full"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Select value={editExtKind} onValueChange={v => setEditExtKind(v)}>
+                                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="freelancer">Freelancer</SelectItem>
+                                  <SelectItem value="partner">Partner</SelectItem>
+                                  <SelectItem value="manager">Manager</SelectItem>
+                                  <SelectItem value="intern">Intern</SelectItem>
+                                  <SelectItem value="founder">Founder</SelectItem>
+                                  <SelectItem value="advisor">Advisor</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  placeholder="0"
+                                  value={editExtRate}
+                                  onChange={e => setEditExtRate(e.target.value)}
+                                  className="h-8 text-sm w-[72px]"
+                                />
+                                <Select value={editExtRateCurrency} onValueChange={v => setEditExtRateCurrency(v)}>
+                                  <SelectTrigger className="h-8 text-xs w-[62px]"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="EUR">EUR</SelectItem>
+                                    <SelectItem value="USD">USD</SelectItem>
+                                    <SelectItem value="CHF">CHF</SelectItem>
+                                    <SelectItem value="GBP">GBP</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={() => saveEditExt(c.id)}
+                                  disabled={!editExtName.trim() || !editExtEmail.trim()}
+                                  className="text-emerald-600 hover:text-emerald-700 p-1 rounded transition-colors disabled:opacity-40"
+                                  title="Save"
                                 >
-                                  {c.employee_role_code}
-                                  <span className="ml-1 text-[8px] opacity-60">EMP</span>
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingExtId(null)}
+                                  className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors"
+                                  title="Cancel"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+                      // ── Read-only row ──────────────────────────────
+                      return (
+                        <TableRow key={c.id} className="hover:bg-muted/20 group">
+                          <TableCell className="font-semibold text-sm">{c.name}</TableCell>
+                          <TableCell className="text-xs font-mono">
+                            <a href={`mailto:${c.email}`} className="text-primary hover:underline">
+                              {c.email}
+                            </a>
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              if (c.is_employee && c.employee_role_code) {
+                                const code = c.employee_role_code.toLowerCase();
+                                const cls =
+                                  code.startsWith("em") ? "bg-emerald-100 text-emerald-800" :
+                                  code === "int"        ? "bg-amber-100 text-amber-800" :
+                                  code.startsWith("a")  ? "bg-blue-100 text-blue-800" :
+                                  code.startsWith("p")  ? "bg-violet-100 text-violet-800" :
+                                                          "bg-slate-100 text-slate-800";
+                                return (
+                                  <span
+                                    className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium ${cls}`}
+                                    title={c.employee_role_name ?? c.employee_role_code}
+                                  >
+                                    {c.employee_role_code}
+                                    <span className="ml-1 text-[8px] opacity-60">EMP</span>
+                                  </span>
+                                );
+                              }
+                              const cls =
+                                c.kind === "partner"    ? "bg-violet-100 text-violet-800" :
+                                c.kind === "freelancer" ? "bg-blue-100 text-blue-800" :
+                                c.kind === "manager"    ? "bg-emerald-100 text-emerald-800" :
+                                c.kind === "intern"     ? "bg-amber-100 text-amber-800" :
+                                c.kind === "founder"    ? "bg-rose-100 text-rose-800" :
+                                c.kind === "advisor"    ? "bg-cyan-100 text-cyan-800" :
+                                                          "bg-muted text-muted-foreground";
+                              return (
+                                <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium uppercase ${cls}`}>
+                                  {c.kind}
                                 </span>
                               );
-                            }
-                            // Stored-kind fallback for non-employees.
-                            const cls =
-                              c.kind === "partner"    ? "bg-violet-100 text-violet-800" :
-                              c.kind === "freelancer" ? "bg-blue-100 text-blue-800" :
-                              c.kind === "manager"    ? "bg-emerald-100 text-emerald-800" :
-                              c.kind === "intern"     ? "bg-amber-100 text-amber-800" :
-                              c.kind === "founder"    ? "bg-rose-100 text-rose-800" :
-                              c.kind === "advisor"    ? "bg-cyan-100 text-cyan-800" :
-                                                        "bg-muted text-muted-foreground";
-                            return (
-                              <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium uppercase ${cls}`}>
-                                {c.kind}
-                              </span>
-                            );
-                          })()}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <button
-                            onClick={() => deleteExternalContact(c.id, c.name)}
-                            className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
-                            title="Remove"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                            })()}
+                          </TableCell>
+                          <TableCell className="text-sm font-mono" data-privacy="blur">
+                            {c.daily_rate != null
+                              ? `${c.daily_rate_currency ?? "EUR"} ${Number(c.daily_rate).toLocaleString()}`
+                              : <span className="text-muted-foreground text-xs italic">—</span>}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => startEditExt(c)}
+                                className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => deleteExternalContact(c.id, c.name)}
+                                className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
+                                title="Remove"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                 </TableBody>
               </Table>
             )}

@@ -1030,7 +1030,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const r = await db.execute(sql`
-        SELECT id, name, email, kind, created_at
+        SELECT id, name, email, kind, created_at, daily_rate, daily_rate_currency
         FROM external_contacts
         ORDER BY name ASC
       `);
@@ -1071,20 +1071,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/external-contacts", requireAuth, async (req, res) => {
     try {
-      const { name, email, kind } = req.body ?? {};
+      const { name, email, kind, daily_rate, daily_rate_currency } = req.body ?? {};
       if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
-      // Free-text kind — front-end offers a curated dropdown
-      // (freelancer, partner, manager, intern, founder, advisor, …)
-      // but any string is accepted. Default if empty/missing.
       const k = (typeof kind === "string" && kind.trim()) ? kind.trim().toLowerCase() : "freelancer";
+      const rate = daily_rate != null && daily_rate !== "" ? Number(daily_rate) : null;
+      const ccy = (typeof daily_rate_currency === "string" && daily_rate_currency.trim()) ? daily_rate_currency.trim().toUpperCase() : "EUR";
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const now = new Date().toISOString();
       const r = await db.execute(sql`
-        INSERT INTO external_contacts (name, email, kind, created_at)
-        VALUES (${String(name).trim()}, ${String(email).trim().toLowerCase()}, ${k}, ${now})
-        ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
-        RETURNING id, name, email, kind, created_at
+        INSERT INTO external_contacts (name, email, kind, created_at, daily_rate, daily_rate_currency)
+        VALUES (${String(name).trim()}, ${String(email).trim().toLowerCase()}, ${k}, ${now}, ${rate}, ${ccy})
+        ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind,
+          daily_rate = EXCLUDED.daily_rate, daily_rate_currency = EXCLUDED.daily_rate_currency
+        RETURNING id, name, email, kind, created_at, daily_rate, daily_rate_currency
       `);
       res.status(201).json(r.rows[0]);
     } catch (e: any) {
@@ -1095,19 +1095,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/external-contacts/:id", requireAuth, async (req, res) => {
     try {
       const id = safeInt(req.params.id);
-      const { name, email, kind } = req.body ?? {};
+      const { name, email, kind, daily_rate, daily_rate_currency } = req.body ?? {};
       if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
-      // Free-text kind — front-end offers a curated dropdown
-      // (freelancer, partner, manager, intern, founder, advisor, …)
-      // but any string is accepted. Default if empty/missing.
       const k = (typeof kind === "string" && kind.trim()) ? kind.trim().toLowerCase() : "freelancer";
+      const rate = daily_rate != null && daily_rate !== "" ? Number(daily_rate) : null;
+      const ccy = (typeof daily_rate_currency === "string" && daily_rate_currency.trim()) ? daily_rate_currency.trim().toUpperCase() : "EUR";
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const r = await db.execute(sql`
         UPDATE external_contacts
-        SET name = ${String(name).trim()}, email = ${String(email).trim().toLowerCase()}, kind = ${k}
+        SET name = ${String(name).trim()}, email = ${String(email).trim().toLowerCase()},
+            kind = ${k}, daily_rate = ${rate}, daily_rate_currency = ${ccy}
         WHERE id = ${id}
-        RETURNING id, name, email, kind, created_at
+        RETURNING id, name, email, kind, created_at, daily_rate, daily_rate_currency
       `);
       if (r.rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
       res.json(r.rows[0]);
