@@ -5168,6 +5168,37 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  /**
+   * GET /api/agentic/agents/:id/score?days=7
+   * Returns the B7 6-dimension performance scorecard for one agent.
+   * Pure SQL — zero LLM calls, replaces the CHRO "score this agent" Claude call.
+   */
+  app.get("/api/agentic/agents/:id/score", requireAuth, async (req, res) => {
+    try {
+      const { scoreAgent } = await import("./microAI/index.js");
+      const agentId = safeInt(req.params.id);
+      const days    = Math.min(Number(req.query.days ?? 7), 90);
+      const score   = await scoreAgent(agentId, days);
+      res.json(score);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * GET /api/agentic/agents/scores?days=7
+   * Scorecard for ALL active agents — used by the CHRO overview table.
+   */
+  app.get("/api/agentic/agents/scores", requireAuth, async (req, res) => {
+    try {
+      const { scoreAgent } = await import("./microAI/index.js");
+      const days = Math.min(Number(req.query.days ?? 7), 90);
+      const agents = await db.select({ id: agentsTable.id, name: agentsTable.name, status: agentsTable.status })
+        .from(agentsTable).orderBy(agentsTable.id);
+      const active = agents.filter(a => a.status === "active" || a.status === "working");
+      const scores = await Promise.all(active.map(a => scoreAgent(a.id, days)));
+      res.json(scores.map((s, i) => ({ ...s, name: active[i].name })));
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   app.get("/api/agentic/agents/:id", requireAuth, async (req, res) => {
     try {
       const id = safeInt(req.params.id);

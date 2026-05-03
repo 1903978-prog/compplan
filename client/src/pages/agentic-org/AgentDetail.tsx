@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw, TrendingUp, GraduationCap, Brain, Library, ChevronRight } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw, TrendingUp, GraduationCap, Brain, Library, ChevronRight, BarChart3 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Agent {
@@ -58,6 +58,33 @@ interface Idea { id: number; title: string; description: string | null; status: 
 interface Task { id: number; title: string; description: string | null; deadline: string | null; priority: number; status: string; approval_level: string; approval_status: string; }
 interface LogRow { id: number; timestamp: string; event_type: string; payload: any; }
 
+interface AgentScore {
+  agentId:                 number;
+  days:                    number;
+  outputQuality:           number;
+  deliverableCompleteness: number;
+  okrAlignment:            number;
+  decisionRightCompliance: number;
+  conflictRate:            number;
+  knowledgeUtilisation:    number;
+  overall:                 number;
+}
+
+const SCORE_DIMS: { key: keyof AgentScore; label: string; description: string }[] = [
+  { key: "outputQuality",           label: "Output quality",          description: "Mean total_score of scored deliverables" },
+  { key: "deliverableCompleteness", label: "Deliverable completeness",description: "% cycles with ≥ 9 deliverables" },
+  { key: "okrAlignment",            label: "OKR alignment",           description: "% deliverables linked to an objective" },
+  { key: "decisionRightCompliance", label: "Decision-right compliance",description: "% deliverables with a valid L0-L3 level" },
+  { key: "conflictRate",            label: "Conflict rate",           description: "Inverted conflict score (100 = no conflicts)" },
+  { key: "knowledgeUtilisation",    label: "Knowledge utilisation",   description: "% deliverables with source_app_section set" },
+];
+
+function scoreColour(v: number): string {
+  if (v >= 80) return "text-green-600";
+  if (v >= 60) return "text-amber-600";
+  return "text-red-500";
+}
+
 export default function AgentDetail() {
   const [, params] = useRoute("/agents/:id");
   const [, navigate] = useLocation();
@@ -78,6 +105,10 @@ export default function AgentDetail() {
   // Re-route modal
   const [rerouteRow, setRerouteRow]             = useState<SectionMapRow | null>(null);
   const [rerouteDraft, setRerouteDraft]         = useState("");
+  // B7 scorecard
+  const [score, setScore]                       = useState<AgentScore | null>(null);
+  const [scoreDays, setScoreDays]               = useState(7);
+  const [scoreLoading, setScoreLoading]         = useState(false);
 
   async function load() {
     if (!id) return;
@@ -118,7 +149,17 @@ export default function AgentDetail() {
       toast({ title: "Failed to load agent", variant: "destructive" });
     }
   }
+  async function loadScore(days = scoreDays) {
+    if (!id) return;
+    setScoreLoading(true);
+    try {
+      const r = await fetch(`/api/agentic/agents/${id}/score?days=${days}`, { credentials: "include" });
+      if (r.ok) setScore(await r.json());
+    } catch { /* silently ignore */ } finally { setScoreLoading(false); }
+  }
+
   useEffect(() => { void load(); }, [id]);
+  useEffect(() => { void loadScore(scoreDays); }, [id, scoreDays]);
 
   if (!id || !agent) {
     return <div className="container mx-auto py-8 text-sm text-muted-foreground">Loading agent…</div>;
@@ -244,6 +285,72 @@ export default function AgentDetail() {
             ))}
           </div>
         </div>
+      </Section>
+
+      {/* 2b. B7 Performance Scorecard */}
+      <Section
+        title="Performance Scorecard (CHRO)"
+        icon={<BarChart3 className="w-4 h-4" />}
+        right={
+          <div className="flex items-center gap-1">
+            {[7, 14, 30].map(d => (
+              <button key={d}
+                onClick={() => setScoreDays(d)}
+                className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${scoreDays === d ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-muted-foreground/30"}`}>
+                {d}d
+              </button>
+            ))}
+            <Button size="sm" variant="ghost" className="h-6 px-2 ml-1" onClick={() => void loadScore(scoreDays)}>
+              <RefreshCw className={`w-3 h-3 ${scoreLoading ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        }
+      >
+        {score ? (
+          <div className="space-y-2">
+            {/* Overall badge */}
+            <div className="flex items-center gap-3 mb-3">
+              <div className="text-center">
+                <div className={`text-3xl font-bold font-mono ${scoreColour(score.overall)}`}>{score.overall}</div>
+                <div className="text-[10px] text-muted-foreground">Overall ({scoreDays}d)</div>
+              </div>
+              <div className="flex-1 grid grid-cols-2 gap-x-6 gap-y-1">
+                {SCORE_DIMS.map(dim => {
+                  const val = score[dim.key] as number;
+                  return (
+                    <div key={dim.key} className="flex items-center justify-between text-xs" title={dim.description}>
+                      <span className="text-muted-foreground truncate max-w-[140px]">{dim.label}</span>
+                      <span className={`font-mono font-semibold ml-2 shrink-0 ${scoreColour(val)}`}>{val}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Mini bar chart */}
+            <div className="space-y-1">
+              {SCORE_DIMS.map(dim => {
+                const val = score[dim.key] as number;
+                return (
+                  <div key={dim.key} className="flex items-center gap-2 text-[10px]">
+                    <span className="w-36 text-muted-foreground truncate shrink-0">{dim.label}</span>
+                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${val >= 80 ? "bg-green-500" : val >= 60 ? "bg-amber-400" : "bg-red-400"}`}
+                        style={{ width: `${val}%` }}
+                      />
+                    </div>
+                    <span className={`w-7 text-right font-mono font-semibold ${scoreColour(val)}`}>{val}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Computed by B7 Scoring Engine — pure SQL, no LLM.</p>
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground py-4 text-center">
+            {scoreLoading ? "Computing scorecard…" : "No deliverable data yet for this agent."}
+          </div>
+        )}
       </Section>
 
       {/* 3-4. Objectives + KRs */}
