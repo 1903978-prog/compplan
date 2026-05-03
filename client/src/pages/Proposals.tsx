@@ -4465,12 +4465,12 @@ Root cause: Territory allocation..."
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="text-sm font-semibold text-blue-800 mb-1">
-                        Fee Corridor <span className="font-normal text-blue-600">(B8 local AI · 0 tokens)</span>
+                        NET1 Fee Corridor <span className="font-normal text-blue-600">(B8 local AI · 0 tokens · excl. admin markup)</span>
                       </p>
                       <div className="flex items-center gap-4">
-                        <span className="text-sm text-blue-700">Min <strong>{fmt(fs.feeMin)}</strong>/wk</span>
-                        <span className="text-sm text-blue-700">Mid <strong className="text-blue-900">{fmt(fs.feeMid)}</strong>/wk</span>
-                        <span className="text-sm text-blue-700">Max <strong>{fmt(fs.feeMax)}</strong>/wk</span>
+                        <span className="text-sm text-blue-700">Min <strong>{fmt(fs.feeMin)}</strong>/wk NET1</span>
+                        <span className="text-sm text-blue-700">Mid <strong className="text-blue-900">{fmt(fs.feeMid)}</strong>/wk NET1</span>
+                        <span className="text-sm text-blue-700">Max <strong>{fmt(fs.feeMax)}</strong>/wk NET1</span>
                       </div>
                       <p className="text-xs text-blue-500 mt-1">{fs.rationale}{fs.ruleUsed ? ` · rule: ${fs.ruleUsed}` : ""}</p>
                     </div>

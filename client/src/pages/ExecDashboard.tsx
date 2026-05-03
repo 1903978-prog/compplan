@@ -312,9 +312,14 @@ export default function ExecDashboard() {
     return m;
   }, [pricingCases]);
 
+  // NET1/wk: case lookup → total_fee/weeks → weekly_price (last resort only).
+  // total_fee always stores NET1 total; weekly_price may be GROSS1 on older rows.
   const propNet1 = (p: PricingProposal): number => {
     const key = (p.project_name ?? "").trim().toLowerCase();
-    return dashNet1Map.get(key) ?? dashNet1Map.get(key.replace(/[a-z]+$/, "")) ?? p.weekly_price;
+    const fromCase = dashNet1Map.get(key) ?? dashNet1Map.get(key.replace(/[a-z]+$/, ""));
+    if (fromCase) return fromCase;
+    if (p.total_fee && (p.duration_weeks ?? 0) > 0) return Math.round(p.total_fee / p.duration_weeks!);
+    return p.weekly_price;
   };
   const propNet1Total = (p: PricingProposal): number => {
     const wk = propNet1(p);
