@@ -3409,7 +3409,7 @@ export default function PricingTool() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={c.status === "final" ? "default" : "secondary"} className="text-xs capitalize">
-                            {c.status}
+                            {c.status === "final" ? "TBD" : c.status}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
