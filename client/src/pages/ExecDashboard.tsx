@@ -594,7 +594,7 @@ export default function ExecDashboard() {
         <Kpi label="Active candidates" value={String(hiring.total)}    sub={`${hiring.potential} new potential`} icon={UserCheck} tone="violet" href="/hiring" />
         <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open invoices`} icon={Receipt}   tone="amber"   href="/invoicing" />
         <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
-        <Kpi label="Active projects" value={String(active.count)}      sub={eur(active.value)}             icon={Briefcase}  tone="emerald" href="/bd" />
+        <Kpi label="Active projects" value={String(ongoing.count)}     sub={eur(ongoing.totalValue)}       icon={Briefcase}  tone="emerald" href="/bd" />
       </div>
 
       {/* ── Ongoing Projects (proposals with end_date in the future) ─── */}
