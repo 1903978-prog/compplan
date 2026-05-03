@@ -294,14 +294,20 @@ export default function ExecDashboard() {
       if (!namesByStage[s]) namesByStage[s] = [];
       namesByStage[s].push(c.name || "—");
     }
+    const potential     = byStage["potential"] ?? 0;
+    const after_intro   = byStage["after_intro"] ?? 0;
+    const after_csi_asc = byStage["after_csi_asc"] ?? 0;
+    const after_csi_lm  = byStage["after_csi_lm"] ?? 0;
+    const hired         = byStage["hired"] ?? 0;
+    const out           = byStage["out"] ?? 0;
+    // Active = in the funnel, not yet hired or rejected. The "Active
+    // candidates" KPI tile uses this — previously it counted everyone
+    // including hired and out, which inflated the number.
+    const active = potential + after_intro + after_csi_asc + after_csi_lm;
     return {
       total: candidates.length,
-      potential:     byStage["potential"] ?? 0,
-      after_intro:   byStage["after_intro"] ?? 0,
-      after_csi_asc: byStage["after_csi_asc"] ?? 0,
-      after_csi_lm:  byStage["after_csi_lm"] ?? 0,
-      hired:         byStage["hired"] ?? 0,
-      out:           byStage["out"] ?? 0,
+      active,
+      potential, after_intro, after_csi_asc, after_csi_lm, hired, out,
       // Names of candidates past CSI ASC (for interview tracking)
       namesAfterCsi: [
         ...(namesByStage["after_csi_asc"] ?? []),
@@ -365,6 +371,11 @@ export default function ExecDashboard() {
   const bd = useMemo(() => {
     const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
     const recent = proposals.filter(p => {
+      // Honor the user-set "exclude from analysis" flag — these are typos,
+      // duplicates, internal demos, etc. that the user explicitly marked
+      // as junk in the Pricing Tool. Without this filter, flagged rows
+      // still inflate Pending/Won/Lost counts on the dashboard.
+      if ((p as any).excluded_from_analysis === 1 || (p as any).excluded_from_analysis === true) return false;
       if (!p.proposal_date) return true;
       const d = new Date(p.proposal_date);
       return isNaN(d.getTime()) || d >= cutoff;
@@ -447,12 +458,20 @@ export default function ExecDashboard() {
       return sum + Math.max(1, teamLen);
     }, 0);
 
-    // Pipeline weighted at default 50% probability (proposals don't carry probability).
+    // Pipeline weighted by each proposal's actual win_probability when
+    // present, falling back to 50% only when the user hasn't set one.
+    // Previously every pending proposal counted at flat 50% regardless
+    // of how likely the deal was.
     const pipeline = bd.pendingList;
     const pipelineWeightedSlots = pipeline.reduce((sum, p) => {
       const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
       const slots = Math.max(1, teamLen);
-      return sum + slots * 0.5; // 50% win probability
+      const wpRaw = (p as any).win_probability;
+      // win_probability is stored 0–100 (percent). Coerce + clamp.
+      const wp = (typeof wpRaw === "number" && isFinite(wpRaw))
+        ? Math.max(0, Math.min(1, wpRaw / 100))
+        : 0.5;
+      return sum + slots * wp;
     }, 0);
 
     const totalDemand   = committedSlots + pipelineWeightedSlots;
@@ -596,7 +615,7 @@ export default function ExecDashboard() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Kpi label="Headcount"       value={String(hr.headcount)}      sub={`${hr.birthdays} birthday${hr.birthdays === 1 ? "" : "s"} in 30d`} icon={Users}      tone="blue"    href="/" />
         <Kpi label="Monthly payroll" value={eur(hr.monthlyPayroll)}    sub={`avg ${eur(hr.avgSalary)}`}    icon={DollarSign} tone="slate"   href="/employees" />
-        <Kpi label="Active candidates" value={String(hiring.total)}    sub={`${hiring.potential} new potential`} icon={UserCheck} tone="violet" href="/hiring" />
+        <Kpi label="Active candidates" value={String(hiring.active)}   sub={`${hiring.potential} new potential · ${hiring.hired} hired`} icon={UserCheck} tone="violet" href="/hiring" />
         <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open invoices`} icon={Receipt}   tone="amber"   href="/invoicing" />
         <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
         <Kpi label="Active projects" value={String(ongoing.count)}     sub={eur(ongoing.totalValue)}       icon={Briefcase}  tone="emerald" href="/bd" />
