@@ -30,3 +30,12 @@ ppt-generation-brief.json
 *.pem
 *.p12
 credentials.json
+
+# Local dev runtime artifacts (server logs, install logs, throwaway scripts)
+server_err.txt
+server_out.txt
+server_err.log
+server_out.log
+.npm-install.log
+dev.cmd
+kill-locks.cjs
