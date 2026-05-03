@@ -1112,6 +1112,7 @@ export const orgAgents = pgTable("org_agents", {
     note?: string;
   }[]>().notNull().default([]),
   sort_order: integer("sort_order").notNull().default(0),
+  templates: jsonb("templates").$type<string[]>().notNull().default([]),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });

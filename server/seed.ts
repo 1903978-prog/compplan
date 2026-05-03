@@ -848,6 +848,7 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'agent'`);
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS email TEXT`);
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS dotted_parent_role_keys JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS templates JSONB NOT NULL DEFAULT '[]'::jsonb`);
   // Pre-set the CFO ↔ CCO matrix per co-CEO direction: CFO primarily under
   // CEO (solid), dotted-line to CCO because CFO does contracts/invoicing/
   // expense-reports for sales engagements. Idempotent — only adds 'cco'

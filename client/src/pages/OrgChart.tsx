@@ -1173,7 +1173,7 @@ function RoleDetailDialog({
   allRoles: OrgRole[];
   aiosAgent?: AiosAgent;
   onUpdateReportsTo: (role: OrgRole, newParent: string | null, isDotted?: boolean) => Promise<void>;
-  onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name">>) => Promise<void>;
+  onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name" | "templates">>) => Promise<void>;
   onCascade: (role: OrgRole) => Promise<void>;
   onClose: () => void;
   onAddKnowledgeFromDialog: () => void;
