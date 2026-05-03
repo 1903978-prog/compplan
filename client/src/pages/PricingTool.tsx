@@ -734,6 +734,9 @@ export default function PricingTool() {
   // /api/employees endpoint is unreachable (auth/503) — the team picker
   // then shows an empty dropdown with a hint to check the connection.
   const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>([]);
+  // External contacts — freelancers + partners. Loaded alongside employees
+  // so the Manager (EM) dropdown shows all eligible people in one list.
+  const [externalContacts, setExternalContacts] = useState<Array<{ id: number; name: string; kind: string }>>([]);
   // Which proposal row is currently having its team edited (Past Projects
   // → click "Pick team" / current roster button → opens the dialog).
   // Null = dialog closed. Holds a draft so dialog edits don't mutate the
@@ -900,16 +903,23 @@ export default function PricingTool() {
       // IMPORTANT: do not call setCases here — keep whatever is already in state.
     }
 
-    // Employees — best-effort. Used by the team-picker dialog on Past
-    // Projects rows. If unreachable the picker shows an empty list with
-    // a hint; doesn't block the rest of the page.
+    // Employees + external contacts — loaded in parallel for the Manager
+    // (EM) dropdown and team-picker dialog.
     try {
-      const eData = await loadOne<any[]>("/api/employees");
+      const [eData, ecData] = await Promise.all([
+        loadOne<any[]>("/api/employees"),
+        loadOne<any[]>("/api/external-contacts"),
+      ]);
       setEmployees(Array.isArray(eData)
         ? eData.map(e => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
         : []);
+      setExternalContacts(Array.isArray(ecData)
+        ? ecData
+            .filter((c: any) => c.kind === "freelancer" || c.kind === "partner")
+            .map((c: any) => ({ id: c.id, name: c.name, kind: c.kind }))
+        : []);
     } catch (err: any) {
-      console.warn("[PricingTool] employees load failed (team-picker will be empty):", err);
+      console.warn("[PricingTool] employees/contacts load failed (team-picker will be empty):", err);
     }
 
     // Proposals — preserve previous on failure, do NOT reset to []
@@ -1591,15 +1601,26 @@ export default function PricingTool() {
           </div>
         )}
         {/* Manager — the EM running the engagement day-to-day.
-            Hybrid input: dropdown of all employees (the common case) +
-            "Other (type below)" mode for external partners / freelancers
-            who aren't in /employees. The stored value is always a free
-            string so existing rows + non-employee names round-trip. */}
+            Shows only Engagement Managers (EM1/EM2), Partners, and
+            external freelancers/partners — other employee levels are
+            not eligible to lead a project. Falls back to "Other" for
+            names saved before this filter was introduced. */}
         <div className="space-y-1">
           <Label className="text-xs">Manager (EM)</Label>
           {(() => {
-            const managerInList = !!historyForm.manager_name
-              && employees.some(e => e.name === historyForm.manager_name);
+            // Eligible internal employees: EM1, EM2, or any role containing "Partner"
+            const emEmployees = employees.filter(e =>
+              e.current_role_code === "EM1" ||
+              e.current_role_code === "EM2" ||
+              (e.current_role_code ?? "").toLowerCase().includes("partner")
+            );
+            // All external freelancers + partners from external_contacts
+            const allEligible: { name: string; subtitle: string }[] = [
+              ...emEmployees.map(e => ({ name: e.name, subtitle: e.current_role_code ?? "" })),
+              ...externalContacts.map(c => ({ name: c.name, subtitle: c.kind === "partner" ? "Partner" : "Freelancer" })),
+            ];
+            const eligibleNames = new Set(allEligible.map(x => x.name));
+            const managerInList = !!historyForm.manager_name && eligibleNames.has(historyForm.manager_name);
             const isCustom = !!historyForm.manager_name && !managerInList;
             return (
               <div className="space-y-1">
@@ -1615,17 +1636,17 @@ export default function PricingTool() {
                     else setHistoryForm(f => ({ ...f, manager_name: v }));
                   }}
                 >
-                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick employee…" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick manager…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— none —</SelectItem>
-                    {employees.length === 0 && (
+                    {allEligible.length === 0 && (
                       <div className="px-2 py-2 text-[11px] text-muted-foreground italic">
-                        No employees loaded — add them in /employees.
+                        No eligible managers — add EM/Partner employees or external contacts.
                       </div>
                     )}
-                    {employees.map(e => (
-                      <SelectItem key={e.id} value={e.name}>
-                        {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
+                    {allEligible.map((p, i) => (
+                      <SelectItem key={i} value={p.name}>
+                        {p.name}{p.subtitle ? ` · ${p.subtitle}` : ""}
                       </SelectItem>
                     ))}
                     <SelectItem value="__other__">— Other (type a name) —</SelectItem>
@@ -4941,13 +4962,12 @@ export default function PricingTool() {
   // ── FORM VIEW ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      {/* Form header — sticky so the back arrow + title stay visible while
-          the user scrolls through the long edit form. top-0 sits flush
-          against the top of the scroll container; bg + subtle border keep
-          the content underneath legible as it slides past. z-30 stays
-          below the global app nav (which has its own sticky/fixed layer)
-          but above any inline cards. */}
-      <div className="sticky top-16 z-30 -mx-4 px-4 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b">
+      {/* Form header — FIXED so it never scrolls away regardless of the
+          overflow-x-hidden context on <main>. Sits at top-16 (64px = nav
+          height) so it appears flush below the global nav bar. A spacer
+          div below reserves the same height so form content starts below. */}
+      <div className="fixed top-16 inset-x-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="max-w-full mx-auto px-6 md:px-10 py-2">
         <div className="flex items-center gap-3">
           <button onClick={() => setView("list")}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded">
@@ -4967,7 +4987,10 @@ export default function PricingTool() {
             </Button>
           </div>
         </div>
+        </div>
       </div>
+      {/* Spacer — same height as the fixed header so content starts below it */}
+      <div className="h-14" />
 
       <div className="space-y-5">
 
