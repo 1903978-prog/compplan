@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Sun, Coffee, Play, RefreshCw, Copy, Upload, FileText,
   AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, Zap,
-  History, ShieldAlert, ChevronRight, BarChart2
+  History, ShieldAlert, ChevronRight, BarChart2, ThumbsUp, ThumbsDown
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -27,7 +27,7 @@ interface AiosLog {
 interface AiosDeliverable {
   id: number; cycle_id: number; agent_id: number; agent_name?: string;
   deliverable_type: string; rank: number; title: string; description?: string;
-  total_score?: number; status: string;
+  total_score?: number; status: string; human_rating?: number | null;
 }
 interface CeoBrief {
   id: number; cycle_id: number; executive_summary?: string;
@@ -125,6 +125,15 @@ export default function AiosCycle() {
     setDeliverables(d);
     if (b) setCeoBrief(b);
     setCoworkLetters(ltrs);
+  }, []);
+
+  const rateDeliverable = useCallback(async (id: number, rating: 1 | -1 | null) => {
+    await fetch(`/api/aios/deliverables/${id}/rate`, {
+      method: "PATCH", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rating }),
+    });
+    setDeliverables(prev => prev.map(d => d.id === id ? { ...d, human_rating: rating } : d));
   }, []);
 
   const loadCycleData = useCallback(async (id: number) => {
@@ -512,6 +521,20 @@ export default function AiosCycle() {
                                   {d.total_score != null && (
                                     <Badge variant="outline" className="text-[10px] h-4 shrink-0">{d.total_score}</Badge>
                                   )}
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); void rateDeliverable(d.id, d.human_rating === 1 ? null : 1); }}
+                                    className={`shrink-0 rounded hover:bg-emerald-100 p-0.5 transition-colors ${d.human_rating === 1 ? "text-emerald-600" : "text-muted-foreground/40 hover:text-emerald-600"}`}
+                                    title="Good"
+                                  >
+                                    <ThumbsUp className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); void rateDeliverable(d.id, d.human_rating === -1 ? null : -1); }}
+                                    className={`shrink-0 rounded hover:bg-red-100 p-0.5 transition-colors ${d.human_rating === -1 ? "text-red-500" : "text-muted-foreground/40 hover:text-red-500"}`}
+                                    title="Not useful"
+                                  >
+                                    <ThumbsDown className="w-3 h-3" />
+                                  </button>
                                 </div>
                               ))}
                             </div>

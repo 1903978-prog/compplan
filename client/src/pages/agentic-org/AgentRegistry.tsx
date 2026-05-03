@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Plus, Minus, Users, ChevronRight, BookOpen } from "lucide-react";
+import { Plus, Minus, Users, ChevronRight, BookOpen, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Agent {
@@ -22,16 +22,18 @@ export default function AgentRegistry() {
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
   const [kmExpanded, setKmExpanded] = useState(false);
+  const [agentRatings, setAgentRatings] = useState<Record<string, { up: number; down: number }>>({});
 
   async function load() {
     setLoading(true);
     try {
-      const [aRes, iRes, tRes] = await Promise.all([
-        fetch("/api/agentic/agents",  { credentials: "include" }),
-        fetch("/api/agentic/ideas",   { credentials: "include" }),
-        fetch("/api/agentic/tasks",   { credentials: "include" }),
+      const [aRes, iRes, tRes, rRes] = await Promise.all([
+        fetch("/api/agentic/agents",                      { credentials: "include" }),
+        fetch("/api/agentic/ideas",                       { credentials: "include" }),
+        fetch("/api/agentic/tasks",                       { credentials: "include" }),
+        fetch("/api/aios/deliverables/agent-ratings",     { credentials: "include" }),
       ]);
-      const [a, i, t] = await Promise.all([aRes.json(), iRes.json(), tRes.json()]);
+      const [a, i, t, r] = await Promise.all([aRes.json(), iRes.json(), tRes.json(), rRes.ok ? rRes.json() : []]);
       setAgents(Array.isArray(a) ? a : []);
       const ic: Record<number, number> = {};
       for (const idea of (Array.isArray(i) ? i : []) as any[]) {
@@ -43,6 +45,11 @@ export default function AgentRegistry() {
         if (tk.status === "open" || tk.status === "in_progress") tc[tk.agent_id] = (tc[tk.agent_id] ?? 0) + 1;
       }
       setTaskCounts(tc);
+      const rc: Record<string, { up: number; down: number }> = {};
+      for (const row of (Array.isArray(r) ? r : []) as any[]) {
+        rc[row.agent_name] = { up: Number(row.thumbs_up ?? 0), down: Number(row.thumbs_down ?? 0) };
+      }
+      setAgentRatings(rc);
     } catch {
       toast({ title: "Failed to load agents", variant: "destructive" });
     } finally {
@@ -74,7 +81,7 @@ export default function AgentRegistry() {
     }
   }
 
-  const COLS = "grid grid-cols-[1fr_180px_120px_100px_100px_40px] gap-3 px-4";
+  const COLS = "grid grid-cols-[1fr_180px_120px_80px_80px_80px_40px] gap-3 px-4";
 
   function AgentRow({ a, indent = false }: { a: Agent; indent?: boolean }) {
     return (
@@ -99,6 +106,18 @@ export default function AgentRegistry() {
         </div>
         <div className="text-right font-mono text-sm">{ideaCounts[a.id] ?? 0}</div>
         <div className="text-right font-mono text-sm">{taskCounts[a.id] ?? 0}</div>
+        <div className="flex items-center gap-1 justify-end">
+          {agentRatings[a.name] ? (
+            <>
+              <ThumbsUp className="w-3 h-3 text-emerald-500" />
+              <span className="text-[11px] text-emerald-700 font-mono">{agentRatings[a.name].up}</span>
+              <ThumbsDown className="w-3 h-3 text-red-400 ml-1" />
+              <span className="text-[11px] text-red-500 font-mono">{agentRatings[a.name].down}</span>
+            </>
+          ) : (
+            <span className="text-[11px] text-muted-foreground/40">—</span>
+          )}
+        </div>
         <ChevronRight className="w-4 h-4 text-muted-foreground" />
       </button>
     );
@@ -137,6 +156,7 @@ export default function AgentRegistry() {
           <div>Status</div>
           <div className="text-right">Open ideas</div>
           <div className="text-right">Open tasks</div>
+          <div className="text-right">Ratings</div>
           <div></div>
         </div>
 

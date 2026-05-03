@@ -317,11 +317,37 @@ function buildAgentContext(agent: any, agentObjectives: any[], agentTasks: any[]
   return lines.join("\n");
 }
 
+// ── Agent rating signal ───────────────────────────────────────────────────────
+async function getAgentRatingSignal(agentName: string): Promise<string> {
+  try {
+    const rows = await db.execute(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE human_rating = 1)  AS up,
+        COUNT(*) FILTER (WHERE human_rating = -1) AS down
+      FROM aios_deliverables
+      WHERE agent_name = ${agentName}
+        AND human_rating IS NOT NULL
+        AND created_at > NOW() - INTERVAL '14 days'
+    `);
+    const row = (rows as any).rows?.[0];
+    const up = Number(row?.up ?? 0);
+    const down = Number(row?.down ?? 0);
+    if (up + down === 0) return "";
+    const pct = Math.round((up / (up + down)) * 100);
+    if (pct >= 70) return `\n[QUALITY SIGNAL: Your recent deliverables were rated ${pct}% positive (${up}👍 ${down}👎 over 14 days). Keep the same level of specificity and evidence.]`;
+    if (pct <= 40) return `\n[QUALITY SIGNAL: Your recent deliverables were rated only ${pct}% positive (${up}👍 ${down}👎 over 14 days). Focus on more concrete, actionable, evidence-based insights this cycle.]`;
+    return `\n[QUALITY SIGNAL: Your recent deliverables were rated ${pct}% positive (${up}👍 ${down}👎 over 14 days). Aim for greater specificity and impact.]`;
+  } catch {
+    return "";
+  }
+}
+
 // ── Generate agent deliverables via Claude ───────────────────────────────────
 async function generateAgentDeliverables(cycleId: number, agent: any, context: string): Promise<any[]> {
+  const ratingSignal = await getAgentRatingSignal(agent.name);
   const system = `You are ${agent.name}, an AI agent at Eendigo, an AI-powered management consulting firm.
 You are executing your daily AIOS analysis cycle.
-Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.`;
+Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.${ratingSignal}`;
 
   const user = `${context}
 

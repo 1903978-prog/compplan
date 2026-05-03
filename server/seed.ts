@@ -3437,6 +3437,9 @@ Sequential IDs: PAR-001.
       )
     `);
 
+  // ── Deliverable human feedback ────────────────────────────────────────────────
+  await db.execute(sql`ALTER TABLE aios_deliverables ADD COLUMN IF NOT EXISTS human_rating INTEGER`);
+
   // ── KM agent extensions on agents table ──────────────────────────────────────
   await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS agent_type          TEXT NOT NULL DEFAULT 'aios_classic'`);
   await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge_base_path TEXT`);
@@ -3728,6 +3731,21 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
       created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+
+  // ── template_renders — every micro-AI template render is logged here ─
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS template_renders (
+      id             SERIAL PRIMARY KEY,
+      agent          TEXT NOT NULL,
+      template_slug  TEXT NOT NULL,
+      rendered_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+      slots          JSONB,
+      output         TEXT,
+      used_in        TEXT
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS template_renders_agent_idx ON template_renders (agent, rendered_at DESC)`);
+
   // ── Apply structured agent specs from agentSpecsData.ts ──────────────
   // Match by exact name (cards.json was authored to match agents.name 1:1).
   // For each spec we:

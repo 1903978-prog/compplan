@@ -1477,6 +1477,7 @@ export const aiosDeliverables = pgTable("aios_deliverables", {
   research_topic:       text("research_topic"),
   business_question:    text("business_question"),
   expected_output:      text("expected_output"),
+  human_rating:         integer("human_rating"),   // 1 = thumbs up, -1 = thumbs down, null = unrated
   created_at:           text("created_at").notNull(),
 });
 export type AiosDeliverable = typeof aiosDeliverables.$inferSelect;

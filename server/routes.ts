@@ -6,6 +6,7 @@ import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposal
 import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
 import { runKmCycle, getKmSessions, getKmSessionDetail } from "./kmService";
 import { runCeoBrief } from "./ceoBriefRunner";
+import { listTemplates, loadTemplate, loadTemplateRaw, render as renderTemplate, saveTemplate } from "./microAI/templateEngine";
 import { ceoBriefRuns, ceoBriefRunDecisions } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -123,6 +124,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       node_env: process.env.NODE_ENV || "unknown",
       started_at: new Date(Date.now() - Math.floor(process.uptime() * 1000)).toISOString(),
     });
+  });
+
+  // ── Template engine (micro-AI) ───────────────────────────────────────
+  // List, fetch, render and save markdown templates. Renders are logged
+  // into template_renders so we can see token-free deliverable volume.
+  app.get("/api/templates", requireAuth, (req, res) => {
+    const agent = (req.query.agent as string | undefined)?.trim() || undefined;
+    res.json(listTemplates(agent));
+  });
+  app.get("/api/templates/:agent/:slug", requireAuth, (req, res) => {
+    try {
+      const { meta, body } = loadTemplate(req.params.agent, req.params.slug);
+      const raw = loadTemplateRaw(req.params.agent, req.params.slug);
+      res.json({ meta, body, raw });
+    } catch (err: any) {
+      res.status(404).json({ message: err?.message ?? "Template not found" });
+    }
+  });
+  app.post("/api/templates/render", requireAuth, async (req, res) => {
+    try {
+      const { agent, slug, slots, used_in } = req.body ?? {};
+      if (!agent || !slug) return res.status(400).json({ message: "agent and slug are required" });
+      const result = renderTemplate(agent, slug, slots ?? {});
+      try {
+        await db.execute(sql`
+          INSERT INTO template_renders (agent, template_slug, slots, output, used_in)
+          VALUES (${agent}, ${slug}, ${JSON.stringify(slots ?? {})}::jsonb, ${result.body}, ${used_in ?? null})
+        `);
+      } catch { /* logging is best-effort */ }
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+  app.post("/api/templates/:agent/:slug", requireAuth, (req, res) => {
+    try {
+      const { content } = req.body ?? {};
+      if (typeof content !== "string" || !content.includes("---")) {
+        return res.status(400).json({ message: "content must be a markdown string with frontmatter" });
+      }
+      saveTemplate(req.params.agent, req.params.slug, content);
+      const { meta, body } = loadTemplate(req.params.agent, req.params.slug);
+      res.json({ meta, body });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Save failed" });
+    }
   });
 
   // ── Diagnostic row counts (unauthenticated, read-only) ────────────────────
@@ -7485,6 +7532,38 @@ RULES:
           eq(agentKpis.round, "round1")
         ));
       res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // PATCH /api/aios/deliverables/:id/rate — record human thumbs-up (+1) or thumbs-down (-1)
+  app.patch("/api/aios/deliverables/:id/rate", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { rating } = req.body ?? {};
+      if (rating !== 1 && rating !== -1 && rating !== null) {
+        res.status(400).json({ message: "rating must be 1, -1, or null" });
+        return;
+      }
+      await db.execute(sql`UPDATE aios_deliverables SET human_rating = ${rating} WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/deliverables/agent-ratings — avg human_rating per agent (last 30 days)
+  app.get("/api/aios/deliverables/agent-ratings", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT agent_name,
+               COUNT(*)                                              AS total_rated,
+               ROUND(AVG(human_rating::numeric), 2)                 AS avg_rating,
+               COUNT(*) FILTER (WHERE human_rating = 1)             AS thumbs_up,
+               COUNT(*) FILTER (WHERE human_rating = -1)            AS thumbs_down
+        FROM aios_deliverables
+        WHERE human_rating IS NOT NULL
+          AND created_at > NOW() - INTERVAL '30 days'
+        GROUP BY agent_name
+      `);
+      res.json((rows as any).rows ?? []);
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
