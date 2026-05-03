@@ -3187,42 +3187,43 @@ export default function PricingTool() {
           </div>
         )}
 
-        {/* Tab navigation + Refresh button */}
-        <div className="flex items-center justify-between border-b">
-          <div className="flex gap-1">
-            {([
-              { id: "cases" as const,         label: "Pricing Cases",    icon: DollarSign,  count: activeCases.length },
-              { id: "wonlost_cases" as const, label: "Won/Lost Pricings",icon: CheckCircle, count: resolvedCases.length },
-              { id: "history" as const,       label: "Past Projects",    icon: History,     count: proposals.length },
-              { id: "winloss" as const,       label: "Win-Loss",         icon: TrendingUp,  count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
-            ]).map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setMainTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                  mainTab === tab.id
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
-          </div>
-          {/* Refresh button — forces a full re-fetch and updates the cache */}
+        {/* Tab navigation */}
+        <div className="flex gap-1 border-b">
+          {([
+            { id: "cases" as const,         label: "Pricing Cases",    icon: DollarSign,  count: activeCases.length },
+            { id: "wonlost_cases" as const, label: "Won/Lost Pricings",icon: CheckCircle, count: resolvedCases.length },
+            { id: "history" as const,       label: "Past Projects",    icon: History,     count: proposals.length },
+            { id: "winloss" as const,       label: "Win-Loss",         icon: TrendingUp,  count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
+          ]).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setMainTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                mainTab === tab.id
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                {tab.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Refresh button — sits below the tab bar, above content */}
+        <div className="flex justify-end pt-1.5 pb-0.5">
           <Button
             size="sm"
             variant="ghost"
             onClick={() => { _invalidatePricingCache(); loadAll({ force: true }); }}
             disabled={loading}
-            className="mr-2 mb-0.5 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground text-xs h-7"
             title="Force-reload all data from the database"
           >
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3 h-3 mr-1.5 ${loading ? "animate-spin" : ""}`} />
             {loading ? "Loading…" : "Refresh"}
           </Button>
         </div>
