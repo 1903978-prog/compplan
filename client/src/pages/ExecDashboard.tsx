@@ -312,8 +312,15 @@ export default function ExecDashboard() {
 
   // ─── AR rollup ────────────────────────────────────────────────────────
   const ar = useMemo(() => {
-    const open = invoices.filter(i => (i.state ?? "").toLowerCase() !== "paid");
     const today = new Date(); today.setHours(0, 0, 0, 0);
+    // Mirror Invoicing page definition: "outstanding" = open | partial | overdue.
+    // Draft / approved / sent / closed are excluded — they're not yet collectible.
+    const open = invoices.filter(i => {
+      const s = (i.state ?? "").toLowerCase();
+      if (s === "open" || s === "partial") return true;
+      if (s === "paid" || s === "closed" || s === "draft") return false;
+      return i.due_date ? new Date(i.due_date) < today : false;
+    });
     let outstanding = 0;
     let overdue = 0;
     let overdueCount = 0;

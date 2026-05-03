@@ -39,3 +39,4 @@ server_out.log
 .npm-install.log
 dev.cmd
 kill-locks.cjs
+*.log

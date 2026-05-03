@@ -583,6 +583,7 @@ function Router() {
       <Route path="/admin/theme" component={AdminTheme} />
       <Route path="/hiring/scores" component={CandidateScores} />
       <Route path="/hiring/scoreboard" component={HiringScoreboard} />
+      <Route path="/login"><Redirect to="/" /></Route>
       <Route component={NotFound} />
     </Switch>
   );
