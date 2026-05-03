@@ -294,14 +294,20 @@ export default function ExecDashboard() {
       if (!namesByStage[s]) namesByStage[s] = [];
       namesByStage[s].push(c.name || "—");
     }
+    const potential     = byStage["potential"] ?? 0;
+    const after_intro   = byStage["after_intro"] ?? 0;
+    const after_csi_asc = byStage["after_csi_asc"] ?? 0;
+    const after_csi_lm  = byStage["after_csi_lm"] ?? 0;
+    const hired         = byStage["hired"] ?? 0;
+    const out           = byStage["out"] ?? 0;
+    // Active = in the funnel, not yet hired or rejected. The "Active
+    // candidates" KPI tile uses this — previously it counted everyone
+    // including hired and out, which inflated the number.
+    const active = potential + after_intro + after_csi_asc + after_csi_lm;
     return {
       total: candidates.length,
-      potential:     byStage["potential"] ?? 0,
-      after_intro:   byStage["after_intro"] ?? 0,
-      after_csi_asc: byStage["after_csi_asc"] ?? 0,
-      after_csi_lm:  byStage["after_csi_lm"] ?? 0,
-      hired:         byStage["hired"] ?? 0,
-      out:           byStage["out"] ?? 0,
+      active,
+      potential, after_intro, after_csi_asc, after_csi_lm, hired, out,
       // Names of candidates past CSI ASC (for interview tracking)
       namesAfterCsi: [
         ...(namesByStage["after_csi_asc"] ?? []),
@@ -372,6 +378,11 @@ export default function ExecDashboard() {
   const bd = useMemo(() => {
     const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
     const recent = proposals.filter(p => {
+      // Honor the user-set "exclude from analysis" flag — these are typos,
+      // duplicates, internal demos, etc. that the user explicitly marked
+      // as junk in the Pricing Tool. Without this filter, flagged rows
+      // still inflate Pending/Won/Lost counts on the dashboard.
+      if ((p as any).excluded_from_analysis === 1 || (p as any).excluded_from_analysis === true) return false;
       if (!p.proposal_date) return true;
       const d = new Date(p.proposal_date);
       return isNaN(d.getTime()) || d >= cutoff;
@@ -454,12 +465,20 @@ export default function ExecDashboard() {
       return sum + Math.max(1, teamLen);
     }, 0);
 
-    // Pipeline weighted at default 50% probability (proposals don't carry probability).
+    // Pipeline weighted by each proposal's actual win_probability when
+    // present, falling back to 50% only when the user hasn't set one.
+    // Previously every pending proposal counted at flat 50% regardless
+    // of how likely the deal was.
     const pipeline = bd.pendingList;
     const pipelineWeightedSlots = pipeline.reduce((sum, p) => {
       const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
       const slots = Math.max(1, teamLen);
-      return sum + slots * 0.5; // 50% win probability
+      const wpRaw = (p as any).win_probability;
+      // win_probability is stored 0–100 (percent). Coerce + clamp.
+      const wp = (typeof wpRaw === "number" && isFinite(wpRaw))
+        ? Math.max(0, Math.min(1, wpRaw / 100))
+        : 0.5;
+      return sum + slots * wp;
     }, 0);
 
     const totalDemand   = committedSlots + pipelineWeightedSlots;
@@ -492,7 +511,12 @@ export default function ExecDashboard() {
       signals: string[]; level: "high" | "medium" | "low";
     };
 
-    return employees.map((emp): RiskRow => {
+    // Exclude retired employees — they no longer report to anyone, can't
+    // be promoted, and any signal we'd compute on them is meaningless.
+    // Status defaults to "active" if missing (pre-migration rows).
+    const activeOnly = employees.filter(e => ((e as any).status ?? "active") !== "former");
+
+    return activeOnly.map((emp): RiskRow => {
       const signals: string[] = [];
 
       // 1. Months since last promotion
@@ -598,7 +622,7 @@ export default function ExecDashboard() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Kpi label="Headcount"       value={String(hr.headcount)}      sub={`${hr.birthdays} birthday${hr.birthdays === 1 ? "" : "s"} in 30d`} icon={Users}      tone="blue"    href="/" />
         <Kpi label="Monthly payroll" value={eur(hr.monthlyPayroll)}    sub={`avg ${eur(hr.avgSalary)}`}    icon={DollarSign} tone="slate"   href="/employees" />
-        <Kpi label="Active candidates" value={String(hiring.total)}    sub={`${hiring.potential} new potential`} icon={UserCheck} tone="violet" href="/hiring" />
+        <Kpi label="Active candidates" value={String(hiring.active)}   sub={`${hiring.potential} new potential · ${hiring.hired} hired`} icon={UserCheck} tone="violet" href="/hiring" />
         <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open invoices`} icon={Receipt}   tone="amber"   href="/invoicing" />
         <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
         <Kpi label="Active projects" value={String(ongoing.count)}     sub={eur(ongoing.totalValue)}       icon={Briefcase}  tone="emerald" href="/bd" />
@@ -772,40 +796,6 @@ export default function ExecDashboard() {
           </p>
         </div>
       </Card>
-
-      {/* ── People Risk ──────────────────────────────────────────── */}
-      {churnRisk.length > 0 && (
-        <Card className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-              <TrendingDown className="w-4 h-4 text-red-600" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold">People Risk</h3>
-              <p className="text-[11px] text-muted-foreground">
-                Attrition / churn signals — {churnRisk.filter(r => r.level === "high").length} high, {churnRisk.filter(r => r.level === "medium").length} medium
-              </p>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            {churnRisk.sort((a, b) => (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1)).map(r => (
-              <div key={r.id} className={`flex items-center gap-2 flex-wrap text-xs rounded px-2 py-1.5 ${
-                r.level === "high" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"
-              }`}>
-                <Badge variant="outline" className={`text-[10px] shrink-0 ${
-                  r.level === "high" ? "border-red-400 text-red-700 bg-red-50" : "border-amber-400 text-amber-700 bg-amber-50"
-                }`}>{r.level}</Badge>
-                <span className="font-semibold" data-privacy="blur">{r.name}</span>
-                <span className="text-muted-foreground">{r.role}</span>
-                <span className="ml-auto text-[10px] text-muted-foreground">{r.signals.join(" · ")}</span>
-              </div>
-            ))}
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-2">
-            Signals: promotion overdue (&gt;24mo), performance &lt;6.5, onboarding (&lt;6mo), no recent rating. CHRO owns resolution.
-          </p>
-        </Card>
-      )}
 
       {/* ── Row 2: Hiring funnel + Top overdue invoices ──────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1122,6 +1112,42 @@ export default function ExecDashboard() {
           </div>
         );
       })()}
+
+      {/* ── People Risk ──────────────────────────────────────────────
+          Lives at the BOTTOM of the page — it's a CHRO concern, not a
+          headline KPI. Excludes retired (status='former') employees. */}
+      {churnRisk.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
+              <TrendingDown className="w-4 h-4 text-red-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">People Risk</h3>
+              <p className="text-[11px] text-muted-foreground">
+                Attrition / churn signals — {churnRisk.filter(r => r.level === "high").length} high, {churnRisk.filter(r => r.level === "medium").length} medium
+              </p>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {churnRisk.sort((a, b) => (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1)).map(r => (
+              <div key={r.id} className={`flex items-center gap-2 flex-wrap text-xs rounded px-2 py-1.5 ${
+                r.level === "high" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"
+              }`}>
+                <Badge variant="outline" className={`text-[10px] shrink-0 ${
+                  r.level === "high" ? "border-red-400 text-red-700 bg-red-50" : "border-amber-400 text-amber-700 bg-amber-50"
+                }`}>{r.level}</Badge>
+                <span className="font-semibold" data-privacy="blur">{r.name}</span>
+                <span className="text-muted-foreground">{r.role}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">{r.signals.join(" · ")}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Signals: promotion overdue (&gt;24mo), performance &lt;6.5, onboarding (&lt;6mo), no recent rating. Retired employees excluded. CHRO owns resolution.
+          </p>
+        </Card>
+      )}
 
       {loading && (
         <p className="text-[11px] text-muted-foreground italic text-center">Loading live data…</p>

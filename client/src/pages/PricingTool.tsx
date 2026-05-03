@@ -746,7 +746,10 @@ export default function PricingTool() {
   // 0% commitment whenever the duration changes. Options 2 and 3 stay
   // user-editable. Runs only when duration_weeks actually changes so it
   // doesn't stomp on a user's Option 2/3 edits.
-  const [mainTab, setMainTab] = useState<"cases" | "wonlost_cases" | "history" | "winloss">("cases");
+  // "wonlost_cases" tab removed — won/lost projects already live in
+  // the All Projects tab (renamed from "Past Projects"), so the
+  // separate Won/Lost listing was redundant.
+  const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
   // Won Projects moved to the AR / Invoicing page (Task 11) — no state here.
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
@@ -2523,10 +2526,12 @@ export default function PricingTool() {
 
       toast({
         title: `Project marked as ${outcome}`,
-        description: `${displayProjectName(form.project_name, form.revision_letter)} moved to Won/Lost Pricings`,
+        description: `${displayProjectName(form.project_name, form.revision_letter)} marked ${outcome}`,
       });
       setView("list");
-      setMainTab("wonlost_cases");
+      // Land on the All Projects tab where the now-resolved row appears
+      // alongside everything else.
+      setMainTab("history");
       _invalidatePricingCache(); loadAll({ force: true });
     } catch {
       toast({ title: "Failed to save", variant: "destructive" });
@@ -3107,11 +3112,11 @@ export default function PricingTool() {
       : canonicalGrossWeekly;
   }, [canonicalGrossWeekly, variableFeePct]);
 
-  // Split cases: active (no outcome) vs resolved (won / lost)
+  // Active cases (no outcome yet) — distinct from resolved (won/lost)
+  // ones that now appear inline in the All Projects tab.
   const activeCases = cases.filter((c: any) => !c.outcome || (c.outcome !== "won" && c.outcome !== "lost"));
-  const resolvedCases = cases.filter((c: any) => c.outcome === "won" || c.outcome === "lost");
 
-  /** For Won/Lost tab: strip the trailing revision letter (e.g. "RUB07A" → "RUB07"). */
+  /** Strip the trailing revision letter (e.g. "RUB07A" → "RUB07"). */
   const wonDisplayName = (c: any): string => {
     const full = displayProjectName(c.project_name, c.revision_letter);
     return full.replace(/[A-Z]$/, "");
@@ -3190,10 +3195,9 @@ export default function PricingTool() {
         {/* Tab navigation */}
         <div className="flex gap-1 border-b">
           {([
-            { id: "cases" as const,         label: "Pricing Cases",    icon: DollarSign,  count: activeCases.length },
-            { id: "wonlost_cases" as const, label: "Won/Lost Pricings",icon: CheckCircle, count: resolvedCases.length },
-            { id: "history" as const,       label: "Past Projects",    icon: History,     count: proposals.length },
-            { id: "winloss" as const,       label: "Win-Loss",         icon: TrendingUp,  count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
+            { id: "cases" as const,   label: "Pricing Cases", icon: DollarSign, count: activeCases.length },
+            { id: "history" as const, label: "All Projects",  icon: History,    count: proposals.length },
+            { id: "winloss" as const, label: "Win-Loss",      icon: TrendingUp, count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
           ]).map(tab => (
             <button
               key={tab.id}
@@ -3213,7 +3217,7 @@ export default function PricingTool() {
           ))}
         </div>
 
-        {/* Refresh button — sits below the tab bar, above content */}
+        {/* Refresh button — below the tab bar */}
         <div className="flex justify-end pt-1.5 pb-0.5">
           <Button
             size="sm"
@@ -3590,76 +3594,8 @@ export default function PricingTool() {
               </Card>
             )}
           </>
-        ) : mainTab === "wonlost_cases" ? (
-          /* ── WON / LOST PRICINGS TAB ───────────────────────────────── */
-          <div className="space-y-4">
-            <p className="text-xs text-muted-foreground">
-              Pricing cases that have been marked as Won or Lost. The project name is shown without the revision letter.
-              Click a row to re-open the case for reference.
-            </p>
-            {resolvedCases.length === 0 ? (
-              <Card className="py-14">
-                <CardContent className="flex flex-col items-center gap-3 text-center">
-                  <CheckCircle className="w-10 h-10 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">No cases have been marked Won or Lost yet.</p>
-                  <p className="text-xs text-muted-foreground">Open a pricing case and click "Mark as Won" or "Mark as Lost" to move it here.</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Project</TableHead>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Fund</TableHead>
-                      <TableHead>Region</TableHead>
-                      <TableHead>Duration</TableHead>
-                      <TableHead>Target / wk</TableHead>
-                      <TableHead>Outcome</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="w-16">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {resolvedCases.map((c: any) => (
-                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openCase(c)}>
-                        <TableCell className="font-semibold font-mono">{wonDisplayName(c)}</TableCell>
-                        <TableCell>{c.client_name || "—"}</TableCell>
-                        <TableCell className="text-muted-foreground">{c.fund_name || "—"}</TableCell>
-                        <TableCell>{c.region || "—"}</TableCell>
-                        <TableCell>{c.duration_weeks ? `${c.duration_weeks}w` : "—"}</TableCell>
-                        <TableCell className="font-mono text-primary font-semibold">
-                          {c.recommendation?.canonical_net_weekly
-                            ? fmt(c.recommendation.canonical_net_weekly)
-                            : c.recommendation?.target_weekly
-                              ? fmt(c.recommendation.target_weekly)
-                              : "—"}
-                        </TableCell>
-                        <TableCell>
-                          {c.outcome === "won"
-                            ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">Won</Badge>
-                            : <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Lost</Badge>}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
-                          {c.created_at ? new Date(c.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—"}
-                        </TableCell>
-                        <TableCell onClick={(e) => e.stopPropagation()}>
-                          <div className="flex gap-1">
-                            <button onClick={() => openCase(c)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors" title="Open case">
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Card>
-            )}
-          </div>
         ) : mainTab === "history" ? (
-          /* ── PAST PROJECTS TAB ─────────────────────────────────────── */
+          /* ── ALL PROJECTS TAB (was "Past Projects") ─────────────────── */
           <div className="space-y-4">
             {/* Backfill TBD from cases — creates a "pending" proposal
                 row for every saved pricing case that doesn't have one
