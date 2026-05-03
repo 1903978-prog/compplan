@@ -4947,15 +4947,24 @@ export default function PricingTool() {
           the content underneath legible as it slides past. z-30 stays
           below the global app nav (which has its own sticky/fixed layer)
           but above any inline cards. */}
-      <div className="sticky top-0 z-30 -mx-4 px-4 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b">
+      <div className="sticky top-16 z-30 -mx-4 px-4 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b">
         <div className="flex items-center gap-3">
           <button onClick={() => setView("list")}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded">
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div>
+          <div className="flex-1 min-w-0">
             <h1 className="text-xl font-bold">{form.id ? "Edit Pricing Case" : "New Pricing Case"}</h1>
             <p className="text-sm text-muted-foreground">Fill in the details — pricing recommendation updates live</p>
+          </div>
+          {/* Save buttons duplicated here so they're always reachable without scrolling */}
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="outline" size="sm" onClick={() => handleSave("draft")} disabled={saving}>
+              Save draft
+            </Button>
+            <Button size="sm" onClick={() => handleSave("final")} disabled={saving}>
+              {saving ? "Saving…" : "Save & Finalise"}
+            </Button>
           </div>
         </div>
       </div>
