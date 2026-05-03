@@ -526,12 +526,53 @@ export default function ExecDashboard() {
     }).filter(r => r.level !== "low");
   }, [employees]);
 
-  // ─── Recent BD activity — last 10 proposals ──────────────────────────
+  // ─── Recent BD activity — merged proposals + cases, deduplicated ─────
+  // Proposals and pricing cases represent the same business concept (a
+  // commercial opportunity). We merge both, add any case that has no
+  // matching proposal yet, then deduplicate by client+project keeping
+  // the best outcome per project (won > lost > pending/TBD).
   const recentBD = useMemo(() => {
-    return [...proposals]
+    const outcomeRank = (o: string | null | undefined) =>
+      o === "won" ? 3 : o === "lost" ? 2 : 1;
+
+    // Pricing cases that aren't already represented by any proposal row
+    const proposalKeys = new Set(
+      proposals.map(p =>
+        `${(p.client_name ?? "").toLowerCase()}::${(p.project_name ?? "").toLowerCase()}`
+      )
+    );
+    const casesOnly: PricingProposal[] = (pricingCases as any[])
+      .filter(c => {
+        const key = `${(c.client_name ?? "").toLowerCase()}::${(c.project_name ?? "").toLowerCase()}`;
+        return c.project_name && !proposalKeys.has(key);
+      })
+      .map(c => ({
+        id: -(c.id as number),
+        project_name: c.project_name ?? null,
+        client_name: c.client_name ?? null,
+        total_fee: c.total_fee ?? null,
+        weekly_price: 0,
+        duration_weeks: c.duration_weeks ?? null,
+        outcome: (c.status === "final" ? "won" : c.status === "lost" ? "lost" : "pending") as PricingProposal["outcome"],
+        proposal_date: c.created_at ?? null,
+        region: null,
+        currency: c.currency ?? null,
+      }));
+
+    // Deduplicate: for each client+project keep the row with the best outcome
+    const byKey = new Map<string, PricingProposal>();
+    for (const p of [...proposals, ...casesOnly]) {
+      const key = `${(p.client_name ?? "").toLowerCase()}::${(p.project_name ?? "").toLowerCase()}`;
+      const existing = byKey.get(key);
+      if (!existing || outcomeRank(p.outcome) > outcomeRank(existing.outcome)) {
+        byKey.set(key, p);
+      }
+    }
+
+    return [...byKey.values()]
       .sort((a, b) => String(b.proposal_date ?? "").localeCompare(String(a.proposal_date ?? "")))
       .slice(0, 8);
-  }, [proposals]);
+  }, [proposals, pricingCases]);
 
   const maxFunnel = Math.max(1, hiring.potential, hiring.after_intro, hiring.after_csi_asc, hiring.after_csi_lm, hiring.hired, hiring.out);
 
@@ -894,7 +935,7 @@ export default function ExecDashboard() {
               </div>
               <div>
                 <h3 className="text-sm font-semibold">Recent proposals</h3>
-                <p className="text-[11px] text-muted-foreground">Last 8 by date</p>
+                <p className="text-[11px] text-muted-foreground">Last 8 · one per project</p>
               </div>
             </div>
             <Link href="/bd" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
