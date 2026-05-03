@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useLayoutEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Bot, BookOpen, Plus, Minus } from "lucide-react";
+import { Bot, BookOpen, Plus, Minus, ChevronRight } from "lucide-react";
 
 // ─── Public types ─────────────────────────────────────────────────────
 export interface OrgTreeNode {
@@ -27,6 +27,10 @@ interface OrgTreeProps {
   onToggleCollapse: (id: string) => void;
   onOpen: (id: string) => void;
   onAddKnowledge: (id: string) => void;
+  // Fired when the user clicks the chevron on a node whose subtree
+  // exceeds MAX_LAYERS_BELOW_CEO. The page renders a side panel
+  // listing direct reports of this node.
+  onShowSubtree?: (id: string) => void;
 }
 
 // ─── Layout constants ─────────────────────────────────────────────────
@@ -50,6 +54,10 @@ const PAD_BOT  = 28;
 const PEER_GAP = 18;          // above-root vertical gap for peer cards
 const ELBOW_R  = 5;
 const CEO_ID   = "ceo";       // children of this node spread horizontally
+// Cap on visible layers BELOW CEO. CEO row is layer 0; its children
+// are layer 1; etc. Anything past MAX_LAYERS_BELOW_CEO is hidden
+// behind a "show direct reports" chevron that opens the side panel.
+const MAX_LAYERS_BELOW_CEO = 3;
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 function initialsOf(name: string | undefined | null): string {
@@ -182,7 +190,7 @@ function computeLayout(
   nodes: OrgTreeNode[],
   collapsedIds: Set<string>,
   excludeIds: Set<string>,
-): { points: LayoutPoint[]; width: number; height: number; maxDepth: number } | null {
+): { points: LayoutPoint[]; width: number; height: number; maxDepth: number; hiddenSubtreeOwners: Set<string> } | null {
   const ROOT_ID = "__virtual_root__";
   const usable  = nodes.filter(n => !excludeIds.has(n.id));
   const byId    = new Map(usable.map(n => [n.id, n]));
@@ -255,18 +263,29 @@ function computeLayout(
   // collect() returns the next available Y (in pixels) after placing
   // the subtree. Working in pixel-Y instead of row-count lets us mix
   // tall and short cards on the same canvas.
+  //
+  // We also track `dfc` (depth from CEO) — resets to 0 when we hit the
+  // CEO node, otherwise inherits parent's dfc + 1 (or stays -1 above
+  // CEO). When dfc reaches MAX_LAYERS_BELOW_CEO and the node still has
+  // children, those children are skipped from the chart and the node
+  // is added to hiddenSubtreeOwners so the UI can render a chevron
+  // pointing into the side panel.
   const points: LayoutPoint[] = [];
   let maxDepth = 0;
+  const hiddenSubtreeOwners = new Set<string>();
 
-  const collect = (n: TNode, depth: number, x: number, y: number): number => {
+  const collect = (n: TNode, depth: number, dfc: number, x: number, y: number): number => {
     if (n.id === ROOT_ID) {
       n._depth = -1;
       let curY = y;
-      for (const c of n.children) curY = collect(c, 0, x, curY);
+      for (const c of n.children) curY = collect(c, 0, -1, x, curY);
       return curY;
     }
     n._depth = depth;
     if (depth > maxDepth) maxDepth = depth;
+
+    // Reset depth-from-CEO when we hit the CEO node itself.
+    const cd = n.data?.id === CEO_ID ? 0 : dfc;
 
     const h  = cardH(depth);
     const px = x;
@@ -284,6 +303,13 @@ function computeLayout(
       parentId: n.parentId === ROOT_ID ? null : n.parentId,
     });
 
+    // Cap once we're MAX_LAYERS_BELOW_CEO levels deep below CEO. Anything
+    // deeper moves to the side panel — render a chevron instead.
+    if (cd >= MAX_LAYERS_BELOW_CEO && n.children.length > 0) {
+      hiddenSubtreeOwners.add(n.id);
+      return py + h + V_GAP;
+    }
+
     if (n.data?.id === CEO_ID && n.children.length > 0) {
       // Exception 2: CEO's children spread horizontally on the row below.
       const childY = py + h + V_GAP;
@@ -291,7 +317,7 @@ function computeLayout(
       let maxBottomY = childY + cardH(depth + 1);
       for (const c of n.children) {
         const w = subtreeWidth(c);
-        const r = collect(c, depth + 1, cx, childY);
+        const r = collect(c, depth + 1, cd + 1, cx, childY);
         if (r > maxBottomY) maxBottomY = r;
         cx += w + COL_GAP;
       }
@@ -301,11 +327,11 @@ function computeLayout(
     // Default: vertical indented tree.
     let nextY = py + h + V_GAP;
     for (const c of n.children) {
-      nextY = collect(c, depth + 1, x + INDENT_X, nextY);
+      nextY = collect(c, depth + 1, cd + 1, x + INDENT_X, nextY);
     }
     return nextY;
   };
-  const totalBottomY = collect(vRoot, 0, PAD_X, PAD_TOP);
+  const totalBottomY = collect(vRoot, 0, -1, PAD_X, PAD_TOP);
 
   if (points.length === 0) return null;
 
@@ -345,7 +371,7 @@ function computeLayout(
   const width  = maxRight + PAD_X;
   const height = maxBottom + PAD_BOT;
 
-  return { points, width, height, maxDepth };
+  return { points, width, height, maxDepth, hiddenSubtreeOwners };
 }
 
 // Indented-tree bracket: from parent's bottom (at the bracket-X column)
@@ -387,7 +413,7 @@ function tBracket(pcx: number, py: number, ccx: number, cy: number): string {
 
 // ─── Component ────────────────────────────────────────────────────────
 export default function OrgTree({
-  nodes, peerIds = [], collapsedIds, onToggleCollapse, onOpen, onAddKnowledge,
+  nodes, peerIds = [], collapsedIds, onToggleCollapse, onOpen, onAddKnowledge, onShowSubtree,
 }: OrgTreeProps) {
   const [zoom, setZoom]       = useState(1);
   const [fitZoom, setFitZoom] = useState(1);
@@ -440,7 +466,7 @@ export default function OrgTree({
     return <div className="text-sm text-muted-foreground italic p-4">No roles to display.</div>;
   }
 
-  const { points, width, height } = layout;
+  const { points, width, height, hiddenSubtreeOwners } = layout;
 
   const peerNodes = peerIds.map(id => nodeById.get(id)).filter((n): n is OrgTreeNode => !!n);
   const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
@@ -642,6 +668,29 @@ export default function OrgTree({
           {/* Collapse/expand toggles intentionally NOT rendered — chart is
               always fully expanded per user spec. Removed from the DOM
               entirely. */}
+
+          {/* "Show direct reports" chevron — placed on the right edge of
+              cards whose subtree is hidden by the depth cap. Distinct
+              from any +/- toggle (which is gone): this opens the side
+              panel rather than expanding the chart in place. */}
+          {points
+            .filter(p => hiddenSubtreeOwners.has(p.id))
+            .map(p => {
+              const tx = p.x + CARD_W - 6;        // overlap right edge of card
+              const ty = p.y + treeOffY + p.h / 2 - 9;
+              return (
+                <button
+                  key={`sub-${p.id}`}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onShowSubtree?.(p.id); }}
+                  title="Show direct reports"
+                  className="absolute z-10 w-[18px] h-[18px] rounded-full bg-sky-500 text-white border border-white flex items-center justify-center shadow hover:bg-sky-600"
+                  style={{ left: tx, top: ty }}
+                >
+                  <ChevronRight className="w-3 h-3" />
+                </button>
+              );
+            })}
         </div>
       </div>
 
