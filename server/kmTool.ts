@@ -178,7 +178,8 @@ export async function readKmFiles(
     entry: f,
     fnScore: filenameScore(f.relPath, queryTokens),
   }));
-  phase1.sort((a, b) => b.fnScore - a.fnScore);
+  // Stable tie-break: smaller files first (more targeted docs over bulk reference files)
+  phase1.sort((a, b) => b.fnScore - a.fnScore || a.entry.sizeBytes - b.entry.sizeBytes);
 
   // Take top-K for content reading
   const candidates = phase1.slice(0, TOP_K_CONTENT);
