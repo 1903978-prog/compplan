@@ -208,6 +208,14 @@ export async function seedDatabase() {
     )
   `);
 
+  // ── Indexes for fast Pricing Tool queries ──────────────────────────────
+  // These are safe to run multiple times (IF NOT EXISTS). On a small table
+  // (~50-200 rows) the queries are already fast, but these indexes eliminate
+  // the sequential scan entirely and reduce sort cost for the ORDER BY columns.
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pricing_proposals_date    ON pricing_proposals (proposal_date)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pricing_proposals_outcome ON pricing_proposals (outcome)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pricing_cases_status      ON pricing_cases     (status)`);
+
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS hiring_candidates (
       id SERIAL PRIMARY KEY,

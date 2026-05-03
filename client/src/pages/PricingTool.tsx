@@ -649,11 +649,34 @@ function ArcGauge({ ratio, label, denomLabel, maxRatio = 0.2, benchmark }: {
 
 type CountryFeeRow = { country: string; won: number; lost: number; winRate: number | null; avgWon: number | null; avgLost: number | null; avgWonWeekly: number | null; avgLostWeekly: number | null; };
 
+// ── Module-level data cache ────────────────────────────────────────────────
+// Lives OUTSIDE the React component so it survives SPA navigation.
+// The component unmounts/remounts every time the user changes pages — without
+// this cache every visit re-runs the full 5-endpoint waterfall (4-6 seconds).
+// With the cache, re-visits are instant (<20ms). Cache TTL = 5 minutes.
+interface _PricingDataCache {
+  settings:         any | null;
+  cases:            any[];
+  proposals:        any[];
+  employees:        any[];
+  externalContacts: any[];
+  loadedAt:         number | null; // ms epoch
+}
+const _pricingCache: _PricingDataCache = {
+  settings: null, cases: [], proposals: [], employees: [], externalContacts: [], loadedAt: null,
+};
+const _CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+function _isCacheFresh() {
+  return _pricingCache.loadedAt !== null && (Date.now() - _pricingCache.loadedAt) < _CACHE_TTL_MS;
+}
+function _invalidatePricingCache() { _pricingCache.loadedAt = null; }
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function PricingTool() {
   const { toast } = useToast();
   const [view, setView] = useState<"list" | "form">("list");
-  const [cases, setCases] = useState<any[]>([]);
-  const [proposals, setProposals] = useState<PricingProposal[]>([]);
+  const [cases, setCases] = useState<any[]>(_pricingCache.cases);
+  const [proposals, setProposals] = useState<PricingProposal[]>(_pricingCache.proposals as PricingProposal[]);
 
   // ── Component-wide NET1 lookup ──────────────────────────────────────────
   // Maps project_name (lower) → canonical_net_weekly from the matching case.
@@ -683,8 +706,10 @@ export default function PricingTool() {
     const weeks = p.duration_weeks ?? 0;
     return weeks > 0 ? Math.round(wk * weeks) : (p.total_fee ?? 0);
   };
-  const [settings, setSettings] = useState<PricingSettings | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<PricingSettings | null>(
+    _pricingCache.settings ? { ...DEFAULT_PRICING_SETTINGS, ..._pricingCache.settings } : null
+  );
+  const [loading, setLoading] = useState(!_isCacheFresh());
   // Tracks which of the three parallel loads failed (if any). Surfaced as a
   // red banner with a Retry button so the user never silently sees "0" tabs
   // when the real cause was a transient fetch failure (e.g. a Render deploy
@@ -733,11 +758,11 @@ export default function PricingTool() {
   // { id, name, current_role_code }. Falls back to an empty list if the
   // /api/employees endpoint is unreachable (auth/503) — the team picker
   // then shows an empty dropdown with a hint to check the connection.
-  const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>([]);
+  const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>(_pricingCache.employees);
   // External contacts (partners / freelancers) — used by the Manager (EM)
   // and Team picker dropdowns so the user can assign people who aren't on
   // the /employees rich roster.
-  const [externalContacts, setExternalContacts] = useState<Array<{ id: number; name: string; kind: string }>>([]);
+  const [externalContacts, setExternalContacts] = useState<Array<{ id: number; name: string; kind: string }>>(_pricingCache.externalContacts);
 
   // Unified people list for the Manager (EM) dropdown.
   // Tier 1 = internal EM1/EM2 employees + external partners (alphabetical)
@@ -903,106 +928,101 @@ export default function PricingTool() {
     throw lastErr;
   };
 
-  const loadAll = async () => {
-    setLoading(true);
+  // ── loadAll: parallel fetch + module-level cache ──────────────────────────
+  // opts.force = true  → skip cache, always hit the network (used after mutations)
+  // opts.silent = true → don't show the loading spinner (background refresh)
+  const loadAll = async (opts?: { force?: boolean; silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    const force  = opts?.force  === true;
+
+    // ── Cache hit: serve instantly from memory ──────────────────────────────
+    if (!force && _isCacheFresh()) {
+      setSettings(_pricingCache.settings ?? DEFAULT_PRICING_SETTINGS);
+      setCases(_pricingCache.cases);
+      setProposals(_pricingCache.proposals as PricingProposal[]);
+      setEmployees(_pricingCache.employees);
+      setExternalContacts(_pricingCache.externalContacts);
+      setLoading(false);
+      return;
+    }
+
+    if (!silent) setLoading(true);
     const errors: { settings?: string; cases?: string; proposals?: string } = {};
 
-    // Settings
-    let merged: PricingSettings | null = null;
-    try {
-      const sData = await loadOne<any>("/api/pricing/settings");
+    // ── ALL four endpoints in parallel (single round-trip budget) ──────────
+    const [sResult, cResult, ePairResult, pResult] = await Promise.allSettled([
+      loadOne<any>("/api/pricing/settings"),
+      loadOne<any[]>("/api/pricing/cases"),
+      Promise.all([
+        loadOne<any[]>("/api/employees"),
+        loadOne<any[]>("/api/external-contacts"),
+      ]),
+      loadOne<any[]>("/api/pricing/proposals"),
+    ]);
+
+    // Settings — default to DEFAULT_PRICING_SETTINGS so merged is always non-null
+    let merged: PricingSettings = DEFAULT_PRICING_SETTINGS;
+    if (sResult.status === "fulfilled") {
+      const sData = sResult.value;
       merged = { ...DEFAULT_PRICING_SETTINGS, ...sData };
-      if (!merged.roles?.length) merged.roles = DEFAULT_PRICING_SETTINGS.roles;
-      if (!merged.regions?.length) merged.regions = DEFAULT_PRICING_SETTINGS.regions;
-      if (!merged.ownership_multipliers?.length) merged.ownership_multipliers = DEFAULT_PRICING_SETTINGS.ownership_multipliers;
+      if (!merged.roles?.length)                  merged.roles                  = DEFAULT_PRICING_SETTINGS.roles;
+      if (!merged.regions?.length)                merged.regions                = DEFAULT_PRICING_SETTINGS.regions;
+      if (!merged.ownership_multipliers?.length)  merged.ownership_multipliers  = DEFAULT_PRICING_SETTINGS.ownership_multipliers;
       if (!merged.revenue_band_multipliers?.length) merged.revenue_band_multipliers = DEFAULT_PRICING_SETTINGS.revenue_band_multipliers;
       if (!merged.sensitivity_multipliers?.length) merged.sensitivity_multipliers = DEFAULT_PRICING_SETTINGS.sensitivity_multipliers;
       setSettings(merged);
-    } catch (err: any) {
-      errors.settings = err.message ?? "Failed to load settings";
-      console.error("[PricingTool] settings load failed:", err);
-      // Only fall back to defaults if we have NO settings yet.
-      // This preserves prior state if the user was already loaded.
+      _pricingCache.settings = merged;
+    } else {
+      errors.settings = (sResult.reason as any)?.message ?? "Failed to load settings";
+      console.error("[PricingTool] settings load failed:", sResult.reason);
       setSettings(prev => prev ?? DEFAULT_PRICING_SETTINGS);
     }
 
-    // Cases — preserve previous on failure, do NOT reset to []
-    try {
-      const cData = await loadOne<any[]>("/api/pricing/cases");
-      setCases(Array.isArray(cData) ? cData : []);
-    } catch (err: any) {
-      errors.cases = err.message ?? "Failed to load pricing cases";
-      console.error("[PricingTool] cases load failed:", err);
-      // IMPORTANT: do not call setCases here — keep whatever is already in state.
+    // Cases
+    if (cResult.status === "fulfilled") {
+      const cases = Array.isArray(cResult.value) ? cResult.value : [];
+      setCases(cases);
+      _pricingCache.cases = cases;
+    } else {
+      errors.cases = (cResult.reason as any)?.message ?? "Failed to load pricing cases";
+      console.error("[PricingTool] cases load failed:", cResult.reason);
+      // Preserve previous state — do NOT reset to []
     }
 
-    // Employees + external contacts — loaded in parallel for the Manager
-    // (EM) dropdown and team-picker dialog.
-    try {
-      const [eData, ecData] = await Promise.all([
-        loadOne<any[]>("/api/employees"),
-        loadOne<any[]>("/api/external-contacts"),
-      ]);
-      setEmployees(Array.isArray(eData)
-        ? eData.map(e => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
-        : []);
-      setExternalContacts(Array.isArray(ecData)
-        ? ecData
-            .filter((c: any) => c.kind === "freelancer" || c.kind === "partner")
-            .map((c: any) => ({ id: c.id, name: c.name, kind: c.kind }))
-        : []);
-    } catch (err: any) {
-      console.warn("[PricingTool] employees/contacts load failed (team-picker will be empty):", err);
+    // Employees + external contacts (single combined fetch, no duplicate)
+    if (ePairResult.status === "fulfilled") {
+      const [eData, ecData] = ePairResult.value;
+      const emps = Array.isArray(eData)
+        ? eData.map((e: any) => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
+        : [];
+      const exts = Array.isArray(ecData)
+        ? ecData.map((x: any) => ({ id: x.id, name: x.name, kind: x.kind ?? "freelancer" }))
+        : [];
+      setEmployees(emps);
+      setExternalContacts(exts);
+      _pricingCache.employees        = emps;
+      _pricingCache.externalContacts = exts;
+    } else {
+      console.warn("[PricingTool] employees/contacts load failed (dropdowns will use cached data):", ePairResult.reason);
     }
 
-    // External contacts — partners, freelancers, interns, external
-    // managers. Used by the Manager (EM) and Team picker dropdowns so
-    // people who aren't in the rich /employees roster can still be
-    // assigned to a project. Best-effort: if it fails, dropdowns just
-    // fall back to employees only.
-    try {
-      const xData = await loadOne<any[]>("/api/external-contacts");
-      setExternalContacts(Array.isArray(xData)
-        ? xData.map(x => ({ id: x.id, name: x.name, kind: (x.kind ?? "freelancer") }))
-        : []);
-    } catch (err: any) {
-      console.warn("[PricingTool] external-contacts load failed:", err);
-    }
-
-    // Proposals — preserve previous on failure, do NOT reset to []
-    try {
-      const pData = await loadOne<any[]>("/api/pricing/proposals");
-      const rawProposals: PricingProposal[] = Array.isArray(pData)
-        ? pData.map((p: any) => ({ ...p, pe_owned: p.pe_owned === 1 || p.pe_owned === true }))
+    // Proposals
+    if (pResult.status === "fulfilled") {
+      const rawProposals: PricingProposal[] = Array.isArray(pResult.value)
+        ? pResult.value.map((p: any) => ({ ...p, pe_owned: p.pe_owned === 1 || p.pe_owned === true }))
         : [];
 
-      // Auto-normalize fund names against canonical list (non-fatal)
+      // Auto-normalize fund names against canonical list (non-fatal, fire-and-forget)
       const canonicalFunds: string[] = merged?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? [];
-      const toNormalize = rawProposals.filter(p => {
-        if (!p.fund_name) return false;
+      for (const p of rawProposals) {
+        if (!p.fund_name) continue;
         const lName = p.fund_name.toLowerCase().trim();
-        const exact = canonicalFunds.find(c => c.toLowerCase() === lName);
-        if (exact) return false;
-        const sub = canonicalFunds.find(c => {
-          const lc = c.toLowerCase();
-          return lName.includes(lc) || lc.includes(lName);
-        });
-        if (sub) return true;
-        const token = canonicalFunds.find(c => {
-          const tokens = c.toLowerCase().split(/\s+/);
-          return tokens.some(t => t.length >= 3 && lName.includes(t));
-        });
-        return !!token;
-      });
-
-      for (const p of toNormalize) {
-        const lName = (p.fund_name ?? "").toLowerCase().trim();
+        if (canonicalFunds.find(c => c.toLowerCase() === lName)) continue;
         const normalized =
-          canonicalFunds.find(c => c.toLowerCase() === lName) ??
           canonicalFunds.find(c => { const lc = c.toLowerCase(); return lName.includes(lc) || lc.includes(lName); }) ??
           canonicalFunds.find(c => c.toLowerCase().split(/\s+/).some(t => t.length >= 3 && lName.includes(t)));
         if (normalized && p.id) {
-          rawProposals.forEach(r => { if (r.id === p.id) r.fund_name = normalized; });
+          p.fund_name = normalized;
           fetch(`/api/pricing/proposals/${p.id}`, {
             method: "PUT", credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -1012,26 +1032,38 @@ export default function PricingTool() {
       }
 
       setProposals(rawProposals);
-    } catch (err: any) {
-      errors.proposals = err.message ?? "Failed to load past projects";
-      console.error("[PricingTool] proposals load failed:", err);
-      // IMPORTANT: do not call setProposals here — keep whatever is already in state.
+      _pricingCache.proposals = rawProposals;
+    } else {
+      errors.proposals = (pResult.reason as any)?.message ?? "Failed to load past projects";
+      console.error("[PricingTool] proposals load failed:", pResult.reason);
+      // Preserve previous state — do NOT reset to []
     }
 
-    // Won Projects moved to AR / Invoicing page (Task 11).
+    // Update cache timestamp only when core data loaded successfully
+    if (!errors.cases && !errors.proposals) {
+      _pricingCache.loadedAt = Date.now();
+    }
 
     setLoadErrors(errors);
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   useEffect(() => { loadAll(); }, []);
 
-  // Auto-retry when the tab becomes visible again (user was on another tab
-  // during a deploy and comes back — we transparently refetch).
+  // Auto-refresh on window focus: if cache has expired since the user was
+  // last on this page, silently re-fetch in the background.
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState === "visible" && Object.keys(loadErrors).length > 0) {
-        loadAll();
+      if (document.visibilityState !== "visible") return;
+      // Error recovery: always retry if something failed
+      if (Object.keys(loadErrors).length > 0) {
+        _invalidatePricingCache();
+        loadAll({ force: true });
+        return;
+      }
+      // Stale cache: silently refresh without a spinner
+      if (!_isCacheFresh()) {
+        loadAll({ silent: true });
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
@@ -1124,7 +1156,8 @@ export default function PricingTool() {
       if (data == null) setEditingBenchmarks(false);
       if (!silent) {
         toast({ title: "Benchmarks saved" });
-        loadAll();
+        _invalidatePricingCache();
+        loadAll({ force: true });
       }
       // Silent path: skip toast and loadAll so rapid stepper clicks don't
       // spam the UI or race against each other with stale server reads.
@@ -1178,7 +1211,7 @@ export default function PricingTool() {
   const deleteCase = async (id: number) => {
     if (!confirm("Delete this pricing case?")) return;
     await fetch(`/api/pricing/cases/${id}`, { method: "DELETE", credentials: "include" });
-    loadAll();
+    _invalidatePricingCache(); loadAll({ force: true });
   };
 
   const saveProb = async (id: number) => {
@@ -1340,7 +1373,7 @@ export default function PricingTool() {
       const conflictMsg = conflicts.length > 0 ? `, ${conflicts.length} conflict(s) need review` : "";
       setExcelPasteResult({ ok: true, msg: `Imported ${inserted}, skipped ${skipped} exact duplicates${conflictMsg}` });
       if (conflicts.length === 0) setExcelPaste("");
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } catch {
       setExcelPasteResult({ ok: false, msg: "Import failed" });
     } finally {
@@ -1365,7 +1398,7 @@ export default function PricingTool() {
           body: JSON.stringify(payload),
         });
       }
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     }
     // Either way, remove this conflict from the list
     setImportConflicts(prev => prev.filter(c => c !== conflict));
@@ -1445,7 +1478,7 @@ export default function PricingTool() {
       setShowEditProposalForm(false);
       setEditingProposalId(null);
       setHistoryForm(emptyProposal());
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } catch (e: any) {
       console.error("[PricingTool] save proposal threw:", e);
       toast({ title: "Failed to save", description: String(e?.message ?? e), variant: "destructive" });
@@ -2494,7 +2527,7 @@ export default function PricingTool() {
       });
       setView("list");
       setMainTab("wonlost_cases");
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } catch {
       toast({ title: "Failed to save", variant: "destructive" });
     } finally {
@@ -2505,7 +2538,7 @@ export default function PricingTool() {
   const deleteProposal = async (id: number) => {
     if (!confirm("Delete this past proposal?")) return;
     await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
-    loadAll();
+    _invalidatePricingCache(); loadAll({ force: true });
   };
 
   // Propagate region / fund / revenue / ebitda from one proposal to all same-client proposals.
@@ -2568,7 +2601,7 @@ export default function PricingTool() {
       });
     } catch {
       toast({ title: "Failed to update", variant: "destructive" });
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     }
   };
 
@@ -2656,7 +2689,7 @@ export default function PricingTool() {
 
       toast({ title: status === "final" ? "Case finalised" : "Saved as draft" });
       setView("list");
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } catch {
       toast({ title: "Failed to save case", variant: "destructive" });
     } finally {
@@ -2693,7 +2726,7 @@ export default function PricingTool() {
       if (parts.length === 0) parts.push("Already in sync — no changes needed.");
       else parts.push("(restorable from /admin/trash)");
       toast({ title: "TBD sync complete", description: parts.join(" · ") });
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } finally {
       setBackfillingTbd(false);
     }
@@ -2821,7 +2854,7 @@ export default function PricingTool() {
         description: (parts.join(" · ") || "Nothing to do.") + (failures.length > 0 ? `\n${failures.join("\n")}` : ""),
         variant: failed > 0 ? "destructive" : undefined,
       });
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } finally {
       setBackfillingCanonical(false);
     }
@@ -3148,36 +3181,50 @@ export default function PricingTool() {
               {Object.entries(loadErrors).map(([k, v]) => `${k} (${v})`).join(" • ")}.
               {" "}Previously loaded data is preserved. Click Retry to try again.
             </div>
-            <Button size="sm" variant="outline" onClick={loadAll}>
+            <Button size="sm" variant="outline" onClick={() => { _invalidatePricingCache(); loadAll({ force: true }); }}>
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
             </Button>
           </div>
         )}
 
-        {/* Tab navigation */}
-        <div className="flex gap-1 border-b">
-          {([
-            { id: "cases" as const,         label: "Pricing Cases",    icon: DollarSign,  count: activeCases.length },
-            { id: "wonlost_cases" as const, label: "Won/Lost Pricings",icon: CheckCircle, count: resolvedCases.length },
-            { id: "history" as const,       label: "Past Projects",    icon: History,     count: proposals.length },
-            { id: "winloss" as const,       label: "Win-Loss",         icon: TrendingUp,  count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
-          ]).map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setMainTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                mainTab === tab.id
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
-                {tab.count}
-              </span>
-            </button>
-          ))}
+        {/* Tab navigation + Refresh button */}
+        <div className="flex items-center justify-between border-b">
+          <div className="flex gap-1">
+            {([
+              { id: "cases" as const,         label: "Pricing Cases",    icon: DollarSign,  count: activeCases.length },
+              { id: "wonlost_cases" as const, label: "Won/Lost Pricings",icon: CheckCircle, count: resolvedCases.length },
+              { id: "history" as const,       label: "Past Projects",    icon: History,     count: proposals.length },
+              { id: "winloss" as const,       label: "Win-Loss",         icon: TrendingUp,  count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
+            ]).map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setMainTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                  mainTab === tab.id
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <tab.icon className="w-4 h-4" />
+                {tab.label}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+          {/* Refresh button — forces a full re-fetch and updates the cache */}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { _invalidatePricingCache(); loadAll({ force: true }); }}
+            disabled={loading}
+            className="mr-2 mb-0.5 text-muted-foreground hover:text-foreground"
+            title="Force-reload all data from the database"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Loading…" : "Refresh"}
+          </Button>
         </div>
 
         {mainTab === "cases" ? (
@@ -3641,7 +3688,7 @@ export default function PricingTool() {
                     const r = await fetch("/api/pricing/proposals/normalize-names", { method: "POST", credentials: "include" });
                     const d = await r.json();
                     toast({ title: `Names normalized`, description: d.count > 0 ? d.renamed.join(", ") : "All names already consistent." });
-                    if (d.count > 0) await loadAll();
+                    if (d.count > 0) { _invalidatePricingCache(); await loadAll({ force: true }); }
                   } catch { toast({ title: "Normalize failed", variant: "destructive" }); }
                 }}
               >
