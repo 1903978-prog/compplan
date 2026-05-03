@@ -569,7 +569,7 @@ export default function ExecDashboard() {
       }
     }
 
-    return [...byKey.values()]
+    return Array.from(byKey.values())
       .sort((a, b) => String(b.proposal_date ?? "").localeCompare(String(a.proposal_date ?? "")))
       .slice(0, 8);
   }, [proposals, pricingCases]);
@@ -800,7 +800,7 @@ export default function ExecDashboard() {
         </Card>
       )}
 
-      {/* ── Row 2: Hiring funnel + BD pipeline ───────────────────── */}
+      {/* ── Row 2: Hiring funnel + Top overdue invoices ──────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Hiring funnel */}
         <Card className="p-4">
@@ -840,136 +840,6 @@ export default function ExecDashboard() {
                   </div>
                 </div>
               )}
-            </div>
-          )}
-        </Card>
-
-        {/* BD pipeline */}
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
-                <Target className="w-4 h-4 text-emerald-600" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold">Pricing proposals</h3>
-                <p className="text-[11px] text-muted-foreground">Last 12 months · win rate {bd.winRate}%</p>
-              </div>
-            </div>
-            <Link href="/pricing" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
-              open <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="text-center p-2 bg-amber-50 rounded border border-amber-100">
-              <Clock className="w-4 h-4 text-amber-600 mx-auto mb-1" />
-              <div className="text-[10px] text-amber-700 uppercase font-semibold">TBD</div>
-              <div className="text-lg font-bold text-amber-700" data-privacy="blur">{bd.pendingCount}</div>
-              <div className="text-[10px] text-amber-600" data-privacy="blur">{eur(bd.pendingValue)}</div>
-            </div>
-            <div className="text-center p-2 bg-emerald-50 rounded border border-emerald-100">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 mx-auto mb-1" />
-              <div className="text-[10px] text-emerald-700 uppercase font-semibold">Won</div>
-              <div className="text-lg font-bold text-emerald-700" data-privacy="blur">{bd.wonCount}</div>
-              <div className="text-[10px] text-emerald-600" data-privacy="blur">{eur(bd.wonValue)}</div>
-            </div>
-            <div className="text-center p-2 bg-red-50 rounded border border-red-100">
-              <TrendingDown className="w-4 h-4 text-red-600 mx-auto mb-1" />
-              <div className="text-[10px] text-red-700 uppercase font-semibold">Lost</div>
-              <div className="text-lg font-bold text-red-700" data-privacy="blur">{bd.lostCount}</div>
-              <div className="text-[10px] text-red-600" data-privacy="blur">{eur(bd.lostValue)}</div>
-            </div>
-          </div>
-          <div className="mt-3 pt-3 border-t flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Total value in flight</span>
-            <span className="font-bold" data-privacy="blur">{eur(bd.pendingValue + bd.wonValue)}</span>
-          </div>
-
-          {/* TBD proposals list — every saved pricing case lands here with
-              outcome="pending" until the user marks it Won/Lost. Rendered
-              inside the Pricing proposals card so a leader scanning the
-              dashboard sees which deals still need a decision, sorted
-              most-recent first. */}
-          {bd.pendingList.length > 0 && (
-            <div className="mt-3 pt-3 border-t">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 mb-2">
-                TBD · awaiting decision ({bd.pendingList.length})
-              </p>
-              <div className="space-y-1">
-                {bd.pendingList.slice(0, 6).map(p => (
-                  <Link
-                    key={p.id}
-                    href="/pricing"
-                    className="flex items-center gap-2 text-xs py-1 px-2 rounded hover:bg-amber-50 transition-colors"
-                  >
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-semibold uppercase">
-                      <Clock className="w-3 h-3" /> TBD
-                    </span>
-                    <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
-                      <span className="font-medium">{p.client_name ?? "—"}</span>
-                      <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
-                    </span>
-                    <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
-                      {eur(propNet1Total(p))}
-                    </span>
-                  </Link>
-                ))}
-                {bd.pendingList.length > 6 && (
-                  <p className="text-[10px] text-muted-foreground italic px-2 pt-1">
-                    +{bd.pendingList.length - 6} more — see Pricing
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      {/* ── Row 3: Recent BD + Top overdue invoices ───────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-                <TrendingUp className="w-4 h-4 text-blue-600" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold">Recent proposals</h3>
-                <p className="text-[11px] text-muted-foreground">Last 8 · one per project</p>
-              </div>
-            </div>
-            <Link href="/bd" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
-              all <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
-          {recentBD.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic text-center py-6">No proposals yet.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {recentBD.map(p => {
-                const tone =
-                  p.outcome === "won"  ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-                  p.outcome === "lost" ? "bg-red-50 border-red-200 text-red-700" :
-                                         "bg-slate-50 border-slate-200 text-slate-700";
-                const icon =
-                  p.outcome === "won"  ? <CheckCircle2 className="w-3 h-3" /> :
-                  p.outcome === "lost" ? <TrendingDown className="w-3 h-3" /> :
-                                         <Clock className="w-3 h-3" />;
-                return (
-                  <div key={p.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
-                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase ${tone}`}>
-                      {icon}{p.outcome === "won" ? "won" : p.outcome === "lost" ? "lost" : "tbd"}
-                    </span>
-                    <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
-                      <span className="font-medium">{p.client_name ?? "—"}</span>
-                      <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
-                    </span>
-                    <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
-                      {eur(propNet1Total(p))}
-                    </span>
-                  </div>
-                );
-              })}
             </div>
           )}
         </Card>
@@ -1036,6 +906,83 @@ export default function ExecDashboard() {
           })()}
         </Card>
       </div>
+
+      {/* ── Row 3: Proposals (merged summary + deal list) ────────── */}
+      <Card className="p-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
+              <Target className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">Proposals</h3>
+              <p className="text-[11px] text-muted-foreground">Last 12 months · win rate {bd.winRate}%</p>
+            </div>
+          </div>
+          <Link href="/pricing" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+            open <ArrowUpRight className="w-3 h-3" />
+          </Link>
+        </div>
+
+        {/* Stats row: TBD / WON / LOST + total in flight */}
+        <div className="flex flex-wrap gap-3 mb-4">
+          <div className="flex-1 min-w-[90px] text-center p-3 bg-amber-50 rounded-lg border border-amber-100">
+            <Clock className="w-4 h-4 text-amber-600 mx-auto mb-1" />
+            <div className="text-[10px] text-amber-700 uppercase font-semibold">TBD</div>
+            <div className="text-xl font-bold text-amber-700" data-privacy="blur">{bd.pendingCount}</div>
+            <div className="text-[11px] text-amber-600" data-privacy="blur">{eur(bd.pendingValue)}</div>
+          </div>
+          <div className="flex-1 min-w-[90px] text-center p-3 bg-emerald-50 rounded-lg border border-emerald-100">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 mx-auto mb-1" />
+            <div className="text-[10px] text-emerald-700 uppercase font-semibold">Won</div>
+            <div className="text-xl font-bold text-emerald-700" data-privacy="blur">{bd.wonCount}</div>
+            <div className="text-[11px] text-emerald-600" data-privacy="blur">{eur(bd.wonValue)}</div>
+          </div>
+          <div className="flex-1 min-w-[90px] text-center p-3 bg-red-50 rounded-lg border border-red-100">
+            <TrendingDown className="w-4 h-4 text-red-600 mx-auto mb-1" />
+            <div className="text-[10px] text-red-700 uppercase font-semibold">Lost</div>
+            <div className="text-xl font-bold text-red-700" data-privacy="blur">{bd.lostCount}</div>
+            <div className="text-[11px] text-red-600" data-privacy="blur">{eur(bd.lostValue)}</div>
+          </div>
+          <div className="flex-1 min-w-[140px] flex flex-col justify-center px-4 border-l border-muted">
+            <div className="text-[10px] text-muted-foreground uppercase font-semibold">Total value in flight</div>
+            <div className="text-2xl font-bold tabular-nums" data-privacy="blur">{eur(bd.pendingValue + bd.wonValue)}</div>
+          </div>
+        </div>
+
+        {/* Deal list — one row per project, sorted most-recent first */}
+        {recentBD.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic text-center py-4">No proposals yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0">
+            {recentBD.map(p => {
+              const badgeCls =
+                p.outcome === "won"  ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
+                p.outcome === "lost" ? "bg-red-50 border-red-200 text-red-700" :
+                                       "bg-amber-50 border-amber-200 text-amber-700";
+              const icon =
+                p.outcome === "won"  ? <CheckCircle2 className="w-3 h-3" /> :
+                p.outcome === "lost" ? <TrendingDown className="w-3 h-3" /> :
+                                       <Clock className="w-3 h-3" />;
+              return (
+                <div key={p.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-muted/40 last:border-0">
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase ${badgeCls}`}>
+                    {icon}{p.outcome === "won" ? "won" : p.outcome === "lost" ? "lost" : "tbd"}
+                  </span>
+                  <span className="flex-1 truncate" title={`${p.client_name ?? ""} — ${p.project_name ?? ""}`}>
+                    <span className="font-medium">{p.client_name ?? "—"}</span>
+                    <span className="text-muted-foreground"> · {p.project_name ?? ""}</span>
+                  </span>
+                  <span className="font-mono font-semibold text-foreground/80 shrink-0" data-privacy="blur">
+                    {eur(propNet1Total(p))}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
       {/* Commercial Options — three-timeline preview per active pricing case.
           Mirrors the block rendered inside each case so leadership sees the
