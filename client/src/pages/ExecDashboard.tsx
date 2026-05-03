@@ -138,12 +138,22 @@ function FunnelRow({ label, count, max, tone }: {
 // LocalStorage cache key — stores the last successful dashboard payload
 // so the page renders instantly on revisit, then silently refreshes.
 const DASH_CACHE_KEY = "exec_dashboard_cache";
+// Cache TTL: 10 minutes. Without this, a transient API failure that wrote
+// empty arrays to the cache would persist across reloads until the user
+// manually cleared localStorage.
+const DASH_CACHE_TTL_MS = 10 * 60 * 1000;
 
 function readCache(): { candidates: Candidate[]; invoices: Invoice[]; proposals: PricingProposal[]; wonProjects: WonProject[]; ts: string } | null {
   try {
     const raw = localStorage.getItem(DASH_CACHE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const cached = JSON.parse(raw) as { candidates: Candidate[]; invoices: Invoice[]; proposals: PricingProposal[]; wonProjects: WonProject[]; ts: string };
+    const ts = cached?.ts ? new Date(cached.ts).getTime() : 0;
+    if (!ts || Date.now() - ts > DASH_CACHE_TTL_MS) {
+      localStorage.removeItem(DASH_CACHE_KEY);
+      return null;
+    }
+    return cached;
   } catch { return null; }
 }
 
@@ -154,12 +164,17 @@ function writeCache(candidates: Candidate[], invoices: Invoice[], proposals: Pri
 }
 
 export default function ExecDashboard() {
-  const { employees } = useStore();
+  const { employees: storeEmployees } = useStore();
 
   // ── Instant render from localStorage cache, then refresh in background ──
   // On first mount, read the last successful payload from localStorage
   // so the page paints in <50ms instead of waiting 1-3s for 4 API calls.
   const cached = readCache();
+  // Direct employees fetch — used as a fallback when the Zustand store is
+  // empty (e.g. its loadData() failed at app boot due to a transient 401 /
+  // 5xx). Without this the dashboard would show Headcount=0 / Payroll=€0
+  // forever, since loadData() runs once and never retries.
+  const [directEmployees, setDirectEmployees] = useState<typeof storeEmployees>([]);
   const [candidates, setCandidates] = useState<Candidate[]>(cached?.candidates ?? []);
   const [invoices, setInvoices] = useState<Invoice[]>(cached?.invoices ?? []);
   const [proposals, setProposals] = useState<PricingProposal[]>(cached?.proposals ?? []);
@@ -182,7 +197,8 @@ export default function ExecDashboard() {
       // already has content and we're just silently refreshing.
       if (!cached) setLoading(true);
       try {
-        const [cRes, iRes, pRes, wRes, casesRes, settingsRes] = await Promise.all([
+        const [empRes, cRes, iRes, pRes, wRes, casesRes, settingsRes] = await Promise.all([
+          fetch("/api/employees",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/hiring/candidates",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
           fetch("/api/harvest/invoices",   { credentials: "include" }).then(r => r.ok ? r.json().then(d => d.invoices ?? []) : []),
           fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
@@ -191,10 +207,12 @@ export default function ExecDashboard() {
           fetch("/api/pricing/settings",   { credentials: "include" }).then(r => r.ok ? r.json() : null),
         ]);
         if (cancelled) return;
+        const emp = Array.isArray(empRes) ? empRes : [];
         const c = Array.isArray(cRes) ? cRes : [];
         const i = Array.isArray(iRes) ? iRes : [];
         const p = Array.isArray(pRes) ? pRes : [];
         const w = Array.isArray(wRes) ? wRes : [];
+        setDirectEmployees(emp);
         setCandidates(c);
         setInvoices(i);
         setProposals(p);
@@ -214,8 +232,11 @@ export default function ExecDashboard() {
   }, []);
 
   // ─── HR rollup ────────────────────────────────────────────────────────
-  // `employees` from useStore is already the active roster — the app has
-  // no leave-date field, so we treat every row as active.
+  // Prefer the store's roster (which the app already shares across pages),
+  // but fall back to the dashboard's own /api/employees fetch if the store
+  // is empty — covers the case where useStore.loadData() failed at boot
+  // and never retried, leaving Headcount=0 / Payroll=€0 forever.
+  const employees = (storeEmployees.length > 0 ? storeEmployees : directEmployees) as typeof storeEmployees;
   const hr = useMemo(() => {
     const active = employees;
     // Consultants = billable staff only; Interns (INT) and Back Office (BO)
