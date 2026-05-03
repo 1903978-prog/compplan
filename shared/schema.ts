@@ -1214,6 +1214,7 @@ export const agents = pgTable("agents", {
   skills: jsonb("skills").$type<string[]>(),
   knowledge: jsonb("knowledge").$type<string[]>(),
   training: jsonb("training").$type<string[]>(),
+  templates: jsonb("templates").$type<string[]>(),
   // KM agent extensions (additive — existing AIOS agents default to 'aios_classic')
   agent_type: text("agent_type").notNull().default("aios_classic"),   // aios_classic | km_specialist | km_router
   knowledge_base_path: text("knowledge_base_path"),                    // relative path within KM root

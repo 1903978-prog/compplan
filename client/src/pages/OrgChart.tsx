@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen, FileText } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import OrgTree, { type OrgTreeNode } from "@/components/OrgTree";
 
@@ -29,6 +29,7 @@ interface AiosAgent {
   skills: string[] | null;
   knowledge: string[] | null;
   training: string[] | null;
+  templates: string[] | null;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -1375,7 +1376,7 @@ function RoleDetailDialog({
                 <SectionBlock
                   icon={<Lightbulb className="w-3.5 h-3.5 text-primary" />}
                   label="Skills & Profile"
-                  count={(aiosAgent.deliverables?.length ?? 0) + (aiosAgent.skills?.length ?? 0) + (aiosAgent.training?.length ?? 0)}
+                  count={(aiosAgent.deliverables?.length ?? 0) + (aiosAgent.skills?.length ?? 0) + (aiosAgent.training?.length ?? 0) + (aiosAgent.templates?.length ?? 0)}
                 >
                   <div className="space-y-1 py-1">
                     {aiosAgent.function_area && (
@@ -1391,6 +1392,7 @@ function RoleDetailDialog({
                     <SpecGroup icon={<Lightbulb className="w-3 h-3 text-amber-500 shrink-0" />} label="Skills" items={aiosAgent.skills ?? []} />
                     <SpecGroup icon={<BookOpen className="w-3 h-3 text-emerald-500 shrink-0" />} label="Domain Knowledge" items={aiosAgent.knowledge ?? []} />
                     <SpecGroup icon={<GraduationCap className="w-3 h-3 text-purple-500 shrink-0" />} label="Training" items={aiosAgent.training ?? []} />
+                    <SpecGroup icon={<FileText className="w-3 h-3 text-rose-500 shrink-0" />} label="Templates" items={aiosAgent.templates ?? []} />
                   </div>
                 </SectionBlock>
               )}

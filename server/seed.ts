@@ -3294,6 +3294,7 @@ Sequential IDs: PAR-001.
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS skills JSONB`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge JSONB`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS training JSONB`);
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS templates JSONB`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS aios_cycles (
         id SERIAL PRIMARY KEY,
@@ -3778,6 +3779,7 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
         skills                       = ${JSON.stringify(spec.skills)}::jsonb,
         knowledge                    = ${JSON.stringify(spec.knowledge)}::jsonb,
         training                     = ${JSON.stringify(spec.training)}::jsonb,
+        templates                    = ${JSON.stringify(spec.templates ?? [])}::jsonb,
         decision_rights_autonomous   = ${auto},
         decision_rights_livio        = ${livio},
         skill_gaps                   = ${spec.skills.join("\n")},
