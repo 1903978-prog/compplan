@@ -137,6 +137,10 @@ export default function OrgChart() {
   const [loading, setLoading] = useState(true);
   const [openRole, setOpenRole] = useState<OrgRole | null>(null);
   const [addKnowledgeForRole, setAddKnowledgeForRole] = useState<OrgRole | null>(null);
+  // Side panel for the depth-cap "show direct reports" chevron. When set,
+  // a slide-in panel on the right lists that role's direct reports — the
+  // depth-4+ nodes that the chart hides to keep the layout compact.
+  const [subtreeFor, setSubtreeFor] = useState<OrgRole | null>(null);
   const [knowledgeDraftTitle, setKnowledgeDraftTitle] = useState("");
   const [knowledgeDraftContent, setKnowledgeDraftContent] = useState("");
   const [showFullLog, setShowFullLog] = useState(false);
@@ -605,6 +609,10 @@ export default function OrgChart() {
                 const r = roles.find(x => x.role_key === id);
                 if (r) setAddKnowledgeForRole(r);
               }}
+              onShowSubtree={(id) => {
+                const r = roles.find(x => x.role_key === id);
+                if (r) setSubtreeFor(r);
+              }}
             />
           </div>
         );
@@ -804,6 +812,83 @@ export default function OrgChart() {
           }
         }}
       />
+
+      {/* ── Direct-reports side panel ──────────────────────────────────
+          Opens when the user clicks the sky-blue chevron on a node
+          whose subtree is hidden by the depth cap (3 layers below CEO).
+          Lists every role whose primary boss is the selected node.
+          Clicking a row closes the panel and opens that role's detail
+          dialog. */}
+      {subtreeFor && (() => {
+        const reports = roles
+          .filter(r => r.parent_role_key === subtreeFor.role_key)
+          .sort((a, b) => a.sort_order - b.sort_order);
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/20"
+              onClick={() => setSubtreeFor(null)}
+            />
+            <div className="fixed top-0 right-0 z-50 h-full w-[380px] max-w-[90vw] bg-card border-l border-slate-200 dark:border-slate-700 shadow-xl flex flex-col">
+              <div className="flex items-start justify-between gap-2 p-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Direct reports of</div>
+                  <div className="text-base font-semibold truncate">{subtreeFor.role_name}</div>
+                  {subtreeFor.person_name && (
+                    <div className="text-xs text-muted-foreground truncate">{subtreeFor.person_name}</div>
+                  )}
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => setSubtreeFor(null)} className="h-7 w-7 p-0 shrink-0">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {reports.length === 0 && (
+                  <div className="text-sm text-muted-foreground italic text-center py-8">
+                    No direct reports.
+                  </div>
+                )}
+                {reports.map(r => {
+                  const overdue = r.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
+                  const knowledgeCount = knowledge.filter(k => k.role_key === r.role_key).length;
+                  const isAgent = (r.kind ?? "agent") === "agent";
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => { setOpenRole(r); setSubtreeFor(null); }}
+                      className="w-full text-left flex items-start gap-3 p-2.5 rounded-md border border-slate-200 dark:border-slate-700 hover:border-slate-400 hover:shadow-sm bg-card"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center font-semibold text-xs shrink-0">
+                        {isAgent ? <Bot className="w-4 h-4" /> : (r.person_name ?? "?").trim().split(/\s+/).map(p => p[0]).slice(0,2).join("").toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm leading-tight truncate">{r.role_name}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {r.person_name || (r.status === "vacant" ? "Vacant" : "—")}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {statusBadge(r.status)}
+                          {overdue > 0 && (
+                            <Badge className="bg-red-100 text-red-700 border-red-200 text-[10px]">{overdue} overdue</Badge>
+                          )}
+                          {knowledgeCount > 0 && (
+                            <Badge variant="secondary" className="text-[10px]">{knowledgeCount} <BookOpen className="w-2.5 h-2.5 inline ml-0.5" /></Badge>
+                          )}
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="p-3 border-t border-slate-100 dark:border-slate-800 text-[11px] text-muted-foreground">
+                Roles below 3 layers under the CEO live here so the chart stays compact.
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
