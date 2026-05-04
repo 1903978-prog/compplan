@@ -437,7 +437,7 @@ function Navigation() {
                 ]}
               />
               <NavDropdown
-                label="AR"
+                label="FINANCE"
                 icon={Receipt}
                 basePaths={["/invoicing", "/clients"]}
                 items={[
