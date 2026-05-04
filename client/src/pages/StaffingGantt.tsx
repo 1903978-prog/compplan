@@ -242,10 +242,17 @@ export default function StaffingGantt() {
   };
 
   const people = useMemo(() => {
+    // Two-pass: build exclusion set first so retired/back-office names are
+    // never re-added when we later scan proposal assignments.
+    const excluded = new Set<string>();
+    for (const e of employees) {
+      if ((e as any).status === "former" || isBackOffice(e)) {
+        excluded.add(e.name.trim().toLowerCase());
+      }
+    }
     const out = new Map<string, { name: string; role?: string }>();
     for (const e of employees) {
-      if ((e as any).status === "former") continue; // retired staff — not shown anywhere except the Retired page
-      if (isBackOffice(e)) continue;
+      if (excluded.has(e.name.trim().toLowerCase())) continue;
       out.set(e.name.trim().toLowerCase(), { name: e.name, role: e.current_role_code ?? undefined });
     }
     for (const p of proposals) {
@@ -253,12 +260,12 @@ export default function StaffingGantt() {
       if (!includeP) continue;
       if (p.manager_name) {
         const k = p.manager_name.trim().toLowerCase();
-        if (!out.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
+        if (!out.has(k) && !excluded.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
       }
       for (const m of (p.team_members ?? [])) {
         if (!m.name) continue;
         const k = m.name.trim().toLowerCase();
-        if (!out.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
+        if (!out.has(k) && !excluded.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
       }
     }
     return Array.from(out.values()).sort((a, b) => a.name.localeCompare(b.name));
