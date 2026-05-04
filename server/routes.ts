@@ -4236,7 +4236,7 @@ RULES:
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
 
-      const deals: any = await db.execute(sql`SELECT id, client_name, name FROM bd_deals WHERE client_name IS NOT NULL`);
+      const deals: any = await db.execute(sql`SELECT id, client_name, name FROM bd_deals`);
       const proposals: any = await db.execute(sql`
         SELECT id, client_name, project_name, revision_letter, weekly_price, total_fee, proposal_date
         FROM pricing_proposals
