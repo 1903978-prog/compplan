@@ -226,6 +226,39 @@ export default function ExecDashboard() {
   // ── Payment round detail popup ─────────────────────────────────────────
   const [roundDetailIdx, setRoundDetailIdx] = useState<number | null>(null);
 
+  // ── Payment round manual overrides ─────────────────────────────────────
+  // Keyed by ISO date (e.g. "2026-05-05"). Auto-calc applies for any date
+  // with no stored override — so future cycles always start clean.
+  type RoundOverrides = Record<string, { eur?: number | null; usd?: number | null }>;
+  const OVERRIDES_KEY = "compplan_payment_round_overrides";
+  const [paymentRoundOverrides, setPaymentRoundOverrides] = useState<RoundOverrides>(() => {
+    try {
+      const stored = localStorage.getItem(OVERRIDES_KEY);
+      if (stored) return JSON.parse(stored) as RoundOverrides;
+    } catch { /* ignore */ }
+    // Seed from Payment History (May 2026 initial values).
+    const seed: RoundOverrides = {
+      "2026-05-05": { eur: 10200, usd: null },
+      "2026-05-15": { eur: 25000, usd: 43000 },
+    };
+    try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(seed)); } catch { /* ignore */ }
+    return seed;
+  });
+  const [overrideEdit, setOverrideEdit] = useState<{ roundIdx: number; currency: "eur" | "usd" } | null>(null);
+
+  const saveOverride = (roundDate: Date, currency: "eur" | "usd", rawInput: string) => {
+    const key = roundDate.toISOString().slice(0, 10);
+    const clean = rawInput.trim().replace(/[€$\s]/g, "").replace(/\./g, "").replace(",", ".");
+    const num = clean === "" ? null : Number(clean);
+    const value = num === null || isNaN(num) ? null : num;
+    setPaymentRoundOverrides(prev => {
+      const next: RoundOverrides = { ...prev, [key]: { ...(prev[key] ?? {}), [currency]: value } };
+      try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+    setOverrideEdit(null);
+  };
+
   // ── Inline editing for Ongoing Projects table ──────────────────────────
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
   const [editManager, setEditManager] = useState("");
@@ -897,22 +930,50 @@ export default function ExecDashboard() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="bg-white/70 rounded border border-blue-100 p-2.5">
-                <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
-                  EUR
-                </div>
-                <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
-                  {round.eur_total > 0 ? `€${Math.round(round.eur_total).toLocaleString("it-IT")}` : "—"}
-                </div>
-              </div>
-              <div className="bg-white/70 rounded border border-blue-100 p-2.5">
-                <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
-                  USD
-                </div>
-                <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
-                  {round.usd_total > 0 ? `$${Math.round(round.usd_total).toLocaleString("it-IT")}` : "—"}
-                </div>
-              </div>
+              {(["eur", "usd"] as const).map(ccy => {
+                const dateKey = round.date.toISOString().slice(0, 10);
+                const ovr = paymentRoundOverrides[dateKey];
+                const autoVal = ccy === "eur" ? round.eur_total : round.usd_total;
+                const overridden = ovr?.[ccy] != null;
+                const displayVal = overridden ? (ovr![ccy] as number) : autoVal;
+                const isEditing = overrideEdit?.roundIdx === idx && overrideEdit?.currency === ccy;
+                const symbol = ccy === "eur" ? "€" : "$";
+                return (
+                  <div
+                    key={ccy}
+                    className={`rounded border p-2.5 cursor-text transition-colors ${overridden ? "bg-amber-50/80 border-amber-300 hover:bg-amber-50" : "bg-white/70 border-blue-100 hover:bg-white/90"}`}
+                    onClick={() => { if (!isEditing) setOverrideEdit({ roundIdx: idx, currency: ccy }); }}
+                    title="Click to override"
+                  >
+                    <div className="flex items-center justify-between mb-0.5">
+                      <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">{ccy.toUpperCase()}</div>
+                      {overridden
+                        ? <span className="text-[8px] text-amber-600 font-bold uppercase tracking-wide cursor-pointer hover:text-red-500" title="Clear manual override" onClick={e => { e.stopPropagation(); saveOverride(round.date, ccy, ""); }}>manual ×</span>
+                        : <Pencil className="w-2.5 h-2.5 text-blue-200 group-hover:text-blue-400" />
+                      }
+                    </div>
+                    {isEditing ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        inputMode="numeric"
+                        className="w-full text-xl font-bold tabular-nums text-blue-900 bg-transparent border-b border-blue-400 outline-none"
+                        defaultValue={displayVal > 0 ? String(Math.round(displayVal)) : ""}
+                        placeholder="0"
+                        onBlur={e => saveOverride(round.date, ccy, e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                          if (e.key === "Escape") setOverrideEdit(null);
+                        }}
+                      />
+                    ) : (
+                      <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
+                        {displayVal > 0 ? `${symbol}${Math.round(displayVal).toLocaleString("it-IT")}` : "—"}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </Card>
         ))}
@@ -959,24 +1020,40 @@ export default function ExecDashboard() {
                   })}
                 </div>
               )}
-              <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2 text-sm">
-                {round.eur_total > 0 && (
-                  <div className="bg-blue-50 rounded p-2 text-center">
-                    <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">EUR total</div>
-                    <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
-                      €{Math.round(round.eur_total).toLocaleString("it-IT")}
-                    </div>
+              {(() => {
+                const dateKey = round.date.toISOString().slice(0, 10);
+                const ovr = paymentRoundOverrides[dateKey];
+                const dispEur = ovr?.eur != null ? ovr.eur : round.eur_total;
+                const dispUsd = ovr?.usd != null ? ovr.usd : round.usd_total;
+                const eurOverridden = ovr?.eur != null;
+                const usdOverridden = ovr?.usd != null;
+                return (
+                  <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2 text-sm">
+                    {(dispEur > 0 || eurOverridden) && (
+                      <div className={`rounded p-2 text-center ${eurOverridden ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
+                        <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">
+                          EUR total{eurOverridden && " ✎"}
+                        </div>
+                        <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
+                          €{Math.round(dispEur).toLocaleString("it-IT")}
+                        </div>
+                        {eurOverridden && <div className="text-[9px] text-amber-500 mt-0.5">manual override · auto: €{Math.round(round.eur_total).toLocaleString("it-IT")}</div>}
+                      </div>
+                    )}
+                    {(dispUsd > 0 || usdOverridden) && (
+                      <div className={`rounded p-2 text-center ${usdOverridden ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
+                        <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">
+                          USD total{usdOverridden && " ✎"}
+                        </div>
+                        <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
+                          ${Math.round(dispUsd).toLocaleString("it-IT")}
+                        </div>
+                        {usdOverridden && <div className="text-[9px] text-amber-500 mt-0.5">manual override · auto: ${Math.round(round.usd_total).toLocaleString("it-IT")}</div>}
+                      </div>
+                    )}
                   </div>
-                )}
-                {round.usd_total > 0 && (
-                  <div className="bg-blue-50 rounded p-2 text-center">
-                    <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">USD total</div>
-                    <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
-                      ${Math.round(round.usd_total).toLocaleString("it-IT")}
-                    </div>
-                  </div>
-                )}
-              </div>
+                );
+              })()}
             </DialogContent>
           </Dialog>
         );
