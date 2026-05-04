@@ -451,6 +451,8 @@ function Navigation() {
                 basePaths={["/bd"]}
                 items={[
                   { href: "/bd", label: "Pipeline", icon: Target },
+                  { href: "/bd/contacts", label: "Contacts", icon: Database },
+                  { href: "/bd/companies", label: "Companies", icon: Database },
                   { href: "/bd/import", label: "Import HubSpot", icon: Database },
                 ]}
               />
@@ -566,6 +568,8 @@ function Router() {
       <Route path="/ceo-brief/:id">{() => <CeoBrief />}</Route>
       <Route path="/ceo-brief">{() => <CeoBrief />}</Route>
       <Route path="/bd" component={BusinessDevelopment} />
+      <Route path="/bd/contacts" component={BusinessDevelopment} />
+      <Route path="/bd/companies" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />
       <Route path="/roles" component={RoleGridPage} />
