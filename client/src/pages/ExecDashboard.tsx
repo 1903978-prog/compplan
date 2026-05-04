@@ -7,7 +7,7 @@ import { useStore } from "@/hooks/use-store";
 import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
-  ArrowUpRight, Target, Layers,
+  ArrowUpRight, Target, Layers, ClipboardList, FlaskConical,
 } from "lucide-react";
 
 // ─── Executive Dashboard ─────────────────────────────────────────────────
@@ -416,6 +416,61 @@ export default function ExecDashboard() {
     };
   }, [proposals, dashNet1Map]);
 
+  // ─── 4-month capacity gap from Gantt data ────────────────────────────
+  // For each of the next 4 calendar months compute: committed FTE demand
+  // (won proposals active that month × team_size), pipeline demand
+  // (pending × team_size × win_prob), and gap vs current headcount.
+  const capacityByMonth = useMemo(() => {
+    const today = new Date();
+    const months: { label: string; start: Date; end: Date }[] = [];
+    for (let m = 0; m < 4; m++) {
+      const d = new Date(today.getFullYear(), today.getMonth() + m, 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59);
+      months.push({
+        label: d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" }),
+        start: d,
+        end,
+      });
+    }
+
+    const allProps: PricingProposal[] = proposals.filter(p =>
+      !(p as any).excluded_from_analysis
+    );
+
+    return months.map(({ label, start, end }) => {
+      let committed = 0;
+      let pipeline = 0;
+
+      for (const p of allProps) {
+        const pStart = (p as any).start_date ? new Date((p as any).start_date) : (p.proposal_date ? new Date(p.proposal_date) : null);
+        const pEnd = p.end_date ? new Date(p.end_date) : (pStart && p.duration_weeks ? new Date(pStart.getTime() + p.duration_weeks * 7 * 86_400_000) : null);
+        if (!pStart || !pEnd) continue;
+        // Active during month if they overlap
+        if (pEnd < start || pStart > end) continue;
+
+        const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
+        const slots = Math.max(1, teamLen);
+
+        if (p.outcome === "won") {
+          committed += slots;
+        } else if (p.outcome === "pending" || !p.outcome) {
+          const wp = typeof (p as any).win_probability === "number"
+            ? Math.max(0, Math.min(1, (p as any).win_probability / 100))
+            : 0.5;
+          pipeline += slots * wp;
+        }
+      }
+
+      const supply = hr.headcount;
+      const totalDemand = committed + pipeline;
+      const gap = totalDemand - supply;
+      const status: "ok" | "tight" | "over" =
+        gap <= 0 ? "ok" : gap < 2 ? "tight" : "over";
+
+      return { label, committed: Math.round(committed), pipeline: Math.round(pipeline * 10) / 10, gap: Math.round(gap * 10) / 10, status };
+    });
+  }, [proposals, hr.headcount]);
+
   // ─── Active projects from wonProjects ────────────────────────────────
   const active = useMemo(() => {
     // Treat null/missing status as "active" — the DB default is 'active' and
@@ -492,32 +547,29 @@ export default function ExecDashboard() {
     return { supply, committedSlots, pipelineWeightedSlots, totalDemand, gap, utilisation, gapStatus };
   }, [hr.headcount, ongoing.list, bd.pendingList]);
 
-  // ─── Attrition / churn risk per employee ─────────────────────────────
-  // Heuristics (none require external benchmarks):
-  //   • months_since_promo > 24   → "Promo overdue" signal
-  //   • performance_score < 6.5   → "Low performance" signal (risk: flight or PIP)
-  //   • tenure_months < 6         → "Onboarding — settling" signal
-  //   • no monthly_ratings entry in last 90d → "Disengaged" signal
-  // Risk level:
-  //   HIGH   = ≥2 signals OR promo_overdue + low_perf together
-  //   MEDIUM = 1 signal
-  //   LOW    = no signals
+  // ─── Attrition / churn risk per employee (numerical formula) ─────────
+  // Score 0-100. Signals and their weights:
+  //   Promotion overdue >30mo   +35
+  //   Promotion overdue >24mo   +25
+  //   Performance <6.5          +25
+  //   Performance 6.5-7.0       +10
+  //   HR events (complaints)    +20 per high-severity, +10 medium, +5 low
+  //   New hire <6mo             +10
+  //   No rating in 90d          +10
+  // Risk level:  HIGH ≥50 · MEDIUM 25-49 · LOW <25
   const churnRisk = useMemo(() => {
     const today = new Date();
-    const todayIso = today.toISOString().slice(0, 10);
 
     type RiskRow = {
       id: string; name: string; role: string;
-      signals: string[]; level: "high" | "medium" | "low";
+      signals: string[]; score: number; level: "high" | "medium" | "low";
     };
 
-    // Exclude retired employees — they no longer report to anyone, can't
-    // be promoted, and any signal we'd compute on them is meaningless.
-    // Status defaults to "active" if missing (pre-migration rows).
     const activeOnly = employees.filter(e => ((e as any).status ?? "active") !== "former");
 
     return activeOnly.map((emp): RiskRow => {
       const signals: string[] = [];
+      let score = 0;
 
       // 1. Months since last promotion
       const promoDate = emp.last_promo_date
@@ -525,37 +577,95 @@ export default function ExecDashboard() {
         : emp.hire_date ? new Date(emp.hire_date + "-01") : null;
       if (promoDate && !isNaN(promoDate.getTime())) {
         const monthsSince = (today.getTime() - promoDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-        if (monthsSince > 24) signals.push(`${Math.round(monthsSince)}mo without promotion`);
+        if (monthsSince > 30) { score += 35; signals.push(`${Math.round(monthsSince)}mo without promotion`); }
+        else if (monthsSince > 24) { score += 25; signals.push(`${Math.round(monthsSince)}mo without promotion`); }
       }
 
       // 2. Performance score
       const perf = emp.performance_score;
-      if (typeof perf === "number" && perf < 6.5) signals.push(`performance ${perf.toFixed(1)}/10`);
+      if (typeof perf === "number") {
+        if (perf < 6.5) { score += 25; signals.push(`performance ${perf.toFixed(1)}/10`); }
+        else if (perf < 7.0) { score += 10; signals.push(`performance ${perf.toFixed(1)}/10 (borderline)`); }
+      }
 
-      // 3. New-hire onboarding risk (first 6 months)
+      // 3. HR events (complaints, absence concerns)
+      const hrEvents = (emp as any).hr_events ?? [];
+      let hrEventScore = 0;
+      const hrEventSummary: string[] = [];
+      for (const ev of hrEvents) {
+        if (ev.type === "complaint" || ev.type === "absence_concern" || ev.type === "performance_concern") {
+          const pts = ev.severity === "high" ? 20 : ev.severity === "medium" ? 10 : 5;
+          hrEventScore += pts;
+          hrEventSummary.push(ev.type.replace(/_/g, " "));
+        }
+      }
+      if (hrEventScore > 0) {
+        score += Math.min(hrEventScore, 40); // cap HR events contribution
+        signals.push(`${hrEvents.filter((e: any) => ["complaint","absence_concern","performance_concern"].includes(e.type)).length} HR event(s): ${[...new Set(hrEventSummary)].join(", ")}`);
+      }
+
+      // 4. New-hire onboarding risk (first 6 months)
       const hireParts = emp.hire_date?.split("-").map(Number) ?? [];
       if (hireParts.length >= 2) {
         const hireDate = new Date(hireParts[0], hireParts[1] - 1, 1);
         const tenureMonths = (today.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-        if (tenureMonths < 6) signals.push(`new hire (${Math.round(tenureMonths)}mo)`);
+        if (tenureMonths < 6) { score += 10; signals.push(`new hire (${Math.round(tenureMonths)}mo)`); }
       }
 
-      // 4. No rating in last 90 days → disengagement signal
+      // 5. No rating in last 90 days → disengagement signal
       const ratings = emp.monthly_ratings ?? [];
       const cutoff = new Date(today); cutoff.setDate(today.getDate() - 90);
-      const cutoffStr = cutoff.toISOString().slice(0, 7); // YYYY-MM
+      const cutoffStr = cutoff.toISOString().slice(0, 7);
       const hasRecentRating = ratings.some((r: any) => String(r.month ?? r.date ?? "").slice(0, 7) >= cutoffStr);
-      if (ratings.length > 0 && !hasRecentRating) signals.push("no recent rating (>90d)");
+      if (ratings.length > 0 && !hasRecentRating) { score += 10; signals.push("no recent rating (>90d)"); }
 
-      void todayIso;
+      score = Math.min(100, score);
       const level: "high" | "medium" | "low" =
-        signals.length >= 2 ? "high" :
-        signals.length === 1 ? "medium" :
+        score >= 50 ? "high" :
+        score >= 25 ? "medium" :
         "low";
 
-      return { id: emp.id, name: emp.name, role: emp.current_role_code, signals, level };
+      return { id: emp.id, name: emp.name, role: emp.current_role_code, signals, score, level };
     }).filter(r => r.level !== "low");
   }, [employees]);
+
+  // ─── Employee tasks ───────────────────────────────────────────────────
+  const [employeeTasks, setEmployeeTasks] = useState<any[]>([]);
+  useEffect(() => {
+    fetch("/api/employee-tasks", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setEmployeeTasks(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
+
+  const overdueTasks = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return employeeTasks
+      .filter(t => t.status !== "done" && t.deadline && t.deadline < todayStr)
+      .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+  }, [employeeTasks]);
+
+  // ─── Candidates missing key tests ────────────────────────────────────
+  const needsTests = useMemo(() => {
+    const ACTIVE_STAGES = new Set(["potential", "after_intro", "after_csi_asc", "after_csi_lm"]);
+    return candidates
+      .filter(c => ACTIVE_STAGES.has(c.stage ?? ""))
+      .map(c => {
+        const sc = (c as any).scores ?? {};
+        const missing: string[] = [];
+        // logic / verbal — expected once a candidate enters the funnel
+        if ((c as any).logic_pct == null && sc.hsa == null) missing.push("Logic");
+        if ((c as any).verbal_pct == null) missing.push("Verbal");
+        // TestGorilla expected by after_intro stage
+        if (c.stage !== "potential" && sc.testgorilla == null) missing.push("TestGorilla");
+        // intro call score expected once past potential
+        if (c.stage !== "potential" && sc.intro_call == null) missing.push("Intro call");
+        // case study expected at CSI stages
+        if ((c.stage === "after_csi_asc" || c.stage === "after_csi_lm") && sc.case_study == null) missing.push("Case study");
+        return { id: c.id, name: c.name, stage: c.stage, missing };
+      })
+      .filter(c => c.missing.length > 0);
+  }, [candidates]);
 
   // ─── Recent BD activity — merged proposals + cases, deduplicated ─────
   // Proposals and pricing cases represent the same business concept (a
@@ -795,6 +905,33 @@ export default function ExecDashboard() {
             To adjust: update team lists on ongoing proposals or add probability to BD deals.
           </p>
         </div>
+
+        {/* 4-month FTE gap table */}
+        {capacityByMonth.length > 0 && (
+          <div className="border-t pt-4 mt-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">FTE gap — next 4 months</p>
+            <div className="grid grid-cols-4 gap-2">
+              {capacityByMonth.map(m => (
+                <div key={m.label} className={`rounded border p-2 text-center ${
+                  m.status === "over"  ? "border-red-300 bg-red-50/40"
+                  : m.status === "tight" ? "border-amber-300 bg-amber-50/40"
+                  : "border-emerald-300 bg-emerald-50/40"
+                }`}>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase">{m.label}</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    m.status === "over" ? "text-red-700" : m.status === "tight" ? "text-amber-700" : "text-emerald-700"
+                  }`} data-privacy="blur">
+                    {m.gap > 0 ? `+${m.gap}` : m.gap}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground">
+                    {m.committed}c + {m.pipeline}p vs {capacity.supply}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">c=committed, p=pipeline-weighted. Positive = need to hire.</p>
+          </div>
+        )}
       </Card>
 
       {/* ── Row 2: Hiring funnel + Top overdue invoices ──────────── */}
@@ -1130,13 +1267,14 @@ export default function ExecDashboard() {
             </div>
           </div>
           <div className="space-y-1.5">
-            {churnRisk.sort((a, b) => (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1)).map(r => (
+            {churnRisk.sort((a, b) => b.score - a.score).map(r => (
               <div key={r.id} className={`flex items-center gap-2 flex-wrap text-xs rounded px-2 py-1.5 ${
                 r.level === "high" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"
               }`}>
                 <Badge variant="outline" className={`text-[10px] shrink-0 ${
                   r.level === "high" ? "border-red-400 text-red-700 bg-red-50" : "border-amber-400 text-amber-700 bg-amber-50"
                 }`}>{r.level}</Badge>
+                <span className={`font-mono text-[11px] font-bold shrink-0 ${r.level === "high" ? "text-red-700" : "text-amber-700"}`}>{r.score}</span>
                 <span className="font-semibold" data-privacy="blur">{r.name}</span>
                 <span className="text-muted-foreground">{r.role}</span>
                 <span className="ml-auto text-[10px] text-muted-foreground">{r.signals.join(" · ")}</span>
@@ -1144,10 +1282,99 @@ export default function ExecDashboard() {
             ))}
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Signals: promotion overdue (&gt;24mo), performance &lt;6.5, onboarding (&lt;6mo), no recent rating. Retired employees excluded. CHRO owns resolution.
+            Score 0-100. Signals: promo overdue (+25-35), performance &lt;7 (+10-25), HR events/complaints (+5-20 each), new hire (+10), no recent rating (+10). HIGH ≥50, MEDIUM ≥25. CHRO owns resolution.
           </p>
         </Card>
       )}
+
+      {/* ── Who Needs Tests + Overdue Tasks ─────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Candidates missing tests */}
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                <FlaskConical className="w-4 h-4 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Who needs tests</h3>
+                <p className="text-[11px] text-muted-foreground">Active candidates with missing scores</p>
+              </div>
+            </div>
+            <Link href="/hr/hiring/scoreboard" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+              scoreboard <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          </div>
+          {needsTests.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-emerald-600">
+              <CheckCircle2 className="w-4 h-4" /> All active candidates have required scores.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {needsTests.slice(0, 10).map(c => (
+                <div key={c.id} className="flex items-start gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
+                  <span className="flex-1 font-medium truncate" data-privacy="blur">{c.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0 font-mono">{c.stage?.replace(/_/g, " ")}</span>
+                  <div className="flex flex-wrap gap-1 justify-end max-w-[180px]">
+                    {c.missing.map(t => (
+                      <span key={t} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-50 border border-amber-200 text-amber-700">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {needsTests.length > 10 && (
+                <p className="text-[10px] text-muted-foreground text-right">+{needsTests.length - 10} more</p>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Overdue tasks */}
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
+                <ClipboardList className="w-4 h-4 text-orange-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Overdue tasks</h3>
+                <p className="text-[11px] text-muted-foreground">Pending tasks past their deadline</p>
+              </div>
+            </div>
+            <Link href="/employees" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+              TDL <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          </div>
+          {overdueTasks.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-emerald-600">
+              <CheckCircle2 className="w-4 h-4" /> No overdue tasks — great.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {overdueTasks.slice(0, 10).map(t => {
+                const daysOver = t.deadline
+                  ? Math.floor((Date.now() - new Date(t.deadline).getTime()) / 86_400_000)
+                  : 0;
+                const isVeryLate = daysOver > 7;
+                return (
+                  <div key={t.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase ${isVeryLate ? "bg-red-50 border-red-200 text-red-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+                      {daysOver}d
+                    </span>
+                    <span className="flex-1 truncate" data-privacy="blur">{t.title}</span>
+                    <span className="text-[10px] text-muted-foreground shrink-0 font-mono">{t.delegated_to}</span>
+                  </div>
+                );
+              })}
+              {overdueTasks.length > 10 && (
+                <p className="text-[10px] text-muted-foreground text-right">+{overdueTasks.length - 10} more</p>
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
 
       {loading && (
         <p className="text-[11px] text-muted-foreground italic text-center">Loading live data…</p>

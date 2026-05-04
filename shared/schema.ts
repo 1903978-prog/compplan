@@ -159,6 +159,16 @@ export interface EmployeeCalculationResult {
   policy_applied: string;
 }
 
+// ─── HR event log (complaints, concerns, absence patterns, praise) ───────────
+export interface HrEvent {
+  id: string;                 // uuid-like
+  date: string;               // YYYY-MM-DD
+  type: "complaint" | "absence_concern" | "performance_concern" | "praise" | "other";
+  note: string;
+  severity: "low" | "medium" | "high";
+  logged_by?: string;
+}
+
 // ─── PostgreSQL tables ───────────────────────────────────────────────────────
 
 export const employees = pgTable("employees", {
@@ -188,6 +198,7 @@ export const employees = pgTable("employees", {
   comex_areas: jsonb("comex_areas").$type<ComexAreas>().default({}),
   status: text("status").notNull().default("active"),    // "active" | "former"
   retired_at: text("retired_at"),
+  hr_events: jsonb("hr_events").$type<HrEvent[]>().default([]),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
@@ -366,6 +377,9 @@ export const pricingCases = pgTable("pricing_cases", {
   // on the case. Cases with an outcome are hidden from the active "Pricing Cases"
   // tab and shown in the "Won/Lost Pricings" tab instead.
   outcome: text("outcome"),
+  // partner_id: optional FK to the partners table. Records which external
+  // firm referred or co-pitched this deal. Null = direct Eendigo origination.
+  partner_id: integer("partner_id"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -486,6 +500,7 @@ export const pricingProposals = pgTable("pricing_proposals", {
     blockers?: string[];
     pct_complete?: number;
   }[]>(),
+  partner_id: integer("partner_id"),
 });
 
 // ─── Employee Tasks (TDL) ────────────────────────────────────────────────────
@@ -899,11 +914,28 @@ export const bdDeals = pgTable("bd_deals", {
   region: text("region"),
   last_activity_at: text("last_activity_at"),              // Last touchpoint from HubSpot
   imported_at: text("imported_at"),                        // When row first came in from HubSpot
+  partner_id: integer("partner_id"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
 export type BdDeal = typeof bdDeals.$inferSelect;
 export type InsertBdDeal = typeof bdDeals.$inferInsert;
+
+// ── Partner Firms ────────────────────────────────────────────────────────────
+// External firms that refer or co-pitch deals to Eendigo. A partner_id FK
+// on pricing_cases, pricing_proposals, and bd_deals records attribution.
+export const partners = pgTable("partners", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  type: text("type").notNull().default("referral"), // "referral" | "co-pitch" | "channel" | "other"
+  contact_name: text("contact_name"),
+  contact_email: text("contact_email"),
+  notes: text("notes"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type Partner = typeof partners.$inferSelect;
+export type InsertPartner = typeof partners.$inferInsert;
 
 // ── Harvest Invoice Tracking ────────────────────────────────────────────────
 // Snapshot of last-seen state per invoice (for change detection)

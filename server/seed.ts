@@ -885,6 +885,23 @@ export async function seedDatabase() {
   // "Won/Lost Pricings" tab and is hidden from the active Pricing Cases list.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS outcome TEXT`);
 
+  // ── Partners table + partner_id FKs ─────────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS partners (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'referral',
+      contact_name TEXT,
+      contact_email TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+  await db.execute(sql`ALTER TABLE bd_deals ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+
   // (Removed) Seed pricing_cases for specific reference projects (EMV01,
   // SCHA01) — these were development scaffolding for the three-timeline
   // commercial-proposal layout. The shape is now covered by real user
@@ -1224,6 +1241,9 @@ Run with: node eendigo_template.js',
     ON CONFLICT (role_code) DO NOTHING
   `);
 
+  // Add hr_events column if missing (T12 migration)
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS hr_events jsonb DEFAULT '[]'::jsonb`);
+
   // Seed employees if empty
   const existingEmployees = await db.select().from(employees);
   if (existingEmployees.length === 0) {
@@ -1232,18 +1252,13 @@ Run with: node eendigo_template.js',
     console.log(`Seeded ${SEED_EMPLOYEES.length} employees`);
   }
 
-  // Fix Defne: she is A2, not S1 — correct role and salary history
+  // Promote Defne to S1 (as of 2026-05-04)
   await db.execute(sql`
     UPDATE employees
-    SET current_role_code = 'A2',
-        last_promo_date = '2024-03-01',
-        current_gross_fixed_year = 36387
-    WHERE id = 'emp-defne' AND current_role_code = 'S1'
-  `);
-  await db.execute(sql`
-    UPDATE salary_history
-    SET role_code = 'A2', effective_date = '2025-09-01', note = 'Salary increase'
-    WHERE employee_id = 'emp-defne' AND role_code = 'S1'
+    SET current_role_code = 'S1',
+        last_promo_date = '2026-05-04',
+        current_gross_fixed_year = 38480
+    WHERE id = 'emp-defne' AND current_role_code = 'A2'
   `);
 
   // Ensure Defne has BA and A1 salary history entries (may be missing if DB was seeded before these were added)
@@ -1268,6 +1283,13 @@ Run with: node eendigo_template.js',
       ('emp-defne', '2024-03-01', 'A2',  34307, 13, 'Promotion to A2'),
       ('emp-defne', '2025-09-01', 'A2',  36387, 13, 'Salary increase')`);
     console.log("Seeded Defne salary history");
+  }
+  // Ensure Defne S1 promotion is in salary history
+  const defneS1Count = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-defne' AND role_code = 'S1'`);
+  if (parseInt((defneS1Count.rows[0] as any).cnt) === 0) {
+    await db.execute(sql`INSERT INTO salary_history (employee_id, effective_date, role_code, gross_fixed_year, months_paid, note) VALUES
+      ('emp-defne', '2026-05-04', 'S1', 38480, 13, 'Promotion to S1')`);
+    console.log("Added Defne S1 promotion to salary history");
   }
 
   // Seed Malika salary history (idempotent)
