@@ -227,19 +227,26 @@ export default function ExecDashboard() {
   const [roundDetailIdx, setRoundDetailIdx] = useState<number | null>(null);
 
   // ── Payment round manual overrides ─────────────────────────────────────
-  // Keyed by ISO date (e.g. "2026-05-05"). Auto-calc applies for any date
-  // with no stored override — so future cycles always start clean.
+  // Keyed by local YYYY-MM-DD (e.g. "2026-05-05"). Using local date avoids
+  // the UTC-offset problem where midnight in e.g. UTC+2 shifts toISOString()
+  // to the previous day. Auto-calc applies for any date with no stored
+  // override — so future cycles always start clean.
   type RoundOverrides = Record<string, { eur?: number | null; usd?: number | null }>;
   const OVERRIDES_KEY = "compplan_payment_round_overrides";
+  const localDateKey = (d: Date) => {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
   const [paymentRoundOverrides, setPaymentRoundOverrides] = useState<RoundOverrides>(() => {
     try {
       const stored = localStorage.getItem(OVERRIDES_KEY);
       if (stored) return JSON.parse(stored) as RoundOverrides;
     } catch { /* ignore */ }
-    // Seed from Payment History (May 2026 initial values).
+    // Seed from Payment History (May 2026 initial values). Keys use
+    // localDateKey(new Date(2026,4,5/15)) so they match runtime lookups.
     const seed: RoundOverrides = {
-      "2026-05-05": { eur: 10200, usd: null },
-      "2026-05-15": { eur: 25000, usd: 43000 },
+      [localDateKey(new Date(2026, 4, 5))]:  { eur: 10200, usd: null },
+      [localDateKey(new Date(2026, 4, 15))]: { eur: 25000, usd: 43000 },
     };
     try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(seed)); } catch { /* ignore */ }
     return seed;
@@ -247,7 +254,7 @@ export default function ExecDashboard() {
   const [overrideEdit, setOverrideEdit] = useState<{ roundIdx: number; currency: "eur" | "usd" } | null>(null);
 
   const saveOverride = (roundDate: Date, currency: "eur" | "usd", rawInput: string) => {
-    const key = roundDate.toISOString().slice(0, 10);
+    const key = localDateKey(roundDate);
     const clean = rawInput.trim().replace(/[€$\s]/g, "").replace(/\./g, "").replace(",", ".");
     const num = clean === "" ? null : Number(clean);
     const value = num === null || isNaN(num) ? null : num;
@@ -931,7 +938,7 @@ export default function ExecDashboard() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               {(["eur", "usd"] as const).map(ccy => {
-                const dateKey = round.date.toISOString().slice(0, 10);
+                const dateKey = localDateKey(round.date);
                 const ovr = paymentRoundOverrides[dateKey];
                 const autoVal = ccy === "eur" ? round.eur_total : round.usd_total;
                 const overridden = ovr?.[ccy] != null;
@@ -1021,7 +1028,7 @@ export default function ExecDashboard() {
                 </div>
               )}
               {(() => {
-                const dateKey = round.date.toISOString().slice(0, 10);
+                const dateKey = localDateKey(round.date);
                 const ovr = paymentRoundOverrides[dateKey];
                 const dispEur = ovr?.eur != null ? ovr.eur : round.eur_total;
                 const dispUsd = ovr?.usd != null ? ovr.usd : round.usd_total;
