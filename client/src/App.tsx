@@ -15,6 +15,7 @@ import Login from "@/pages/login";
 import PricingTool from "@/pages/PricingTool";
 import PricingAdmin from "@/pages/PricingAdmin";
 import Hiring from "@/pages/Hiring";
+import HiringOffers from "@/pages/HiringOffers";
 import TimeTracker from "@/pages/TimeTracker";
 import Proposals from "@/pages/Proposals";
 import SlideMethodologyAdmin from "@/pages/SlideMethodologyAdmin";
@@ -54,7 +55,7 @@ import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
@@ -387,13 +388,14 @@ function Navigation() {
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
-                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker", "/exec/staffing"]}
+                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker", "/exec/staffing", "/hr/offers"]}
                 items={[
                   { href: "/", label: "Dashboard", icon: LayoutDashboard },
                   { href: "/employees", label: "Employees", icon: Users },
                   { href: "/roles", label: "Role Grid", icon: Grid3X3 },
                   { href: "/exec/staffing", label: "Staffing Gantt", icon: CalendarDays },
                   { href: "/days-off", label: "Days Off", icon: CalendarDays },
+                  { href: "/hr/offers", label: "Offers (Win/Loss)", icon: TrendingUp },
                   { href: "/time-tracker", label: "Time Tracker", icon: Timer },
                   { href: "/settings", label: "Settings", icon: SettingsIcon },
                 ]}
@@ -583,6 +585,7 @@ function Router() {
       <Route path="/admin/theme" component={AdminTheme} />
       <Route path="/hiring/scores" component={CandidateScores} />
       <Route path="/hiring/scoreboard" component={HiringScoreboard} />
+      <Route path="/hr/offers" component={HiringOffers} />
       <Route path="/login"><Redirect to="/" /></Route>
       <Route component={NotFound} />
     </Switch>
