@@ -297,14 +297,16 @@ export default function StaffingGantt() {
 
   // FTE demand build-up: per-project per-week contribution to staffing demand.
   // Each row is a project active in the 24-week horizon; per-week values are
-  // (named-team-count × weight) where weight = 1 for won/ongoing and
+  // (team-count × weight) where weight = 1 for won/ongoing and
   // win_probability/100 for pending. A "—" cell means the project is not
   // active that week. The total row is the sum across rows.
   //
-  // Counted from `manager_name` + `team_members`, so a project with no team
-  // assigned contributes 0 (no signal of headcount needed). Always weighted
-  // by win_probability for pending — independent of the showWeighted /
-  // showPipeline visual toggles, since this is the demand picture.
+  // Managers are EXCLUDED from the count — they're oversight, not capacity.
+  // Only `team_members` (the consultants below the manager) count as FTEs.
+  // A project with only a manager assigned (no team yet) contributes 0.
+  // Always weighted by win_probability for pending — independent of the
+  // showWeighted / showPipeline visual toggles, since this is the demand
+  // picture.
   type FteRow = {
     projectId: number;
     projectName: string;
@@ -321,9 +323,10 @@ export default function StaffingGantt() {
       if (p.outcome !== "won" && p.outcome !== "pending") continue;
       const span = projectWeeks(p, weekStart);
       if (!span) continue;
-      const teamCount =
-        (p.manager_name ? 1 : 0) +
-        (p.team_members ?? []).filter(m => (m.name ?? "").trim().length > 0).length;
+      // Managers excluded — capacity is the team beneath them.
+      const teamCount = (p.team_members ?? []).filter(
+        m => (m.name ?? "").trim().length > 0,
+      ).length;
       if (teamCount === 0) continue;
       const isPipeline = p.outcome === "pending";
       const probability = isPipeline
