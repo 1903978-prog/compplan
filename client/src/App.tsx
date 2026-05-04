@@ -27,6 +27,7 @@ import AdminAIModels from "@/pages/AdminAIModels";
 import AdminTheme from "@/pages/AdminTheme";
 import CandidateScores from "@/pages/CandidateScores";
 import HiringScoreboard from "@/pages/HiringScoreboard";
+import ReadAiScripts from "@/pages/ReadAiScripts";
 import { useActiveAIModel } from "@/hooks/use-active-ai-model";
 import AdminBackup from "@/pages/AdminBackup";
 import AdminTrash from "@/pages/AdminTrash";
@@ -54,7 +55,7 @@ import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen, Wrench, SlidersHorizontal, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen, Wrench, SlidersHorizontal, BarChart3, Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type NavItem =
@@ -401,7 +402,7 @@ function Navigation() {
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
-                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker", "/exec/staffing", "/hiring"]}
+                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker", "/exec/staffing", "/hiring", "/hiring/scripts"]}
                 items={[
                   { href: "/", label: "Dashboard", icon: LayoutDashboard },
                   { href: "/employees", label: "Employees", icon: Users },
@@ -413,6 +414,7 @@ function Navigation() {
                   { kind: "group", label: "Hiring" },
                   { href: "/hiring", label: "Pipeline", icon: UserCheck },
                   { href: "/hiring/scoreboard", label: "Scoreboard", icon: BarChart3 },
+                  { href: "/hiring/scripts", label: "Read.ai Scripts", icon: Mic },
                 ]}
               />
               {/* PROPOSALS — merged Pricing + Pitchdeck (was Proposals) + Pitch Creation (T16) */}
@@ -586,6 +588,7 @@ function Router() {
       <Route path="/admin/theme" component={AdminTheme} />
       <Route path="/hiring/scores" component={CandidateScores} />
       <Route path="/hiring/scoreboard" component={HiringScoreboard} />
+      <Route path="/hiring/scripts" component={ReadAiScripts} />
       <Route path="/login"><Redirect to="/" /></Route>
       <Route component={NotFound} />
     </Switch>
