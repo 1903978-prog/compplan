@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X, Zap } from "lucide-react";
+import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X, Zap, Pencil, Check, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 // ── Types we read from the API ──────────────────────────────────────────────
@@ -35,6 +35,22 @@ interface ExternalContact {
   name: string;
   email?: string | null;
   kind: string; // "freelancer" | "partner" | ...
+}
+
+// Pricing case — read-only here, used as the upstream source-of-truth
+// for win_probability / start_date / duration_weeks. The Staffing Gantt
+// links cases to proposals by project_name (case-insensitive); when a
+// proposal is missing one of these three fields, we fall back to the
+// case's value, and the user can also click "Copy from case" to persist
+// the case values onto the proposal in one action.
+interface PricingCase {
+  id: number;
+  project_name: string;
+  client_name?: string | null;
+  duration_weeks?: number | null;
+  win_probability?: number | null;
+  start_date?: string | null;
+  outcome?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -86,6 +102,17 @@ export default function StaffingGantt() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [externals, setExternals] = useState<ExternalContact[]>([]);
+  // Pricing cases — read-only source-of-truth for win_probability /
+  // start_date / duration_weeks when the corresponding proposal has
+  // those fields null. Keyed by lowercased project_name in caseByName.
+  const [cases, setCases] = useState<PricingCase[]>([]);
+  // Inline-edit state per proposal id. When non-null for an id, the
+  // card shows input fields instead of the static badge.
+  const [editingFields, setEditingFields] = useState<Record<number, {
+    win_probability: string;
+    start_date: string;
+    duration_weeks: string;
+  }>>({});
   const [loading, setLoading] = useState(true);
   const [showWeighted, setShowWeighted] = useState(true);
   const [showPipeline, setShowPipeline] = useState(true);
@@ -221,13 +248,144 @@ export default function StaffingGantt() {
       fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/employees",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/external-contacts",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([pp, ee, ex]) => {
+      // Pricing cases — used to backfill prob/start/duration on the TBD
+      // cards when the proposal row has those fields null.
+      fetch("/api/pricing/cases",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([pp, ee, ex, cs]) => {
       setProposals(Array.isArray(pp) ? pp : []);
       setEmployees(Array.isArray(ee) ? ee : []);
       setExternals(Array.isArray(ex) ? ex : []);
+      setCases(Array.isArray(cs) ? cs : []);
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load staffing data", variant: "destructive" }); setLoading(false); });
   }, [toast]);
+
+  // Lookup map: lowercased project_name → case (most recent revision wins
+  // on duplicates). Strips any trailing single uppercase revision letter
+  // ("RUB07A" → "rub07") so a proposal named "RUB07" still finds case
+  // revision A. Used to fill missing proposal fields with case fallbacks.
+  const caseByName = useMemo(() => {
+    const m = new Map<string, PricingCase>();
+    for (const c of cases) {
+      const raw = (c.project_name ?? "").trim().toLowerCase();
+      if (!raw) continue;
+      const stripped = raw.replace(/[a-z]$/, "");
+      // Latest case wins (assume id ordering reflects creation order)
+      const incumbent = m.get(raw);
+      if (!incumbent || c.id > incumbent.id) m.set(raw, c);
+      const incumbentS = m.get(stripped);
+      if (!incumbentS || c.id > incumbentS.id) m.set(stripped, c);
+    }
+    return m;
+  }, [cases]);
+
+  // Resolve effective prob/start/duration for a proposal, falling back
+  // to the linked pricing case when the proposal's column is null.
+  // Returns the case-derived flag too so the UI can show "(from case)".
+  const effectiveFields = (p: Proposal) => {
+    const raw = (p.project_name ?? "").trim().toLowerCase();
+    const c = caseByName.get(raw) ?? caseByName.get(raw.replace(/[a-z]$/, ""));
+    return {
+      win_probability:
+        p.win_probability != null ? p.win_probability :
+        c?.win_probability != null ? c.win_probability : null,
+      start_date:
+        p.start_date ? p.start_date :
+        c?.start_date ? c.start_date : null,
+      duration_weeks:
+        p.duration_weeks != null ? p.duration_weeks :
+        c?.duration_weeks != null ? c.duration_weeks : null,
+      probFromCase:    p.win_probability == null && c?.win_probability != null,
+      startFromCase:   !p.start_date && !!c?.start_date,
+      durFromCase:     p.duration_weeks == null && c?.duration_weeks != null,
+      hasCase:         !!c,
+    };
+  };
+
+  // Begin inline edit on a proposal card — pre-fills inputs with the
+  // effective values (proposal first, case fallback) so the user starts
+  // from the value they're seeing.
+  const startEdit = (p: Proposal) => {
+    const eff = effectiveFields(p);
+    setEditingFields(prev => ({
+      ...prev,
+      [p.id]: {
+        win_probability: eff.win_probability != null ? String(eff.win_probability) : "",
+        start_date:      eff.start_date ?? "",
+        duration_weeks:  eff.duration_weeks != null ? String(eff.duration_weeks) : "",
+      },
+    }));
+  };
+  const cancelEdit = (id: number) => setEditingFields(prev => {
+    const next = { ...prev };
+    delete next[id];
+    return next;
+  });
+
+  // Save inline edits — PUTs the proposal with the new values. Empty
+  // strings become null. Numbers are clamped to sensible ranges.
+  const saveEdit = async (p: Proposal) => {
+    const drafted = editingFields[p.id];
+    if (!drafted) return;
+    const wp = drafted.win_probability.trim() === ""
+      ? null
+      : Math.max(0, Math.min(100, Number(drafted.win_probability)));
+    const sd = drafted.start_date.trim() === "" ? null : drafted.start_date.trim();
+    const dw = drafted.duration_weeks.trim() === ""
+      ? null
+      : Math.max(0, Number(drafted.duration_weeks));
+    try {
+      const r = await fetch(`/api/pricing/proposals/${p.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...p, win_probability: wp, start_date: sd, duration_weeks: dw }),
+      });
+      if (!r.ok) {
+        const errBody = await r.text().catch(() => "");
+        toast({ title: `Save failed (HTTP ${r.status})`, description: errBody.slice(0, 200), variant: "destructive" });
+        return;
+      }
+      const updated = await r.json();
+      setProposals(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
+      cancelEdit(p.id);
+      toast({ title: "Updated" });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: String(e?.message ?? e), variant: "destructive" });
+    }
+  };
+
+  // One-click "copy from pricing case" — persists prob/start/duration
+  // from the linked case onto the proposal so future loads use the
+  // proposal's own values instead of the dynamic fallback.
+  const copyFromCase = async (p: Proposal) => {
+    const eff = effectiveFields(p);
+    if (!eff.hasCase) {
+      toast({ title: "No matching pricing case found", variant: "destructive" });
+      return;
+    }
+    if (!eff.probFromCase && !eff.startFromCase && !eff.durFromCase) {
+      toast({ title: "Proposal already has all 3 fields — nothing to copy" });
+      return;
+    }
+    try {
+      const r = await fetch(`/api/pricing/proposals/${p.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...p,
+          win_probability: eff.win_probability,
+          start_date:      eff.start_date,
+          duration_weeks:  eff.duration_weeks,
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+      setProposals(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
+      toast({ title: "Synced from pricing case" });
+    } catch (e: any) {
+      toast({ title: "Copy failed", description: String(e?.message ?? e), variant: "destructive" });
+    }
+  };
 
   const weekStart = useMemo(() => startOfWeekMonday(new Date()), []);
   const weeks = useMemo(() => {
@@ -293,6 +451,79 @@ export default function StaffingGantt() {
     }
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
+
+  // ── Monthly ASC demand row ─────────────────────────────────────────────
+  // For each week of the horizon: count ASC FTE demand from
+  //   (a) committed (won) projects: each team-member counted as 1 ASC
+  //   (b) TBD pipeline:             each team-member × win_probability/100
+  // Then aggregate weeks into months and take the PEAK week within each
+  // month — that's the conservative "how many ASC do we need to plan
+  // for this month" number, since hiring on a peak basis is what the
+  // user described in the brief.
+  //
+  // Manager (the EM) is NOT counted toward ASC demand — managers run
+  // the project, ASCs deliver. team_members.length excludes the manager
+  // (the manager lives in p.manager_name, separate field). When team
+  // hasn't been filled in yet, default to 1 ASC slot as a placeholder.
+  const monthlyAscDemand = useMemo(() => {
+    const weeklyCommitted = new Array(HORIZON_WEEKS).fill(0);
+    const weeklyTbd       = new Array(HORIZON_WEEKS).fill(0);
+
+    for (const p of proposals) {
+      const teamSize = (p.team_members ?? []).length || 1;
+      const eff = effectiveFields(p);
+      // projectWeeks uses raw p.start_date/duration_weeks. Patch it with
+      // case fallbacks before calling so TBDs that only have those
+      // fields on the linked case still appear on the demand row.
+      const patched: Proposal = {
+        ...p,
+        start_date: p.start_date ?? eff.start_date,
+        duration_weeks: p.duration_weeks ?? eff.duration_weeks,
+      };
+      const span = projectWeeks(patched, weekStart);
+      if (!span) continue;
+
+      if (p.outcome === "won") {
+        for (let w = span.from; w <= span.to; w++) {
+          weeklyCommitted[w] += teamSize;
+        }
+      } else if (p.outcome === "pending") {
+        const wp = (eff.win_probability ?? 0) / 100;
+        if (wp > 0) {
+          for (let w = span.from; w <= span.to; w++) {
+            weeklyTbd[w] += teamSize * wp;
+          }
+        }
+      }
+    }
+
+    // Group weeks by year-month, take the peak week's value as the
+    // monthly figure (per the user's example: a TBD that contributes 1
+    // FTE in any week of June makes June's monthly demand 1).
+    const months: Array<{
+      label:     string;
+      weekFrom:  number;
+      weekTo:    number;
+      committed: number;
+      tbd:       number;
+    }> = [];
+    for (let w = 0; w < HORIZON_WEEKS; w++) {
+      const d = weeks[w];
+      const key = d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+      const last = months[months.length - 1];
+      if (!last || last.label !== key) {
+        months.push({
+          label: key, weekFrom: w, weekTo: w,
+          committed: weeklyCommitted[w], tbd: weeklyTbd[w],
+        });
+      } else {
+        last.weekTo = w;
+        if (weeklyCommitted[w] > last.committed) last.committed = weeklyCommitted[w];
+        if (weeklyTbd[w]       > last.tbd)       last.tbd       = weeklyTbd[w];
+      }
+    }
+    return months;
+  }, [proposals, weeks, weekStart, caseByName]);
 
   // Availability: human-readable string + actual Date for the first free week.
   // The Date is used when reserving to a TBD project (start_date patch).
@@ -463,6 +694,41 @@ export default function StaffingGantt() {
                 );
               })}
             </tbody>
+            {/* ASC demand by month — peak FTE need = committed + Σ(prob × team) */}
+            <tfoot>
+              <tr className="border-t-2 border-slate-300 bg-slate-50 dark:bg-slate-900">
+                <td className="p-2 font-semibold text-[11px] sticky left-0 bg-slate-50 dark:bg-slate-900 z-10">
+                  ASC demand
+                </td>
+                <td className="p-2 text-[10px] text-muted-foreground sticky left-44 bg-slate-50 dark:bg-slate-900 z-10">
+                  peak / month
+                </td>
+                {monthlyAscDemand.map((m, i) => {
+                  const span = m.weekTo - m.weekFrom + 1;
+                  const total = m.committed + m.tbd;
+                  // Color-code by demand: green = covered range, amber = stretching,
+                  // red = needs hiring. Threshold values are heuristic — tune later.
+                  const tone =
+                    total >= 4 ? "bg-red-100 text-red-800"     :
+                    total >= 2 ? "bg-amber-100 text-amber-800" :
+                    total >  0 ? "bg-emerald-50  text-emerald-800" :
+                                  "text-muted-foreground";
+                  return (
+                    <td
+                      key={i}
+                      colSpan={span}
+                      className={`text-center p-1.5 border-l text-[10px] font-mono tabular-nums ${tone}`}
+                      title={`${m.label}: ${m.committed.toFixed(1)} committed (won) + ${m.tbd.toFixed(2)} TBD-weighted = ${total.toFixed(2)} ASC FTE peak`}
+                    >
+                      <div className="font-semibold text-xs leading-tight">{total.toFixed(1)}</div>
+                      <div className="opacity-70 text-[9px] leading-tight">
+                        {m.committed.toFixed(0)}+{m.tbd.toFixed(1)}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
           </table>
         </Card>
       )}
@@ -503,10 +769,12 @@ export default function StaffingGantt() {
                 ...(p.manager_name ? [{ role: "Manager", name: p.manager_name }] : []),
                 ...(p.team_members ?? []),
               ];
+              const eff = effectiveFields(p);
               const probColor =
-                (p.win_probability ?? 0) >= 70 ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
-                (p.win_probability ?? 0) >= 40 ? "bg-amber-100 text-amber-800 border-amber-300" :
+                (eff.win_probability ?? 0) >= 70 ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
+                (eff.win_probability ?? 0) >= 40 ? "bg-amber-100 text-amber-800 border-amber-300" :
                 "bg-red-100 text-red-800 border-red-300";
+              const isEditing = !!editingFields[p.id];
               return (
                 <Card key={p.id} className="p-3 border-amber-200 space-y-2">
                   <div className="flex items-start justify-between gap-2">
@@ -514,16 +782,77 @@ export default function StaffingGantt() {
                       <div className="font-mono font-bold text-sm truncate">{p.project_name}</div>
                       {p.client_name && <div className="text-[10px] text-muted-foreground truncate">{p.client_name}</div>}
                     </div>
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${probColor}`}>
-                      {p.win_probability != null ? `${p.win_probability}%` : "?%"}
-                    </Badge>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Badge variant="outline" className={`text-[10px] ${probColor}`}>
+                        {eff.win_probability != null ? `${eff.win_probability}%` : "?%"}
+                        {eff.probFromCase && <span className="ml-0.5 text-[8px] opacity-70">·case</span>}
+                      </Badge>
+                      {!isEditing && (
+                        <button onClick={() => startEdit(p)} className="text-muted-foreground hover:text-foreground p-0.5" title="Edit prob / start / duration">
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
-                    {p.duration_weeks && <span>{p.duration_weeks}w</span>}
-                    {p.start_date && <span>· starts {p.start_date}</span>}
-                    {!p.start_date && <span className="italic">· no start date yet</span>}
-                  </div>
+                  {isEditing ? (
+                    <div className="space-y-1.5 bg-amber-50/50 -mx-3 px-3 py-2 border-y border-amber-100">
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] w-14 text-muted-foreground shrink-0">Win prob</Label>
+                        <Input
+                          type="number" min="0" max="100"
+                          value={editingFields[p.id]!.win_probability}
+                          onChange={e => setEditingFields(prev => ({ ...prev, [p.id]: { ...prev[p.id]!, win_probability: e.target.value } }))}
+                          className="h-6 text-xs font-mono"
+                          placeholder="%"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] w-14 text-muted-foreground shrink-0">Start</Label>
+                        <Input
+                          type="date"
+                          value={editingFields[p.id]!.start_date}
+                          onChange={e => setEditingFields(prev => ({ ...prev, [p.id]: { ...prev[p.id]!, start_date: e.target.value } }))}
+                          className="h-6 text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] w-14 text-muted-foreground shrink-0">Duration</Label>
+                        <Input
+                          type="number" min="0" step="0.5"
+                          value={editingFields[p.id]!.duration_weeks}
+                          onChange={e => setEditingFields(prev => ({ ...prev, [p.id]: { ...prev[p.id]!, duration_weeks: e.target.value } }))}
+                          className="h-6 text-xs font-mono"
+                          placeholder="weeks"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1 pt-1">
+                        <Button size="sm" className="h-6 text-[10px] flex-1" onClick={() => saveEdit(p)}>
+                          <Check className="w-3 h-3 mr-1" /> Save
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => cancelEdit(p.id)}>Cancel</Button>
+                      </div>
+                      {eff.hasCase && (eff.probFromCase || eff.startFromCase || eff.durFromCase) && (
+                        <button
+                          onClick={() => copyFromCase(p)}
+                          className="text-[10px] text-blue-600 hover:underline flex items-center gap-1"
+                          title="Persist the values shown above (which fall back to the linked pricing case) onto this proposal"
+                        >
+                          <Copy className="w-2.5 h-2.5" /> Copy missing fields from pricing case
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
+                      {eff.duration_weeks != null && (
+                        <span>{eff.duration_weeks}w{eff.durFromCase && <span className="opacity-60"> ·case</span>}</span>
+                      )}
+                      {eff.start_date && (
+                        <span>· starts {eff.start_date}{eff.startFromCase && <span className="opacity-60"> ·case</span>}</span>
+                      )}
+                      {!eff.start_date && <span className="italic">· no start date yet</span>}
+                    </div>
+                  )}
 
                   {/* Already-reserved team members */}
                   {team.length > 0 && (
