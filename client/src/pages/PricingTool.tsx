@@ -879,6 +879,23 @@ export default function PricingTool() {
   const isExcluded = (p: PricingProposal): boolean => !!(p.excluded_from_analysis);
   const analysisProposals = useMemo(() => proposals.filter(p => !isExcluded(p)), [proposals]);
 
+  // ── Duplicate proposal detection ───────────────────────────────────────
+  // Groups proposals by (client_name + project_name + rounded total fee).
+  // Any group with 2+ entries is a suspected duplicate.
+  const duplicateGroups = useMemo(() => {
+    const feeOf = (p: PricingProposal) =>
+      Math.round(p.total_fee ?? p.weekly_price * (p.duration_weeks ?? 0));
+    const keyOf = (p: PricingProposal) =>
+      `${(p.client_name ?? "").toLowerCase().trim()}|${(p.project_name ?? "").toLowerCase().trim()}|${feeOf(p)}`;
+    const map = new Map<string, PricingProposal[]>();
+    for (const p of proposals) {
+      const k = keyOf(p);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(p);
+    }
+    return Array.from(map.values()).filter(g => g.length > 1);
+  }, [proposals]);
+
   // Fees-by-region analysis (groups by admin region, not individual country)
   const computeFeesByCountry = (ps: PricingProposal[]): CountryFeeRow[] => {
     const relevant = ps.filter(p => p.outcome === "won" || p.outcome === "lost");
@@ -2549,6 +2566,12 @@ export default function PricingTool() {
     _invalidatePricingCache(); loadAll({ force: true });
   };
 
+  const deleteDuplicate = async (id: number) => {
+    await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
+    setProposals(prev => prev.filter(p => p.id !== id));
+    _invalidatePricingCache();
+  };
+
   // Propagate region / fund / revenue / ebitda from one proposal to all same-client proposals.
   // Only overwrites fields that are non-null/non-empty in `source`.
   const syncClientFields = async (source: PricingProposal, currentProposals?: PricingProposal[]) => {
@@ -4050,6 +4073,48 @@ export default function PricingTool() {
         {/* ── WIN-LOSS ANALYSIS TAB ──────────────────────────────── */}
         {mainTab === "winloss" && (
           <div className="space-y-6">
+
+            {/* ── Duplicate proposals banner ─────────────────────────────── */}
+            {duplicateGroups.length > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 px-4 py-3 space-y-3">
+                <div className="flex items-center gap-2 text-amber-800 dark:text-amber-400">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-sm font-semibold">
+                    {duplicateGroups.length} duplicate group{duplicateGroups.length > 1 ? "s" : ""} detected — same client, project code, and fee
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {duplicateGroups.map((group, gi) => {
+                    // Sort ascending by id; keep[0] is the oldest — offer to delete the rest
+                    const sorted = [...group].sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+                    const keep = sorted[0];
+                    const toDelete = sorted.slice(1);
+                    return (
+                      <div key={gi} className="rounded-md bg-amber-100 dark:bg-amber-900/30 px-3 py-2 text-xs space-y-1">
+                        <div className="font-medium text-amber-900 dark:text-amber-300">
+                          {keep.client_name || keep.project_name} · {keep.project_name} · {Math.round(keep.total_fee ?? keep.weekly_price * (keep.duration_weeks ?? 0)).toLocaleString("it-IT")} €
+                        </div>
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <span className="text-amber-700 dark:text-amber-400">
+                            Keep #{keep.id} ({keep.proposal_date}), delete:
+                          </span>
+                          {toDelete.map(p => (
+                            <button
+                              key={p.id}
+                              onClick={() => deleteDuplicate(p.id!)}
+                              className="inline-flex items-center gap-1 rounded px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/60 font-medium transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              #{p.id} ({p.proposal_date})
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* ── Fees by Country (live — always recomputed from current proposals) ── */}
             <Card>
