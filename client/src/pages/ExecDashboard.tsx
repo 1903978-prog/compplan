@@ -7,7 +7,7 @@ import { useStore } from "@/hooks/use-store";
 import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
-  ArrowUpRight, Target, Layers,
+  ArrowUpRight, Target, Layers, ClipboardList, FlaskConical,
 } from "lucide-react";
 
 // ─── Executive Dashboard ─────────────────────────────────────────────────
@@ -573,6 +573,44 @@ export default function ExecDashboard() {
       return { id: emp.id, name: emp.name, role: emp.current_role_code, signals, score, level };
     }).filter(r => r.level !== "low");
   }, [employees]);
+
+  // ─── Employee tasks ───────────────────────────────────────────────────
+  const [employeeTasks, setEmployeeTasks] = useState<any[]>([]);
+  useEffect(() => {
+    fetch("/api/employee-tasks", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setEmployeeTasks(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
+
+  const overdueTasks = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return employeeTasks
+      .filter(t => t.status !== "done" && t.deadline && t.deadline < todayStr)
+      .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+  }, [employeeTasks]);
+
+  // ─── Candidates missing key tests ────────────────────────────────────
+  const needsTests = useMemo(() => {
+    const ACTIVE_STAGES = new Set(["potential", "after_intro", "after_csi_asc", "after_csi_lm"]);
+    return candidates
+      .filter(c => ACTIVE_STAGES.has(c.stage ?? ""))
+      .map(c => {
+        const sc = (c as any).scores ?? {};
+        const missing: string[] = [];
+        // logic / verbal — expected once a candidate enters the funnel
+        if ((c as any).logic_pct == null && sc.hsa == null) missing.push("Logic");
+        if ((c as any).verbal_pct == null) missing.push("Verbal");
+        // TestGorilla expected by after_intro stage
+        if (c.stage !== "potential" && sc.testgorilla == null) missing.push("TestGorilla");
+        // intro call score expected once past potential
+        if (c.stage !== "potential" && sc.intro_call == null) missing.push("Intro call");
+        // case study expected at CSI stages
+        if ((c.stage === "after_csi_asc" || c.stage === "after_csi_lm") && sc.case_study == null) missing.push("Case study");
+        return { id: c.id, name: c.name, stage: c.stage, missing };
+      })
+      .filter(c => c.missing.length > 0);
+  }, [candidates]);
 
   // ─── Recent BD activity — merged proposals + cases, deduplicated ─────
   // Proposals and pricing cases represent the same business concept (a
@@ -1166,6 +1204,95 @@ export default function ExecDashboard() {
           </p>
         </Card>
       )}
+
+      {/* ── Who Needs Tests + Overdue Tasks ─────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Candidates missing tests */}
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                <FlaskConical className="w-4 h-4 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Who needs tests</h3>
+                <p className="text-[11px] text-muted-foreground">Active candidates with missing scores</p>
+              </div>
+            </div>
+            <Link href="/hr/hiring/scoreboard" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+              scoreboard <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          </div>
+          {needsTests.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-emerald-600">
+              <CheckCircle2 className="w-4 h-4" /> All active candidates have required scores.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {needsTests.slice(0, 10).map(c => (
+                <div key={c.id} className="flex items-start gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
+                  <span className="flex-1 font-medium truncate" data-privacy="blur">{c.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0 font-mono">{c.stage?.replace(/_/g, " ")}</span>
+                  <div className="flex flex-wrap gap-1 justify-end max-w-[180px]">
+                    {c.missing.map(t => (
+                      <span key={t} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-50 border border-amber-200 text-amber-700">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {needsTests.length > 10 && (
+                <p className="text-[10px] text-muted-foreground text-right">+{needsTests.length - 10} more</p>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Overdue tasks */}
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
+                <ClipboardList className="w-4 h-4 text-orange-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Overdue tasks</h3>
+                <p className="text-[11px] text-muted-foreground">Pending tasks past their deadline</p>
+              </div>
+            </div>
+            <Link href="/employees" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+              TDL <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          </div>
+          {overdueTasks.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-emerald-600">
+              <CheckCircle2 className="w-4 h-4" /> No overdue tasks — great.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {overdueTasks.slice(0, 10).map(t => {
+                const daysOver = t.deadline
+                  ? Math.floor((Date.now() - new Date(t.deadline).getTime()) / 86_400_000)
+                  : 0;
+                const isVeryLate = daysOver > 7;
+                return (
+                  <div key={t.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded-sm border text-[9px] font-semibold uppercase ${isVeryLate ? "bg-red-50 border-red-200 text-red-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+                      {daysOver}d
+                    </span>
+                    <span className="flex-1 truncate" data-privacy="blur">{t.title}</span>
+                    <span className="text-[10px] text-muted-foreground shrink-0 font-mono">{t.delegated_to}</span>
+                  </div>
+                );
+              })}
+              {overdueTasks.length > 10 && (
+                <p className="text-[10px] text-muted-foreground text-right">+{overdueTasks.length - 10} more</p>
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
 
       {loading && (
         <p className="text-[11px] text-muted-foreground italic text-center">Loading live data…</p>
