@@ -997,7 +997,9 @@ export default function PricingTool() {
     if (ePairResult.status === "fulfilled") {
       const [eData, ecData] = ePairResult.value;
       const emps = Array.isArray(eData)
-        ? eData.map((e: any) => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
+        ? eData
+            .filter((e: any) => e.status !== "former") // retired staff not in dropdowns
+            .map((e: any) => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
         : [];
       const exts = Array.isArray(ecData)
         ? ecData.map((x: any) => ({ id: x.id, name: x.name, kind: x.kind ?? "freelancer" }))

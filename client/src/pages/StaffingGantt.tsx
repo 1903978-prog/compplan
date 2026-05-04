@@ -244,6 +244,7 @@ export default function StaffingGantt() {
   const people = useMemo(() => {
     const out = new Map<string, { name: string; role?: string }>();
     for (const e of employees) {
+      if ((e as any).status === "former") continue; // retired staff — not shown anywhere except the Retired page
       if (isBackOffice(e)) continue;
       out.set(e.name.trim().toLowerCase(), { name: e.name, role: e.current_role_code ?? undefined });
     }

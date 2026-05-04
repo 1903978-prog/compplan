@@ -1,13 +1,16 @@
 import { useEffect, useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Link } from "wouter";
 import { useStore } from "@/hooks/use-store";
+import { useToast } from "@/hooks/use-toast";
 import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
   ArrowUpRight, Target, Layers, ClipboardList, FlaskConical, CreditCard,
+  Pencil, Save, X, Plus, Trash2,
 } from "lucide-react";
 
 // ─── Executive Dashboard ─────────────────────────────────────────────────

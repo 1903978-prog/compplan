@@ -4192,20 +4192,26 @@ RULES:
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
-      const r = await db.execute(sql`
-        SELECT
-          d.*,
-          p.project_name        AS proposal_project_name,
-          p.revision_letter     AS proposal_revision_letter,
-          p.weekly_price        AS proposal_weekly_price,
-          p.total_fee           AS proposal_total_fee,
-          p.duration_weeks      AS proposal_duration_weeks,
-          p.outcome             AS proposal_outcome,
-          p.sector              AS proposal_sector
-        FROM bd_deals d
-        LEFT JOIN pricing_proposals p ON p.id = d.linked_proposal_id
-        ORDER BY d.updated_at DESC
-      `);
+      let r: any;
+      try {
+        r = await db.execute(sql`
+          SELECT
+            d.*,
+            p.project_name        AS proposal_project_name,
+            p.revision_letter     AS proposal_revision_letter,
+            p.weekly_price        AS proposal_weekly_price,
+            p.total_fee           AS proposal_total_fee,
+            p.duration_weeks      AS proposal_duration_weeks,
+            p.outcome             AS proposal_outcome,
+            p.sector              AS proposal_sector
+          FROM bd_deals d
+          LEFT JOIN pricing_proposals p ON p.id = d.linked_proposal_id
+          ORDER BY d.updated_at DESC
+        `);
+      } catch {
+        // linked_proposal_id column may not exist yet if db:push hasn't run — fall back
+        r = await db.execute(sql`SELECT * FROM bd_deals ORDER BY updated_at DESC`);
+      }
       res.json(r.rows);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
