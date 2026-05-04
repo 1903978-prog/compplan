@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Search, RefreshCw, ChevronDown, ChevronRight, DollarSign, CheckCircle, AlertTriangle } from "lucide-react";
+import { Users, Search, RefreshCw, ChevronDown, ChevronRight, DollarSign, CheckCircle, AlertTriangle, EyeOff, Eye, GitMerge, X } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface HarvestInvoice {
@@ -35,8 +35,8 @@ interface HarvestInvoice {
 }
 
 interface ProjectGroup {
-  code: string;         // e.g. "COE02" from Harvest, or "General"
-  name: string;         // Harvest project name, e.g. "Cohesia SPA - Phase 2"
+  code: string;
+  name: string;
   invoices: HarvestInvoice[];
   totalInvoiced: number;
   totalPaid: number;
@@ -54,14 +54,25 @@ interface ClientSummary {
   projects: ProjectGroup[];
 }
 
+interface ClientMerge {
+  primaryId: number;
+  secondaryId: number;
+  mergedName: string;
+}
+
+// ── Persistence keys ───────────────────────────────────────────────────────────
+const MERGES_KEY    = "clm_merges_v1";
+const HIDDEN_KEY    = "clm_hidden_v1";
+const DISMISSED_KEY = "clm_dismissed_dupes_v1";
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function fmtCurrency(amount: number, currency: string = "EUR"): string {
-  const sym = currency === "USD" ? "$" : currency === "GBP" ? "\u00A3" : currency === "CHF" ? "CHF " : "\u20AC";
+  const sym = currency === "USD" ? "$" : currency === "GBP" ? "£" : currency === "CHF" ? "CHF " : "€";
   return sym + Math.round(amount).toLocaleString("it-IT");
 }
 
 function fmtDate(d: string | null): string {
-  if (!d) return "\u2014";
+  if (!d) return "—";
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
@@ -69,24 +80,45 @@ function fmtDate(d: string | null): string {
 function clientPrefix(name: string | null | undefined): string {
   if (!name) return "";
   return name
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/[^A-Za-z]/g, "")
     .slice(0, 3)
     .toUpperCase();
 }
 
-// Extract project codes from Harvest line_items data (stored as comma-separated string).
-// Enforces the rule: letter prefix MUST equal first 3 letters of client name.
-// When no code is available, falls back to "<PREFIX>??" (e.g. "GAR??") so the
-// "needs assignment" bucket is clearly labelled per-client instead of a generic
-// "General" catch-all.
+// Normalise a client name for duplicate-detection comparison.
+// "Garnica Plywood" and "Garnica_Plywood" both → "garnicaplywood"
+function normaliseForDupe(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+// Two clients are considered similar if their normalised names are identical, or
+// one is a clean prefix of the other (e.g. "Garnica" vs "Garnica Plywood").
+function areSimilarClients(a: string, b: string): boolean {
+  const na = normaliseForDupe(a);
+  const nb = normaliseForDupe(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  // One is a prefix of the other and both are at least 4 chars
+  if (na.length >= 4 && nb.length >= 4) {
+    const [shorter, longer] = na.length <= nb.length ? [na, nb] : [nb, na];
+    if (longer.startsWith(shorter)) return true;
+  }
+  return false;
+}
+
+// Build a stable pair key: always smallest ID first
+function dupeKey(a: number, b: number): string {
+  return `${Math.min(a, b)}-${Math.max(a, b)}`;
+}
+
 function extractProjectCodes(inv: HarvestInvoice): string[] {
   const prefix = clientPrefix(inv.client?.name);
   if (inv.project_codes) {
     const codes = inv.project_codes.split(",").map(c => c.trim()).filter(Boolean);
-    // Filter out anything that doesn't match the client prefix (kills THAN30
-    // and similar regex false positives that snuck in before the fix).
-    // Exception: if the user has set this as a manual override, trust it.
     if (prefix && inv.code_source !== "manual") {
       const filtered = codes.filter(c => c.toUpperCase().startsWith(prefix));
       if (filtered.length) return filtered;
@@ -99,7 +131,6 @@ function extractProjectCodes(inv: HarvestInvoice): string[] {
 
 function getPaidAmount(inv: HarvestInvoice): number {
   if (inv.state === "paid" || inv.state === "closed") return inv.amount;
-  // Partial: paid = total - remaining due
   if (inv.due_amount < inv.amount) return inv.amount - inv.due_amount;
   return 0;
 }
@@ -118,35 +149,33 @@ export default function ClientLedger() {
   const [editingApplyToClient, setEditingApplyToClient] = useState<boolean>(true);
   const [savingCodeFor, setSavingCodeFor] = useState<number | null>(null);
 
-  const saveProjectCodeOverride = async (invoiceId: number, value: string, applyToClient: boolean) => {
-    setSavingCodeFor(invoiceId);
-    try {
-      const res = await fetch(`/api/harvest/invoices/${invoiceId}/project-codes`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_codes: value.trim() || null, apply_to_client: applyToClient }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setEditingCodeFor(null);
-      toast({ title: "Project code saved", description: applyToClient && value.trim() ? `${value.trim()} applied to all blank invoices for this client` : (value.trim() || "(cleared)") });
-      // If we set a client default, reload so the fallback fills every blank.
-      if (applyToClient && value.trim()) {
-        loadInvoices();
-      } else {
-        setInvoices(prev => prev.map(i => i.id === invoiceId
-          ? { ...i, project_codes: value.trim() || i.project_codes_auto || null,
-              project_codes_manual: value.trim() || null,
-              has_manual_override: !!value.trim() }
-          : i));
-      }
-    } catch (err: any) {
-      toast({ title: "Failed to save", description: err.message, variant: "destructive" });
-    } finally {
-      setSavingCodeFor(null);
-    }
+  // ── Persistent display-layer state ──────────────────────────────────────────
+  const [merges, setMerges] = useState<ClientMerge[]>(() => {
+    try { return JSON.parse(localStorage.getItem(MERGES_KEY) ?? "[]"); } catch { return []; }
+  });
+  const [hiddenIds, setHiddenIds] = useState<number[]>(() => {
+    try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]"); } catch { return []; }
+  });
+  const [dismissedDupes, setDismissedDupes] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]"); } catch { return []; }
+  });
+  const [showHidden, setShowHidden] = useState(false);
+
+  // ── Helpers to persist state ─────────────────────────────────────────────────
+  const saveMerges = (updated: ClientMerge[]) => {
+    setMerges(updated);
+    try { localStorage.setItem(MERGES_KEY, JSON.stringify(updated)); } catch {}
+  };
+  const saveHidden = (updated: number[]) => {
+    setHiddenIds(updated);
+    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(updated)); } catch {}
+  };
+  const saveDismissed = (updated: string[]) => {
+    setDismissedDupes(updated);
+    try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(updated)); } catch {}
   };
 
+  // ── Load invoices ────────────────────────────────────────────────────────────
   const loadInvoices = async () => {
     setLoading(true);
     setError(null);
@@ -166,27 +195,66 @@ export default function ClientLedger() {
     }
   };
 
+  const saveProjectCodeOverride = async (invoiceId: number, value: string, applyToClient: boolean) => {
+    setSavingCodeFor(invoiceId);
+    try {
+      const res = await fetch(`/api/harvest/invoices/${invoiceId}/project-codes`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_codes: value.trim() || null, apply_to_client: applyToClient }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setEditingCodeFor(null);
+      toast({ title: "Project code saved", description: applyToClient && value.trim() ? `${value.trim()} applied to all blank invoices for this client` : (value.trim() || "(cleared)") });
+      if (applyToClient && value.trim()) {
+        loadInvoices();
+      } else {
+        setInvoices(prev => prev.map(i => i.id === invoiceId
+          ? { ...i, project_codes: value.trim() || i.project_codes_auto || null,
+              project_codes_manual: value.trim() || null,
+              has_manual_override: !!value.trim() }
+          : i));
+      }
+    } catch (err: any) {
+      toast({ title: "Failed to save", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingCodeFor(null);
+    }
+  };
+
   useEffect(() => { loadInvoices(); }, []);
 
-  // Build client summaries
+  // ── Build client summaries (with merges applied) ─────────────────────────────
   const clients = useMemo(() => {
+    // Build ID remap: secondary → primary
+    const idRemap = new Map<number, number>();
+    const nameOverride = new Map<number, string>();
+    for (const m of merges) {
+      idRemap.set(m.secondaryId, m.primaryId);
+      nameOverride.set(m.primaryId, m.mergedName);
+    }
+
     const map = new Map<number, HarvestInvoice[]>();
     for (const inv of invoices) {
       if (!inv.client) continue;
-      const cid = inv.client.id;
-      if (!map.has(cid)) map.set(cid, []);
-      map.get(cid)!.push(inv);
+      const effectiveCid = idRemap.get(inv.client.id) ?? inv.client.id;
+      if (!map.has(effectiveCid)) map.set(effectiveCid, []);
+      map.get(effectiveCid)!.push(inv);
     }
 
     const summaries: ClientSummary[] = [];
     for (const [clientId, clientInvs] of map) {
-      const clientName = clientInvs[0].client?.name ?? "Unknown";
+      // Canonical name: explicit override (from merge) > primary's own invoice > fallback
+      const clientName = nameOverride.get(clientId)
+        ?? clientInvs.find(i => i.client?.id === clientId)?.client?.name
+        ?? clientInvs[0].client?.name
+        ?? "Unknown";
       const currency = clientInvs[0].currency ?? "EUR";
       const totalInvoiced = clientInvs.reduce((s, i) => s + i.amount, 0);
       const totalPaid = clientInvs.reduce((s, i) => s + getPaidAmount(i), 0);
       const totalOutstanding = totalInvoiced - totalPaid;
 
-      // Group by project code (an invoice can belong to multiple projects)
       const projectMap = new Map<string, HarvestInvoice[]>();
       for (const inv of clientInvs) {
         const codes = extractProjectCodes(inv);
@@ -198,7 +266,6 @@ export default function ClientLedger() {
 
       const projects: ProjectGroup[] = [...projectMap.entries()]
         .map(([code, pinvs]) => {
-          // Find the Harvest project name for this code
           let projectName = code;
           for (const inv of pinvs) {
             if (inv.project_codes && inv.project_names) {
@@ -222,23 +289,69 @@ export default function ClientLedger() {
       summaries.push({ clientId, clientName, currency, totalInvoiced, totalPaid, totalOutstanding, invoiceCount: clientInvs.length, projects });
     }
 
-    // Sort by total invoiced descending
     return summaries.sort((a, b) => b.totalInvoiced - a.totalInvoiced);
-  }, [invoices]);
+  }, [invoices, merges]);
 
-  // Filter by search
+  // ── Duplicate detection ──────────────────────────────────────────────────────
+  const dupePairs = useMemo(() => {
+    const dismissedSet = new Set(dismissedDupes);
+    const pairs: { a: ClientSummary; b: ClientSummary }[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < clients.length; i++) {
+      for (let j = i + 1; j < clients.length; j++) {
+        const a = clients[i];
+        const b = clients[j];
+        const key = dupeKey(a.clientId, b.clientId);
+        if (seen.has(key) || dismissedSet.has(key)) continue;
+        seen.add(key);
+        if (areSimilarClients(a.clientName, b.clientName)) {
+          pairs.push({ a, b });
+        }
+      }
+    }
+    return pairs;
+  }, [clients, dismissedDupes]);
+
+  // ── Merge & hide handlers ───────────────────────────────────────────────────
+  const handleMerge = (primary: ClientSummary, secondary: ClientSummary) => {
+    saveMerges([...merges, { primaryId: primary.clientId, secondaryId: secondary.clientId, mergedName: primary.clientName }]);
+    toast({ title: `Merged "${secondary.clientName}" into "${primary.clientName}"` });
+  };
+
+  const handleDismissDupe = (a: ClientSummary, b: ClientSummary) => {
+    saveDismissed([...dismissedDupes, dupeKey(a.clientId, b.clientId)]);
+  };
+
+  const handleHide = (clientId: number) => {
+    saveHidden([...hiddenIds, clientId]);
+  };
+
+  const handleUnhide = (clientId: number) => {
+    saveHidden(hiddenIds.filter(id => id !== clientId));
+  };
+
+  // ── Filter ───────────────────────────────────────────────────────────────────
+  const hiddenSet = useMemo(() => new Set(hiddenIds), [hiddenIds]);
+
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return clients;
+    const base = showHidden ? clients : clients.filter(c => !hiddenSet.has(c.clientId));
+    if (!searchQuery.trim()) return base;
     const q = searchQuery.toLowerCase();
-    return clients.filter(c =>
+    return base.filter(c =>
       c.clientName.toLowerCase().includes(q) ||
       c.projects.some(p => p.code.toLowerCase().includes(q))
     );
-  }, [clients, searchQuery]);
+  }, [clients, searchQuery, hiddenSet, showHidden]);
 
-  // Totals
-  const grandInvoiced = filtered.reduce((s, c) => s + c.totalInvoiced, 0);
-  const grandPaid = filtered.reduce((s, c) => s + c.totalPaid, 0);
+  const visibleHiddenClients = useMemo(() =>
+    showHidden ? clients.filter(c => hiddenSet.has(c.clientId)) : [],
+    [clients, hiddenSet, showHidden]
+  );
+
+  // ── Totals ───────────────────────────────────────────────────────────────────
+  const visibleClients = filtered.filter(c => !hiddenSet.has(c.clientId));
+  const grandInvoiced = visibleClients.reduce((s, c) => s + c.totalInvoiced, 0);
+  const grandPaid = visibleClients.reduce((s, c) => s + c.totalPaid, 0);
   const grandOutstanding = grandInvoiced - grandPaid;
   const collectionRate = grandInvoiced > 0 ? Math.round((grandPaid / grandInvoiced) * 100) : 0;
 
@@ -246,7 +359,7 @@ export default function ClientLedger() {
     <div className="space-y-6">
       <PageHeader
         title="Client Ledger"
-        description="Revenue by client and project \u2014 invoiced vs. received"
+        description="Revenue by client and project — invoiced vs. received"
         actions={
           <Button variant="outline" size="sm" onClick={loadInvoices} disabled={loading}>
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
@@ -264,7 +377,7 @@ export default function ClientLedger() {
               <div>
                 <div className="text-[10px] text-muted-foreground uppercase font-semibold">Total Invoiced</div>
                 <div className="text-lg font-bold">{fmtCurrency(grandInvoiced)}</div>
-                <div className="text-[10px] text-muted-foreground">{filtered.length} clients</div>
+                <div className="text-[10px] text-muted-foreground">{visibleClients.length} clients</div>
               </div>
             </div>
           </CardContent>
@@ -311,8 +424,37 @@ export default function ClientLedger() {
           <Input placeholder="Search client or project code..." value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)} className="pl-9 h-9" />
         </div>
-        <div className="text-xs text-muted-foreground">{filtered.length} clients</div>
+        <div className="text-xs text-muted-foreground">{visibleClients.length} clients</div>
       </div>
+
+      {/* Duplicate merge suggestions */}
+      {dupePairs.length > 0 && (
+        <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            Possible duplicate client{dupePairs.length > 1 ? "s" : ""} detected
+          </div>
+          {dupePairs.map(({ a, b }) => (
+            <div key={dupeKey(a.clientId, b.clientId)} className="flex items-center gap-2 text-xs flex-wrap">
+              <span className="font-semibold text-amber-900">"{a.clientName}"</span>
+              <span className="text-amber-600">and</span>
+              <span className="font-semibold text-amber-900">"{b.clientName}"</span>
+              <span className="text-amber-700">appear to be the same client.</span>
+              <div className="flex items-center gap-1 ml-auto">
+                <Button size="sm" variant="outline" className="h-6 text-[10px] border-amber-300 bg-white hover:bg-amber-100 text-amber-800"
+                  onClick={() => handleMerge(a, b)}>
+                  <GitMerge className="w-3 h-3 mr-1" />
+                  Merge into "{a.clientName}"
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 text-[10px] text-amber-700 hover:text-amber-900"
+                  onClick={() => handleDismissDupe(a, b)}>
+                  <X className="w-3 h-3 mr-0.5" /> Dismiss
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Error / Loading */}
       {error && !loading && (
@@ -334,51 +476,64 @@ export default function ClientLedger() {
             <div className="text-center text-muted-foreground py-12">No clients found</div>
           ) : filtered.map(client => {
             const isExpanded = expandedClient === client.clientId;
+            const isHidden = hiddenSet.has(client.clientId);
             const paidPct = client.totalInvoiced > 0 ? Math.round((client.totalPaid / client.totalInvoiced) * 100) : 0;
 
             return (
-              <Card key={client.clientId} className="overflow-hidden">
-                {/* Client header row */}
-                <button
-                  onClick={() => setExpandedClient(isExpanded ? null : client.clientId)}
-                  className="w-full flex items-center gap-4 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
-                >
-                  {isExpanded
-                    ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-                    : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                  }
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold">{client.clientName}</span>
-                      <Badge variant="secondary" className="text-[9px]">{client.invoiceCount} inv</Badge>
-                      {client.projects.length > 1 && (
-                        <Badge variant="outline" className="text-[9px]">{client.projects.filter(p => p.code !== "General" && !p.code.endsWith("??")).length} projects</Badge>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-6 shrink-0 text-right">
-                    <div>
-                      <div className="text-[9px] text-muted-foreground uppercase">Invoiced</div>
-                      <div className="text-sm font-mono font-bold">{fmtCurrency(client.totalInvoiced, client.currency)}</div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] text-muted-foreground uppercase">Received</div>
-                      <div className="text-sm font-mono font-bold text-emerald-600">{fmtCurrency(client.totalPaid, client.currency)}</div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] text-muted-foreground uppercase">Outstanding</div>
-                      <div className={`text-sm font-mono font-bold ${client.totalOutstanding > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-                        {client.totalOutstanding > 0 ? fmtCurrency(client.totalOutstanding, client.currency) : "\u2014"}
+              <Card key={client.clientId} className={`overflow-hidden transition-opacity ${isHidden ? "opacity-40" : ""}`}>
+                {/* Client header row — outer div carries group for hover-reveal hide button */}
+                <div className="group relative w-full flex items-center">
+                  <button
+                    onClick={() => setExpandedClient(isExpanded ? null : client.clientId)}
+                    className="flex-1 flex items-center gap-4 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+                  >
+                    {isExpanded
+                      ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                      : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    }
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold">{client.clientName}</span>
+                        <Badge variant="secondary" className="text-[9px]">{client.invoiceCount} inv</Badge>
+                        {client.projects.length > 1 && (
+                          <Badge variant="outline" className="text-[9px]">{client.projects.filter(p => p.code !== "General" && !p.code.endsWith("??")).length} projects</Badge>
+                        )}
+                        {isHidden && <Badge variant="outline" className="text-[9px] text-muted-foreground border-dashed">hidden</Badge>}
                       </div>
                     </div>
-                    <div className="w-16">
-                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${paidPct}%` }} />
+                    <div className="flex items-center gap-6 shrink-0 text-right">
+                      <div>
+                        <div className="text-[9px] text-muted-foreground uppercase">Invoiced</div>
+                        <div className="text-sm font-mono font-bold">{fmtCurrency(client.totalInvoiced, client.currency)}</div>
                       </div>
-                      <div className="text-[9px] text-muted-foreground text-center mt-0.5">{paidPct}%</div>
+                      <div>
+                        <div className="text-[9px] text-muted-foreground uppercase">Received</div>
+                        <div className="text-sm font-mono font-bold text-emerald-600">{fmtCurrency(client.totalPaid, client.currency)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-muted-foreground uppercase">Outstanding</div>
+                        <div className={`text-sm font-mono font-bold ${client.totalOutstanding > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                          {client.totalOutstanding > 0 ? fmtCurrency(client.totalOutstanding, client.currency) : "—"}
+                        </div>
+                      </div>
+                      <div className="w-16">
+                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${paidPct}%` }} />
+                        </div>
+                        <div className="text-[9px] text-muted-foreground text-center mt-0.5">{paidPct}%</div>
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+
+                  {/* Hide / Unhide button — hover-reveal */}
+                  <button
+                    onClick={e => { e.stopPropagation(); isHidden ? handleUnhide(client.clientId) : handleHide(client.clientId); }}
+                    title={isHidden ? "Unhide client" : "Hide client"}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-3 p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                  >
+                    {isHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
 
                 {/* Expanded: project breakdown */}
                 {isExpanded && (
@@ -390,7 +545,6 @@ export default function ClientLedger() {
 
                       return (
                         <div key={project.code} className="border rounded-lg bg-background overflow-hidden">
-                          {/* Project header */}
                           <button
                             onClick={() => setExpandedProject(projExpanded ? null : projKey)}
                             className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/20 transition-colors"
@@ -419,7 +573,6 @@ export default function ClientLedger() {
                             </div>
                           </button>
 
-                          {/* Project invoice detail */}
                           {projExpanded && (
                             <div className="border-t">
                               <Table>
@@ -503,12 +656,12 @@ export default function ClientLedger() {
                                             </button>
                                           )}
                                         </TableCell>
-                                        <TableCell className="text-[11px] text-muted-foreground max-w-[200px] truncate">{inv.subject ?? "\u2014"}</TableCell>
+                                        <TableCell className="text-[11px] text-muted-foreground max-w-[200px] truncate">{inv.subject ?? "—"}</TableCell>
                                         <TableCell className="text-[11px]">{fmtDate(inv.created_at)}</TableCell>
                                         <TableCell className="text-xs font-mono text-right font-semibold">{fmtCurrency(inv.amount, inv.currency)}</TableCell>
-                                        <TableCell className="text-xs font-mono text-right text-emerald-600">{paid > 0 ? fmtCurrency(paid, inv.currency) : "\u2014"}</TableCell>
+                                        <TableCell className="text-xs font-mono text-right text-emerald-600">{paid > 0 ? fmtCurrency(paid, inv.currency) : "—"}</TableCell>
                                         <TableCell className={`text-xs font-mono text-right ${isOverdue ? "text-red-600 font-bold" : inv.due_amount > 0 ? "text-amber-600" : ""}`}>
-                                          {inv.due_amount > 0 ? fmtCurrency(inv.due_amount, inv.currency) : "\u2014"}
+                                          {inv.due_amount > 0 ? fmtCurrency(inv.due_amount, inv.currency) : "—"}
                                         </TableCell>
                                         <TableCell>
                                           <Badge variant={inv.state === "paid" ? "default" : isOverdue ? "destructive" : "secondary"} className="text-[9px]">
@@ -530,6 +683,21 @@ export default function ClientLedger() {
               </Card>
             );
           })}
+
+          {/* Hidden clients toggle */}
+          {hiddenIds.length > 0 && (
+            <div className="flex items-center justify-center pt-2">
+              <button
+                onClick={() => setShowHidden(v => !v)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showHidden
+                  ? <><EyeOff className="w-3.5 h-3.5" /> Hide {hiddenIds.length} hidden client{hiddenIds.length !== 1 ? "s" : ""}</>
+                  : <><Eye className="w-3.5 h-3.5" /> Show {hiddenIds.length} hidden client{hiddenIds.length !== 1 ? "s" : ""}</>
+                }
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

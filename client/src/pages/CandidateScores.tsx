@@ -319,7 +319,14 @@ export default function CandidateScores() {
     });
     const withScore = enriched.filter(r => r.score != null).sort((a, b) => (b.score! - a.score!));
     const noScore = enriched.filter(r => r.score == null);
-    return { withScore, noScore };
+    // Group 1: has all four required tests. Group 2: everyone else.
+    const group1 = withScore.filter(r =>
+      G1_REQUIRED.every(tid => typeof r.eff[tid] === "number" && r.eff[tid] !== null),
+    );
+    const group2 = withScore.filter(r =>
+      !G1_REQUIRED.every(tid => typeof r.eff[tid] === "number" && r.eff[tid] !== null),
+    );
+    return { withScore, group1, group2, noScore };
   }, [candidates, weights]);
 
   const filtered = (list: { c: Candidate; score: number | null }[]) => {
@@ -403,7 +410,7 @@ export default function CandidateScores() {
             <Trophy className="w-4 h-4 text-amber-500" />
             <h3 className="font-bold text-sm">
               Ranked candidates
-              <span className="text-muted-foreground font-normal ml-2">({ranked.withScore.length} scored, {ranked.noScore.length} not scored)</span>
+              <span className="text-muted-foreground font-normal ml-2">({ranked.group1.length} complete · {ranked.group2.length} partial · {ranked.noScore.length} not scored)</span>
             </h3>
             <Input
               placeholder="Filter by name / email…"
@@ -433,68 +440,87 @@ export default function CandidateScores() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered(ranked.withScore).map((row, i) => {
-                    const c = row.c;
-                    const comp = row.score!;
-                    const isEditing = editingId === c.id;
-                    const stageLabel = c.stage.replace(/_/g, " ");
-                    return (
-                      <TableRow key={c.id} className={i === 0 && !search ? "bg-amber-50/60" : ""}>
-                        <TableCell className="text-center font-bold font-mono">
-                          {i === 0 && !search ? <Trophy className="w-3.5 h-3.5 text-amber-500 mx-auto" /> : i + 1}
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-semibold text-sm">{c.name || <span className="italic text-muted-foreground">Unnamed</span>}</div>
-                          <div className="text-[10px] text-muted-foreground capitalize">{stageLabel}</div>
-                        </TableCell>
-                        {TESTS.map(t => {
-                          // Prefer manual entry for display; fall back to
-                          // the effective score (parsed from notes) so the
-                          // ranking cells actually show a value before the
-                          // user has saved anything.
-                          const manualV = c.scores?.[t.id];
-                          const v = typeof manualV === "number" ? manualV : row.eff[t.id];
-                          if (isEditing) {
+                  {(() => {
+                    const g1 = filtered(ranked.group1);
+                    const g2 = filtered(ranked.group2);
+
+                    const renderRow = (row: typeof g1[0], rank: number, isTop: boolean) => {
+                      const c = row.c;
+                      const comp = row.score!;
+                      const isEditing = editingId === c.id;
+                      const stageLabel = c.stage.replace(/_/g, " ");
+                      return (
+                        <TableRow key={c.id} className={isTop ? "bg-amber-50/60" : ""}>
+                          <TableCell className="text-center font-bold font-mono">
+                            {isTop ? <Trophy className="w-3.5 h-3.5 text-amber-500 mx-auto" /> : rank}
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-semibold text-sm">{c.name || <span className="italic text-muted-foreground">Unnamed</span>}</div>
+                            <div className="text-[10px] text-muted-foreground capitalize">{stageLabel}</div>
+                          </TableCell>
+                          {TESTS.map(t => {
+                            const manualV = c.scores?.[t.id];
+                            const v = typeof manualV === "number" ? manualV : row.eff[t.id];
+                            if (isEditing) {
+                              return (
+                                <TableCell key={t.id} className="p-1">
+                                  <Input
+                                    type="number" min="0" max="100" step="1"
+                                    placeholder="—"
+                                    value={scoreBuffer[t.id] ?? ""}
+                                    onChange={e => setScoreBuffer(s => ({ ...s, [t.id]: e.target.value }))}
+                                    className="h-7 text-xs text-center font-mono p-1"
+                                  />
+                                </TableCell>
+                              );
+                            }
                             return (
-                              <TableCell key={t.id} className="p-1">
-                                <Input
-                                  type="number" min="0" max="100" step="1"
-                                  placeholder="—"
-                                  value={scoreBuffer[t.id] ?? ""}
-                                  onChange={e => setScoreBuffer(s => ({ ...s, [t.id]: e.target.value }))}
-                                  className="h-7 text-xs text-center font-mono p-1"
-                                />
+                              <TableCell key={t.id} className="text-center p-1">
+                                <span className={`inline-flex items-center justify-center w-12 h-7 rounded font-mono text-xs ${scoreColor(v)}`}>
+                                  {typeof v === "number" ? v : "—"}
+                                </span>
                               </TableCell>
                             );
-                          }
-                          return (
-                            <TableCell key={t.id} className="text-center p-1">
-                              <span className={`inline-flex items-center justify-center w-12 h-7 rounded font-mono text-xs ${scoreColor(v)}`}>
-                                {typeof v === "number" ? v : "—"}
-                              </span>
+                          })}
+                          <TableCell className="text-center">
+                            <span className={`inline-flex items-center justify-center w-14 h-8 rounded font-mono text-sm ${scoreColor(comp)}`}>
+                              {comp}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {isEditing ? (
+                              <div className="flex gap-1 justify-end">
+                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingId(null)}>✕</Button>
+                                <Button size="sm" className="h-7 w-7 p-0" onClick={() => saveScores(c)}>✓</Button>
+                              </div>
+                            ) : (
+                              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => startEditing(c)}>
+                                Edit
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    };
+
+                    return (
+                      <>
+                        {g1.map((row, i) => renderRow(row, i + 1, i === 0 && !search))}
+
+                        {g2.length > 0 && (
+                          <TableRow key="__g2sep__">
+                            <TableCell colSpan={TESTS.length + 4} className="py-2 px-4 bg-muted/20">
+                              <div className="text-[10px] text-muted-foreground text-center italic">
+                                ── Missing one or more of Logic / Verbal / TG / Intro ──
+                              </div>
                             </TableCell>
-                          );
-                        })}
-                        <TableCell className="text-center">
-                          <span className={`inline-flex items-center justify-center w-14 h-8 rounded font-mono text-sm ${scoreColor(comp)}`}>
-                            {comp}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {isEditing ? (
-                            <div className="flex gap-1 justify-end">
-                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingId(null)}>✕</Button>
-                              <Button size="sm" className="h-7 w-7 p-0" onClick={() => saveScores(c)}>✓</Button>
-                            </div>
-                          ) : (
-                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => startEditing(c)}>
-                              Edit
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
+                          </TableRow>
+                        )}
+
+                        {g2.map((row, i) => renderRow(row, g1.length + i + 1, false))}
+                      </>
                     );
-                  })}
+                  })()}
                 </TableBody>
               </Table>
             </div>
