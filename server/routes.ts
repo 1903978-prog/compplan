@@ -3231,6 +3231,14 @@ Extract visual and content patterns from the image. Only suggest additions that 
         adminConfigMap[cfg.slide_id] = cfg;
       }
 
+      // G3: find the matching pricing case to copy fee timelines into the deck.
+      // Match on client_name = company_name (case-insensitive). Pick the row
+      // with the highest id when multiple cases exist for the same client.
+      const allCases = await storage.getPricingCases();
+      const matchingCase = allCases
+        .filter(c => (c.client_name ?? "").toLowerCase() === (proposal.company_name ?? "").toLowerCase())
+        .sort((a, b) => b.id - a.id)[0] ?? null;
+
       const buffer = await generateProposalDeck(
         {
           company_name: proposal.company_name,
@@ -3245,6 +3253,8 @@ Extract visual and content patterns from the image. Only suggest additions that 
           slide_selection: (proposal.slide_selection as any[]) || [],
           admin_configs: adminConfigMap,
           deck_template: deckTemplate || undefined,
+          case_timelines: matchingCase?.case_timelines ?? null,
+          case_discounts: matchingCase?.case_discounts ?? null,
         },
         template,
       );

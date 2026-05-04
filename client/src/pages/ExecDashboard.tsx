@@ -68,6 +68,7 @@ interface PricingProposal {
   last_invoice_at?: string | null;
   start_date?: string | null;
   win_probability?: number | null;
+  manager_name?: string | null;
   team_members?: { role: string; name: string }[] | null;
   excluded_from_analysis?: 0 | 1 | boolean | null;
 }
@@ -218,6 +219,39 @@ export default function ExecDashboard() {
   const [pricingRoles, setPricingRoles] = useState<{ id: string; default_daily_rate: number }[]>([]);
   const [loading, setLoading] = useState(!cached); // skip spinner if cache is warm
   const [lastFetch, setLastFetch] = useState<Date | null>(cached?.ts ? new Date(cached.ts) : null);
+
+  // ── Inline editing for Ongoing Projects table ──────────────────────────
+  const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
+  const [editManager, setEditManager] = useState("");
+  const [editTeam, setEditTeam] = useState<{ role: string; name: string }[]>([]);
+  const { toast } = useToast();
+
+  function startEdit(p: PricingProposal) {
+    setEditingProjectId(p.id);
+    setEditManager(p.manager_name ?? "");
+    setEditTeam(p.team_members ? [...p.team_members.map(m => ({ ...m }))] : []);
+  }
+
+  function cancelEdit() { setEditingProjectId(null); }
+
+  async function saveEdit(id: number) {
+    try {
+      const res = await fetch(`/api/proposals/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ manager_name: editManager, team_members: editTeam.filter(m => m.name.trim()) }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setProposals(prev => prev.map(p =>
+        p.id === id ? { ...p, manager_name: editManager, team_members: editTeam.filter(m => m.name.trim()) } as any : p
+      ));
+      setEditingProjectId(null);
+      toast({ title: "Saved", description: "Project team updated." });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -906,6 +940,7 @@ export default function ExecDashboard() {
                   <th className="py-2 pr-3">Team</th>
                   <th className="py-2 pr-3 text-right">Total fee</th>
                   <th className="py-2 pr-3">Last invoice</th>
+                  <th className="py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -917,25 +952,70 @@ export default function ExecDashboard() {
                   const daysSinceInv = lastInv ? Math.round((today.getTime() - lastInv.getTime()) / 86_400_000) : null;
                   const needsInvoice = !lastInv || (daysSinceInv != null && daysSinceInv > 30);
                   return (
-                    <tr key={p.id} className="border-b last:border-0 hover:bg-muted/30">
+                    <tr key={p.id} className="group border-b last:border-0 hover:bg-muted/30">
                       <td className="py-1.5 pr-3 font-mono font-semibold">
                         <a href="/pricing" className="hover:underline">{p.project_name}</a>
                       </td>
                       <td className="py-1.5 pr-3 text-muted-foreground">{p.client_name || "—"}</td>
                       <td className="py-1.5 pr-3">{p.end_date ?? "—"}</td>
                       <td className="py-1.5 pr-3 text-right tabular-nums" data-privacy="blur">{wksLeft ?? "—"}</td>
-                      <td className="py-1.5 pr-3">{p.manager_name || <span className="text-muted-foreground italic">—</span>}</td>
-                      <td className="py-1.5 pr-3 max-w-xs">
-                        {p.team_members && p.team_members.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {p.team_members.map((m, i) => (
-                              <Badge key={i} variant="outline" className="text-[10px] py-0 h-5">
-                                {m.role || "?"}: {m.name || "?"}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : <span className="text-muted-foreground italic">—</span>}
-                      </td>
+
+                      {editingProjectId === p.id ? (
+                        <>
+                          <td className="py-1 pr-3">
+                            <input
+                              className="border rounded px-1.5 py-0.5 text-xs w-28"
+                              value={editManager}
+                              onChange={e => setEditManager(e.target.value)}
+                              placeholder="Manager name"
+                            />
+                          </td>
+                          <td className="py-1 pr-3">
+                            <div className="flex flex-col gap-1">
+                              {editTeam.map((m, i) => (
+                                <div key={i} className="flex items-center gap-1">
+                                  <input
+                                    className="border rounded px-1 py-0.5 text-xs w-16"
+                                    value={m.role}
+                                    onChange={e => setEditTeam(t => t.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+                                    placeholder="Role"
+                                  />
+                                  <input
+                                    className="border rounded px-1 py-0.5 text-xs w-24"
+                                    value={m.name}
+                                    onChange={e => setEditTeam(t => t.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                                    placeholder="Name"
+                                  />
+                                  <button onClick={() => setEditTeam(t => t.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                              <button
+                                onClick={() => setEditTeam(t => [...t, { role: "", name: "" }])}
+                                className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-0.5 mt-0.5"
+                              >
+                                <Plus className="w-3 h-3" /> Add
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="py-1.5 pr-3">{p.manager_name || <span className="text-muted-foreground italic">—</span>}</td>
+                          <td className="py-1.5 pr-3 max-w-xs">
+                            {p.team_members && p.team_members.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {p.team_members.map((m, i) => (
+                                  <Badge key={i} variant="outline" className="text-[10px] py-0 h-5">
+                                    {m.role ? `${m.role}: ` : ""}{m.name || "?"}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : <span className="text-muted-foreground italic">—</span>}
+                          </td>
+                        </>
+                      )}
                       <td className="py-1.5 pr-3 text-right font-mono" data-privacy="blur">
                         {propNet1Total(p) > 0 ? eur(propNet1Total(p)) : "—"}
                       </td>
@@ -946,6 +1026,22 @@ export default function ExecDashboard() {
                           </span>
                         ) : (
                           <Badge variant="destructive" className="text-[9px] py-0 h-4">never invoiced</Badge>
+                        )}
+                      </td>
+                      <td className="py-1.5 pl-1">
+                        {editingProjectId === p.id ? (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => saveEdit(p.id)} className="text-emerald-600 hover:text-emerald-800" title="Save">
+                              <Save className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={cancelEdit} className="text-muted-foreground hover:text-foreground" title="Cancel">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => startEdit(p)} className="text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity" title="Edit team">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </td>
                     </tr>
