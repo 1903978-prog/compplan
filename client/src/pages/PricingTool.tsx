@@ -5034,6 +5034,34 @@ export default function PricingTool() {
           </div>
         )}
 
+      {/* Bubble tooltip — fixed to viewport, follows mouse */}
+      {bubbleTip && (() => {
+        const p = bubbleTip.p;
+        const dateStr = p.proposal_date ?? "";
+        const [yyyy, mm] = dateStr.split("-");
+        const dateFmt = mm && yyyy ? `${mm}/${yyyy.slice(2)}` : dateStr;
+        const sym = getCurrencyForRegion(p.region).symbol;
+        const total = proposalNet1Total(p);
+        const wk = proposalNet1(p);
+        const weeks = p.duration_weeks ?? 0;
+        return (
+          <div
+            style={{ position: "fixed", left: bubbleTip.x + 14, top: bubbleTip.y - 56, pointerEvents: "none", zIndex: 9999 }}
+            className="bg-popover border border-border rounded-lg shadow-xl px-3 py-2 text-xs min-w-[140px]"
+          >
+            <div className="font-semibold text-foreground">{p.project_name}</div>
+            <div className="text-muted-foreground mt-0.5">{dateFmt}</div>
+            <div className="font-mono text-foreground mt-1">
+              {sym}{Math.round(total).toLocaleString("it-IT")}
+              {weeks > 0 && <span className="text-muted-foreground text-[10px] ml-1">({weeks}w × {sym}{Math.round(wk / 1000)}k)</span>}
+            </div>
+            <div className={`mt-1 text-[10px] font-medium ${bubbleTip.outcome === "won" ? "text-emerald-600" : "text-red-500"}`}>
+              {bubbleTip.outcome === "won" ? "Won" : "Lost"}
+            </div>
+          </div>
+        );
+      })()}
+
       </div>
     );
   }
@@ -7956,33 +7984,6 @@ export default function PricingTool() {
         </DialogContent>
       </Dialog>
 
-      {/* Bubble tooltip — fixed to viewport, follows mouse */}
-      {bubbleTip && (() => {
-        const p = bubbleTip.p;
-        const dateStr = p.proposal_date ?? "";
-        const [yyyy, mm] = dateStr.split("-");
-        const dateFmt = mm && yyyy ? `${mm}/${yyyy.slice(2)}` : dateStr;
-        const sym = getCurrencyForRegion(p.region).symbol;
-        const total = proposalNet1Total(p);
-        const wk = proposalNet1(p);
-        const weeks = p.duration_weeks ?? 0;
-        return (
-          <div
-            style={{ position: "fixed", left: bubbleTip.x + 14, top: bubbleTip.y - 56, pointerEvents: "none", zIndex: 9999 }}
-            className="bg-popover border border-border rounded-lg shadow-xl px-3 py-2 text-xs min-w-[140px]"
-          >
-            <div className="font-semibold text-foreground">{p.project_name}</div>
-            <div className="text-muted-foreground mt-0.5">{dateFmt}</div>
-            <div className="font-mono text-foreground mt-1">
-              {sym}{Math.round(total).toLocaleString("it-IT")}
-              {weeks > 0 && <span className="text-muted-foreground text-[10px] ml-1">({weeks}w × {sym}{Math.round(wk / 1000)}k)</span>}
-            </div>
-            <div className={`mt-1 text-[10px] font-medium ${bubbleTip.outcome === "won" ? "text-emerald-600" : "text-red-500"}`}>
-              {bubbleTip.outcome === "won" ? "Won" : "Lost"}
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }
