@@ -123,10 +123,12 @@ export default function Dashboard() {
   const { employees, roleGrid, settings } = useStore();
 
   const metrics = useMemo(() => {
-    return employees.map(emp => {
-      const result = calculateEmployeeMetrics(emp, roleGrid, settings);
-      return { ...emp, ...result };
-    }).sort((a, b) => {
+    return employees
+      .filter(e => ((e as any).status ?? "active") !== "former")
+      .map(emp => {
+        const result = calculateEmployeeMetrics(emp, roleGrid, settings);
+        return { ...emp, ...result };
+      }).sort((a, b) => {
       const rankA = ROLE_RANK[a.current_role_code] || 0;
       const rankB = ROLE_RANK[b.current_role_code] || 0;
       if (rankA !== rankB) return rankB - rankA;
@@ -211,24 +213,26 @@ export default function Dashboard() {
     return { total, totalPayroll, avgSalary, overBand, underBand };
   }, [metrics]);
 
-  // Monthly cash outflow
+  // Monthly cash outflow — active employees only (former employees not on payroll)
   const cashOutflow = useMemo(() => {
     const now = new Date();
     const isMarch    = now.getMonth() === 2;   // March  → bonuses
     const isDecember = now.getMonth() === 11;  // December → 13th salary for 13-paycheck staff
     const monthName = format(now, "MMMM yyyy");
 
+    const active = employees.filter(e => ((e as any).status ?? "active") !== "former");
+
     // Base monthly payroll (each person contributes their regular monthly gross)
-    const baseMonthly = employees.reduce((s, emp) => s + emp.current_gross_fixed_year / emp.months_paid, 0);
+    const baseMonthly = active.reduce((s, emp) => s + emp.current_gross_fixed_year / emp.months_paid, 0);
 
     // March: add full annual bonus per employee
     const bonusTotal = isMarch
-      ? employees.reduce((s, emp) => s + emp.current_gross_fixed_year * (emp.current_bonus_pct / 100), 0)
+      ? active.reduce((s, emp) => s + emp.current_gross_fixed_year * (emp.current_bonus_pct / 100), 0)
       : 0;
 
     // December: employees with 13 paychecks get an extra monthly salary (13th month)
     const thirteenthTotal = isDecember
-      ? employees
+      ? active
           .filter(emp => emp.months_paid === 13)
           .reduce((s, emp) => s + emp.current_gross_fixed_year / emp.months_paid, 0)
       : 0;
@@ -236,7 +240,7 @@ export default function Dashboard() {
     const total = baseMonthly + bonusTotal + thirteenthTotal;
 
     const bonusBreakdown = isMarch
-      ? employees
+      ? active
           .filter(emp => emp.current_bonus_pct > 0)
           .map(emp => ({
             name: emp.name,
@@ -246,7 +250,7 @@ export default function Dashboard() {
           }))
           .sort((a, b) => b.amount - a.amount)
       : isDecember
-      ? employees
+      ? active
           .filter(emp => emp.months_paid === 13)
           .map(emp => ({
             name: emp.name,
@@ -268,10 +272,11 @@ export default function Dashboard() {
     const next30Days = addDays(now, 30);
     
     return employees.filter(emp => {
+      if (((emp as any).status ?? "active") === "former") return false;
       const dob = parseISO(emp.date_of_birth);
       const thisYearBirthday = new Date(now.getFullYear(), dob.getMonth(), dob.getDate());
       const nextYearBirthday = new Date(now.getFullYear() + 1, dob.getMonth(), dob.getDate());
-      
+
       return (isAfter(thisYearBirthday, now) && isBefore(thisYearBirthday, next30Days)) ||
              (isAfter(nextYearBirthday, now) && isBefore(nextYearBirthday, next30Days));
     }).sort((a, b) => {

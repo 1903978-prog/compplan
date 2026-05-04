@@ -1158,42 +1158,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
-  // PATCH /api/employees/:id/retire — mark as former employee and immediately
-  // remove them from every pricing proposal (manager_name + team_members).
+  // PATCH /api/employees/:id/retire — mark as former + cascade cleanup in one TX.
+  // Cascade logic lives in storage.retireEmployee (transactional).
   app.patch("/api/employees/:id/retire", requireAuth, async (req, res) => {
     try {
-      // Resolve name before retiring so we can match proposals by name.
-      const empRows = await db.execute(sql`SELECT name FROM employees WHERE id = ${req.params.id} LIMIT 1`);
-      const empName: string | null = (empRows.rows?.[0] as any)?.name ?? null;
-
       await storage.retireEmployee(req.params.id);
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
 
-      if (empName) {
-        const nameLower = empName.trim().toLowerCase();
-        // 1. Clear manager_name where it matches (case-insensitive).
-        await db.execute(sql`
-          UPDATE pricing_proposals
-          SET manager_name = NULL, updated_at = ${new Date().toISOString()}
-          WHERE LOWER(TRIM(manager_name)) = ${nameLower}
-        `);
-        // 2. Strip from team_members JSONB array — remove any element whose
-        //    name field (lowercased) matches. jsonb_array_elements + rebuild.
-        await db.execute(sql`
-          UPDATE pricing_proposals
-          SET team_members = (
-            SELECT COALESCE(jsonb_agg(el), '[]'::jsonb)
-            FROM jsonb_array_elements(COALESCE(team_members, '[]'::jsonb)) AS el
-            WHERE LOWER(TRIM(el->>'name')) <> ${nameLower}
-          ),
-          updated_at = ${new Date().toISOString()}
-          WHERE team_members IS NOT NULL
-            AND EXISTS (
-              SELECT 1 FROM jsonb_array_elements(team_members) AS el
-              WHERE LOWER(TRIM(el->>'name')) = ${nameLower}
-            )
-        `);
-      }
-
+  // PATCH /api/employees/:id/unretire — reinstate a former employee to active.
+  app.patch("/api/employees/:id/unretire", requireAuth, async (req, res) => {
+    try {
+      await storage.unretireEmployee(req.params.id);
       res.status(204).end();
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw, Printer, Mail, User, UserX, ChevronUp, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw, Printer, Mail, User, UserX, UserCheck, ChevronUp, ChevronDown } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -449,7 +449,7 @@ function computeChurnScore(emp: any): { score: number; level: "high" | "medium" 
 }
 
 export default function EmployeeList() {
-  const { employees, addEmployee, updateEmployee, deleteEmployee, retireEmployee, roleGrid, settings } = useStore();
+  const { employees, addEmployee, updateEmployee, deleteEmployee, retireEmployee, unretireEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
   const [mainTab, setMainTab] = useState<"employees" | "tdl" | "performance" | "external">("employees");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -1732,19 +1732,33 @@ Thanks,`;
                   <TableHead>Role</TableHead>
                   <TableHead>Hire Date</TableHead>
                   <TableHead>Retired</TableHead>
+                  <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {formerEmployees.map(emp => (
                   <TableRow
                     key={emp.id}
-                    className="cursor-pointer hover:bg-muted/50 text-muted-foreground"
-                    onClick={() => setSelectedEmpId(emp.id)}
+                    className="hover:bg-muted/50 text-muted-foreground"
                   >
-                    <TableCell className="font-medium">{emp.name}</TableCell>
-                    <TableCell>{emp.current_role_code}</TableCell>
-                    <TableCell>{emp.hire_date}</TableCell>
-                    <TableCell>{(emp as any).retired_at ?? "—"}</TableCell>
+                    <TableCell className="font-medium cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{emp.name}</TableCell>
+                    <TableCell className="cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{emp.current_role_code}</TableCell>
+                    <TableCell className="cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{emp.hire_date}</TableCell>
+                    <TableCell className="cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{(emp as any).retired_at ?? "—"}</TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-7 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                        onClick={async () => {
+                          if (confirm(`Reinstate ${emp.name} as an active employee?`)) {
+                            await unretireEmployee(emp.id);
+                          }
+                        }}
+                      >
+                        Unretire
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -1763,7 +1777,7 @@ Thanks,`;
 }
 
 function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onBack: () => void }) {
-  const { updateEmployee, retireEmployee, roleGrid, settings } = useStore();
+  const { updateEmployee, retireEmployee, unretireEmployee, roleGrid, settings } = useStore();
   const { toast } = useToast();
   const metrics = calculateEmployeeMetrics(employee, roleGrid, settings);
 
@@ -1966,6 +1980,14 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     if (confirm(`Retire ${employee.name}? They will be moved to Former Employees. No data is deleted.`)) {
       await retireEmployee(employee.id);
       toast({ title: `${employee.name} retired`, description: "Moved to Former Employees. All data retained." });
+      onBack();
+    }
+  };
+
+  const handleUnretire = async () => {
+    if (confirm(`Reinstate ${employee.name} as an active employee?`)) {
+      await unretireEmployee(employee.id);
+      toast({ title: `${employee.name} reinstated`, description: "Moved back to active employees." });
       onBack();
     }
   };
@@ -3137,11 +3159,19 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
 
         {/* Save + Delete buttons */}
         <div className="flex justify-between items-center pt-4 border-t">
-          <Button type="button" variant="outline" onClick={handleRetire}
-            className="text-slate-600 border-slate-300 hover:border-slate-400 hover:bg-slate-50">
-            <UserX className="w-4 h-4 mr-2" />
-            Retire Employee
-          </Button>
+          {(employee as any).status === "former" ? (
+            <Button type="button" variant="outline" onClick={handleUnretire}
+              className="text-emerald-700 border-emerald-300 hover:border-emerald-400 hover:bg-emerald-50">
+              <UserCheck className="w-4 h-4 mr-2" />
+              Unretire Employee
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" onClick={handleRetire}
+              className="text-slate-600 border-slate-300 hover:border-slate-400 hover:bg-slate-50">
+              <UserX className="w-4 h-4 mr-2" />
+              Retire Employee
+            </Button>
+          )}
           <Button type="submit" disabled={saveState !== "idle"}
             className={saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : ""}>
             {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save Employee"}

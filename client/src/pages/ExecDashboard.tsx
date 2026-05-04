@@ -864,8 +864,8 @@ export default function ExecDashboard() {
         <Kpi label="Headcount"       value={String(hr.headcount)}      sub={`${hr.birthdays} birthday${hr.birthdays === 1 ? "" : "s"} in 30d`} icon={Users}      tone="blue"    href="/" />
         <Kpi label="Monthly payroll" value={eur(hr.monthlyPayroll)}    sub={`avg ${eur(hr.avgSalary)}`}    icon={DollarSign} tone="slate"   href="/employees" />
         <Kpi label="Active candidates" value={String(hiring.active)}   sub={`${hiring.potential} new potential · ${hiring.hired} hired`} icon={UserCheck} tone="violet" href="/hiring" />
-        <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open invoices`} icon={Receipt}   tone="amber"   href="/invoicing" />
-        <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
+        <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open · USD→EUR at 0.93`} icon={Receipt}   tone="amber"   href="/invoicing" />
+        <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d · USD@0.93`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
         <Kpi label="Active projects" value={String(ongoing.count)}     sub={eur(ongoing.totalValue)}       icon={Briefcase}  tone="emerald" href="/bd" />
       </div>
 

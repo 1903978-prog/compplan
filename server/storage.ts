@@ -25,6 +25,7 @@ export interface IStorage {
   updateEmployee(id: string, emp: Partial<InsertEmployee>): Promise<Employee>;
   deleteEmployee(id: string): Promise<void>;
   retireEmployee(id: string): Promise<void>;
+  unretireEmployee(id: string): Promise<void>;
 
   // Role grid
   getRoleGrid(): Promise<RoleGridRow[]>;
@@ -90,8 +91,45 @@ export class DatabaseStorage implements IStorage {
   }
 
   async retireEmployee(id: string): Promise<void> {
+    // Look up name first (read-only, outside transaction).
+    const rows = await db.select({ name: employees.name }).from(employees).where(eq(employees.id, id)).limit(1);
+    const empName: string | null = rows[0]?.name ?? null;
+
+    // Wrap status update + cascade cleanup in one transaction (FIX-7).
+    await db.transaction(async (tx) => {
+      await tx.update(employees)
+        .set({ status: "former", retired_at: new Date().toISOString().slice(0, 10) } as any)
+        .where(eq(employees.id, id));
+
+      if (empName) {
+        const nameLower = empName.trim().toLowerCase();
+        const now = new Date().toISOString();
+        await tx.execute(sql`
+          UPDATE pricing_proposals
+          SET manager_name = NULL, updated_at = ${now}
+          WHERE LOWER(TRIM(manager_name)) = ${nameLower}
+        `);
+        await tx.execute(sql`
+          UPDATE pricing_proposals
+          SET team_members = (
+            SELECT COALESCE(jsonb_agg(el), '[]'::jsonb)
+            FROM jsonb_array_elements(COALESCE(team_members, '[]'::jsonb)) AS el
+            WHERE LOWER(TRIM(el->>'name')) <> ${nameLower}
+          ),
+          updated_at = ${now}
+          WHERE team_members IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(team_members) AS el
+              WHERE LOWER(TRIM(el->>'name')) = ${nameLower}
+            )
+        `);
+      }
+    });
+  }
+
+  async unretireEmployee(id: string): Promise<void> {
     await db.update(employees)
-      .set({ status: "former", retired_at: new Date().toISOString().slice(0, 10) } as any)
+      .set({ status: "active", retired_at: null } as any)
       .where(eq(employees.id, id));
   }
 
@@ -712,4 +750,39 @@ export async function purgeExpiredTrash(): Promise<number> {
     WHERE expires_at < NOW() AND restored_at IS NULL
   `);
   return (r as any).rowCount ?? 0;
+}
+
+/**
+ * One-time idempotent cleanup: strip ALL retired employees from
+ * pricing_proposals manager_name and team_members. Safe to run on every boot.
+ * Handles employees retired before the cascade code was deployed (FIX-1).
+ */
+export async function cleanupRetiredEmployeeAssignments(): Promise<void> {
+  const now = new Date().toISOString();
+  await db.execute(sql`
+    UPDATE pricing_proposals
+    SET manager_name = NULL, updated_at = ${now}
+    WHERE manager_name IS NOT NULL
+      AND LOWER(TRIM(manager_name)) IN (
+        SELECT LOWER(TRIM(name)) FROM employees WHERE status = 'former'
+      )
+  `);
+  await db.execute(sql`
+    UPDATE pricing_proposals
+    SET team_members = (
+      SELECT COALESCE(jsonb_agg(el), '[]'::jsonb)
+      FROM jsonb_array_elements(COALESCE(team_members, '[]'::jsonb)) AS el
+      WHERE LOWER(TRIM(el->>'name')) NOT IN (
+        SELECT LOWER(TRIM(name)) FROM employees WHERE status = 'former'
+      )
+    ),
+    updated_at = ${now}
+    WHERE team_members IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(COALESCE(team_members, '[]'::jsonb)) AS el
+        WHERE LOWER(TRIM(el->>'name')) IN (
+          SELECT LOWER(TRIM(name)) FROM employees WHERE status = 'former'
+        )
+      )
+  `);
 }

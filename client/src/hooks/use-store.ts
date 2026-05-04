@@ -34,6 +34,7 @@ interface AppState {
   updateEmployee: (id: string, employee: Partial<EmployeeInput>) => Promise<void>;
   deleteEmployee: (id: string) => Promise<void>;
   retireEmployee: (id: string) => Promise<void>;
+  unretireEmployee: (id: string) => Promise<void>;
 
   updateRoleGrid: (newGrid: RoleGridRow[]) => Promise<void>;
   updateSettings: (newSettings: AdminSettings) => Promise<void>;
@@ -134,6 +135,15 @@ export const useStore = create<AppState>()((set, get) => ({
     set((s) => ({
       employees: s.employees.map((e) =>
         e.id === id ? { ...e, status: "former", retired_at: today } : e
+      ),
+    }));
+  },
+
+  unretireEmployee: async (id) => {
+    await apiRequest("PATCH", `/api/employees/${id}/unretire`);
+    set((s) => ({
+      employees: s.employees.map((e) =>
+        e.id === id ? { ...e, status: "active", retired_at: null } : e
       ),
     }));
   },
