@@ -14,6 +14,7 @@ import DaysOff from "@/pages/DaysOff";
 import Login from "@/pages/login";
 import PricingTool from "@/pages/PricingTool";
 import PricingAdmin from "@/pages/PricingAdmin";
+import PricingDirector from "@/pages/PricingDirector";
 import Hiring from "@/pages/Hiring";
 import TimeTracker from "@/pages/TimeTracker";
 import Proposals from "@/pages/Proposals";
@@ -55,7 +56,7 @@ import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen, Wrench, SlidersHorizontal, BarChart3, Mic } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen, Wrench, SlidersHorizontal, BarChart3, Mic, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type NavItem =
@@ -424,6 +425,7 @@ function Navigation() {
                 basePaths={["/pricing", "/proposals", "/knowledge"]}
                 items={[
                   { href: "/pricing", label: "Pricing Cases", icon: DollarSign },
+                  { href: "/pricing/director", label: "Pricing Director", icon: TrendingUp },
                   { href: "/pricing/admin", label: "Pricing Admin", icon: SlidersHorizontal },
                   { kind: "group", label: "Pitchdeck" },
                   { href: "/proposals", label: "Pitchdeck", icon: FileText },
@@ -570,6 +572,7 @@ function Router() {
       <Route path="/days-off" component={DaysOff} />
       <Route path="/settings" component={Settings} />
       <Route path="/pricing" component={PricingTool} />
+      <Route path="/pricing/director" component={PricingDirector} />
       <Route path="/pricing/admin" component={PricingAdmin} />
       <Route path="/time-tracker" component={TimeTracker} />
       <Route path="/proposals" component={Proposals} />
