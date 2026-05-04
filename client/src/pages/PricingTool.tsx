@@ -750,6 +750,7 @@ export default function PricingTool() {
   // the All Projects tab (renamed from "Past Projects"), so the
   // separate Won/Lost listing was redundant.
   const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
+  const [bubbleTip, setBubbleTip] = useState<{ p: PricingProposal; outcome: "won" | "lost"; x: number; y: number } | null>(null);
   // Won Projects moved to the AR / Invoicing page (Task 11) — no state here.
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
@@ -4740,17 +4741,23 @@ export default function PricingTool() {
                               {won.map((p, i) => (
                                 <circle key={`w${i}`} cx={xAt(proposalNet1(p))}
                                   cy={padT + 12 + (i % 3) * 10} r="3.5"
-                                  fill="#10b981" opacity="0.85" stroke="#065f46" strokeWidth="0.4">
-                                  <title>{p.project_name} · Won · {fmtFull(proposalNet1(p))}/wk</title>
-                                </circle>
+                                  fill="#10b981" opacity="0.85" stroke="#065f46" strokeWidth="0.4"
+                                  style={{ cursor: "pointer" }}
+                                  onMouseEnter={e => setBubbleTip({ p, outcome: "won", x: e.clientX, y: e.clientY })}
+                                  onMouseMove={e => setBubbleTip(t => t ? { ...t, x: e.clientX, y: e.clientY } : t)}
+                                  onMouseLeave={() => setBubbleTip(null)}
+                                />
                               ))}
                               {/* Lost dots — x position = NET1 */}
                               {lost.map((p, i) => (
                                 <circle key={`l${i}`} cx={xAt(proposalNet1(p))}
                                   cy={padT + 45 + (i % 3) * 10} r="3.5"
-                                  fill="#ef4444" opacity="0.85" stroke="#7f1d1d" strokeWidth="0.4">
-                                  <title>{p.project_name} · Lost · {fmtFull(proposalNet1(p))}/wk</title>
-                                </circle>
+                                  fill="#ef4444" opacity="0.85" stroke="#7f1d1d" strokeWidth="0.4"
+                                  style={{ cursor: "pointer" }}
+                                  onMouseEnter={e => setBubbleTip({ p, outcome: "lost", x: e.clientX, y: e.clientY })}
+                                  onMouseMove={e => setBubbleTip(t => t ? { ...t, x: e.clientX, y: e.clientY } : t)}
+                                  onMouseLeave={() => setBubbleTip(null)}
+                                />
                               ))}
                               {/* Scale labels */}
                               <text x={padL} y={H - 4} fontSize="7" fill="#94a3b8">{fmtK2(sMin)}</text>
@@ -7948,6 +7955,34 @@ export default function PricingTool() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bubble tooltip — fixed to viewport, follows mouse */}
+      {bubbleTip && (() => {
+        const p = bubbleTip.p;
+        const dateStr = p.proposal_date ?? "";
+        const [yyyy, mm] = dateStr.split("-");
+        const dateFmt = mm && yyyy ? `${mm}/${yyyy.slice(2)}` : dateStr;
+        const sym = getCurrencyForRegion(p.region).symbol;
+        const total = proposalNet1Total(p);
+        const wk = proposalNet1(p);
+        const weeks = p.duration_weeks ?? 0;
+        return (
+          <div
+            style={{ position: "fixed", left: bubbleTip.x + 14, top: bubbleTip.y - 56, pointerEvents: "none", zIndex: 9999 }}
+            className="bg-popover border border-border rounded-lg shadow-xl px-3 py-2 text-xs min-w-[140px]"
+          >
+            <div className="font-semibold text-foreground">{p.project_name}</div>
+            <div className="text-muted-foreground mt-0.5">{dateFmt}</div>
+            <div className="font-mono text-foreground mt-1">
+              {sym}{Math.round(total).toLocaleString("it-IT")}
+              {weeks > 0 && <span className="text-muted-foreground text-[10px] ml-1">({weeks}w × {sym}{Math.round(wk / 1000)}k)</span>}
+            </div>
+            <div className={`mt-1 text-[10px] font-medium ${bubbleTip.outcome === "won" ? "text-emerald-600" : "text-red-500"}`}>
+              {bubbleTip.outcome === "won" ? "Won" : "Lost"}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
