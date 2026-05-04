@@ -106,7 +106,7 @@ export class DatabaseStorage implements IStorage {
         const now = new Date().toISOString();
         await tx.execute(sql`
           UPDATE pricing_proposals
-          SET manager_name = NULL, updated_at = ${now}
+          SET manager_name = NULL
           WHERE LOWER(TRIM(manager_name)) = ${nameLower}
         `);
         await tx.execute(sql`
@@ -115,8 +115,7 @@ export class DatabaseStorage implements IStorage {
             SELECT COALESCE(jsonb_agg(el), '[]'::jsonb)
             FROM jsonb_array_elements(COALESCE(team_members, '[]'::jsonb)) AS el
             WHERE LOWER(TRIM(el->>'name')) <> ${nameLower}
-          ),
-          updated_at = ${now}
+          )
           WHERE team_members IS NOT NULL
             AND EXISTS (
               SELECT 1 FROM jsonb_array_elements(team_members) AS el
@@ -758,10 +757,9 @@ export async function purgeExpiredTrash(): Promise<number> {
  * Handles employees retired before the cascade code was deployed (FIX-1).
  */
 export async function cleanupRetiredEmployeeAssignments(): Promise<void> {
-  const now = new Date().toISOString();
   await db.execute(sql`
     UPDATE pricing_proposals
-    SET manager_name = NULL, updated_at = ${now}
+    SET manager_name = NULL
     WHERE manager_name IS NOT NULL
       AND LOWER(TRIM(manager_name)) IN (
         SELECT LOWER(TRIM(name)) FROM employees WHERE status = 'former'
@@ -775,8 +773,7 @@ export async function cleanupRetiredEmployeeAssignments(): Promise<void> {
       WHERE LOWER(TRIM(el->>'name')) NOT IN (
         SELECT LOWER(TRIM(name)) FROM employees WHERE status = 'former'
       )
-    ),
-    updated_at = ${now}
+    )
     WHERE team_members IS NOT NULL
       AND EXISTS (
         SELECT 1 FROM jsonb_array_elements(COALESCE(team_members, '[]'::jsonb)) AS el
