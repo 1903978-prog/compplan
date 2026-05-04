@@ -4275,11 +4275,19 @@ RULES:
       const { sql } = await import("drizzle-orm");
 
       const deals: any = await db.execute(sql`SELECT id, client_name, name FROM bd_deals`);
-      const proposals: any = await db.execute(sql`
-        SELECT id, client_name, project_name, revision_letter, weekly_price, total_fee, proposal_date
-        FROM pricing_proposals
-        ORDER BY proposal_date DESC
-      `);
+      let proposals: any;
+      try {
+        proposals = await db.execute(sql`
+          SELECT id, client_name, project_name, revision_letter, weekly_price, total_fee, proposal_date
+          FROM pricing_proposals ORDER BY proposal_date DESC
+        `);
+      } catch {
+        // revision_letter column may not exist yet — fall back without it
+        proposals = await db.execute(sql`
+          SELECT id, client_name, project_name, weekly_price, total_fee, proposal_date
+          FROM pricing_proposals ORDER BY proposal_date DESC
+        `);
+      }
 
       let matched = 0, unmatched = 0;
       const results: { deal: string; proposal: string | null; matched: boolean }[] = [];

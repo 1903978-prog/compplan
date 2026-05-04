@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Target, Plus, Upload, Trash2, Pencil, Save, X, Loader2,
   CheckCircle2, AlertCircle, ExternalLink, Database, RefreshCw, Wifi, WifiOff,
-  Users, Building2, Mail, Phone, MapPin,
+  Users, Building2, Mail, Phone, MapPin, ArrowRight,
 } from "lucide-react";
 
 // ─── Business Development CRM ────────────────────────────────────────────
@@ -350,6 +350,21 @@ export default function BusinessDevelopment() {
                               >
                                 <Trash2 className="w-3 h-3 text-red-500" />
                               </button>
+                              {(() => {
+                                const idx = STAGES.findIndex(s => s.id === d.stage);
+                                const next = STAGES[idx + 1];
+                                if (!next) return null;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => changeStage(d.id, next.id)}
+                                    className="p-0.5 hover:bg-blue-100 rounded"
+                                    title={`Move to ${next.label}`}
+                                  >
+                                    <ArrowRight className="w-3 h-3 text-blue-500" />
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </div>
                           <div className="flex items-center justify-between mt-1.5">
