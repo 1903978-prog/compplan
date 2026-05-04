@@ -357,7 +357,7 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
 
   // ─── Fee Comparison Slide (3-column, from case_timelines) ──────────────────
   // Only added when the proposal is linked to a pricing case that has timelines.
-  if (proposal.case_timelines && proposal.case_timelines.length >= 2 &&
+  if (proposal.case_timelines && proposal.case_timelines.length >= 1 &&
       (shouldInclude("fee_comparison") || selectedSlideIds.size === 0)) {
     const tls = proposal.case_timelines.slice(0, 3);
     const discounts = (proposal.case_discounts ?? []).filter((d: CaseDiscount) => d.enabled && d.pct > 0);
@@ -429,7 +429,9 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     rowY += ROW_H + 0.15;
 
     feeSlide.addText(
-      "Same weekly price across all three options — commitment discount rewards longer engagements.",
+      tls.length > 1
+        ? "Same weekly price across all options — commitment discount rewards longer engagements."
+        : "Commitment discount rewards longer engagements.",
       { x: 0.5, y: rowY, w: 12, h: 0.35, fontSize: 9, color: COLORS.MUTED, fontFace: "Arial", italic: true },
     );
 
