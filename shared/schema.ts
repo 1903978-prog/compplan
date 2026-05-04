@@ -921,6 +921,55 @@ export const bdDeals = pgTable("bd_deals", {
 export type BdDeal = typeof bdDeals.$inferSelect;
 export type InsertBdDeal = typeof bdDeals.$inferInsert;
 
+// ── HubSpot Contacts ─────────────────────────────────────────────────────────
+// Full contact list synced from HubSpot via Private App token.
+// Requires crm.objects.contacts.read scope. Upserted by hubspot_id.
+export const hubspotContacts = pgTable("hubspot_contacts", {
+  id: serial("id").primaryKey(),
+  hubspot_id: text("hubspot_id").notNull().unique(),
+  first_name: text("first_name"),
+  last_name: text("last_name"),
+  email: text("email"),
+  phone: text("phone"),
+  job_title: text("job_title"),
+  company: text("company"),
+  company_hubspot_id: text("company_hubspot_id"),
+  lifecycle_stage: text("lifecycle_stage"),
+  lead_status: text("lead_status"),
+  owner_id: text("owner_id"),
+  city: text("city"),
+  country: text("country"),
+  last_activity_at: text("last_activity_at"),
+  synced_at: text("synced_at").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type HubspotContact = typeof hubspotContacts.$inferSelect;
+
+// ── HubSpot Companies ─────────────────────────────────────────────────────────
+// Company/account list synced from HubSpot via Private App token.
+// Requires crm.objects.companies.read scope. Upserted by hubspot_id.
+export const hubspotCompanies = pgTable("hubspot_companies", {
+  id: serial("id").primaryKey(),
+  hubspot_id: text("hubspot_id").notNull().unique(),
+  name: text("name"),
+  domain: text("domain"),
+  industry: text("industry"),
+  num_employees: text("num_employees"),
+  annual_revenue: real("annual_revenue"),
+  country: text("country"),
+  city: text("city"),
+  phone: text("phone"),
+  description: text("description"),
+  lifecycle_stage: text("lifecycle_stage"),
+  owner_id: text("owner_id"),
+  last_activity_at: text("last_activity_at"),
+  synced_at: text("synced_at").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type HubspotCompany = typeof hubspotCompanies.$inferSelect;
+
 // ── Partner Firms ────────────────────────────────────────────────────────────
 // External firms that refer or co-pitch deals to Eendigo. A partner_id FK
 // on pricing_cases, pricing_proposals, and bd_deals records attribution.

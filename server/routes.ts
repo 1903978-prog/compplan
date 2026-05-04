@@ -4617,6 +4617,228 @@ RULES:
     }
   });
 
+  // ── HubSpot Contacts sync ───────────────────────────────────────────────────
+  // Requires crm.objects.contacts.read scope on the Private App.
+  app.get("/api/hubspot/contacts", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const rows: any = await db.execute(sql`
+        SELECT * FROM hubspot_contacts ORDER BY last_name, first_name
+      `);
+      res.json(rows.rows ?? []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/hubspot/contacts/sync", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.status(400).json({ error: "HUBSPOT_TOKEN not configured." });
+      return;
+    }
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const CONTACT_PROPS = [
+        "firstname", "lastname", "email", "phone", "jobtitle",
+        "company", "associatedcompanyid", "lifecyclestage", "hs_lead_status",
+        "hubspot_owner_id", "city", "country", "notes_last_activity",
+      ].join(",");
+
+      let after: string | null = null;
+      const allContacts: any[] = [];
+
+      for (let page = 0; page < 50; page++) {
+        const url = `https://api.hubapi.com/crm/v3/objects/contacts?limit=100&archived=false&properties=${CONTACT_PROPS}${after ? `&after=${after}` : ""}`;
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        if (r.status === 403) {
+          const body = await r.json().catch(() => ({}));
+          res.status(403).json({ error: "Missing scope: crm.objects.contacts.read", detail: body });
+          return;
+        }
+        if (!r.ok) throw new Error(`HubSpot API ${r.status}: ${await r.text()}`);
+        const data: any = await r.json();
+        allContacts.push(...(data.results ?? []));
+        if (data.paging?.next?.after) after = data.paging.next.after;
+        else break;
+      }
+
+      const now = new Date().toISOString();
+      let inserted = 0, updated = 0, skipped = 0;
+
+      for (const contact of allContacts) {
+        try {
+          const p = contact.properties ?? {};
+          const row = {
+            hubspot_id:         String(contact.id),
+            first_name:         p.firstname ?? null,
+            last_name:          p.lastname ?? null,
+            email:              p.email ?? null,
+            phone:              p.phone ?? null,
+            job_title:          p.jobtitle ?? null,
+            company:            p.company ?? null,
+            company_hubspot_id: p.associatedcompanyid ? String(p.associatedcompanyid) : null,
+            lifecycle_stage:    p.lifecyclestage ?? null,
+            lead_status:        p.hs_lead_status ?? null,
+            owner_id:           p.hubspot_owner_id ?? null,
+            city:               p.city ?? null,
+            country:            p.country ?? null,
+            last_activity_at:   p.notes_last_activity ? p.notes_last_activity.slice(0, 10) : null,
+          };
+          const existing: any = await db.execute(sql`SELECT id FROM hubspot_contacts WHERE hubspot_id = ${row.hubspot_id}`);
+          if (existing.rows?.length > 0) {
+            await db.execute(sql`
+              UPDATE hubspot_contacts SET
+                first_name = ${row.first_name}, last_name = ${row.last_name},
+                email = ${row.email}, phone = ${row.phone}, job_title = ${row.job_title},
+                company = ${row.company}, company_hubspot_id = ${row.company_hubspot_id},
+                lifecycle_stage = ${row.lifecycle_stage}, lead_status = ${row.lead_status},
+                owner_id = ${row.owner_id}, city = ${row.city}, country = ${row.country},
+                last_activity_at = ${row.last_activity_at}, synced_at = ${now}, updated_at = ${now}
+              WHERE hubspot_id = ${row.hubspot_id}
+            `);
+            updated++;
+          } else {
+            await db.execute(sql`
+              INSERT INTO hubspot_contacts (
+                hubspot_id, first_name, last_name, email, phone, job_title,
+                company, company_hubspot_id, lifecycle_stage, lead_status,
+                owner_id, city, country, last_activity_at, synced_at, created_at, updated_at
+              ) VALUES (
+                ${row.hubspot_id}, ${row.first_name}, ${row.last_name}, ${row.email}, ${row.phone},
+                ${row.job_title}, ${row.company}, ${row.company_hubspot_id}, ${row.lifecycle_stage},
+                ${row.lead_status}, ${row.owner_id}, ${row.city}, ${row.country},
+                ${row.last_activity_at}, ${now}, ${now}, ${now}
+              )
+            `);
+            inserted++;
+          }
+        } catch (e: any) {
+          skipped++;
+          console.warn("[hubspot/contacts/sync] contact skipped:", e.message);
+        }
+      }
+
+      res.json({ ok: true, total: allContacts.length, inserted, updated, skipped });
+    } catch (err: any) {
+      console.error("[hubspot/contacts/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── HubSpot Companies sync ──────────────────────────────────────────────────
+  // Requires crm.objects.companies.read scope on the Private App.
+  app.get("/api/hubspot/companies", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const rows: any = await db.execute(sql`
+        SELECT * FROM hubspot_companies ORDER BY name
+      `);
+      res.json(rows.rows ?? []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/hubspot/companies/sync", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.status(400).json({ error: "HUBSPOT_TOKEN not configured." });
+      return;
+    }
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const COMPANY_PROPS = [
+        "name", "domain", "industry", "numberofemployees", "annualrevenue",
+        "country", "city", "phone", "description", "lifecyclestage",
+        "hubspot_owner_id", "notes_last_activity",
+      ].join(",");
+
+      let after: string | null = null;
+      const allCompanies: any[] = [];
+
+      for (let page = 0; page < 50; page++) {
+        const url = `https://api.hubapi.com/crm/v3/objects/companies?limit=100&archived=false&properties=${COMPANY_PROPS}${after ? `&after=${after}` : ""}`;
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        if (r.status === 403) {
+          const body = await r.json().catch(() => ({}));
+          res.status(403).json({ error: "Missing scope: crm.objects.companies.read", detail: body });
+          return;
+        }
+        if (!r.ok) throw new Error(`HubSpot API ${r.status}: ${await r.text()}`);
+        const data: any = await r.json();
+        allCompanies.push(...(data.results ?? []));
+        if (data.paging?.next?.after) after = data.paging.next.after;
+        else break;
+      }
+
+      const now = new Date().toISOString();
+      let inserted = 0, updated = 0, skipped = 0;
+
+      for (const company of allCompanies) {
+        try {
+          const p = company.properties ?? {};
+          const rev = p.annualrevenue ? Number(p.annualrevenue) : null;
+          const row = {
+            hubspot_id:       String(company.id),
+            name:             p.name ?? null,
+            domain:           p.domain ?? null,
+            industry:         p.industry ?? null,
+            num_employees:    p.numberofemployees ?? null,
+            annual_revenue:   rev !== null && !isNaN(rev) ? rev : null,
+            country:          p.country ?? null,
+            city:             p.city ?? null,
+            phone:            p.phone ?? null,
+            description:      p.description ?? null,
+            lifecycle_stage:  p.lifecyclestage ?? null,
+            owner_id:         p.hubspot_owner_id ?? null,
+            last_activity_at: p.notes_last_activity ? p.notes_last_activity.slice(0, 10) : null,
+          };
+          const existing: any = await db.execute(sql`SELECT id FROM hubspot_companies WHERE hubspot_id = ${row.hubspot_id}`);
+          if (existing.rows?.length > 0) {
+            await db.execute(sql`
+              UPDATE hubspot_companies SET
+                name = ${row.name}, domain = ${row.domain}, industry = ${row.industry},
+                num_employees = ${row.num_employees}, annual_revenue = ${row.annual_revenue},
+                country = ${row.country}, city = ${row.city}, phone = ${row.phone},
+                description = ${row.description}, lifecycle_stage = ${row.lifecycle_stage},
+                owner_id = ${row.owner_id}, last_activity_at = ${row.last_activity_at},
+                synced_at = ${now}, updated_at = ${now}
+              WHERE hubspot_id = ${row.hubspot_id}
+            `);
+            updated++;
+          } else {
+            await db.execute(sql`
+              INSERT INTO hubspot_companies (
+                hubspot_id, name, domain, industry, num_employees, annual_revenue,
+                country, city, phone, description, lifecycle_stage, owner_id,
+                last_activity_at, synced_at, created_at, updated_at
+              ) VALUES (
+                ${row.hubspot_id}, ${row.name}, ${row.domain}, ${row.industry},
+                ${row.num_employees}, ${row.annual_revenue}, ${row.country}, ${row.city},
+                ${row.phone}, ${row.description}, ${row.lifecycle_stage}, ${row.owner_id},
+                ${row.last_activity_at}, ${now}, ${now}, ${now}
+              )
+            `);
+            inserted++;
+          }
+        } catch (e: any) {
+          skipped++;
+          console.warn("[hubspot/companies/sync] company skipped:", e.message);
+        }
+      }
+
+      res.json({ ok: true, total: allCompanies.length, inserted, updated, skipped });
+    } catch (err: any) {
+      console.error("[hubspot/companies/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Harvest Invoicing ───────────────────────────────────────────────────────
   const HARVEST_TOKEN = process.env.HARVEST_TOKEN ?? "";
   const HARVEST_ACCOUNT = process.env.HARVEST_ACCOUNT_ID ?? "";

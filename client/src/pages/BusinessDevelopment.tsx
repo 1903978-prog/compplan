@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Target, Plus, Upload, Trash2, Pencil, Save, X, Loader2,
   CheckCircle2, AlertCircle, ExternalLink, Database, RefreshCw, Wifi, WifiOff,
+  Users, Building2, Mail, Phone, MapPin,
 } from "lucide-react";
 
 // ─── Business Development CRM ────────────────────────────────────────────
@@ -68,9 +69,12 @@ export default function BusinessDevelopment() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
 
-  // Tab: pipeline | import. Driven by the URL (/bd vs /bd/import) so the
-  // nav dropdown item can deep-link straight into Import.
-  const tab: "pipeline" | "import" = location === "/bd/import" ? "import" : "pipeline";
+  // Tab: pipeline | contacts | companies | import. Driven by URL.
+  const tab: "pipeline" | "contacts" | "companies" | "import" =
+    location === "/bd/import"    ? "import"    :
+    location === "/bd/contacts"  ? "contacts"  :
+    location === "/bd/companies" ? "companies" :
+    "pipeline";
 
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,11 +193,27 @@ export default function BusinessDevelopment() {
               </Button>
               <Button
                 size="sm"
+                variant={tab === "contacts" ? "default" : "ghost"}
+                onClick={() => setLocation("/bd/contacts")}
+                className="h-7 px-3 text-xs"
+              >
+                <Users className="w-3.5 h-3.5 mr-1" /> Contacts
+              </Button>
+              <Button
+                size="sm"
+                variant={tab === "companies" ? "default" : "ghost"}
+                onClick={() => setLocation("/bd/companies")}
+                className="h-7 px-3 text-xs"
+              >
+                <Building2 className="w-3.5 h-3.5 mr-1" /> Companies
+              </Button>
+              <Button
+                size="sm"
                 variant={tab === "import" ? "default" : "ghost"}
                 onClick={() => setLocation("/bd/import")}
                 className="h-7 px-3 text-xs"
               >
-                <Upload className="w-3.5 h-3.5 mr-1" /> Import HubSpot
+                <Upload className="w-3.5 h-3.5 mr-1" /> Import
               </Button>
             </div>
             {tab === "pipeline" && (
@@ -319,6 +339,8 @@ export default function BusinessDevelopment() {
         </>
       )}
 
+      {tab === "contacts"  && <ContactsTab />}
+      {tab === "companies" && <CompaniesTab />}
       {tab === "import" && <HubspotImport onDone={() => { setLocation("/bd"); fetchDeals(); }} />}
     </div>
   );
@@ -406,6 +428,271 @@ function DealEditor({
           <X className="w-3 h-3" />
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ─── Contacts list tab ───────────────────────────────────────────────────
+function ContactsTab() {
+  const { toast } = useToast();
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [syncing, setSyncing]   = useState(false);
+  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; updated: number } | null>(null);
+  const [search, setSearch]     = useState("");
+
+  useEffect(() => {
+    fetch("/api/hubspot/contacts", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then(setContacts)
+      .catch(() => toast({ title: "Failed to load contacts", variant: "destructive" }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function runSync() {
+    setSyncing(true);
+    try {
+      const r = await fetch("/api/hubspot/contacts/sync", { method: "POST", credentials: "include" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Sync failed");
+      setLastSync(data);
+      toast({ title: `Contacts synced — ${data.inserted} new, ${data.updated} updated` });
+      const fresh = await fetch("/api/hubspot/contacts", { credentials: "include" });
+      setContacts(await fresh.json());
+    } catch (e: any) {
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const filtered = contacts.filter(c => {
+    const q = search.toLowerCase();
+    return !q || [c.first_name, c.last_name, c.email, c.company, c.job_title].some(v => v?.toLowerCase().includes(q));
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={runSync} disabled={syncing} className="h-7 text-xs">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync from HubSpot"}
+          </Button>
+          <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>
+          {lastSync && (
+            <span className="text-[11px] text-emerald-700">
+              · {lastSync.inserted} new, {lastSync.updated} updated
+            </span>
+          )}
+        </div>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search contacts…"
+          className="h-7 text-xs border rounded px-2 w-48 bg-background"
+        />
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-muted-foreground">
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Loading…
+        </div>
+      ) : contacts.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          No contacts yet. Sync from HubSpot to pull your contact list.
+          <p className="text-xs mt-1">Requires <code className="bg-muted px-1 rounded">crm.objects.contacts.read</code> scope on your Private App.</p>
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 border-b">
+              <tr>
+                <th className="text-left px-3 py-2 font-semibold">Name</th>
+                <th className="text-left px-3 py-2 font-semibold">Email</th>
+                <th className="text-left px-3 py-2 font-semibold">Phone</th>
+                <th className="text-left px-3 py-2 font-semibold">Title</th>
+                <th className="text-left px-3 py-2 font-semibold">Company</th>
+                <th className="text-left px-3 py-2 font-semibold">Stage</th>
+                <th className="text-left px-3 py-2 font-semibold">Country</th>
+                <th className="text-left px-3 py-2 font-semibold">Last activity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((c, i) => (
+                <tr key={c.id} className={`border-t ${i % 2 === 0 ? "" : "bg-muted/20"} hover:bg-muted/30`}>
+                  <td className="px-3 py-1.5 font-medium whitespace-nowrap" data-privacy="blur">
+                    {[c.first_name, c.last_name].filter(Boolean).join(" ") || "—"}
+                  </td>
+                  <td className="px-3 py-1.5" data-privacy="blur">
+                    {c.email ? (
+                      <a href={`mailto:${c.email}`} className="flex items-center gap-1 text-violet-600 hover:underline">
+                        <Mail className="w-3 h-3" />{c.email}
+                      </a>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground" data-privacy="blur">
+                    {c.phone ? (
+                      <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.phone}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{c.job_title ?? "—"}</td>
+                  <td className="px-3 py-1.5 font-medium">{c.company ?? "—"}</td>
+                  <td className="px-3 py-1.5">
+                    {c.lifecycle_stage ? (
+                      <span className="inline-block px-1.5 py-0.5 text-[10px] rounded bg-blue-50 text-blue-700 border border-blue-200 uppercase font-semibold">
+                        {c.lifecycle_stage}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground">
+                    {c.country ? (
+                      <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.city ? `${c.city}, ` : ""}{c.country}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground font-mono text-[10px]">{c.last_activity_at ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length === 0 && search && (
+            <div className="text-center py-4 text-xs text-muted-foreground">No contacts match "{search}"</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Companies list tab ──────────────────────────────────────────────────
+function CompaniesTab() {
+  const { toast } = useToast();
+  const [companies, setCompanies] = useState<any[]>([]);
+  const [loading, setLoading]    = useState(true);
+  const [syncing, setSyncing]    = useState(false);
+  const [lastSync, setLastSync]  = useState<{ total: number; inserted: number; updated: number } | null>(null);
+  const [search, setSearch]      = useState("");
+
+  useEffect(() => {
+    fetch("/api/hubspot/companies", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then(setCompanies)
+      .catch(() => toast({ title: "Failed to load companies", variant: "destructive" }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function runSync() {
+    setSyncing(true);
+    try {
+      const r = await fetch("/api/hubspot/companies/sync", { method: "POST", credentials: "include" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Sync failed");
+      setLastSync(data);
+      toast({ title: `Companies synced — ${data.inserted} new, ${data.updated} updated` });
+      const fresh = await fetch("/api/hubspot/companies", { credentials: "include" });
+      setCompanies(await fresh.json());
+    } catch (e: any) {
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const fmt = (n: any) => {
+    if (n == null || isNaN(Number(n))) return "—";
+    const x = Number(n);
+    return x >= 1_000_000 ? `€${(x / 1_000_000).toFixed(1)}M` : x >= 1000 ? `€${Math.round(x / 1000)}k` : `€${Math.round(x)}`;
+  };
+
+  const filtered = companies.filter(c => {
+    const q = search.toLowerCase();
+    return !q || [c.name, c.domain, c.industry, c.country].some(v => v?.toLowerCase().includes(q));
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={runSync} disabled={syncing} className="h-7 text-xs">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync from HubSpot"}
+          </Button>
+          <span className="text-xs text-muted-foreground">{companies.length} companies</span>
+          {lastSync && (
+            <span className="text-[11px] text-emerald-700">
+              · {lastSync.inserted} new, {lastSync.updated} updated
+            </span>
+          )}
+        </div>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search companies…"
+          className="h-7 text-xs border rounded px-2 w-48 bg-background"
+        />
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-muted-foreground">
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Loading…
+        </div>
+      ) : companies.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          No companies yet. Sync from HubSpot to pull your company list.
+          <p className="text-xs mt-1">Requires <code className="bg-muted px-1 rounded">crm.objects.companies.read</code> scope on your Private App.</p>
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 border-b">
+              <tr>
+                <th className="text-left px-3 py-2 font-semibold">Name</th>
+                <th className="text-left px-3 py-2 font-semibold">Domain</th>
+                <th className="text-left px-3 py-2 font-semibold">Industry</th>
+                <th className="text-right px-3 py-2 font-semibold">Employees</th>
+                <th className="text-right px-3 py-2 font-semibold">Revenue</th>
+                <th className="text-left px-3 py-2 font-semibold">Country</th>
+                <th className="text-left px-3 py-2 font-semibold">Stage</th>
+                <th className="text-left px-3 py-2 font-semibold">Last activity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((c, i) => (
+                <tr key={c.id} className={`border-t ${i % 2 === 0 ? "" : "bg-muted/20"} hover:bg-muted/30`}>
+                  <td className="px-3 py-1.5 font-medium">{c.name ?? "—"}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">
+                    {c.domain ? (
+                      <a href={`https://${c.domain}`} target="_blank" rel="noopener noreferrer"
+                        className="text-violet-600 hover:underline flex items-center gap-1">
+                        {c.domain} <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{c.industry ?? "—"}</td>
+                  <td className="px-3 py-1.5 text-right font-mono">{c.num_employees ?? "—"}</td>
+                  <td className="px-3 py-1.5 text-right font-mono" data-privacy="blur">{fmt(c.annual_revenue)}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">
+                    {c.country ? (
+                      <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.city ? `${c.city}, ` : ""}{c.country}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {c.lifecycle_stage ? (
+                      <span className="inline-block px-1.5 py-0.5 text-[10px] rounded bg-blue-50 text-blue-700 border border-blue-200 uppercase font-semibold">
+                        {c.lifecycle_stage}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground font-mono text-[10px]">{c.last_activity_at ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length === 0 && search && (
+            <div className="text-center py-4 text-xs text-muted-foreground">No companies match "{search}"</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
