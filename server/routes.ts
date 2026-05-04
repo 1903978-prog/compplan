@@ -4192,9 +4192,70 @@ RULES:
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
-      const r = await db.execute(sql`SELECT * FROM bd_deals ORDER BY updated_at DESC`);
+      const r = await db.execute(sql`
+        SELECT
+          d.*,
+          p.project_name        AS proposal_project_name,
+          p.revision_letter     AS proposal_revision_letter,
+          p.weekly_price        AS proposal_weekly_price,
+          p.total_fee           AS proposal_total_fee,
+          p.duration_weeks      AS proposal_duration_weeks,
+          p.outcome             AS proposal_outcome,
+          p.sector              AS proposal_sector
+        FROM bd_deals d
+        LEFT JOIN pricing_proposals p ON p.id = d.linked_proposal_id
+        ORDER BY d.updated_at DESC
+      `);
       res.json(r.rows);
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/bd/deals/sync-proposals — match each deal to a pricing proposal
+  // by client_name (case-insensitive). Sets linked_proposal_id on matched deals.
+  // Takes the most recent proposal per client.
+  app.post("/api/bd/deals/sync-proposals", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+
+      const deals: any = await db.execute(sql`SELECT id, client_name, name FROM bd_deals WHERE client_name IS NOT NULL`);
+      const proposals: any = await db.execute(sql`
+        SELECT id, client_name, project_name, revision_letter, weekly_price, total_fee, proposal_date
+        FROM pricing_proposals
+        ORDER BY proposal_date DESC
+      `);
+
+      let matched = 0, unmatched = 0;
+      const results: { deal: string; proposal: string | null; matched: boolean }[] = [];
+
+      for (const deal of deals.rows) {
+        const needle = (deal.client_name ?? deal.name ?? "").toLowerCase().trim();
+        if (!needle) { unmatched++; continue; }
+
+        // Find first proposal whose client_name contains the deal name or vice versa
+        const hit = proposals.rows.find((p: any) => {
+          const hay = (p.client_name ?? "").toLowerCase().trim();
+          return hay && (hay.includes(needle) || needle.includes(hay));
+        });
+
+        if (hit) {
+          await db.execute(sql`
+            UPDATE bd_deals SET linked_proposal_id = ${hit.id}, updated_at = ${new Date().toISOString()}
+            WHERE id = ${deal.id}
+          `);
+          matched++;
+          results.push({ deal: deal.client_name ?? deal.name, proposal: `${hit.project_name}${hit.revision_letter ?? ""}`, matched: true });
+        } else {
+          unmatched++;
+          results.push({ deal: deal.client_name ?? deal.name, proposal: null, matched: false });
+        }
+      }
+
+      res.json({ ok: true, matched, unmatched, results });
+    } catch (err: any) {
+      console.error("[bd/sync-proposals] failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });

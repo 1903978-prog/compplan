@@ -53,8 +53,17 @@ interface Deal {
   region: string | null;
   last_activity_at: string | null;
   imported_at: string | null;
+  linked_proposal_id: number | null;
   created_at: string;
   updated_at: string;
+  // Joined from pricing_proposals via linked_proposal_id
+  proposal_project_name: string | null;
+  proposal_revision_letter: string | null;
+  proposal_weekly_price: number | null;
+  proposal_total_fee: number | null;
+  proposal_duration_weeks: number | null;
+  proposal_outcome: string | null;
+  proposal_sector: string | null;
 }
 
 const eur = (n: number | null | undefined) => {
@@ -80,6 +89,7 @@ export default function BusinessDevelopment() {
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | "new" | null>(null);
   const [draft, setDraft] = useState<Partial<Deal>>({});
+  const [syncingProposals, setSyncingProposals] = useState(false);
 
   async function fetchDeals() {
     setLoading(true);
@@ -153,6 +163,21 @@ export default function BusinessDevelopment() {
     }
   }
 
+  async function syncProposals() {
+    setSyncingProposals(true);
+    try {
+      const r = await fetch("/api/bd/deals/sync-proposals", { method: "POST", credentials: "include" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Sync failed");
+      toast({ title: `Proposals synced — ${data.matched} matched, ${data.unmatched} unmatched` });
+      fetchDeals();
+    } catch (err: any) {
+      toast({ title: "Sync failed", description: err?.message, variant: "destructive" });
+    } finally {
+      setSyncingProposals(false);
+    }
+  }
+
   const byStage = useMemo(() => {
     const map: Record<string, Deal[]> = {};
     for (const s of STAGES) map[s.id] = [];
@@ -217,13 +242,25 @@ export default function BusinessDevelopment() {
               </Button>
             </div>
             {tab === "pipeline" && (
-              <Button
-                size="sm"
-                onClick={() => { setEditingId("new"); setDraft({ stage: "lead", currency: "EUR" }); }}
-                disabled={editingId !== null}
-              >
-                <Plus className="w-3.5 h-3.5 mr-1" /> New deal
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={syncProposals}
+                  disabled={syncingProposals}
+                  className="h-8 text-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncingProposals ? "animate-spin" : ""}`} />
+                  {syncingProposals ? "Syncing…" : "Sync with Proposals"}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => { setEditingId("new"); setDraft({ stage: "lead", currency: "EUR" }); }}
+                  disabled={editingId !== null}
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" /> New deal
+                </Button>
+              </div>
             )}
           </div>
         }
@@ -323,6 +360,29 @@ export default function BusinessDevelopment() {
                           >
                             {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
                           </select>
+                          {d.proposal_project_name && (
+                            <div className="mt-1.5 pt-1.5 border-t border-dashed border-muted-foreground/20 space-y-0.5">
+                              <div className="flex items-center justify-between text-[9px]">
+                                <span className="font-mono font-semibold text-violet-700">
+                                  {d.proposal_project_name}{d.proposal_revision_letter ?? ""}
+                                </span>
+                                {d.proposal_outcome && (
+                                  <span className={`px-1 py-0.5 rounded text-[8px] font-semibold uppercase ${
+                                    d.proposal_outcome === "won"  ? "bg-emerald-100 text-emerald-700" :
+                                    d.proposal_outcome === "lost" ? "bg-red-100 text-red-700" :
+                                    "bg-amber-100 text-amber-700"
+                                  }`}>{d.proposal_outcome}</span>
+                                )}
+                              </div>
+                              <div className="flex items-center justify-between text-[9px] text-muted-foreground">
+                                <span data-privacy="blur">{d.proposal_weekly_price ? `${eur(d.proposal_weekly_price)}/wk` : "—"}</span>
+                                <span data-privacy="blur">{d.proposal_total_fee ? eur(d.proposal_total_fee) : "—"} total</span>
+                              </div>
+                              {d.proposal_duration_weeks && (
+                                <div className="text-[9px] text-muted-foreground">{d.proposal_duration_weeks}w project</div>
+                              )}
+                            </div>
+                          )}
                           {d.hubspot_id && (
                             <div className="flex items-center gap-0.5 mt-1 text-[8px] text-muted-foreground">
                               <Database className="w-2.5 h-2.5" /> HubSpot {d.hubspot_id}

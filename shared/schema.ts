@@ -915,6 +915,7 @@ export const bdDeals = pgTable("bd_deals", {
   last_activity_at: text("last_activity_at"),              // Last touchpoint from HubSpot
   imported_at: text("imported_at"),                        // When row first came in from HubSpot
   partner_id: integer("partner_id"),
+  linked_proposal_id: integer("linked_proposal_id"),       // FK to pricing_proposals — set by BD/proposal sync
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
