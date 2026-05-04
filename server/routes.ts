@@ -2181,10 +2181,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("[read-ai] live transcript fetch failed:", e);
       }
     }
+    const { READ_AI_SEED } = await import("./readAISeed");
+    const meeting = READ_AI_SEED.find((m) => m.id === id);
+    if (meeting?.transcript) {
+      res.json({ source: "seed", transcript: meeting.transcript });
+      return;
+    }
     res.json({
       source: "seed",
       transcript: null,
-      message: "Transcript not cached locally. Ask Claude to refresh the Read.ai seed (pulls full transcript via MCP) or set READ_AI_TOKEN once Read.ai enables static API keys.",
+      message: "Transcript not cached — ask Claude to refresh the Read.ai seed or set READ_AI_TOKEN for live fetch.",
     });
   });
 

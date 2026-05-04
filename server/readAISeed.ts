@@ -26,6 +26,7 @@ export interface ReadAIMeeting {
   participants: ReadAIParticipant[];
   folders: string[];
   summary: string | null;
+  transcript?: string | null;
 }
 
 export const READ_AI_SEED: ReadAIMeeting[] = [
