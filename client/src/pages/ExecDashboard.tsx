@@ -416,6 +416,61 @@ export default function ExecDashboard() {
     };
   }, [proposals, dashNet1Map]);
 
+  // ─── 4-month capacity gap from Gantt data ────────────────────────────
+  // For each of the next 4 calendar months compute: committed FTE demand
+  // (won proposals active that month × team_size), pipeline demand
+  // (pending × team_size × win_prob), and gap vs current headcount.
+  const capacityByMonth = useMemo(() => {
+    const today = new Date();
+    const months: { label: string; start: Date; end: Date }[] = [];
+    for (let m = 0; m < 4; m++) {
+      const d = new Date(today.getFullYear(), today.getMonth() + m, 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59);
+      months.push({
+        label: d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" }),
+        start: d,
+        end,
+      });
+    }
+
+    const allProps: PricingProposal[] = proposals.filter(p =>
+      !(p as any).excluded_from_analysis
+    );
+
+    return months.map(({ label, start, end }) => {
+      let committed = 0;
+      let pipeline = 0;
+
+      for (const p of allProps) {
+        const pStart = (p as any).start_date ? new Date((p as any).start_date) : (p.proposal_date ? new Date(p.proposal_date) : null);
+        const pEnd = p.end_date ? new Date(p.end_date) : (pStart && p.duration_weeks ? new Date(pStart.getTime() + p.duration_weeks * 7 * 86_400_000) : null);
+        if (!pStart || !pEnd) continue;
+        // Active during month if they overlap
+        if (pEnd < start || pStart > end) continue;
+
+        const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
+        const slots = Math.max(1, teamLen);
+
+        if (p.outcome === "won") {
+          committed += slots;
+        } else if (p.outcome === "pending" || !p.outcome) {
+          const wp = typeof (p as any).win_probability === "number"
+            ? Math.max(0, Math.min(1, (p as any).win_probability / 100))
+            : 0.5;
+          pipeline += slots * wp;
+        }
+      }
+
+      const supply = hr.headcount;
+      const totalDemand = committed + pipeline;
+      const gap = totalDemand - supply;
+      const status: "ok" | "tight" | "over" =
+        gap <= 0 ? "ok" : gap < 2 ? "tight" : "over";
+
+      return { label, committed: Math.round(committed), pipeline: Math.round(pipeline * 10) / 10, gap: Math.round(gap * 10) / 10, status };
+    });
+  }, [proposals, hr.headcount]);
+
   // ─── Active projects from wonProjects ────────────────────────────────
   const active = useMemo(() => {
     // Treat null/missing status as "active" — the DB default is 'active' and
@@ -850,6 +905,33 @@ export default function ExecDashboard() {
             To adjust: update team lists on ongoing proposals or add probability to BD deals.
           </p>
         </div>
+
+        {/* 4-month FTE gap table */}
+        {capacityByMonth.length > 0 && (
+          <div className="border-t pt-4 mt-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">FTE gap — next 4 months</p>
+            <div className="grid grid-cols-4 gap-2">
+              {capacityByMonth.map(m => (
+                <div key={m.label} className={`rounded border p-2 text-center ${
+                  m.status === "over"  ? "border-red-300 bg-red-50/40"
+                  : m.status === "tight" ? "border-amber-300 bg-amber-50/40"
+                  : "border-emerald-300 bg-emerald-50/40"
+                }`}>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase">{m.label}</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    m.status === "over" ? "text-red-700" : m.status === "tight" ? "text-amber-700" : "text-emerald-700"
+                  }`} data-privacy="blur">
+                    {m.gap > 0 ? `+${m.gap}` : m.gap}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground">
+                    {m.committed}c + {m.pipeline}p vs {capacity.supply}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">c=committed, p=pipeline-weighted. Positive = need to hire.</p>
+          </div>
+        )}
       </Card>
 
       {/* ── Row 2: Hiring funnel + Top overdue invoices ──────────── */}
