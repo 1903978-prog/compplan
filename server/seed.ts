@@ -430,6 +430,55 @@ export async function seedDatabase() {
   // without blocking manual rows (which leave hubspot_id NULL).
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS bd_deals_hubspot_id_unique ON bd_deals (hubspot_id) WHERE hubspot_id IS NOT NULL`);
 
+  // HubSpot Contacts — synced via Private App token (crm.objects.contacts.read).
+  // See shared/schema.ts ▸ hubspotContacts. Upserted by hubspot_id.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS hubspot_contacts (
+      id SERIAL PRIMARY KEY,
+      hubspot_id TEXT NOT NULL UNIQUE,
+      first_name TEXT,
+      last_name TEXT,
+      email TEXT,
+      phone TEXT,
+      job_title TEXT,
+      company TEXT,
+      company_hubspot_id TEXT,
+      lifecycle_stage TEXT,
+      lead_status TEXT,
+      owner_id TEXT,
+      city TEXT,
+      country TEXT,
+      last_activity_at TEXT,
+      synced_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  // HubSpot Companies — synced via Private App token (crm.objects.companies.read).
+  // See shared/schema.ts ▸ hubspotCompanies. Upserted by hubspot_id.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS hubspot_companies (
+      id SERIAL PRIMARY KEY,
+      hubspot_id TEXT NOT NULL UNIQUE,
+      name TEXT,
+      domain TEXT,
+      industry TEXT,
+      num_employees TEXT,
+      annual_revenue REAL,
+      country TEXT,
+      city TEXT,
+      phone TEXT,
+      description TEXT,
+      lifecycle_stage TEXT,
+      owner_id TEXT,
+      last_activity_at TEXT,
+      synced_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // Raw free-text the user pastes into the "Slide Template Instructions"
   // bulk-parse dialog. Persisted so it survives reloads.
   await db.execute(sql`ALTER TABLE deck_template_configs ADD COLUMN IF NOT EXISTS slide_instructions_text TEXT NOT NULL DEFAULT ''`);
