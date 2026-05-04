@@ -34,6 +34,20 @@ const STAGES = [
 ] as const;
 type StageId = typeof STAGES[number]["id"];
 
+// Parse a fetch Response as JSON, but if the body is HTML (e.g. a Render
+// gateway error page or an SPA fallback because the route 404'd), surface
+// the actual status + a snippet instead of the cryptic
+// "Unexpected token '<'..." JSON-parse error.
+async function parseJsonOrSurface(r: Response): Promise<any> {
+  const text = await r.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    const snippet = text.slice(0, 160).replace(/\s+/g, " ").trim();
+    throw new Error(`HTTP ${r.status} — non-JSON response: ${snippet || "(empty)"}`);
+  }
+}
+
 interface Deal {
   id: number;
   hubspot_id: string | null;
@@ -513,8 +527,8 @@ function ContactsTab() {
     setSyncing(true);
     try {
       const r = await fetch("/api/hubspot/contacts/sync", { method: "POST", credentials: "include" });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error ?? "Sync failed");
+      const data = await parseJsonOrSurface(r);
+      if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
       toast({ title: `Contacts synced — ${data.inserted} new, ${data.updated} updated` });
       const fresh = await fetch("/api/hubspot/contacts", { credentials: "include" });
@@ -645,8 +659,8 @@ function CompaniesTab() {
     setSyncing(true);
     try {
       const r = await fetch("/api/hubspot/companies/sync", { method: "POST", credentials: "include" });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error ?? "Sync failed");
+      const data = await parseJsonOrSurface(r);
+      if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
       toast({ title: `Companies synced — ${data.inserted} new, ${data.updated} updated` });
       const fresh = await fetch("/api/hubspot/companies", { credentials: "include" });
@@ -775,8 +789,8 @@ function HubspotApiSync({ onDone }: { onDone: () => void }) {
     setSyncing(true);
     try {
       const r = await fetch("/api/hubspot/sync", { method: "POST", credentials: "include" });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error ?? "Sync failed");
+      const data = await parseJsonOrSurface(r);
+      if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
       toast({ title: `HubSpot sync complete — ${data.inserted} inserted, ${data.updated} updated` });
       onDone();

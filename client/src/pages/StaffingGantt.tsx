@@ -295,6 +295,33 @@ export default function StaffingGantt() {
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
 
+  // FTE demand per week: full count for won/ongoing projects + (count × prob)
+  // for TBD pipeline. Counted from `manager_name` + `team_members`, so a TBD
+  // proposal with no team yet contributes 0 (no signal of headcount needed).
+  // Always weighted by win_probability for pending — independent of the
+  // showWeighted/showPipeline visual toggles, since this is the demand picture.
+  const ftesNeededPerWeek = useMemo(() => {
+    const out = Array<number>(HORIZON_WEEKS).fill(0);
+    for (const p of proposals) {
+      if (p.outcome === "lost") continue;
+      const span = projectWeeks(p, weekStart);
+      if (!span) continue;
+      const teamCount =
+        (p.manager_name ? 1 : 0) +
+        (p.team_members ?? []).filter(m => (m.name ?? "").trim().length > 0).length;
+      if (teamCount === 0) continue;
+      const isPipeline = p.outcome === "pending";
+      const weight = isPipeline
+        ? Math.max(0, Math.min(100, Number(p.win_probability ?? 50))) / 100
+        : 1;
+      const contribution = teamCount * weight;
+      for (let w = span.from; w <= span.to; w++) {
+        out[w] += contribution;
+      }
+    }
+    return out;
+  }, [proposals, weekStart]);
+
   // Availability: human-readable string + actual Date for the first free week.
   // The Date is used when reserving to a TBD project (start_date patch).
   const { availability, availabilityDates } = useMemo(() => {
@@ -464,6 +491,31 @@ export default function StaffingGantt() {
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="border-t-2 bg-muted/40 font-semibold">
+                <td className="p-2 sticky left-0 bg-muted/60 z-10 w-44">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    FTEs needed
+                  </div>
+                </td>
+                <td
+                  className="p-2 sticky left-44 bg-muted/60 z-10 w-28 text-[10px] font-normal text-muted-foreground"
+                  title="Per week: FTEs on won/ongoing projects + Σ(FTEs on TBD × win-probability)"
+                >
+                  won + tbd × prob
+                </td>
+                {ftesNeededPerWeek.map((n, i) => (
+                  <td
+                    key={i}
+                    className="border-l text-center font-mono text-[11px] p-1 min-w-16"
+                    title={n > 0 ? `${n.toFixed(2)} FTE-equivalents needed week of ${fmtWeek(weeks[i])}` : "no demand"}
+                  >
+                    {n > 0 ? n.toFixed(1) : "—"}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
           </table>
         </Card>
       )}
