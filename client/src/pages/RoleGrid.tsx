@@ -77,6 +77,10 @@ function grossToRal(grossAnnual: number): number {
   return RAL_TABLE[RAL_TABLE.length - 1][0];
 }
 
+// A role is "separate" (not part of the promotion chain) when all promo years are 0
+const isSeparateRole = (row: RoleGridRow) =>
+  row.promo_years_fast === 0 && row.promo_years_normal === 0 && row.promo_years_slow === 0;
+
 export default function RoleGridPage() {
   const { roleGrid, updateRoleGrid } = useStore();
   const { toast } = useToast();
@@ -238,182 +242,197 @@ export default function RoleGridPage() {
             </TableHeader>
             <TableBody>
               {(() => {
-                // Precompute cumulative normal months for each row
+                // Precompute cumulative normal months for chain roles only; null for separate roles
                 let cumNorm = 0;
-                const cumNormByIndex: number[] = gridState.map(r => {
+                const cumNormByIndex: (number | null)[] = gridState.map(r => {
+                  if (isSeparateRole(r)) return null;
                   cumNorm += Math.round(r.promo_years_normal * 12);
                   return cumNorm;
                 });
+                // Index of the first separate role (for the separator row)
+                const firstSeparateIdx = gridState.findIndex(isSeparateRole);
                 return gridState.map((row, index) => (
-                <TableRow key={row.role_code}>
-                  <TableCell className="p-1">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      onClick={() => handleDeleteRole(index)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </TableCell>
-                  <TableCell className="font-medium bg-muted/10">
-                    <Input value={row.role_code}
-                      onChange={(e) => handleCellChange(index, "role_code", e.target.value)}
-                      className="h-8 w-20 font-medium" placeholder="e.g. A1" />
-                  </TableCell>
-                  <TableCell>
-                    <Input value={row.role_name}
-                      onChange={(e) => handleCellChange(index, "role_name", e.target.value)}
-                      className="h-8 min-w-[140px]" placeholder="Role name" />
-                  </TableCell>
-                  <TableCell>
-                      <Input
-                        value={row.next_role_code || ""}
-                        onChange={(e) => handleCellChange(index, "next_role_code", e.target.value)}
-                        className="h-8 w-20"
-                        placeholder="-"
-                      />
-                  </TableCell>
-                  <TableCell className="bg-purple-50/30">
-                     <Input
-                        type="number" step="1" min="1"
-                        value={Math.round(row.promo_years_fast * 12)}
-                        onChange={(e) => handleCellChange(index, "promo_years_fast", parseInt(e.target.value) / 12)}
-                        className="h-8 w-14 mx-auto text-center"
-                      />
-                  </TableCell>
-                  <TableCell className="bg-blue-50/30">
-                     <Input
-                        type="number" step="1" min="1"
-                        value={Math.round(row.promo_years_normal * 12)}
-                        onChange={(e) => handleCellChange(index, "promo_years_normal", parseInt(e.target.value) / 12)}
-                        className="h-8 w-14 mx-auto text-center"
-                      />
-                  </TableCell>
-                  <TableCell className="bg-blue-100/20 text-center font-mono font-semibold text-blue-700">
-                    {(cumNormByIndex[index] / 12).toFixed(1)}y
-                  </TableCell>
-                  <TableCell className="bg-orange-50/30">
-                     <Input
-                        type="number" step="1" min="1"
-                        value={Math.round(row.promo_years_slow * 12)}
-                        onChange={(e) => handleCellChange(index, "promo_years_slow", parseInt(e.target.value) / 12)}
-                        className="h-8 w-14 mx-auto text-center"
-                      />
-                  </TableCell>
-                  <TableCell className="border-l text-center">
-                     <Input
-                        type="number" step="1" min="12" max="13"
-                        value={row.months_paid}
-                        onChange={(e) => handleCellChange(index, "months_paid", parseInt(e.target.value))}
-                        className="h-8 w-14 mx-auto text-center font-mono"
-                      />
-                  </TableCell>
-                  <TableCell className="border-l">
-                     <Input
-                        type="number" step="1"
-                        value={Math.round(row.gross_fixed_min_month * row.months_paid / 1000)}
-                        onChange={(e) => handleGrossChange(index, true, parseFloat(e.target.value))}
-                        className="h-8 w-20 mx-auto text-right font-mono"
-                      />
-                  </TableCell>
-                  <TableCell>
-                     <Input
-                        type="number" step="1"
-                        value={Math.round(row.gross_fixed_max_month * row.months_paid / 1000)}
-                        onChange={(e) => handleGrossChange(index, false, parseFloat(e.target.value))}
-                        className="h-8 w-20 mx-auto text-right font-mono"
-                      />
-                  </TableCell>
-                  <TableCell className="border-l">
-                     <span className="block w-20 mx-auto text-right font-mono text-muted-foreground text-sm pr-1">
-                       {row.gross_fixed_min_month.toLocaleString("it-IT")}
-                     </span>
-                  </TableCell>
-                  <TableCell>
-                     <span className="block w-20 mx-auto text-right font-mono text-muted-foreground text-sm pr-1">
-                       {row.gross_fixed_max_month.toLocaleString("it-IT")}
-                     </span>
-                  </TableCell>
-                  <TableCell className="border-l">
-                     <Input
-                        type="number"
-                        value={Math.round(row.ral_min_k * 10) / 10}
-                        readOnly
-                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground bg-muted/30 cursor-default"
-                      />
-                  </TableCell>
-                  <TableCell>
-                     <Input
-                        type="number"
-                        value={Math.round(row.ral_max_k * 10) / 10}
-                        readOnly
-                        className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground bg-muted/30 cursor-default"
-                      />
-                  </TableCell>
-                  <TableCell className="border-l">
-                     <div className="relative w-20 mx-auto">
+                  <>
+                  {/* Visual separator before standalone roles */}
+                  {index === firstSeparateIdx && firstSeparateIdx !== -1 && (
+                    <TableRow key="__separator__" className="bg-muted/40 border-t-2 border-border pointer-events-none">
+                      <TableCell colSpan={showTheoretical ? 22 : 18} className="py-1 px-3">
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Standalone Roles</span>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  <TableRow key={row.role_code}>
+                    <TableCell className="p-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDeleteRole(index)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                    <TableCell className="font-medium bg-muted/10">
+                      <Input value={row.role_code}
+                        onChange={(e) => handleCellChange(index, "role_code", e.target.value)}
+                        className="h-8 w-20 font-medium" placeholder="e.g. A1" />
+                    </TableCell>
+                    <TableCell>
+                      <Input value={row.role_name}
+                        onChange={(e) => handleCellChange(index, "role_name", e.target.value)}
+                        className="h-8 min-w-[140px]" placeholder="Role name" />
+                    </TableCell>
+                    <TableCell>
                         <Input
-                            type="number"
-                            value={row.bonus_pct}
-                            onChange={(e) => handleCellChange(index, "bonus_pct", parseFloat(e.target.value))}
-                            className="h-8 w-full pr-6 text-right"
+                          value={row.next_role_code || ""}
+                          onChange={(e) => handleCellChange(index, "next_role_code", e.target.value)}
+                          className="h-8 w-20"
+                          placeholder="-"
                         />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
-                     </div>
-                  </TableCell>
-                  <TableCell className="border-l">
-                     {index === 0 ? (
-                       <span className="block w-20 mx-auto text-center text-muted-foreground text-sm">—</span>
-                     ) : (() => {
-                       const prev = gridState[index - 1];
-                       const prevMin = prev.gross_fixed_min_month * prev.months_paid;
-                       const curMin = row.gross_fixed_min_month * row.months_paid;
-                       const pct = prevMin > 0 ? Math.round((curMin / prevMin - 1) * 100) : 0;
-                       return (
-                         <div className="relative w-20 mx-auto">
-                           <Input type="number" step="1" min="0" value={pct}
-                             onChange={(e) => handleMinIncreaseChange(index, parseInt(e.target.value))}
-                             className="h-8 w-full pr-5 text-right font-mono" />
-                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
-                         </div>
-                       );
-                     })()}
-                  </TableCell>
-                  <TableCell>
-                     {(() => {
-                       const curMin = row.gross_fixed_min_month * row.months_paid;
-                       const curMax = row.gross_fixed_max_month * row.months_paid;
-                       const pct = curMin > 0 ? Math.round((curMax / curMin - 1) * 100) : 0;
-                       return (
-                         <div className="relative w-20 mx-auto">
-                           <Input type="number" step="1" min="0" value={pct}
-                             onChange={(e) => handleMaxVsMinChange(index, parseInt(e.target.value))}
-                             className="h-8 w-full pr-5 text-right font-mono" />
-                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
-                         </div>
-                       );
-                     })()}
-                  </TableCell>
-                  {showTheoretical && (() => {
-                    const ralMin = row.ral_min_k;
-                    const ralMax = row.ral_max_k;
-                    const netMin = calculateNetMonthly(ralMin * 1000, row.months_paid);
-                    const netMax = calculateNetMonthly(ralMax * 1000, row.months_paid);
-                    return (<>
-                      <TableCell className="border-l bg-emerald-50/30 text-center font-mono text-sm text-emerald-700">
-                        {Math.round(ralMin * 10) / 10}
-                      </TableCell>
-                      <TableCell className="bg-emerald-50/30 text-center font-mono text-sm text-emerald-700">
-                        {Math.round(ralMax * 10) / 10}
-                      </TableCell>
-                      <TableCell className="bg-teal-50/30 text-center font-mono text-sm text-teal-700">
-                        {netMin.toLocaleString("it-IT")}
-                      </TableCell>
-                      <TableCell className="bg-teal-50/30 text-center font-mono text-sm text-teal-700">
-                        {netMax.toLocaleString("it-IT")}
-                      </TableCell>
-                    </>);
-                  })()}
-                </TableRow>
-              ))
-            })()}
+                    </TableCell>
+                    <TableCell className="bg-purple-50/30">
+                       <Input
+                          type="number" step="1" min="1"
+                          value={Math.round(row.promo_years_fast * 12)}
+                          onChange={(e) => handleCellChange(index, "promo_years_fast", parseInt(e.target.value) / 12)}
+                          className="h-8 w-14 mx-auto text-center"
+                        />
+                    </TableCell>
+                    <TableCell className="bg-blue-50/30">
+                       <Input
+                          type="number" step="1" min="1"
+                          value={Math.round(row.promo_years_normal * 12)}
+                          onChange={(e) => handleCellChange(index, "promo_years_normal", parseInt(e.target.value) / 12)}
+                          className="h-8 w-14 mx-auto text-center"
+                        />
+                    </TableCell>
+                    <TableCell className="bg-blue-100/20 text-center font-mono font-semibold text-blue-700">
+                      {cumNormByIndex[index] === null
+                        ? <span className="text-muted-foreground font-normal">—</span>
+                        : `${(cumNormByIndex[index]! / 12).toFixed(1)}y`}
+                    </TableCell>
+                    <TableCell className="bg-orange-50/30">
+                       <Input
+                          type="number" step="1" min="1"
+                          value={Math.round(row.promo_years_slow * 12)}
+                          onChange={(e) => handleCellChange(index, "promo_years_slow", parseInt(e.target.value) / 12)}
+                          className="h-8 w-14 mx-auto text-center"
+                        />
+                    </TableCell>
+                    <TableCell className="border-l text-center">
+                       <Input
+                          type="number" step="1" min="12" max="13"
+                          value={row.months_paid}
+                          onChange={(e) => handleCellChange(index, "months_paid", parseInt(e.target.value))}
+                          className="h-8 w-14 mx-auto text-center font-mono"
+                        />
+                    </TableCell>
+                    <TableCell className="border-l">
+                       <Input
+                          type="number" step="1"
+                          value={Math.round(row.gross_fixed_min_month * row.months_paid / 1000)}
+                          onChange={(e) => handleGrossChange(index, true, parseFloat(e.target.value))}
+                          className="h-8 w-20 mx-auto text-right font-mono"
+                        />
+                    </TableCell>
+                    <TableCell>
+                       <Input
+                          type="number" step="1"
+                          value={Math.round(row.gross_fixed_max_month * row.months_paid / 1000)}
+                          onChange={(e) => handleGrossChange(index, false, parseFloat(e.target.value))}
+                          className="h-8 w-20 mx-auto text-right font-mono"
+                        />
+                    </TableCell>
+                    <TableCell className="border-l">
+                       <span className="block w-20 mx-auto text-right font-mono text-muted-foreground text-sm pr-1">
+                         {row.gross_fixed_min_month.toLocaleString("it-IT")}
+                       </span>
+                    </TableCell>
+                    <TableCell>
+                       <span className="block w-20 mx-auto text-right font-mono text-muted-foreground text-sm pr-1">
+                         {row.gross_fixed_max_month.toLocaleString("it-IT")}
+                       </span>
+                    </TableCell>
+                    <TableCell className="border-l">
+                       <Input
+                          type="number"
+                          value={Math.round(row.ral_min_k * 10) / 10}
+                          readOnly
+                          className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground bg-muted/30 cursor-default"
+                        />
+                    </TableCell>
+                    <TableCell>
+                       <Input
+                          type="number"
+                          value={Math.round(row.ral_max_k * 10) / 10}
+                          readOnly
+                          className="h-8 w-20 mx-auto text-right font-mono text-muted-foreground bg-muted/30 cursor-default"
+                        />
+                    </TableCell>
+                    <TableCell className="border-l">
+                       <div className="relative w-20 mx-auto">
+                          <Input
+                              type="number"
+                              value={row.bonus_pct}
+                              onChange={(e) => handleCellChange(index, "bonus_pct", parseFloat(e.target.value))}
+                              className="h-8 w-full pr-6 text-right"
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
+                       </div>
+                    </TableCell>
+                    <TableCell className="border-l">
+                       {(index === 0 || isSeparateRole(row)) ? (
+                         <span className="block w-20 mx-auto text-center text-muted-foreground text-sm">—</span>
+                       ) : (() => {
+                         const prev = gridState[index - 1];
+                         const prevMin = prev.gross_fixed_min_month * prev.months_paid;
+                         const curMin = row.gross_fixed_min_month * row.months_paid;
+                         const pct = prevMin > 0 ? Math.round((curMin / prevMin - 1) * 100) : 0;
+                         return (
+                           <div className="relative w-20 mx-auto">
+                             <Input type="number" step="1" min="0" value={pct}
+                               onChange={(e) => handleMinIncreaseChange(index, parseInt(e.target.value))}
+                               className="h-8 w-full pr-5 text-right font-mono" />
+                             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
+                           </div>
+                         );
+                       })()}
+                    </TableCell>
+                    <TableCell>
+                       {(() => {
+                         const curMin = row.gross_fixed_min_month * row.months_paid;
+                         const curMax = row.gross_fixed_max_month * row.months_paid;
+                         const pct = curMin > 0 ? Math.round((curMax / curMin - 1) * 100) : 0;
+                         return (
+                           <div className="relative w-20 mx-auto">
+                             <Input type="number" step="1" min="0" value={pct}
+                               onChange={(e) => handleMaxVsMinChange(index, parseInt(e.target.value))}
+                               className="h-8 w-full pr-5 text-right font-mono" />
+                             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
+                           </div>
+                         );
+                       })()}
+                    </TableCell>
+                    {showTheoretical && (() => {
+                      const ralMin = row.ral_min_k;
+                      const ralMax = row.ral_max_k;
+                      const netMin = calculateNetMonthly(ralMin * 1000, row.months_paid);
+                      const netMax = calculateNetMonthly(ralMax * 1000, row.months_paid);
+                      return (<>
+                        <TableCell className="border-l bg-emerald-50/30 text-center font-mono text-sm text-emerald-700">
+                          {Math.round(ralMin * 10) / 10}
+                        </TableCell>
+                        <TableCell className="bg-emerald-50/30 text-center font-mono text-sm text-emerald-700">
+                          {Math.round(ralMax * 10) / 10}
+                        </TableCell>
+                        <TableCell className="bg-teal-50/30 text-center font-mono text-sm text-teal-700">
+                          {netMin.toLocaleString("it-IT")}
+                        </TableCell>
+                        <TableCell className="bg-teal-50/30 text-center font-mono text-sm text-teal-700">
+                          {netMax.toLocaleString("it-IT")}
+                        </TableCell>
+                      </>);
+                    })()}
+                  </TableRow>
+                  </>
+                ))
+              })()}
             </TableBody>
           </Table>
         </div>
