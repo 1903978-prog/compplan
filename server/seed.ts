@@ -885,6 +885,23 @@ export async function seedDatabase() {
   // "Won/Lost Pricings" tab and is hidden from the active Pricing Cases list.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS outcome TEXT`);
 
+  // ── Partners table + partner_id FKs ─────────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS partners (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'referral',
+      contact_name TEXT,
+      contact_email TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+  await db.execute(sql`ALTER TABLE bd_deals ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+
   // (Removed) Seed pricing_cases for specific reference projects (EMV01,
   // SCHA01) — these were development scaffolding for the three-timeline
   // commercial-proposal layout. The shape is now covered by real user

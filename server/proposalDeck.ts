@@ -52,6 +52,22 @@ interface SlideSelectionEntry {
   is_selected: boolean;
 }
 
+interface CaseTimeline {
+  weeks: number;
+  commitPct: number;
+  grossTotal?: number;
+  commitAmount?: number;
+  netTotal?: number;
+  note?: string;
+}
+
+interface CaseDiscount {
+  id: string;
+  name: string;
+  pct: number;
+  enabled: boolean;
+}
+
 interface ProposalData {
   company_name: string;
   proposal_title?: string | null;
@@ -65,6 +81,9 @@ interface ProposalData {
   slide_selection?: SlideSelectionEntry[];
   admin_configs?: Record<string, SlideMethodologyConfig>;
   deck_template?: DeckTemplateConfig;
+  // Pricing case data — when present, adds the 3-column fee comparison slide.
+  case_timelines?: CaseTimeline[] | null;
+  case_discounts?: CaseDiscount[] | null;
 }
 
 // Default Eendigo branding colors (overridden by deck template palette)
@@ -335,6 +354,87 @@ export async function generateProposalDeck(proposal: ProposalData, _template?: a
     addFooter(optSlide);
   }
   } // end options gate
+
+  // ─── Fee Comparison Slide (3-column, from case_timelines) ──────────────────
+  // Only added when the proposal is linked to a pricing case that has timelines.
+  if (proposal.case_timelines && proposal.case_timelines.length >= 2 &&
+      (shouldInclude("fee_comparison") || selectedSlideIds.size === 0)) {
+    const tls = proposal.case_timelines.slice(0, 3);
+    const discounts = (proposal.case_discounts ?? []).filter((d: CaseDiscount) => d.enabled && d.pct > 0);
+    const feeSlide = pptx.addSlide();
+
+    feeSlide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.0, fill: { color: COLORS.PRIMARY } });
+    feeSlide.addText("Commercial Proposal — Project Fees by Option", {
+      x: 0.5, y: 0.12, w: 12, h: 0.75, fontSize: 22, color: COLORS.WHITE, fontFace: "Arial", bold: true,
+    });
+
+    // Column headers
+    const colLabels = tls.map((t, i) => `Option ${i + 1} (${t.weeks}w)`);
+    const COL_W = 3.2;
+    const COL_X = [1.2, 4.6, 8.0];
+    const ROW_H = 0.38;
+    let rowY = 1.15;
+
+    // Header row
+    feeSlide.addText("", { x: 0.1, y: rowY, w: 1.0, h: ROW_H, fill: { color: COLORS.PRIMARY } });
+    colLabels.forEach((lbl, ci) => {
+      feeSlide.addText(lbl, {
+        x: COL_X[ci], y: rowY, w: COL_W, h: ROW_H,
+        fontSize: 11, color: COLORS.WHITE, fontFace: "Arial", bold: true, align: "center",
+        fill: { color: COLORS.PRIMARY },
+      });
+    });
+    rowY += ROW_H;
+
+    const addRow = (label: string, values: string[], highlight = false) => {
+      const bg = highlight ? COLORS.LIGHT_BG : COLORS.WHITE;
+      feeSlide.addText(label, {
+        x: 0.1, y: rowY, w: 1.0, h: ROW_H,
+        fontSize: 10, color: COLORS.TEXT, fontFace: "Arial", fill: { color: bg },
+        line: { color: COLORS.LIGHT_GRAY, pt: 0.5 },
+      });
+      values.forEach((v, ci) => {
+        feeSlide.addText(v, {
+          x: COL_X[ci], y: rowY, w: COL_W, h: ROW_H,
+          fontSize: 10, color: COLORS.TEXT, fontFace: "Arial", align: "center",
+          fill: { color: bg }, line: { color: COLORS.LIGHT_GRAY, pt: 0.5 },
+        });
+      });
+      rowY += ROW_H;
+    };
+
+    const fmt = (n?: number) => n ? `€${Math.round(n).toLocaleString("en-DE")}` : "—";
+
+    addRow("Gross total price", tls.map(t => fmt(t.grossTotal)));
+    for (const d of discounts) {
+      const pct = d.pct / 100;
+      addRow(`${d.name} (${d.pct}%)`, tls.map(t => t.grossTotal ? `−€${Math.round(t.grossTotal * pct).toLocaleString("en-DE")}` : "—"));
+    }
+    if (tls.some(t => t.commitAmount && t.commitAmount > 0)) {
+      addRow("Commitment discount", tls.map(t => t.commitAmount ? `−€${Math.round(t.commitAmount).toLocaleString("en-DE")}` : "—"));
+    }
+
+    // Net total — bold highlight row
+    feeSlide.addText("Net total price", {
+      x: 0.1, y: rowY, w: 1.0, h: ROW_H,
+      fontSize: 11, color: COLORS.WHITE, fontFace: "Arial", bold: true, fill: { color: COLORS.PRIMARY },
+    });
+    tls.forEach((t, ci) => {
+      feeSlide.addText(fmt(t.netTotal ?? t.grossTotal), {
+        x: COL_X[ci], y: rowY, w: COL_W, h: ROW_H,
+        fontSize: 11, color: COLORS.WHITE, fontFace: "Arial", bold: true, align: "center",
+        fill: { color: COLORS.PRIMARY },
+      });
+    });
+    rowY += ROW_H + 0.15;
+
+    feeSlide.addText(
+      "Same weekly price across all three options — commitment discount rewards longer engagements.",
+      { x: 0.5, y: rowY, w: 12, h: 0.35, fontSize: 9, color: COLORS.MUTED, fontFace: "Arial", italic: true },
+    );
+
+    addFooter(feeSlide);
+  }
 
   // ─── Slide 9: Next Steps ───────────────────────────────────────────────────
   if (shouldInclude("next_steps")) {

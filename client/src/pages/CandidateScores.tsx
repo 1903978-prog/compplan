@@ -74,6 +74,10 @@ const DEFAULT_WEIGHTS: Record<string, number> = {
 };
 const WEIGHTS_KEY = "candidate_score_weights_v1";
 
+// Candidates who have ALL four of these tests are in Group 1 (complete screen).
+// Everyone else lands in Group 2 (partial / still in progress).
+const G1_REQUIRED = ["logic", "verbal", "testgorilla", "intro_call"];
+
 // Color band for a 0-100 score — keeps the grid scannable without a key.
 function scoreColor(n: number | null | undefined): string {
   if (n == null) return "bg-muted/30 text-muted-foreground";

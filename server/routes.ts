@@ -4256,6 +4256,7 @@ RULES:
         industry:         "industry" in b ? b.industry : cur.industry,
         region:           "region" in b ? b.region : cur.region,
         last_activity_at: "last_activity_at" in b ? b.last_activity_at : cur.last_activity_at,
+        partner_id:       "partner_id" in b ? (b.partner_id ?? null) : cur.partner_id,
       };
 
       const r = await db.execute(sql`
@@ -4294,6 +4295,68 @@ RULES:
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ── Partners CRUD ──────────────────────────────────────────────────────
+  app.get("/api/partners", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`SELECT * FROM partners ORDER BY name ASC`);
+      res.json((r as any).rows ?? r);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post("/api/partners", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const b = req.body ?? {};
+      if (!b.name || typeof b.name !== "string" || !b.name.trim()) {
+        res.status(400).json({ error: "name is required" }); return;
+      }
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        INSERT INTO partners (name, type, contact_name, contact_email, notes, created_at, updated_at)
+        VALUES (${b.name.trim()}, ${b.type ?? "referral"}, ${b.contact_name ?? null},
+                ${b.contact_email ?? null}, ${b.notes ?? null}, ${now}, ${now})
+        RETURNING *
+      `);
+      res.status(201).json(((r as any).rows ?? r)[0]);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.put("/api/partners/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      const b = req.body ?? {};
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        UPDATE partners SET
+          name          = COALESCE(${b.name ?? null}, name),
+          type          = COALESCE(${b.type ?? null}, type),
+          contact_name  = ${b.contact_name ?? null},
+          contact_email = ${b.contact_email ?? null},
+          notes         = ${b.notes ?? null},
+          updated_at    = ${now}
+        WHERE id = ${id}
+        RETURNING *
+      `);
+      const rows = (r as any).rows ?? r;
+      if (rows.length === 0) { res.status(404).json({ error: "not found" }); return; }
+      res.json(rows[0]);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete("/api/partners/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`DELETE FROM partners WHERE id = ${safeInt(req.params.id)}`);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // POST /api/bd/import/hubspot — accepts a HubSpot Deal CSV (as a string
