@@ -492,32 +492,29 @@ export default function ExecDashboard() {
     return { supply, committedSlots, pipelineWeightedSlots, totalDemand, gap, utilisation, gapStatus };
   }, [hr.headcount, ongoing.list, bd.pendingList]);
 
-  // ─── Attrition / churn risk per employee ─────────────────────────────
-  // Heuristics (none require external benchmarks):
-  //   • months_since_promo > 24   → "Promo overdue" signal
-  //   • performance_score < 6.5   → "Low performance" signal (risk: flight or PIP)
-  //   • tenure_months < 6         → "Onboarding — settling" signal
-  //   • no monthly_ratings entry in last 90d → "Disengaged" signal
-  // Risk level:
-  //   HIGH   = ≥2 signals OR promo_overdue + low_perf together
-  //   MEDIUM = 1 signal
-  //   LOW    = no signals
+  // ─── Attrition / churn risk per employee (numerical formula) ─────────
+  // Score 0-100. Signals and their weights:
+  //   Promotion overdue >30mo   +35
+  //   Promotion overdue >24mo   +25
+  //   Performance <6.5          +25
+  //   Performance 6.5-7.0       +10
+  //   HR events (complaints)    +20 per high-severity, +10 medium, +5 low
+  //   New hire <6mo             +10
+  //   No rating in 90d          +10
+  // Risk level:  HIGH ≥50 · MEDIUM 25-49 · LOW <25
   const churnRisk = useMemo(() => {
     const today = new Date();
-    const todayIso = today.toISOString().slice(0, 10);
 
     type RiskRow = {
       id: string; name: string; role: string;
-      signals: string[]; level: "high" | "medium" | "low";
+      signals: string[]; score: number; level: "high" | "medium" | "low";
     };
 
-    // Exclude retired employees — they no longer report to anyone, can't
-    // be promoted, and any signal we'd compute on them is meaningless.
-    // Status defaults to "active" if missing (pre-migration rows).
     const activeOnly = employees.filter(e => ((e as any).status ?? "active") !== "former");
 
     return activeOnly.map((emp): RiskRow => {
       const signals: string[] = [];
+      let score = 0;
 
       // 1. Months since last promotion
       const promoDate = emp.last_promo_date
@@ -525,35 +522,55 @@ export default function ExecDashboard() {
         : emp.hire_date ? new Date(emp.hire_date + "-01") : null;
       if (promoDate && !isNaN(promoDate.getTime())) {
         const monthsSince = (today.getTime() - promoDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-        if (monthsSince > 24) signals.push(`${Math.round(monthsSince)}mo without promotion`);
+        if (monthsSince > 30) { score += 35; signals.push(`${Math.round(monthsSince)}mo without promotion`); }
+        else if (monthsSince > 24) { score += 25; signals.push(`${Math.round(monthsSince)}mo without promotion`); }
       }
 
       // 2. Performance score
       const perf = emp.performance_score;
-      if (typeof perf === "number" && perf < 6.5) signals.push(`performance ${perf.toFixed(1)}/10`);
+      if (typeof perf === "number") {
+        if (perf < 6.5) { score += 25; signals.push(`performance ${perf.toFixed(1)}/10`); }
+        else if (perf < 7.0) { score += 10; signals.push(`performance ${perf.toFixed(1)}/10 (borderline)`); }
+      }
 
-      // 3. New-hire onboarding risk (first 6 months)
+      // 3. HR events (complaints, absence concerns)
+      const hrEvents = (emp as any).hr_events ?? [];
+      let hrEventScore = 0;
+      const hrEventSummary: string[] = [];
+      for (const ev of hrEvents) {
+        if (ev.type === "complaint" || ev.type === "absence_concern" || ev.type === "performance_concern") {
+          const pts = ev.severity === "high" ? 20 : ev.severity === "medium" ? 10 : 5;
+          hrEventScore += pts;
+          hrEventSummary.push(ev.type.replace(/_/g, " "));
+        }
+      }
+      if (hrEventScore > 0) {
+        score += Math.min(hrEventScore, 40); // cap HR events contribution
+        signals.push(`${hrEvents.filter((e: any) => ["complaint","absence_concern","performance_concern"].includes(e.type)).length} HR event(s): ${[...new Set(hrEventSummary)].join(", ")}`);
+      }
+
+      // 4. New-hire onboarding risk (first 6 months)
       const hireParts = emp.hire_date?.split("-").map(Number) ?? [];
       if (hireParts.length >= 2) {
         const hireDate = new Date(hireParts[0], hireParts[1] - 1, 1);
         const tenureMonths = (today.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-        if (tenureMonths < 6) signals.push(`new hire (${Math.round(tenureMonths)}mo)`);
+        if (tenureMonths < 6) { score += 10; signals.push(`new hire (${Math.round(tenureMonths)}mo)`); }
       }
 
-      // 4. No rating in last 90 days → disengagement signal
+      // 5. No rating in last 90 days → disengagement signal
       const ratings = emp.monthly_ratings ?? [];
       const cutoff = new Date(today); cutoff.setDate(today.getDate() - 90);
-      const cutoffStr = cutoff.toISOString().slice(0, 7); // YYYY-MM
+      const cutoffStr = cutoff.toISOString().slice(0, 7);
       const hasRecentRating = ratings.some((r: any) => String(r.month ?? r.date ?? "").slice(0, 7) >= cutoffStr);
-      if (ratings.length > 0 && !hasRecentRating) signals.push("no recent rating (>90d)");
+      if (ratings.length > 0 && !hasRecentRating) { score += 10; signals.push("no recent rating (>90d)"); }
 
-      void todayIso;
+      score = Math.min(100, score);
       const level: "high" | "medium" | "low" =
-        signals.length >= 2 ? "high" :
-        signals.length === 1 ? "medium" :
+        score >= 50 ? "high" :
+        score >= 25 ? "medium" :
         "low";
 
-      return { id: emp.id, name: emp.name, role: emp.current_role_code, signals, level };
+      return { id: emp.id, name: emp.name, role: emp.current_role_code, signals, score, level };
     }).filter(r => r.level !== "low");
   }, [employees]);
 
@@ -1130,13 +1147,14 @@ export default function ExecDashboard() {
             </div>
           </div>
           <div className="space-y-1.5">
-            {churnRisk.sort((a, b) => (a.level === "high" ? 0 : 1) - (b.level === "high" ? 0 : 1)).map(r => (
+            {churnRisk.sort((a, b) => b.score - a.score).map(r => (
               <div key={r.id} className={`flex items-center gap-2 flex-wrap text-xs rounded px-2 py-1.5 ${
                 r.level === "high" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"
               }`}>
                 <Badge variant="outline" className={`text-[10px] shrink-0 ${
                   r.level === "high" ? "border-red-400 text-red-700 bg-red-50" : "border-amber-400 text-amber-700 bg-amber-50"
                 }`}>{r.level}</Badge>
+                <span className={`font-mono text-[11px] font-bold shrink-0 ${r.level === "high" ? "text-red-700" : "text-amber-700"}`}>{r.score}</span>
                 <span className="font-semibold" data-privacy="blur">{r.name}</span>
                 <span className="text-muted-foreground">{r.role}</span>
                 <span className="ml-auto text-[10px] text-muted-foreground">{r.signals.join(" · ")}</span>
@@ -1144,7 +1162,7 @@ export default function ExecDashboard() {
             ))}
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Signals: promotion overdue (&gt;24mo), performance &lt;6.5, onboarding (&lt;6mo), no recent rating. Retired employees excluded. CHRO owns resolution.
+            Score 0-100. Signals: promo overdue (+25-35), performance &lt;7 (+10-25), HR events/complaints (+5-20 each), new hire (+10), no recent rating (+10). HIGH ≥50, MEDIUM ≥25. CHRO owns resolution.
           </p>
         </Card>
       )}

@@ -13,7 +13,7 @@ import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, 
 import { Textarea } from "@/components/ui/textarea";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { employeeInputSchema, type EmployeeInput, type CompletedTest, type EmployeeTask, type YearlyReview, COMEX_AREAS } from "@shared/schema";
+import { employeeInputSchema, type EmployeeInput, type CompletedTest, type EmployeeTask, type YearlyReview, type HrEvent, COMEX_AREAS } from "@shared/schema";
 import { v4 as uuidv4 } from "uuid";
 import { useToast } from "@/hooks/use-toast";
 import { calculateEmployeeMetrics, grossToRal } from "@/lib/calculations";
@@ -405,6 +405,48 @@ const ROLE_RANK: Record<string, number> = {
   "INT": 1
 };
 
+
+// Churn risk score (0-100) computed from employee data alone
+function computeChurnScore(emp: any): { score: number; level: "high" | "medium" | "low" } {
+  const today = new Date();
+  let score = 0;
+  const promoDate = emp.last_promo_date
+    ? new Date(emp.last_promo_date)
+    : emp.hire_date ? new Date(emp.hire_date + "-01") : null;
+  if (promoDate && !isNaN(promoDate.getTime())) {
+    const monthsSince = (today.getTime() - promoDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+    if (monthsSince > 30) score += 35;
+    else if (monthsSince > 24) score += 25;
+  }
+  const perf = emp.performance_score;
+  if (typeof perf === "number") {
+    if (perf < 6.5) score += 25;
+    else if (perf < 7.0) score += 10;
+  }
+  const hrEvents = emp.hr_events ?? [];
+  let hrPts = 0;
+  for (const ev of hrEvents) {
+    if (["complaint","absence_concern","performance_concern"].includes(ev.type)) {
+      hrPts += ev.severity === "high" ? 20 : ev.severity === "medium" ? 10 : 5;
+    }
+  }
+  score += Math.min(hrPts, 40);
+  const hireParts = emp.hire_date?.split("-").map(Number) ?? [];
+  if (hireParts.length >= 2) {
+    const hireDate = new Date(hireParts[0], hireParts[1] - 1, 1);
+    const tenureMonths = (today.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+    if (tenureMonths < 6) score += 10;
+  }
+  const ratings = emp.monthly_ratings ?? [];
+  if (ratings.length > 0) {
+    const cutoff = new Date(today); cutoff.setDate(today.getDate() - 90);
+    const cutoffStr = cutoff.toISOString().slice(0, 7);
+    const recent = ratings.some((r: any) => String(r.month ?? r.date ?? "").slice(0, 7) >= cutoffStr);
+    if (!recent) score += 10;
+  }
+  score = Math.min(100, score);
+  return { score, level: score >= 50 ? "high" : score >= 25 ? "medium" : "low" };
+}
 
 export default function EmployeeList() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, retireEmployee, roleGrid, settings } = useStore();
@@ -1562,6 +1604,7 @@ Thanks,`;
               <TableHead className="text-center">Paychecks</TableHead>
               <TableHead className="text-right">Meal Voucher</TableHead>
               <TableHead className="w-[180px]">Band Position</TableHead>
+              <TableHead className="text-center">Churn Risk</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1638,13 +1681,27 @@ Thanks,`;
                     <TableCell>
                       <BandPosition metrics={metrics} />
                     </TableCell>
+                    <TableCell className="text-center">
+                      {(() => {
+                        if ((emp as any).status === "former") return <span className="text-muted-foreground text-xs">—</span>;
+                        const { score, level } = computeChurnScore(emp);
+                        if (level === "low") return <span className="text-[11px] text-muted-foreground font-mono">{score}</span>;
+                        return (
+                          <span className={`inline-flex items-center justify-center w-10 h-6 rounded text-[11px] font-bold font-mono ${
+                            level === "high" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                          }`} title={level}>
+                            {score}
+                          </span>
+                        );
+                      })()}
+                    </TableCell>
                   </TableRow>
                 </React.Fragment>
               );
             })}
             {filteredEmployees.length === 0 && (
                 <TableRow>
-                    <TableCell colSpan={15} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={16} className="text-center py-12 text-muted-foreground">
                         No employees found.
                     </TableCell>
                 </TableRow>
@@ -3075,6 +3132,9 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
             adding/removing an asset doesn't dirty the employee form. */}
         <EmployeeAssetsSection employeeId={employee.id} />
 
+        {/* HR Events — churn signals logged against this employee */}
+        <HrEventsSection employee={employee} />
+
         {/* Save + Delete buttons */}
         <div className="flex justify-between items-center pt-4 border-t">
           <Button type="button" variant="outline" onClick={handleRetire}
@@ -3089,6 +3149,132 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
         </div>
       </form>
     </div>
+  );
+}
+
+// ── HR Events (churn signal log) ───────────────────────────────────────────
+function HrEventsSection({ employee }: { employee: EmployeeInput }) {
+  const { updateEmployee } = useStore();
+  const { toast } = useToast();
+  const events: HrEvent[] = (employee as any).hr_events ?? [];
+
+  const [newType, setNewType] = useState<HrEvent["type"]>("complaint");
+  const [newSeverity, setNewSeverity] = useState<HrEvent["severity"]>("medium");
+  const [newNote, setNewNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const TYPE_LABELS: Record<HrEvent["type"], string> = {
+    complaint: "Complaint",
+    absence_concern: "Absence",
+    performance_concern: "Performance",
+    praise: "Praise",
+    other: "Other",
+  };
+  const TYPE_COLORS: Record<HrEvent["type"], string> = {
+    complaint: "bg-red-100 text-red-700 border-red-200",
+    absence_concern: "bg-amber-100 text-amber-700 border-amber-200",
+    performance_concern: "bg-orange-100 text-orange-700 border-orange-200",
+    praise: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    other: "bg-slate-100 text-slate-600 border-slate-200",
+  };
+  const SEV_COLORS: Record<HrEvent["severity"], string> = {
+    high: "bg-red-500 text-white",
+    medium: "bg-amber-400 text-white",
+    low: "bg-slate-300 text-slate-700",
+  };
+
+  const logEvent = async () => {
+    if (!newNote.trim()) { toast({ title: "Add a note", variant: "destructive" }); return; }
+    setSaving(true);
+    const newEvent: HrEvent = {
+      id: uuidv4(),
+      date: new Date().toISOString().slice(0, 10),
+      type: newType,
+      severity: newSeverity,
+      note: newNote.trim(),
+    };
+    try {
+      await updateEmployee(employee.id, { ...employee, hr_events: [...events, newEvent] } as any);
+      setNewNote("");
+      toast({ title: "Event logged" });
+    } catch {
+      toast({ title: "Failed to log event", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteEvent = async (id: string) => {
+    await updateEmployee(employee.id, { ...employee, hr_events: events.filter(e => e.id !== id) } as any);
+  };
+
+  const sorted = [...events].sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <Card className="p-4 space-y-3">
+      <h3 className="text-sm font-bold uppercase tracking-wide flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 text-amber-500" />
+        HR Events — Churn Signals ({events.length})
+      </h3>
+
+      {sorted.length === 0 ? (
+        <p className="text-xs text-muted-foreground italic">No events logged yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {sorted.map(ev => (
+            <div key={ev.id} className="flex items-start gap-2 rounded border p-2 bg-card text-xs">
+              <span className="font-mono text-muted-foreground shrink-0 pt-0.5">{ev.date}</span>
+              <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${TYPE_COLORS[ev.type]}`}>
+                {TYPE_LABELS[ev.type]}
+              </span>
+              <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${SEV_COLORS[ev.severity]}`}>
+                {ev.severity}
+              </span>
+              <span className="flex-1 text-foreground">{ev.note}</span>
+              <button type="button" onClick={() => deleteEvent(ev.id)}
+                className="shrink-0 text-muted-foreground hover:text-destructive transition-colors">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add form */}
+      <div className="border-t pt-3 space-y-2">
+        <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Log New Event</p>
+        <div className="flex gap-2 flex-wrap">
+          <Select value={newType} onValueChange={(v) => setNewType(v as HrEvent["type"])}>
+            <SelectTrigger className="h-7 text-xs w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {(Object.keys(TYPE_LABELS) as HrEvent["type"][]).map(t => (
+                <SelectItem key={t} value={t} className="text-xs">{TYPE_LABELS[t]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={newSeverity} onValueChange={(v) => setNewSeverity(v as HrEvent["severity"])}>
+            <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="low" className="text-xs">Low</SelectItem>
+              <SelectItem value="medium" className="text-xs">Medium</SelectItem>
+              <SelectItem value="high" className="text-xs">High</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Brief note…"
+            className="h-7 text-xs flex-1"
+            value={newNote}
+            onChange={(e) => setNewNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); logEvent(); } }}
+          />
+          <Button type="button" size="sm" className="h-7 text-xs px-3" disabled={saving} onClick={logEvent}>
+            {saving ? "…" : "Log"}
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

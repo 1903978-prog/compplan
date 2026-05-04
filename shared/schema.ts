@@ -159,6 +159,16 @@ export interface EmployeeCalculationResult {
   policy_applied: string;
 }
 
+// ─── HR event log (complaints, concerns, absence patterns, praise) ───────────
+export interface HrEvent {
+  id: string;                 // uuid-like
+  date: string;               // YYYY-MM-DD
+  type: "complaint" | "absence_concern" | "performance_concern" | "praise" | "other";
+  note: string;
+  severity: "low" | "medium" | "high";
+  logged_by?: string;
+}
+
 // ─── PostgreSQL tables ───────────────────────────────────────────────────────
 
 export const employees = pgTable("employees", {
@@ -188,6 +198,7 @@ export const employees = pgTable("employees", {
   comex_areas: jsonb("comex_areas").$type<ComexAreas>().default({}),
   status: text("status").notNull().default("active"),    // "active" | "former"
   retired_at: text("retired_at"),
+  hr_events: jsonb("hr_events").$type<HrEvent[]>().default([]),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
