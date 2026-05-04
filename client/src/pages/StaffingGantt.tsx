@@ -295,15 +295,30 @@ export default function StaffingGantt() {
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
 
-  // FTE demand per week: full count for won/ongoing projects + (count × prob)
-  // for TBD pipeline. Counted from `manager_name` + `team_members`, so a TBD
-  // proposal with no team yet contributes 0 (no signal of headcount needed).
-  // Always weighted by win_probability for pending — independent of the
-  // showWeighted/showPipeline visual toggles, since this is the demand picture.
-  const ftesNeededPerWeek = useMemo(() => {
-    const out = Array<number>(HORIZON_WEEKS).fill(0);
+  // FTE demand build-up: per-project per-week contribution to staffing demand.
+  // Each row is a project active in the 24-week horizon; per-week values are
+  // (named-team-count × weight) where weight = 1 for won/ongoing and
+  // win_probability/100 for pending. A "—" cell means the project is not
+  // active that week. The total row is the sum across rows.
+  //
+  // Counted from `manager_name` + `team_members`, so a project with no team
+  // assigned contributes 0 (no signal of headcount needed). Always weighted
+  // by win_probability for pending — independent of the showWeighted /
+  // showPipeline visual toggles, since this is the demand picture.
+  type FteRow = {
+    projectId: number;
+    projectName: string;
+    clientName: string | null;
+    outcome: "won" | "pending";
+    probability: number; // 0..1; always 1 for won
+    teamCount: number;
+    perWeek: (number | null)[]; // null = project not active that week
+  };
+  const fteBuildUp = useMemo(() => {
+    const rows: FteRow[] = [];
     for (const p of proposals) {
       if (p.outcome === "lost") continue;
+      if (p.outcome !== "won" && p.outcome !== "pending") continue;
       const span = projectWeeks(p, weekStart);
       if (!span) continue;
       const teamCount =
@@ -311,15 +326,34 @@ export default function StaffingGantt() {
         (p.team_members ?? []).filter(m => (m.name ?? "").trim().length > 0).length;
       if (teamCount === 0) continue;
       const isPipeline = p.outcome === "pending";
-      const weight = isPipeline
+      const probability = isPipeline
         ? Math.max(0, Math.min(100, Number(p.win_probability ?? 50))) / 100
         : 1;
-      const contribution = teamCount * weight;
-      for (let w = span.from; w <= span.to; w++) {
-        out[w] += contribution;
+      const contribution = teamCount * probability;
+      const perWeek: (number | null)[] = Array(HORIZON_WEEKS).fill(null);
+      for (let w = span.from; w <= span.to; w++) perWeek[w] = contribution;
+      rows.push({
+        projectId: p.id,
+        projectName: p.project_name,
+        clientName: p.client_name ?? null,
+        outcome: isPipeline ? "pending" : "won",
+        probability,
+        teamCount,
+        perWeek,
+      });
+    }
+    // Won first, then pending; alphabetic within each group.
+    rows.sort((a, b) => {
+      if (a.outcome !== b.outcome) return a.outcome === "won" ? -1 : 1;
+      return a.projectName.localeCompare(b.projectName);
+    });
+    const totalPerWeek = Array<number>(HORIZON_WEEKS).fill(0);
+    for (const r of rows) {
+      for (let w = 0; w < HORIZON_WEEKS; w++) {
+        if (r.perWeek[w] != null) totalPerWeek[w] += r.perWeek[w]!;
       }
     }
-    return out;
+    return { rows, totalPerWeek };
   }, [proposals, weekStart]);
 
   // Availability: human-readable string + actual Date for the first free week.
@@ -492,20 +526,97 @@ export default function StaffingGantt() {
               })}
             </tbody>
             <tfoot>
-              <tr className="border-t-2 bg-muted/40 font-semibold">
-                <td className="p-2 sticky left-0 bg-muted/60 z-10 w-44">
+              {/* Section header: "FTEs needed — build-up". Borders + bg
+                  separate the demand section from the people rows above. */}
+              <tr className="border-t-2 bg-muted/30">
+                <td
+                  className="p-2 sticky left-0 bg-muted/60 z-10 w-44 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                  colSpan={2}
+                >
                   <div className="flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5" />
-                    FTEs needed
+                    FTEs needed — build-up
+                  </div>
+                </td>
+                <td className="border-l p-0" colSpan={HORIZON_WEEKS} />
+              </tr>
+
+              {/* One row per active project. Won = full count; TBD = count × prob. */}
+              {fteBuildUp.rows.length === 0 ? (
+                <tr className="bg-muted/20">
+                  <td
+                    className="p-2 sticky left-0 bg-muted/40 z-10 text-[10px] italic text-muted-foreground"
+                    colSpan={2}
+                  >
+                    no active projects
+                  </td>
+                  <td className="border-l" colSpan={HORIZON_WEEKS} />
+                </tr>
+              ) : (
+                fteBuildUp.rows.map(row => {
+                  const isPipeline = row.outcome === "pending";
+                  const probPct = Math.round(row.probability * 100);
+                  return (
+                    <tr key={row.projectId} className="bg-muted/15 hover:bg-muted/30">
+                      <td className="p-1.5 sticky left-0 bg-background z-10 w-44">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-semibold text-[11px] truncate" title={row.clientName ? `${row.projectName} · ${row.clientName}` : row.projectName}>
+                            {row.projectName}
+                          </span>
+                          {isPipeline ? (
+                            <Badge variant="outline" className="text-[8px] py-0 h-3.5 shrink-0 bg-amber-50 border-amber-300 text-amber-800">
+                              TBD {probPct}%
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[8px] py-0 h-3.5 shrink-0 bg-emerald-50 border-emerald-300 text-emerald-800">
+                              WON
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td
+                        className="p-1.5 sticky left-44 bg-background z-10 w-28 text-[10px] font-mono text-muted-foreground"
+                        title={isPipeline
+                          ? `${row.teamCount} FTEs × ${probPct}% = ${(row.teamCount * row.probability).toFixed(2)}`
+                          : `${row.teamCount} FTEs`}
+                      >
+                        {isPipeline
+                          ? `${row.teamCount} × ${probPct}%`
+                          : `${row.teamCount} FTE${row.teamCount === 1 ? "" : "s"}`}
+                      </td>
+                      {row.perWeek.map((v, i) => (
+                        <td
+                          key={i}
+                          className={`border-l text-center font-mono text-[11px] p-1 min-w-16 ${
+                            v == null ? "text-muted-foreground/40" : isPipeline ? "text-amber-700" : ""
+                          }`}
+                          title={v != null
+                            ? `${row.projectName} · ${v.toFixed(2)} FTE-equivalents · week of ${fmtWeek(weeks[i])}`
+                            : `${row.projectName} not active week of ${fmtWeek(weeks[i])}`}
+                        >
+                          {v == null ? "—" : v.toFixed(1)}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })
+              )}
+
+              {/* Total row: sum of all project rows. */}
+              <tr className="border-t-2 bg-muted/50 font-semibold">
+                <td className="p-2 sticky left-0 bg-muted/70 z-10 w-44">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    Total
                   </div>
                 </td>
                 <td
-                  className="p-2 sticky left-44 bg-muted/60 z-10 w-28 text-[10px] font-normal text-muted-foreground"
+                  className="p-2 sticky left-44 bg-muted/70 z-10 w-28 text-[10px] font-normal text-muted-foreground"
                   title="Per week: FTEs on won/ongoing projects + Σ(FTEs on TBD × win-probability)"
                 >
                   won + tbd × prob
                 </td>
-                {ftesNeededPerWeek.map((n, i) => (
+                {fteBuildUp.totalPerWeek.map((n, i) => (
                   <td
                     key={i}
                     className="border-l text-center font-mono text-[11px] p-1 min-w-16"
