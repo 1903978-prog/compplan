@@ -1418,44 +1418,68 @@ export default function ExecDashboard() {
 
       {/* ── Who Needs Tests + Overdue Tasks ─────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Candidates missing tests */}
+        {/* Top Tier 1 candidates */}
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-                <FlaskConical className="w-4 h-4 text-blue-600" />
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
+                <UserCheck className="w-4 h-4 text-emerald-600" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold">Who needs tests</h3>
-                <p className="text-[11px] text-muted-foreground">Active candidates with missing scores</p>
+                <h3 className="text-sm font-semibold">Top Tier 1 candidates</h3>
+                <p className="text-[11px] text-muted-foreground">Highest composite — meet all Tier 1 thresholds</p>
               </div>
             </div>
             <Link href="/hr/hiring/scoreboard" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
               scoreboard <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
-          {needsTests.length === 0 ? (
-            <div className="flex items-center justify-center gap-2 py-6 text-xs text-emerald-600">
-              <CheckCircle2 className="w-4 h-4" /> All active candidates have required scores.
+          {topTier1.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+              No Tier 1 candidates yet.
             </div>
           ) : (
-            <div className="space-y-1.5">
-              {needsTests.slice(0, 10).map(c => (
-                <div key={c.id} className="flex items-start gap-2 text-xs py-1 border-b last:border-0 border-muted/40">
-                  <span className="flex-1 font-medium truncate" data-privacy="blur">{c.name}</span>
-                  <span className="text-[10px] text-muted-foreground shrink-0 font-mono">{c.stage?.replace(/_/g, " ")}</span>
-                  <div className="flex flex-wrap gap-1 justify-end max-w-[180px]">
-                    {c.missing.map(t => (
-                      <span key={t} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-50 border border-amber-200 text-amber-700">
-                        {t}
-                      </span>
-                    ))}
+            <div className="space-y-3">
+              {topTier1.map(({ c, row, composite }) => (
+                <div key={c.id} className="border border-emerald-100 rounded-lg p-2.5 bg-emerald-50/30">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-sm" data-privacy="blur">{c.name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-muted-foreground">{c.stage?.replace(/_/g, " ")}</span>
+                      {composite != null && (
+                        <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 rounded">
+                          {composite}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1">
+                    {([
+                      { key: "logic",       label: "Logic" },
+                      { key: "verbal",      label: "Verbal" },
+                      { key: "testgorilla", label: "TG" },
+                      { key: "intro_call",  label: "Intro" },
+                      { key: "case_study",  label: "Case" },
+                    ] as const).map(({ key, label }) => {
+                      const v = row[key];
+                      const color = v == null ? "bg-muted/30 text-muted-foreground" :
+                        v >= 85 ? "bg-emerald-500 text-white" :
+                        v >= 70 ? "bg-emerald-200 text-emerald-900" :
+                        v >= 55 ? "bg-amber-200 text-amber-900" :
+                        v >= 40 ? "bg-orange-300 text-orange-950" :
+                        "bg-red-300 text-red-950";
+                      return (
+                        <div key={key} className="text-center">
+                          <div className={`rounded text-[10px] font-semibold px-1 py-0.5 ${color}`} data-privacy="blur">
+                            {v != null ? v : "—"}
+                          </div>
+                          <div className="text-[9px] text-muted-foreground mt-0.5">{label}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
-              {needsTests.length > 10 && (
-                <p className="text-[10px] text-muted-foreground text-right">+{needsTests.length - 10} more</p>
-              )}
             </div>
           )}
         </Card>
