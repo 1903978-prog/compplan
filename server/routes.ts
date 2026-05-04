@@ -4482,6 +4482,141 @@ RULES:
     }
   });
 
+  // ── HubSpot live API sync ───────────────────────────────────────────────────
+  // Requires HUBSPOT_TOKEN env var (Private App token from HubSpot settings →
+  // Integrations → Private Apps). Fetches all non-archived deals, maps them
+  // to bd_deals schema, upserts by hubspot_id. Called from the BD import tab.
+  app.get("/api/hubspot/status", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.json({ configured: false, message: "HUBSPOT_TOKEN not set in environment." });
+      return;
+    }
+    // Quick ping: fetch 1 deal to verify auth
+    try {
+      const r = await fetch(
+        "https://api.hubapi.com/crm/v3/objects/deals?limit=1&archived=false",
+        { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+      );
+      if (r.status === 401) {
+        res.json({ configured: true, valid: false, message: "Token invalid or expired." });
+        return;
+      }
+      if (!r.ok) {
+        res.json({ configured: true, valid: false, message: `HubSpot returned ${r.status}` });
+        return;
+      }
+      const data: any = await r.json();
+      res.json({ configured: true, valid: true, total: data?.total ?? null });
+    } catch (e: any) {
+      res.json({ configured: true, valid: false, message: e.message });
+    }
+  });
+
+  app.post("/api/hubspot/sync", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.status(400).json({ error: "HUBSPOT_TOKEN not configured. Add it to your environment variables." });
+      return;
+    }
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const DEAL_PROPS = [
+        "dealname", "amount", "dealstage", "pipeline", "closedate",
+        "hs_deal_stage_probability", "description", "hubspot_owner_id",
+        "hs_lastactivitydate", "dealtype",
+      ].join(",");
+
+      let after: string | null = null;
+      const allDeals: any[] = [];
+
+      // Paginate through all deals
+      for (let page = 0; page < 20; page++) {
+        const url = `https://api.hubapi.com/crm/v3/objects/deals?limit=100&archived=false&properties=${DEAL_PROPS}${after ? `&after=${after}` : ""}`;
+        const r = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        });
+        if (!r.ok) throw new Error(`HubSpot API returned ${r.status}: ${await r.text()}`);
+        const data: any = await r.json();
+        allDeals.push(...(data.results ?? []));
+        if (data.paging?.next?.after) {
+          after = data.paging.next.after;
+        } else {
+          break;
+        }
+      }
+
+      // Map HubSpot deal → bd_deals row
+      const now = new Date().toISOString();
+      let inserted = 0, updated = 0, skipped = 0;
+
+      for (const deal of allDeals) {
+        try {
+          const p = deal.properties ?? {};
+          const amount = p.amount ? Number(p.amount) : null;
+          const prob = p.hs_deal_stage_probability ? Math.round(Number(p.hs_deal_stage_probability) * 100) : null;
+          const row = {
+            hubspot_id:       String(deal.id),
+            name:             p.dealname || "Untitled deal",
+            client_name:      null as string | null,
+            contact_name:     null as string | null,
+            contact_email:    null as string | null,
+            stage:            normaliseHubspotStage(p.dealstage ?? ""),
+            amount:           amount !== null && !isNaN(amount) ? amount : null,
+            currency:         "EUR",
+            probability:      prob,
+            close_date:       p.closedate ? p.closedate.slice(0, 10) : null,
+            source:           "hubspot_api",
+            owner:            p.hubspot_owner_id ?? null,
+            notes:            p.description ?? null,
+            industry:         null as string | null,
+            region:           null as string | null,
+            last_activity_at: p.hs_lastactivitydate ? p.hs_lastactivitydate.slice(0, 10) : null,
+            imported_at:      now,
+          };
+
+          // Upsert by hubspot_id
+          const existing: any = await db.execute(sql`SELECT id FROM bd_deals WHERE hubspot_id = ${row.hubspot_id}`);
+          if (existing.rows?.length > 0) {
+            await db.execute(sql`
+              UPDATE bd_deals SET
+                name = ${row.name}, stage = ${row.stage}, amount = ${row.amount},
+                probability = ${row.probability}, close_date = ${row.close_date},
+                source = ${row.source}, owner = ${row.owner}, notes = ${row.notes},
+                last_activity_at = ${row.last_activity_at}, imported_at = ${row.imported_at},
+                updated_at = ${now}
+              WHERE hubspot_id = ${row.hubspot_id}
+            `);
+            updated++;
+          } else {
+            await db.execute(sql`
+              INSERT INTO bd_deals (
+                hubspot_id, name, client_name, contact_name, contact_email,
+                stage, amount, currency, probability, close_date, source, owner,
+                notes, industry, region, last_activity_at, imported_at, created_at, updated_at
+              ) VALUES (
+                ${row.hubspot_id}, ${row.name}, ${row.client_name}, ${row.contact_name}, ${row.contact_email},
+                ${row.stage}, ${row.amount}, ${row.currency}, ${row.probability}, ${row.close_date},
+                ${row.source}, ${row.owner}, ${row.notes}, ${row.industry}, ${row.region},
+                ${row.last_activity_at}, ${row.imported_at}, ${now}, ${now}
+              )
+            `);
+            inserted++;
+          }
+        } catch (e: any) {
+          skipped++;
+          console.warn("[hubspot/sync] deal skipped:", e.message);
+        }
+      }
+
+      res.json({ ok: true, total: allDeals.length, inserted, updated, skipped });
+    } catch (err: any) {
+      console.error("[hubspot/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Harvest Invoicing ───────────────────────────────────────────────────────
   const HARVEST_TOKEN = process.env.HARVEST_TOKEN ?? "";
   const HARVEST_ACCOUNT = process.env.HARVEST_ACCOUNT_ID ?? "";

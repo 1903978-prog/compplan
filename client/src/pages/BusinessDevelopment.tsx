@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { useToast } from "@/hooks/use-toast";
 import {
   Target, Plus, Upload, Trash2, Pencil, Save, X, Loader2,
-  CheckCircle2, AlertCircle, ExternalLink, Database,
+  CheckCircle2, AlertCircle, ExternalLink, Database, RefreshCw, Wifi, WifiOff,
 } from "lucide-react";
 
 // ─── Business Development CRM ────────────────────────────────────────────
@@ -410,6 +410,85 @@ function DealEditor({
   );
 }
 
+// ─── HubSpot live API sync ───────────────────────────────────────────────
+function HubspotApiSync({ onDone }: { onDone: () => void }) {
+  const { toast } = useToast();
+  const [status, setStatus] = useState<{ configured: boolean; valid?: boolean; total?: number | null; message?: string } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; updated: number; skipped: number } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/hubspot/status", { credentials: "include" })
+      .then(r => r.ok ? r.json() : { configured: false })
+      .then(setStatus)
+      .catch(() => setStatus({ configured: false }));
+  }, []);
+
+  async function runSync() {
+    setSyncing(true);
+    try {
+      const r = await fetch("/api/hubspot/sync", { method: "POST", credentials: "include" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Sync failed");
+      setLastSync(data);
+      toast({ title: `HubSpot sync complete — ${data.inserted} inserted, ${data.updated} updated` });
+      onDone();
+    } catch (e: any) {
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <div className="border rounded-lg p-4 bg-background space-y-3">
+      <div className="flex items-center gap-2">
+        {status?.valid
+          ? <Wifi className="w-4 h-4 text-emerald-600" />
+          : <WifiOff className="w-4 h-4 text-amber-500" />
+        }
+        <h4 className="text-sm font-semibold">HubSpot Live Sync (API)</h4>
+        {status?.configured && status?.valid && (
+          <span className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 rounded font-semibold">Connected</span>
+        )}
+        {status?.configured && status?.valid === false && (
+          <span className="text-[10px] bg-red-50 border border-red-200 text-red-700 px-1.5 py-0.5 rounded font-semibold">Token invalid</span>
+        )}
+        {status?.configured === false && (
+          <span className="text-[10px] bg-amber-50 border border-amber-200 text-amber-700 px-1.5 py-0.5 rounded font-semibold">Not configured</span>
+        )}
+      </div>
+
+      {!status?.configured && (
+        <div className="text-xs text-muted-foreground space-y-1">
+          <p>To enable live sync, add your HubSpot Private App token as an environment variable:</p>
+          <code className="block bg-muted rounded px-3 py-2 text-xs font-mono">HUBSPOT_TOKEN=pat-na1-xxxxxxxxxx</code>
+          <p>Create a Private App in HubSpot: <span className="font-medium">Settings → Integrations → Private Apps</span>. Grant it <code className="bg-muted px-1 rounded">crm.objects.deals.read</code> scope.</p>
+        </div>
+      )}
+
+      {status?.valid && (
+        <div className="flex items-center gap-3">
+          <Button size="sm" disabled={syncing} onClick={runSync} className="h-7 text-xs">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync all deals now"}
+          </Button>
+          {status.total != null && (
+            <span className="text-[11px] text-muted-foreground">{status.total} deals in HubSpot</span>
+          )}
+        </div>
+      )}
+
+      {lastSync && (
+        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          Last sync: {lastSync.total} deals · {lastSync.inserted} new · {lastSync.updated} updated · {lastSync.skipped} skipped
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── HubSpot CSV import tab ─────────────────────────────────────────────
 function HubspotImport({ onDone }: { onDone: () => void }) {
   const { toast } = useToast();
@@ -468,9 +547,12 @@ function HubspotImport({ onDone }: { onDone: () => void }) {
 
   return (
     <Card className="p-4 space-y-4">
-      <div>
+      {/* Live API sync — shown first; CSV import below as fallback */}
+      <HubspotApiSync onDone={onDone} />
+
+      <div className="border-t pt-4">
         <h3 className="text-sm font-semibold flex items-center gap-2">
-          <Database className="w-4 h-4 text-violet-600" /> Import HubSpot Deals CSV
+          <Database className="w-4 h-4 text-violet-600" /> Import HubSpot Deals CSV (fallback)
         </h3>
         <p className="text-[11px] text-muted-foreground mt-1">
           In HubSpot: <span className="font-medium">CRM → Deals → Actions → Export</span>. Choose CSV,
