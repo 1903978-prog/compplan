@@ -4,8 +4,10 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, RefreshCw, Download, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowLeft, RefreshCw, Download, ArrowUpDown, ArrowUp, ArrowDown, SlidersHorizontal } from "lucide-react";
 import { parseCandidateInfo } from "./Hiring";
 
 // ── Hiring Scoreboard ──────────────────────────────────────────────────
@@ -37,13 +39,75 @@ interface Candidate {
   created_at: string;
 }
 
-// Composite rubric — matches CandidateScores.tsx. Seven stages now drive
-// the Weighted Avg in the order HSA → PPT → Excel → TG → Intro → Case → LM
-// case. (LM case = partner's review of the case study; same id 'final'
-// kept for back-compat with stored manual scores.)
-const WEIGHTS: Record<string, number> = {
+// Composite rubric — editable via the Weights popup (persists to localStorage).
+const WEIGHTS_KEY = "scoreboard_weights_v1";
+const DEFAULT_WEIGHTS: Record<string, number> = {
   hsa: 25, ppt: 10, excel: 10, testgorilla: 15, intro_call: 10, case_study: 15, final: 15,
 };
+const WEIGHT_LABELS: Record<string, string> = {
+  hsa: "HSA", ppt: "PPT", excel: "Excel", testgorilla: "TG", intro_call: "Intro", case_study: "CS LM", final: "Final",
+};
+
+function loadWeights(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(WEIGHTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      if (typeof parsed === "object" && Object.keys(DEFAULT_WEIGHTS).every(k => typeof parsed[k] === "number")) return parsed;
+    }
+  } catch {}
+  return { ...DEFAULT_WEIGHTS };
+}
+
+// Weights dialog — shown on demand
+function WeightsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [draft, setDraft] = useState<Record<string, number>>(() => loadWeights());
+  const total = Object.values(draft).reduce((a, b) => a + b, 0);
+  const valid = total === 100;
+
+  const save = () => {
+    if (!valid) return;
+    localStorage.setItem(WEIGHTS_KEY, JSON.stringify(draft));
+    onClose();
+    window.location.reload(); // refresh so composites recompute
+  };
+
+  const reset = () => setDraft({ ...DEFAULT_WEIGHTS });
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader>
+          <DialogTitle>Composite Weights</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground mb-3">All weights must sum to 100. Changes apply immediately.</p>
+        <div className="space-y-2">
+          {Object.entries(draft).map(([k, v]) => (
+            <div key={k} className="flex items-center gap-2">
+              <Label className="w-16 text-xs">{WEIGHT_LABELS[k] ?? k}</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={v}
+                onChange={e => setDraft(prev => ({ ...prev, [k]: Number(e.target.value) }))}
+                className="h-7 w-20 text-sm"
+              />
+            </div>
+          ))}
+          <div className={`text-xs font-mono pt-1 ${valid ? "text-emerald-700" : "text-red-600 font-bold"}`}>
+            Sum: {total} / 100 {!valid && "— must equal 100"}
+          </div>
+        </div>
+        <div className="flex gap-2 pt-2">
+          <Button size="sm" onClick={save} disabled={!valid}>Save</Button>
+          <Button size="sm" variant="outline" onClick={reset}>Reset defaults</Button>
+          <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // Display columns in the table, left-to-right. Each column pulls from
 // either the parsed `info` or the manual `scores` JSON.
@@ -59,20 +123,22 @@ interface Col {
   align?: "left" | "center";
   width?: string;
 }
-const COLS: Col[] = [
+// COLS is computed dynamically in the component to reflect live weights.
+// Static keys that have no weight get no sub-label.
+const STATIC_COLS: Col[] = [
   { key: "applied",     label: "Applied",   kind: "text",  align: "left",   width: "w-20" },
   { key: "logic",       label: "Logic",     kind: "score", align: "center" },
   { key: "verbal",      label: "Verbal",    kind: "score", align: "center" },
   { key: "excel",       label: "Excel",     kind: "score", align: "center" },
   { key: "pres1",       label: "P1",        kind: "score", align: "center" },
   { key: "pres2",       label: "P2",        kind: "score", align: "center" },
-  { key: "testgorilla", label: "TG",        sub: "w25",    kind: "score", align: "center" },
-  { key: "intro_call",  label: "Intro",     sub: "w10",    kind: "score", align: "center" },
+  { key: "testgorilla", label: "TG",        kind: "score", align: "center" },
+  { key: "intro_call",  label: "Intro",     kind: "score", align: "center" },
   { key: "cs_rate",     label: "CS Rate",   kind: "score", align: "center" },
-  { key: "case_study",  label: "CS LM",     sub: "w25",    kind: "score", align: "center" },
-  { key: "hsa",         label: "HSA",       sub: "w30",    kind: "score", align: "center" },
-  { key: "ppt",         label: "PPT",       sub: "w5",     kind: "score", align: "center" },
-  { key: "final",       label: "Final",     sub: "w5",     kind: "score", align: "center" },
+  { key: "case_study",  label: "CS LM",     kind: "score", align: "center" },
+  { key: "hsa",         label: "HSA",       kind: "score", align: "center" },
+  { key: "ppt",         label: "PPT",       kind: "score", align: "center" },
+  { key: "final",       label: "Final",     kind: "score", align: "center" },
 ];
 
 function scoreColor(n: number | null | undefined): string {
@@ -133,9 +199,9 @@ function resolveRow(c: Candidate): Record<string, number | string | null> {
   return out;
 }
 
-function compositeScore(row: Record<string, number | string | null>): number | null {
+function compositeScore(row: Record<string, number | string | null>, weights: Record<string, number>): number | null {
   let num = 0, den = 0;
-  for (const [k, w] of Object.entries(WEIGHTS)) {
+  for (const [k, w] of Object.entries(weights)) {
     const v = row[k];
     if (typeof v === "number") { num += v * w; den += w; }
   }
@@ -151,6 +217,20 @@ export default function HiringScoreboard() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("composite");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [weightsOpen, setWeightsOpen] = useState(false);
+  const [weights, setWeightsState] = useState<Record<string, number>>(loadWeights);
+
+  // Reload weights from localStorage whenever the dialog closes
+  const handleWeightsClose = () => {
+    setWeightsOpen(false);
+    setWeightsState(loadWeights());
+  };
+
+  // Cols with dynamic weight sub-labels
+  const cols = useMemo<Col[]>(() => STATIC_COLS.map(c => ({
+    ...c,
+    sub: weights[c.key] != null ? `w${weights[c.key]}` : undefined,
+  })), [weights]);
 
   const load = async () => {
     setLoading(true);
@@ -169,13 +249,11 @@ export default function HiringScoreboard() {
   const rows = useMemo(() => {
     return candidates.map(c => {
       const row = resolveRow(c);
-      const composite = compositeScore(row);
-      // "Filled" = how many of the 6 composite tests have a number.
-      // Used to flag mid-funnel candidates and to sort by completeness.
-      const filled = Object.keys(WEIGHTS).filter(k => typeof row[k] === "number").length;
+      const composite = compositeScore(row, weights);
+      const filled = Object.keys(weights).filter(k => typeof row[k] === "number").length;
       return { c, row, composite, filled };
     });
-  }, [candidates]);
+  }, [candidates, weights]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -229,13 +307,13 @@ export default function HiringScoreboard() {
   // exported so Excel / Google Sheets gets a 1:1 copy of the on-screen
   // view (easy to paste into the Eendigo admin or email to the team).
   const exportCsv = () => {
-    const headerCells = ["Name", "Stage", ...COLS.map(c => c.label), "Weighted Avg", "Filled /6"];
+    const headerCells = ["Name", "Stage", ...cols.map(c => c.label), "Weighted Avg", "Filled /6"];
     const lines = [headerCells.join(",")];
     for (const r of sorted) {
       const cells: string[] = [
         `"${r.c.name.replace(/"/g, '""')}"`,
         r.c.stage ?? "",
-        ...COLS.map(col => {
+        ...cols.map(col => {
           const v = r.row[col.key];
           if (v == null) return "";
           return typeof v === "number" ? String(v) : `"${String(v).replace(/"/g, '""')}"`;
@@ -256,9 +334,10 @@ export default function HiringScoreboard() {
 
   return (
     <div>
+      <WeightsDialog open={weightsOpen} onClose={handleWeightsClose} />
       <PageHeader
         title="Hiring Scoreboard"
-        description="Every candidate, every test score — mirrors the Eendigo admin page. Weighted Avg uses HSA (30) · TG (25) · CS LM (25) · Intro (10) · PPT (5) · Final (5). Missing scores are skipped and their weight redistributed."
+        description="Every candidate, every test score. Weighted Avg uses the configured weights. Missing scores are skipped and their weight redistributed."
         actions={
           <div className="flex gap-2">
             <Link href="/hiring">
@@ -266,9 +345,9 @@ export default function HiringScoreboard() {
                 <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Pipeline
               </Button>
             </Link>
-            <Link href="/hiring/scores">
-              <Button variant="outline" size="sm">Candidate Scoring</Button>
-            </Link>
+            <Button variant="outline" size="sm" onClick={() => setWeightsOpen(true)}>
+              <SlidersHorizontal className="w-3.5 h-3.5 mr-1" /> Weights
+            </Button>
             <Button variant="outline" size="sm" onClick={load}>
               <RefreshCw className="w-3.5 h-3.5 mr-1" /> Reload
             </Button>
@@ -320,7 +399,7 @@ export default function HiringScoreboard() {
                   >
                     Stage<SortIcon k="stage" />
                   </TableHead>
-                  {COLS.map(col => (
+                  {cols.map(col => (
                     <TableHead
                       key={col.key}
                       className={`cursor-pointer select-none hover:bg-muted/50 ${col.align === "center" ? "text-center" : ""} ${col.width ?? ""}`}
@@ -353,14 +432,12 @@ export default function HiringScoreboard() {
                   <TableRow key={r.c.id} className="hover:bg-muted/20">
                     <TableCell className="text-[11px] text-muted-foreground font-mono">{i + 1}</TableCell>
                     <TableCell className="font-semibold text-sm">
-                      <Link href="/hiring/scores" className="hover:underline">
-                        {r.c.name}
-                      </Link>
+                      {r.c.name}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground capitalize whitespace-nowrap">
                       {(r.c.stage ?? "").replace(/_/g, " ")}
                     </TableCell>
-                    {COLS.map(col => {
+                    {cols.map(col => {
                       const v = r.row[col.key];
                       if (col.kind === "text") {
                         return (
