@@ -94,10 +94,12 @@ function AgentSection({
             return (
               <div
                 key={i}
-                className={`flex items-start gap-2 px-2 py-1.5 rounded border ${m.border} ${m.bg}`}
+                className={`flex items-start gap-2 px-2 py-1.5 rounded border ${m.border} ${m.bg} ${d.keyOutput ? "ring-1 ring-current/20" : ""}`}
               >
                 <span className="text-[13px] mt-0.5 shrink-0" title={m.desc}>{m.emoji}</span>
-                <div className="flex-1 min-w-0 text-[12px] leading-snug">{d.text}</div>
+                <div className={`flex-1 min-w-0 text-[12px] leading-snug ${d.keyOutput ? "underline underline-offset-2 decoration-current font-semibold" : ""}`}>
+                  {d.text}
+                </div>
                 <span className={`shrink-0 text-[10px] font-medium ${m.text}`} title={m.desc}>
                   {m.label}
                 </span>
