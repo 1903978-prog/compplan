@@ -141,6 +141,30 @@ const STATIC_COLS: Col[] = [
   { key: "final",       label: "Final",     kind: "score", align: "center" },
 ];
 
+// ── Candidate tiers (T11) ─────────────────────────────────────────────────────
+// Tier thresholds per field. Missing tests are assumed optimistically to pass
+// (a candidate with only Logic + English is projected into a tier immediately).
+const TIER_THRESHOLDS = {
+  tier1: { logic: 78, verbal: 100, testgorilla: 71, intro_call: 50, case_study: 60 },
+  tier2: { logic: 68, verbal: 80,  testgorilla: 60, intro_call: 40, case_study: 50 },
+} as const;
+const TIER_FIELDS = ["logic", "verbal", "testgorilla", "intro_call", "case_study"] as const;
+type TierResult = "Tier 1" | "Tier 2" | "—";
+
+function computeTier(row: Record<string, number | string | null>): TierResult {
+  const meetsTier = (thresholds: Record<string, number>) =>
+    TIER_FIELDS.every(f => {
+      const v = row[f];
+      if (typeof v !== "number") return true; // missing → optimistic pass
+      return v >= thresholds[f];
+    });
+  if (meetsTier(TIER_THRESHOLDS.tier1)) return "Tier 1";
+  if (meetsTier(TIER_THRESHOLDS.tier2)) return "Tier 2";
+  return "—";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function scoreColor(n: number | null | undefined): string {
   if (n == null) return "bg-muted/20 text-muted-foreground";
   if (n >= 85) return "bg-emerald-500 text-white font-semibold";
@@ -209,7 +233,7 @@ function compositeScore(row: Record<string, number | string | null>, weights: Re
   return Math.round(num / den);
 }
 
-type SortKey = "name" | "stage" | "composite" | "filled" | string;
+type SortKey = "name" | "stage" | "composite" | "filled" | "tier" | string;
 
 export default function HiringScoreboard() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -251,7 +275,8 @@ export default function HiringScoreboard() {
       const row = resolveRow(c);
       const composite = compositeScore(row, weights);
       const filled = Object.keys(weights).filter(k => typeof row[k] === "number").length;
-      return { c, row, composite, filled };
+      const tier = computeTier(row);
+      return { c, row, composite, filled, tier };
     });
   }, [candidates, weights]);
 
@@ -274,6 +299,7 @@ export default function HiringScoreboard() {
         if (sortKey === "stage")     return (r.c.stage ?? "").toLowerCase();
         if (sortKey === "composite") return r.composite ?? -1;
         if (sortKey === "filled")    return r.filled;
+        if (sortKey === "tier")      return r.tier === "Tier 1" ? 1 : r.tier === "Tier 2" ? 2 : 3;
         const v = r.row[sortKey];
         if (typeof v === "number") return v;
         if (typeof v === "string") return v.toLowerCase();
@@ -370,8 +396,16 @@ export default function HiringScoreboard() {
             {sorted.length} candidate{sorted.length === 1 ? "" : "s"}
             {search && ` (filtered from ${rows.length})`}
           </div>
-          <div className="text-[10px] text-muted-foreground italic ml-auto">
-            Sub-scores (Logic · Verbal · Excel · P1 · P2) are displayed only — TG overall already carries their weight. CS Rate is the assessor rating; CS LM is the final line-manager decision (authoritative for the composite).
+          <div className="text-[10px] text-muted-foreground italic ml-auto space-y-0.5">
+            <div>Sub-scores (Logic · Verbal · Excel · P1 · P2) are displayed only — TG overall already carries their weight.</div>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold not-italic">Tiers</span>
+              <span className="bg-emerald-100 text-emerald-800 px-1 rounded text-[9px] font-semibold">Tier 1</span>
+              <span>Logic≥78 · English≥100 · TG≥71 · Intro≥50 · CS≥60</span>
+              <span className="bg-amber-100 text-amber-800 px-1 rounded text-[9px] font-semibold">Tier 2</span>
+              <span>Logic≥68 · English≥80 · TG≥60 · Intro≥40 · CS≥50</span>
+              <span className="text-muted-foreground/70">(missing tests assumed to pass)</span>
+            </div>
           </div>
         </div>
 
@@ -425,6 +459,12 @@ export default function HiringScoreboard() {
                   >
                     / 6<SortIcon k="filled" />
                   </TableHead>
+                  <TableHead
+                    className="cursor-pointer select-none hover:bg-muted/50 text-center font-bold"
+                    onClick={() => toggleSort("tier")}
+                  >
+                    Tier<SortIcon k="tier" />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -461,6 +501,15 @@ export default function HiringScoreboard() {
                     </TableCell>
                     <TableCell className="text-center text-xs text-muted-foreground font-mono">
                       {r.filled}/6
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <span className={`inline-flex items-center justify-center px-2 h-6 rounded-full text-[11px] font-semibold ${
+                        r.tier === "Tier 1" ? "bg-emerald-100 text-emerald-800 border border-emerald-300" :
+                        r.tier === "Tier 2" ? "bg-amber-100 text-amber-800 border border-amber-300" :
+                        "bg-muted/20 text-muted-foreground"
+                      }`}>
+                        {r.tier}
+                      </span>
                     </TableCell>
                   </TableRow>
                 ))}
