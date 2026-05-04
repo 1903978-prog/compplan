@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Receipt, Send, Search, AlertTriangle, CheckCircle, Clock, DollarSign, RefreshCw, EyeOff, Eye, ArrowUpDown, ArrowUp, ArrowDown, X, Bell, Plus, CreditCard, Trophy, Pencil, Trash2 } from "lucide-react";
+import { Receipt, Send, Search, AlertTriangle, CheckCircle, Clock, DollarSign, RefreshCw, EyeOff, Eye, ArrowUpDown, ArrowUp, ArrowDown, X, Bell, Plus, CreditCard, Trophy, Pencil, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -222,6 +222,7 @@ export default function Invoicing() {
   const [editingCodeValue, setEditingCodeValue] = useState<string>("");
   const [editingApplyToClient, setEditingApplyToClient] = useState<boolean>(true);
   const [savingCodeFor, setSavingCodeFor] = useState<number | null>(null);
+  const [showCashNeeds, setShowCashNeeds] = useState(false);
 
   // ── Won Projects (moved from Pricing → AR). Intentionally minimal: only
   // project_code, total_amount, nb_of_invoices, and the invoicing schedule
@@ -574,6 +575,44 @@ export default function Invoicing() {
     const overdueCount = visible.filter(i => isOverdue(i)).length;
     return { totalOutstanding, totalOverdue, paidThisYear, openCount, overdueCount };
   }, [invoices, hiddenIds]);
+
+  // ── Cash Needs — next 4 payment rounds (5th and 15th) ─────────────────────
+  // SQ1 = EUR entity, LLC = USD entity.
+  // Round 0: all open invoices due on or before round date (includes overdue).
+  // Rounds 1+: invoices whose due_date falls in the new window only.
+  const cashNeeds = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const candidates: Date[] = [];
+    for (let offset = 0; offset < 4 && candidates.length < 4; offset++) {
+      const month = today.getMonth() + offset;
+      const yr = today.getFullYear() + Math.floor(month / 12);
+      const mo = month % 12;
+      for (const day of [5, 15]) {
+        const d = new Date(yr, mo, day);
+        if (d >= today && candidates.length < 4) candidates.push(d);
+      }
+    }
+    const openInvoices = invoices.filter(i => {
+      const s = (i.state ?? "").toLowerCase();
+      return s === "open" || s === "partial" || isOverdue(i);
+    });
+    return candidates.slice(0, 4).map((roundDate, idx) => {
+      const prevDate = idx === 0 ? new Date(0) : candidates[idx - 1];
+      const due = openInvoices.filter(i => {
+        if (!i.due_date) return false;
+        const d = new Date(i.due_date);
+        return idx === 0 ? d <= roundDate : d > prevDate && d <= roundDate;
+      });
+      const sq1 = due
+        .filter(i => (i.currency ?? "EUR").toUpperCase() === "EUR")
+        .reduce((s, i) => s + Number(i.due_amount ?? 0), 0);
+      const llc = due
+        .filter(i => (i.currency ?? "").toUpperCase() === "USD")
+        .reduce((s, i) => s + Number(i.due_amount ?? 0), 0);
+      const label = `${roundDate.getDate() === 5 ? "5th" : "15th"} ${roundDate.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}`;
+      return { date: roundDate, label, sq1_eur: sq1, llc_usd: llc, count: due.length };
+    });
+  }, [invoices]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -1002,6 +1041,62 @@ export default function Invoicing() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── CASH NEEDS — NEXT 4 PAYMENT ROUNDS ─────────────────────────────── */}
+      {/* SQ1 = EUR invoices, LLC = USD invoices.
+          Round 0 shows all currently outstanding + due-by-date invoices;
+          rounds 1-3 show incremental windows so there is no double-counting. */}
+      <Card className="mt-6">
+        <CardContent className="p-4">
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-2 text-left"
+            onClick={() => setShowCashNeeds(v => !v)}
+          >
+            <div className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-blue-500" />
+              <h3 className="text-lg font-semibold">Cash Needs — Next 4 Rounds</h3>
+              <Badge variant="secondary" className="text-[11px]">5th &amp; 15th</Badge>
+            </div>
+            {showCashNeeds
+              ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" />
+              : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
+          </button>
+
+          {showCashNeeds && (
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              {cashNeeds.map((round, i) => (
+                <div
+                  key={round.label}
+                  className="border rounded-lg p-3 bg-blue-50/50 border-blue-200"
+                >
+                  <div className="text-[10px] font-semibold text-blue-600 uppercase tracking-wide mb-0.5">
+                    Round {i + 1}
+                  </div>
+                  <div className="text-base font-bold text-blue-800 mb-3">{round.label}</div>
+                  <div className="space-y-2">
+                    <div>
+                      <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">SQ1 · EUR</div>
+                      <div className="text-lg font-bold tabular-nums text-blue-900" data-privacy="blur">
+                        {round.sq1_eur > 0 ? `€${Math.round(round.sq1_eur).toLocaleString("it-IT")}` : "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">LLC · USD</div>
+                      <div className="text-lg font-bold tabular-nums text-blue-900" data-privacy="blur">
+                        {round.llc_usd > 0 ? `$${Math.round(round.llc_usd).toLocaleString("it-IT")}` : "—"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-blue-100 text-[10px] text-muted-foreground">
+                    {round.count} invoice{round.count !== 1 ? "s" : ""} due
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── WON PROJECTS (moved from Pricing tool, Task 11) ─────────────────── */}
       {/* Minimal model: project code + total + number of invoices + free-form

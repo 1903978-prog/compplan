@@ -7,7 +7,7 @@ import { useStore } from "@/hooks/use-store";
 import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
-  ArrowUpRight, Target, Layers, ClipboardList, FlaskConical,
+  ArrowUpRight, Target, Layers, ClipboardList, FlaskConical, CreditCard,
 } from "lucide-react";
 
 // ─── Executive Dashboard ─────────────────────────────────────────────────
@@ -28,6 +28,13 @@ interface Candidate {
   name: string;
   stage: string | null;
   sort_order?: number;
+  logic_pct?: number | null;
+  verbal_pct?: number | null;
+  excel_pct?: number | null;
+  intro_rate_pct?: number | null;
+  cs_rate_pct?: number | null;
+  cs_lm?: string | null;
+  scores?: Record<string, number | null> | null;
 }
 
 interface Invoice {
@@ -351,6 +358,47 @@ export default function ExecDashboard() {
     return { openCount: open.length, outstanding, overdue, overdueCount, overdue60 };
   }, [invoices]);
 
+  // ─── Payment rounds (5th and 15th of each month) ─────────────────────
+  // SQ1 = EUR entity, LLC = USD entity.
+  // For each round we show the total outstanding due_amount from open/partial
+  // invoices whose due_date falls on or before that round date.
+  const paymentRounds = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    // Find next 2 round dates (5th and 15th, whichever comes first)
+    const candidates: Date[] = [];
+    for (let offset = 0; offset < 4 && candidates.length < 4; offset++) {
+      const month = today.getMonth() + offset;
+      const yr = today.getFullYear() + Math.floor(month / 12);
+      const mo = month % 12;
+      for (const day of [5, 15]) {
+        const d = new Date(yr, mo, day);
+        if (d >= today && candidates.length < 4) candidates.push(d);
+      }
+    }
+    const open = invoices.filter(i => {
+      const s = (i.state ?? "").toLowerCase();
+      return s === "open" || s === "partial";
+    });
+    return candidates.slice(0, 2).map((roundDate, idx) => {
+      const prevDate = idx === 0 ? new Date(0) : candidates[idx - 1];
+      // Round 0 catches all overdue + currently-due; rounds 1+ only invoices
+      // whose due_date falls in the new window.
+      const due = open.filter(i => {
+        if (!i.due_date) return false;
+        const d = new Date(i.due_date);
+        return idx === 0 ? d <= roundDate : d > prevDate && d <= roundDate;
+      });
+      const sq1 = due
+        .filter(i => (i.currency ?? "EUR").toUpperCase() === "EUR")
+        .reduce((s, i) => s + Number(i.due_amount ?? i.amount ?? 0), 0);
+      const llc = due
+        .filter(i => (i.currency ?? "").toUpperCase() === "USD")
+        .reduce((s, i) => s + Number(i.due_amount ?? i.amount ?? 0), 0);
+      const label = `${roundDate.getDate() === 5 ? "5th" : "15th"} ${roundDate.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}`;
+      return { date: roundDate, label, sq1_eur: sq1, llc_usd: llc, count: due.length };
+    });
+  }, [invoices]);
+
   // ─── NET1 lookup: case → canonical_net_weekly ────────────────────────
   // Mirrors PricingTool's logic — all monetary figures use the pricing
   // engine's NET1, not stored total_fee (which may be stale).
@@ -651,6 +699,42 @@ export default function ExecDashboard() {
   }, [employeeTasks]);
 
   // ─── Candidates missing key tests ────────────────────────────────────
+  // ─── Top Tier 1 candidates ───────────────────────────────────────────
+  const topTier1 = useMemo(() => {
+    const TIER1 = { logic: 78, verbal: 100, testgorilla: 71, intro_call: 50, case_study: 60 };
+    const ACTIVE = new Set(["potential", "after_intro", "after_csi_asc", "after_csi_lm"]);
+    const WEIGHTS = { logic: 15, verbal: 10, testgorilla: 15, intro_call: 10, case_study: 15 };
+
+    return candidates
+      .filter(c => ACTIVE.has(c.stage ?? "") && c.stage !== "out")
+      .map(c => {
+        const sc = c.scores ?? {};
+        const row = {
+          logic:      c.logic_pct ?? sc.hsa ?? null,
+          verbal:     c.verbal_pct ?? null,
+          testgorilla: sc.testgorilla ?? null,
+          intro_call:  sc.intro_call ?? c.intro_rate_pct ?? null,
+          case_study:  sc.case_study ?? c.cs_rate_pct ?? null,
+        };
+        // Tier 1: all present scores must meet thresholds (missing = optimistic pass)
+        const isTier1 = (Object.keys(TIER1) as (keyof typeof TIER1)[]).every(f => {
+          const v = row[f as keyof typeof row];
+          return typeof v !== "number" || v >= TIER1[f];
+        });
+        // Composite over available scores
+        let totalW = 0, weighted = 0;
+        for (const [k, w] of Object.entries(WEIGHTS)) {
+          const v = row[k as keyof typeof row];
+          if (typeof v === "number" && !isNaN(v)) { weighted += v * w; totalW += w; }
+        }
+        const composite = totalW > 0 ? Math.round(weighted / totalW) : null;
+        return { c, row, isTier1, composite };
+      })
+      .filter(x => x.isTier1)
+      .sort((a, b) => (b.composite ?? 0) - (a.composite ?? 0))
+      .slice(0, 3);
+  }, [candidates]);
+
   const needsTests = useMemo(() => {
     const ACTIVE_STAGES = new Set(["potential", "after_intro", "after_csi_asc", "after_csi_lm"]);
     return candidates
@@ -741,6 +825,46 @@ export default function ExecDashboard() {
         <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open invoices`} icon={Receipt}   tone="amber"   href="/invoicing" />
         <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
         <Kpi label="Active projects" value={String(ongoing.count)}     sub={eur(ongoing.totalValue)}       icon={Briefcase}  tone="emerald" href="/bd" />
+      </div>
+
+      {/* ── Next Payment Rounds (5th & 15th) ─────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {paymentRounds.map((round, idx) => (
+          <Card key={round.label} className="p-4 bg-blue-50 ring-1 ring-blue-200 border-0 hover:shadow-md transition-shadow">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <div className="text-[10px] font-semibold text-blue-600 uppercase tracking-wide">
+                  Payment Round {idx + 1}
+                </div>
+                <div className="text-xl font-bold text-blue-800">{round.label}</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  {round.count} invoice{round.count !== 1 ? "s" : ""} due
+                </div>
+              </div>
+              <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                <CreditCard className="w-5 h-5 text-blue-600" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-white/70 rounded border border-blue-100 p-2.5">
+                <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
+                  SQ1 · EUR
+                </div>
+                <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
+                  {round.sq1_eur > 0 ? `€${Math.round(round.sq1_eur).toLocaleString("it-IT")}` : "—"}
+                </div>
+              </div>
+              <div className="bg-white/70 rounded border border-blue-100 p-2.5">
+                <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
+                  LLC · USD
+                </div>
+                <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
+                  {round.llc_usd > 0 ? `$${Math.round(round.llc_usd).toLocaleString("it-IT")}` : "—"}
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
       </div>
 
       {/* ── Ongoing Projects (proposals with end_date in the future) ─── */}
