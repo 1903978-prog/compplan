@@ -10,8 +10,11 @@ import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
   ArrowUpRight, Target, Layers, ClipboardList, FlaskConical, CreditCard,
-  Pencil, Save, X, Plus, Trash2,
+  Pencil, Save, X, Plus, Trash2, Info,
 } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 // ─── Executive Dashboard ─────────────────────────────────────────────────
 //
@@ -220,6 +223,9 @@ export default function ExecDashboard() {
   const [loading, setLoading] = useState(!cached); // skip spinner if cache is warm
   const [lastFetch, setLastFetch] = useState<Date | null>(cached?.ts ? new Date(cached.ts) : null);
 
+  // ── Payment round detail popup ─────────────────────────────────────────
+  const [roundDetailIdx, setRoundDetailIdx] = useState<number | null>(null);
+
   // ── Inline editing for Ongoing Projects table ──────────────────────────
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
   const [editManager, setEditManager] = useState("");
@@ -396,9 +402,8 @@ export default function ExecDashboard() {
   }, [invoices]);
 
   // ─── Payment rounds (5th and 15th of each month) ─────────────────────
-  // SQ1 = EUR entity, LLC = USD entity.
-  // For each round we show the total outstanding due_amount from open/partial
-  // invoices whose due_date falls on or before that round date.
+  // For each round we show EUR and USD totals from open/partial invoices
+  // whose due_date falls on or before that round date.
   const paymentRounds = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     // Find next 2 round dates (5th and 15th, whichever comes first)
@@ -425,14 +430,14 @@ export default function ExecDashboard() {
         const d = new Date(i.due_date);
         return idx === 0 ? d <= roundDate : d > prevDate && d <= roundDate;
       });
-      const sq1 = due
+      const eur_total = due
         .filter(i => (i.currency ?? "EUR").toUpperCase() === "EUR")
         .reduce((s, i) => s + Number(i.due_amount ?? i.amount ?? 0), 0);
-      const llc = due
+      const usd_total = due
         .filter(i => (i.currency ?? "").toUpperCase() === "USD")
         .reduce((s, i) => s + Number(i.due_amount ?? i.amount ?? 0), 0);
       const label = `${roundDate.getDate() === 5 ? "5th" : "15th"} ${roundDate.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}`;
-      return { date: roundDate, label, sq1_eur: sq1, llc_usd: llc, count: due.length };
+      return { date: roundDate, label, eur_total, usd_total, count: due.length, invoices: due };
     });
   }, [invoices]);
 
@@ -878,31 +883,104 @@ export default function ExecDashboard() {
                   {round.count} invoice{round.count !== 1 ? "s" : ""} due
                 </div>
               </div>
-              <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                <CreditCard className="w-5 h-5 text-blue-600" />
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setRoundDetailIdx(idx)}
+                  className="w-7 h-7 rounded-full bg-blue-100 hover:bg-blue-200 flex items-center justify-center transition-colors"
+                  title="Show invoice breakdown"
+                >
+                  <Info className="w-4 h-4 text-blue-600" />
+                </button>
+                <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center">
+                  <CreditCard className="w-5 h-5 text-blue-600" />
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="bg-white/70 rounded border border-blue-100 p-2.5">
                 <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
-                  SQ1 · EUR
+                  EUR
                 </div>
                 <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
-                  {round.sq1_eur > 0 ? `€${Math.round(round.sq1_eur).toLocaleString("it-IT")}` : "—"}
+                  {round.eur_total > 0 ? `€${Math.round(round.eur_total).toLocaleString("it-IT")}` : "—"}
                 </div>
               </div>
               <div className="bg-white/70 rounded border border-blue-100 p-2.5">
                 <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
-                  LLC · USD
+                  USD
                 </div>
                 <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
-                  {round.llc_usd > 0 ? `$${Math.round(round.llc_usd).toLocaleString("it-IT")}` : "—"}
+                  {round.usd_total > 0 ? `$${Math.round(round.usd_total).toLocaleString("it-IT")}` : "—"}
                 </div>
               </div>
             </div>
           </Card>
         ))}
       </div>
+
+      {/* ── Payment Round detail popup ────────────────────────────────── */}
+      {roundDetailIdx !== null && paymentRounds[roundDetailIdx] && (() => {
+        const round = paymentRounds[roundDetailIdx];
+        return (
+          <Dialog open onOpenChange={() => setRoundDetailIdx(null)}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>
+                  Payment Round {roundDetailIdx + 1} — {round.label}
+                </DialogTitle>
+              </DialogHeader>
+              <p className="text-[12px] text-muted-foreground -mt-1 mb-3">
+                All open/partial invoices due on or before this payment date.
+                {roundDetailIdx > 0 && " (Excludes invoices already in Round 1.)"}
+              </p>
+              {round.invoices.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No invoices due for this round.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                  {round.invoices.map(inv => {
+                    const amt = Number(inv.due_amount ?? inv.amount ?? 0);
+                    const currency = (inv.currency ?? "EUR").toUpperCase();
+                    const symbol = currency === "USD" ? "$" : "€";
+                    return (
+                      <div key={inv.id} className="flex items-center justify-between gap-3 bg-muted/40 rounded px-3 py-2 text-sm">
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium truncate block">{inv.client?.name ?? "—"}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            #{inv.number}
+                            {inv.due_date ? ` · due ${new Date(inv.due_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}
+                            {" · "}<span className="capitalize">{inv.state}</span>
+                          </span>
+                        </div>
+                        <div className="font-semibold tabular-nums shrink-0" data-privacy="blur">
+                          {symbol}{Math.round(amt).toLocaleString("it-IT")} <span className="text-[10px] font-normal text-muted-foreground">{currency}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2 text-sm">
+                {round.eur_total > 0 && (
+                  <div className="bg-blue-50 rounded p-2 text-center">
+                    <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">EUR total</div>
+                    <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
+                      €{Math.round(round.eur_total).toLocaleString("it-IT")}
+                    </div>
+                  </div>
+                )}
+                {round.usd_total > 0 && (
+                  <div className="bg-blue-50 rounded p-2 text-center">
+                    <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">USD total</div>
+                    <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
+                      ${Math.round(round.usd_total).toLocaleString("it-IT")}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {/* ── Ongoing Projects (proposals with end_date in the future) ─── */}
       {ongoing.list.length > 0 && (
