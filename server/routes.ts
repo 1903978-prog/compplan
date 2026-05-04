@@ -345,7 +345,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // re-run of the idempotent SEED_PROPOSALS insert. Returns how many rows
   // were inserted. Safe: the insert uses WHERE NOT EXISTS on project_name
   // so it never duplicates or touches existing rows.
-  app.post("/api/diag/reseed-proposals", async (_req, res) => {
+  app.post("/api/diag/reseed-proposals", requireAuth, async (_req, res) => {
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");

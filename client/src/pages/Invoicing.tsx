@@ -849,16 +849,16 @@ export default function Invoicing() {
                   <TableHead className="text-xs font-semibold cursor-pointer select-none" onClick={() => handleSort("client")}>
                     <span className="flex items-center">Client <SortIcon col="client" /></span>
                   </TableHead>
-                  <TableHead className="text-xs font-semibold">Project</TableHead>
-                  <TableHead className="text-xs font-semibold">Subject</TableHead>
+                  <TableHead className="text-xs font-semibold w-[80px]">Project</TableHead>
+                  <TableHead className="text-xs font-semibold w-[110px]">Subject</TableHead>
                   <TableHead className="text-xs font-semibold text-right cursor-pointer select-none" onClick={() => handleSort("amount")}>
                     <span className="flex items-center justify-end">Amount <SortIcon col="amount" /></span>
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right cursor-pointer select-none" onClick={() => handleSort("due_amount")}>
                     <span className="flex items-center justify-end">Due <SortIcon col="due_amount" /></span>
                   </TableHead>
-                  <TableHead className="text-xs font-semibold cursor-pointer select-none" onClick={() => handleSort("due_date")}>
-                    <span className="flex items-center">Due Date <SortIcon col="due_date" /></span>
+                  <TableHead className="text-xs font-semibold cursor-pointer select-none w-[90px]" onClick={() => handleSort("due_date")}>
+                    <span className="flex items-center whitespace-nowrap">Due Date <SortIcon col="due_date" /></span>
                   </TableHead>
                   <TableHead className="text-xs font-semibold cursor-pointer select-none" onClick={() => handleSort("status")}>
                     <span className="flex items-center">Status <SortIcon col="status" /></span>
@@ -885,7 +885,7 @@ export default function Invoicing() {
                     <TableRow key={inv.id} className={`${overdue && !hidden ? "bg-red-50/50" : ""} ${hidden ? "opacity-40" : ""}`}>
                       <TableCell className="font-mono text-sm font-semibold">{inv.number}</TableCell>
                       <TableCell className="text-sm">{inv.client?.name ?? "\u2014"}</TableCell>
-                      <TableCell className="text-xs font-mono font-semibold text-primary">
+                      <TableCell className="text-xs font-mono font-semibold text-primary w-[80px] max-w-[80px]">
                         {editingCodeFor === inv.id ? (
                           (() => {
                             const clientStats = clientCodeIndex.get(inv.client?.name ?? "") ?? [];
@@ -1000,12 +1000,12 @@ export default function Invoicing() {
                           </button>
                         )}
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{inv.subject ?? "\u2014"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground w-[110px] max-w-[110px] truncate">{inv.subject ?? "\u2014"}</TableCell>
                       <TableCell className="text-sm font-mono text-right font-semibold">{fmtCurrency(inv.amount, inv.currency)}</TableCell>
                       <TableCell className={`text-sm font-mono text-right font-bold ${overdue && !hidden ? "text-red-600" : inv.due_amount > 0 ? "text-amber-600" : "text-emerald-600"}`}>
                         {inv.due_amount > 0 ? fmtCurrency(inv.due_amount, inv.currency) : "\u2014"}
                       </TableCell>
-                      <TableCell className={`text-xs ${overdue && !hidden ? "text-red-600 font-semibold" : ""}`}>{fmtDate(inv.due_date)}</TableCell>
+                      <TableCell className={`text-xs whitespace-nowrap w-[90px] ${overdue && !hidden ? "text-red-600 font-semibold" : ""}`}>{fmtDate(inv.due_date)}</TableCell>
                       <TableCell>
                         <Badge variant={status.variant} className="text-[10px]">{status.label}</Badge>
                       </TableCell>

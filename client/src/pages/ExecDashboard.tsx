@@ -236,7 +236,7 @@ export default function ExecDashboard() {
 
   async function saveEdit(id: number) {
     try {
-      const res = await fetch(`/api/proposals/${id}`, {
+      const res = await fetch(`/api/pricing/proposals/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

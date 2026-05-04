@@ -2567,7 +2567,8 @@ export default function PricingTool() {
   };
 
   const deleteDuplicate = async (id: number) => {
-    await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
+    const res = await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
+    if (!res.ok) { alert(`Delete failed (${res.status}) — please refresh and try again.`); return; }
     setProposals(prev => prev.filter(p => p.id !== id));
     _invalidatePricingCache();
   };
