@@ -56,6 +56,10 @@ interface PricingProposal {
   currency: string | null;
   end_date?: string | null;
   last_invoice_at?: string | null;
+  start_date?: string | null;
+  win_probability?: number | null;
+  team_members?: { role: string; name: string }[] | null;
+  excluded_from_analysis?: 0 | 1 | boolean | null;
 }
 
 interface WonProject {
@@ -382,7 +386,7 @@ export default function ExecDashboard() {
       // duplicates, internal demos, etc. that the user explicitly marked
       // as junk in the Pricing Tool. Without this filter, flagged rows
       // still inflate Pending/Won/Lost counts on the dashboard.
-      if ((p as any).excluded_from_analysis === 1 || (p as any).excluded_from_analysis === true) return false;
+      if (p.excluded_from_analysis === 1 || p.excluded_from_analysis === true) return false;
       if (!p.proposal_date) return true;
       const d = new Date(p.proposal_date);
       return isNaN(d.getTime()) || d >= cutoff;
@@ -434,7 +438,7 @@ export default function ExecDashboard() {
     }
 
     const allProps: PricingProposal[] = proposals.filter(p =>
-      !(p as any).excluded_from_analysis
+      !p.excluded_from_analysis
     );
 
     return months.map(({ label, start, end }) => {
@@ -442,20 +446,20 @@ export default function ExecDashboard() {
       let pipeline = 0;
 
       for (const p of allProps) {
-        const pStart = (p as any).start_date ? new Date((p as any).start_date) : (p.proposal_date ? new Date(p.proposal_date) : null);
+        const pStart = p.start_date ? new Date(p.start_date) : (p.proposal_date ? new Date(p.proposal_date) : null);
         const pEnd = p.end_date ? new Date(p.end_date) : (pStart && p.duration_weeks ? new Date(pStart.getTime() + p.duration_weeks * 7 * 86_400_000) : null);
         if (!pStart || !pEnd) continue;
         // Active during month if they overlap
         if (pEnd < start || pStart > end) continue;
 
-        const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
+        const teamLen = Array.isArray(p.team_members) ? p.team_members.length : 0;
         const slots = Math.max(1, teamLen);
 
         if (p.outcome === "won") {
           committed += slots;
         } else if (p.outcome === "pending" || !p.outcome) {
-          const wp = typeof (p as any).win_probability === "number"
-            ? Math.max(0, Math.min(1, (p as any).win_probability / 100))
+          const wp = typeof p.win_probability === "number"
+            ? Math.max(0, Math.min(1, p.win_probability / 100))
             : 0.5;
           pipeline += slots * wp;
         }
@@ -516,7 +520,7 @@ export default function ExecDashboard() {
     // Committed: each ongoing project with a team list uses team.length;
     // projects with no team data default to 1 slot each.
     const committedSlots = ongoing.list.reduce((sum, p) => {
-      const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
+      const teamLen = Array.isArray(p.team_members) ? p.team_members.length : 0;
       return sum + Math.max(1, teamLen);
     }, 0);
 
@@ -526,9 +530,9 @@ export default function ExecDashboard() {
     // of how likely the deal was.
     const pipeline = bd.pendingList;
     const pipelineWeightedSlots = pipeline.reduce((sum, p) => {
-      const teamLen = Array.isArray((p as any).team_members) ? (p as any).team_members.length : 0;
+      const teamLen = Array.isArray(p.team_members) ? p.team_members.length : 0;
       const slots = Math.max(1, teamLen);
-      const wpRaw = (p as any).win_probability;
+      const wpRaw = p.win_probability;
       // win_probability is stored 0–100 (percent). Coerce + clamp.
       const wp = (typeof wpRaw === "number" && isFinite(wpRaw))
         ? Math.max(0, Math.min(1, wpRaw / 100))
@@ -631,11 +635,12 @@ export default function ExecDashboard() {
 
   // ─── Employee tasks ───────────────────────────────────────────────────
   const [employeeTasks, setEmployeeTasks] = useState<any[]>([]);
+  const [taskLoadFailed, setTaskLoadFailed] = useState(false);
   useEffect(() => {
     fetch("/api/employee-tasks", { credentials: "include" })
-      .then(r => r.ok ? r.json() : [])
-      .then(d => setEmployeeTasks(Array.isArray(d) ? d : []))
-      .catch(() => {});
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { setEmployeeTasks(Array.isArray(d) ? d : []); setTaskLoadFailed(false); })
+      .catch(() => setTaskLoadFailed(true));
   }, []);
 
   const overdueTasks = useMemo(() => {
@@ -1347,7 +1352,11 @@ export default function ExecDashboard() {
               TDL <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
-          {overdueTasks.length === 0 ? (
+          {taskLoadFailed ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-amber-600">
+              Could not load tasks — check connection.
+            </div>
+          ) : overdueTasks.length === 0 ? (
             <div className="flex items-center justify-center gap-2 py-6 text-xs text-emerald-600">
               <CheckCircle2 className="w-4 h-4" /> No overdue tasks — great.
             </div>

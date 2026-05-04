@@ -31,7 +31,7 @@ type Category = "intro_call" | "case_study" | "pitch" | "other";
 function categorize(m: Meeting): Category {
   const t = m.title.toLowerCase();
   if (t.includes("case study")) return "case_study";
-  if (t.includes("intro")) return "intro_call";
+  if (/\bintro\b/.test(t) || t.includes("intro call")) return "intro_call";
   const hasExternal = m.participants.some(
     p => p.email && !p.email.endsWith("@eendigo.com")
   );
