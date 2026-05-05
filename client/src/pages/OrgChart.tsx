@@ -1650,4 +1650,3 @@ function SpecGroup({
 
 // AgentSpecSection removed — spec data now rendered inline inside
 // SectionBlock("Skills & Profile") within RoleDetailDialog.
-// MARKER-TEST
