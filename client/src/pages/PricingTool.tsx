@@ -1823,17 +1823,6 @@ export default function PricingTool() {
               const isCustom = !!m.name && !inList;
               return (
                 <div key={i} className="flex gap-1 items-center">
-                  <Input
-                    type="text"
-                    value={m.role}
-                    onChange={e => setHistoryForm(f => {
-                      const next = [...(f.team_members ?? [])];
-                      next[i] = { ...next[i], role: e.target.value };
-                      return { ...f, team_members: next };
-                    })}
-                    className="h-7 text-xs w-28"
-                    placeholder="Role (e.g. Partner)"
-                  />
                   <Select
                     value={
                       !m.name ? "__none__"

@@ -713,17 +713,6 @@ export default function StaffingGantt() {
               </Select>
             </div>
 
-            {assignKind === "team" && (
-              <div className="space-y-1">
-                <Label className="text-xs">Team-member role label</Label>
-                <Input
-                  value={assignRoleLabel}
-                  onChange={(e) => setAssignRoleLabel(e.target.value)}
-                  placeholder="e.g. Partner, Senior, BA"
-                  className="h-9 text-sm"
-                />
-              </div>
-            )}
 
             {/* TBD project info: show availability + start-date update option */}
             {isTBD && assignFor && (

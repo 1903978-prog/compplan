@@ -227,11 +227,14 @@ export default function ExecDashboard() {
   const [roundDetailIdx, setRoundDetailIdx] = useState<number | null>(null);
 
   // ── Payment round manual overrides ─────────────────────────────────────
-  // Keyed by local YYYY-MM-DD (e.g. "2026-05-05"). Using local date avoids
-  // the UTC-offset problem where midnight in e.g. UTC+2 shifts toISOString()
-  // to the previous day. Auto-calc applies for any date with no stored
-  // override — so future cycles always start clean.
-  type RoundOverrides = Record<string, { eur?: number | null; usd?: number | null }>;
+  // 4 overridable values per round: SQ1 EUR, SQ1 USD, LLC EUR, LLC USD.
+  // Legacy keys "eur"/"usd" are read as fallback for SQ1 EUR / LLC USD.
+  type RoundAccount = "eur_sq1" | "usd_sq1" | "eur_llc" | "usd_llc";
+  type RoundOverrides = Record<string, {
+    eur_sq1?: number | null; usd_sq1?: number | null;
+    eur_llc?: number | null; usd_llc?: number | null;
+    eur?: number | null; usd?: number | null; // legacy fallback
+  }>;
   const OVERRIDES_KEY = "compplan_payment_round_overrides";
   const localDateKey = (d: Date) => {
     const p = (n: number) => String(n).padStart(2, "0");
@@ -242,24 +245,22 @@ export default function ExecDashboard() {
       const stored = localStorage.getItem(OVERRIDES_KEY);
       if (stored) return JSON.parse(stored) as RoundOverrides;
     } catch { /* ignore */ }
-    // Seed from Payment History (May 2026 initial values). Keys use
-    // localDateKey(new Date(2026,4,5/15)) so they match runtime lookups.
     const seed: RoundOverrides = {
-      [localDateKey(new Date(2026, 4, 5))]:  { eur: 10200, usd: null },
-      [localDateKey(new Date(2026, 4, 15))]: { eur: 25000, usd: 43000 },
+      [localDateKey(new Date(2026, 4, 5))]:  { eur_sq1: 10200 },
+      [localDateKey(new Date(2026, 4, 15))]: { eur_sq1: 25000, usd_llc: 43000 },
     };
     try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(seed)); } catch { /* ignore */ }
     return seed;
   });
-  const [overrideEdit, setOverrideEdit] = useState<{ roundIdx: number; currency: "eur" | "usd" } | null>(null);
+  const [overrideEdit, setOverrideEdit] = useState<{ roundIdx: number; account: RoundAccount } | null>(null);
 
-  const saveOverride = (roundDate: Date, currency: "eur" | "usd", rawInput: string) => {
+  const saveOverride = (roundDate: Date, account: RoundAccount, rawInput: string) => {
     const key = localDateKey(roundDate);
     const clean = rawInput.trim().replace(/[€$\s]/g, "").replace(/\./g, "").replace(",", ".");
     const num = clean === "" ? null : Number(clean);
     const value = num === null || isNaN(num) ? null : num;
     setPaymentRoundOverrides(prev => {
-      const next: RoundOverrides = { ...prev, [key]: { ...(prev[key] ?? {}), [currency]: value } };
+      const next: RoundOverrides = { ...prev, [key]: { ...(prev[key] ?? {}), [account]: value } };
       try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
@@ -639,39 +640,45 @@ export default function ExecDashboard() {
   }, [proposals, dashNet1Map]);
 
   // ─── Capacity gap calculator ─────────────────────────────────────────
-  // Supply = current headcount (all employees treated as billable consultants).
-  // Committed demand = active ongoing projects (each assumed min 1 consultant;
-  //   use team_members.length when populated, otherwise fall back to 1).
-  // Pipeline demand = pending proposals weighted at 50% probability × 1 consultant slot.
-  // Gap = (committed + weighted_pipeline) - supply
+  // Gap = max(this-month gap, next-month gap) so the badge reflects the
+  // worst upcoming pressure, not just today's snapshot.
   const capacity = useMemo(() => {
     const supply = hr.headcount;
 
-    // Committed: each ongoing project with a team list uses team.length;
-    // projects with no team data default to 1 slot each.
-    const committedSlots = ongoing.list.reduce((sum, p) => {
-      const teamLen = Array.isArray(p.team_members) ? p.team_members.length : 0;
-      return sum + Math.max(1, teamLen);
-    }, 0);
+    const countSlots = (list: typeof ongoing.list) =>
+      list.reduce((sum, p) => {
+        const teamLen = Array.isArray(p.team_members) ? p.team_members.length : 0;
+        return sum + Math.max(1, teamLen);
+      }, 0);
 
-    // Pipeline weighted by each proposal's actual win_probability when
-    // present, falling back to 50% only when the user hasn't set one.
-    // Previously every pending proposal counted at flat 50% regardless
-    // of how likely the deal was.
+    // This month: all projects already filtered to end_date >= today
+    const committedSlots = countSlots(ongoing.list);
+
+    // Next month: only projects whose end_date reaches into next month
+    const nextMonthStart = new Date();
+    nextMonthStart.setDate(1);
+    nextMonthStart.setMonth(nextMonthStart.getMonth() + 1);
+    const nextMonthIso = nextMonthStart.toISOString().slice(0, 10);
+    const committedNextMonth = countSlots(
+      ongoing.list.filter(p => !!(p.end_date && p.end_date >= nextMonthIso))
+    );
+
     const pipeline = bd.pendingList;
     const pipelineWeightedSlots = pipeline.reduce((sum, p) => {
       const teamLen = Array.isArray(p.team_members) ? p.team_members.length : 0;
       const slots = Math.max(1, teamLen);
       const wpRaw = p.win_probability;
-      // win_probability is stored 0–100 (percent). Coerce + clamp.
       const wp = (typeof wpRaw === "number" && isFinite(wpRaw))
         ? Math.max(0, Math.min(1, wpRaw / 100))
         : 0.5;
       return sum + slots * wp;
     }, 0);
 
+    const gapThisMonth = committedSlots + pipelineWeightedSlots - supply;
+    const gapNextMonth = committedNextMonth + pipelineWeightedSlots - supply;
+    const gap = Math.max(gapThisMonth, gapNextMonth);
+
     const totalDemand   = committedSlots + pipelineWeightedSlots;
-    const gap           = totalDemand - supply;
     const utilisation   = supply > 0 ? Math.round((committedSlots / supply) * 100) : 0;
     const gapStatus: "ok" | "tight" | "over" =
       gap <= 0  ? "ok"    :
@@ -937,25 +944,30 @@ export default function ExecDashboard() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {(["eur", "usd"] as const).map(ccy => {
+              {([
+                { account: "eur_sq1" as RoundAccount, label: "SQ1 EUR", symbol: "€", autoVal: round.eur_total },
+                { account: "usd_sq1" as RoundAccount, label: "SQ1 USD", symbol: "$", autoVal: 0 },
+                { account: "eur_llc" as RoundAccount, label: "LLC EUR", symbol: "€", autoVal: 0 },
+                { account: "usd_llc" as RoundAccount, label: "LLC USD", symbol: "$", autoVal: round.usd_total },
+              ]).map(({ account, label, symbol, autoVal }) => {
                 const dateKey = localDateKey(round.date);
                 const ovr = paymentRoundOverrides[dateKey];
-                const autoVal = ccy === "eur" ? round.eur_total : round.usd_total;
-                const overridden = ovr?.[ccy] != null;
-                const displayVal = overridden ? (ovr![ccy] as number) : autoVal;
-                const isEditing = overrideEdit?.roundIdx === idx && overrideEdit?.currency === ccy;
-                const symbol = ccy === "eur" ? "€" : "$";
+                // Legacy fallback: eur_sq1 ← old "eur", usd_llc ← old "usd"
+                const legacyVal = account === "eur_sq1" ? (ovr?.eur ?? null) : account === "usd_llc" ? (ovr?.usd ?? null) : null;
+                const overridden = ovr?.[account] != null || (legacyVal != null && ovr?.[account] === undefined);
+                const displayVal = ovr?.[account] != null ? (ovr[account] as number) : legacyVal != null ? legacyVal : autoVal;
+                const isEditing = overrideEdit?.roundIdx === idx && overrideEdit?.account === account;
                 return (
                   <div
-                    key={ccy}
+                    key={account}
                     className={`rounded border p-2.5 cursor-text transition-colors ${overridden ? "bg-amber-50/80 border-amber-300 hover:bg-amber-50" : "bg-white/70 border-blue-100 hover:bg-white/90"}`}
-                    onClick={() => { if (!isEditing) setOverrideEdit({ roundIdx: idx, currency: ccy }); }}
+                    onClick={() => { if (!isEditing) setOverrideEdit({ roundIdx: idx, account }); }}
                     title="Click to override"
                   >
                     <div className="flex items-center justify-between mb-0.5">
-                      <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">{ccy.toUpperCase()}</div>
+                      <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">{label}</div>
                       {overridden
-                        ? <span className="text-[8px] text-amber-600 font-bold uppercase tracking-wide cursor-pointer hover:text-red-500" title="Clear manual override" onClick={e => { e.stopPropagation(); saveOverride(round.date, ccy, ""); }}>manual ×</span>
+                        ? <span className="text-[8px] text-amber-600 font-bold uppercase tracking-wide cursor-pointer hover:text-red-500" title="Clear manual override" onClick={e => { e.stopPropagation(); saveOverride(round.date, account, ""); }}>manual ×</span>
                         : <Pencil className="w-2.5 h-2.5 text-blue-200 group-hover:text-blue-400" />
                       }
                     </div>
@@ -964,17 +976,17 @@ export default function ExecDashboard() {
                         autoFocus
                         type="text"
                         inputMode="numeric"
-                        className="w-full text-xl font-bold tabular-nums text-blue-900 bg-transparent border-b border-blue-400 outline-none"
+                        className="w-full text-lg font-bold tabular-nums text-blue-900 bg-transparent border-b border-blue-400 outline-none"
                         defaultValue={displayVal > 0 ? String(Math.round(displayVal)) : ""}
                         placeholder="0"
-                        onBlur={e => saveOverride(round.date, ccy, e.target.value)}
+                        onBlur={e => saveOverride(round.date, account, e.target.value)}
                         onKeyDown={e => {
                           if (e.key === "Enter") e.currentTarget.blur();
                           if (e.key === "Escape") setOverrideEdit(null);
                         }}
                       />
                     ) : (
-                      <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
+                      <div className="text-lg font-bold tabular-nums text-blue-900" data-privacy="blur">
                         {displayVal > 0 ? `${symbol}${Math.round(displayVal).toLocaleString("it-IT")}` : "—"}
                       </div>
                     )}
@@ -1030,34 +1042,28 @@ export default function ExecDashboard() {
               {(() => {
                 const dateKey = localDateKey(round.date);
                 const ovr = paymentRoundOverrides[dateKey];
-                const dispEur = ovr?.eur != null ? ovr.eur : round.eur_total;
-                const dispUsd = ovr?.usd != null ? ovr.usd : round.usd_total;
-                const eurOverridden = ovr?.eur != null;
-                const usdOverridden = ovr?.usd != null;
+                const boxes = [
+                  { account: "eur_sq1" as RoundAccount, label: "SQ1 EUR", symbol: "€", autoVal: round.eur_total, legacy: ovr?.eur ?? null },
+                  { account: "usd_sq1" as RoundAccount, label: "SQ1 USD", symbol: "$", autoVal: 0, legacy: null },
+                  { account: "eur_llc" as RoundAccount, label: "LLC EUR", symbol: "€", autoVal: 0, legacy: null },
+                  { account: "usd_llc" as RoundAccount, label: "LLC USD", symbol: "$", autoVal: round.usd_total, legacy: ovr?.usd ?? null },
+                ];
                 return (
                   <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2 text-sm">
-                    {(dispEur > 0 || eurOverridden) && (
-                      <div className={`rounded p-2 text-center ${eurOverridden ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
-                        <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">
-                          EUR total{eurOverridden && " ✎"}
+                    {boxes.map(({ account, label, symbol, autoVal, legacy }) => {
+                      const val = ovr?.[account] != null ? (ovr[account] as number) : legacy != null ? legacy : autoVal;
+                      const isManual = ovr?.[account] != null || (legacy != null && ovr?.[account] === undefined);
+                      if (val <= 0 && !isManual) return null;
+                      return (
+                        <div key={account} className={`rounded p-2 text-center ${isManual ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
+                          <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">{label}{isManual && " ✎"}</div>
+                          <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
+                            {symbol}{Math.round(val).toLocaleString("it-IT")}
+                          </div>
+                          {isManual && <div className="text-[9px] text-amber-500 mt-0.5">manual · auto: {symbol}{Math.round(autoVal).toLocaleString("it-IT")}</div>}
                         </div>
-                        <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
-                          €{Math.round(dispEur).toLocaleString("it-IT")}
-                        </div>
-                        {eurOverridden && <div className="text-[9px] text-amber-500 mt-0.5">manual override · auto: €{Math.round(round.eur_total).toLocaleString("it-IT")}</div>}
-                      </div>
-                    )}
-                    {(dispUsd > 0 || usdOverridden) && (
-                      <div className={`rounded p-2 text-center ${usdOverridden ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
-                        <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">
-                          USD total{usdOverridden && " ✎"}
-                        </div>
-                        <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
-                          ${Math.round(dispUsd).toLocaleString("it-IT")}
-                        </div>
-                        {usdOverridden && <div className="text-[9px] text-amber-500 mt-0.5">manual override · auto: ${Math.round(round.usd_total).toLocaleString("it-IT")}</div>}
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 );
               })()}
@@ -1691,7 +1697,7 @@ export default function ExecDashboard() {
                 <p className="text-[11px] text-muted-foreground">Highest composite — meet all Tier 1 thresholds</p>
               </div>
             </div>
-            <Link href="/hr/hiring/scoreboard" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+            <Link href="/hiring/scoreboard" className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
               scoreboard <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
