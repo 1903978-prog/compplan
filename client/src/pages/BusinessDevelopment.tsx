@@ -10,8 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Target, Plus, Upload, Trash2, Pencil, Save, X, Loader2,
   CheckCircle2, AlertCircle, ExternalLink, Database, RefreshCw, Wifi, WifiOff,
-  Users, Building2, Mail, Phone, MapPin, ArrowRight,
+  Users, Building2, Mail, Phone, MapPin, ArrowRight, Sparkles,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 // ─── Business Development CRM ────────────────────────────────────────────
 //
@@ -521,6 +522,34 @@ function DealEditor({
   );
 }
 
+// ── Domain → company name (pure client, no API needed) ────────────────────
+const GENERIC_EMAIL_DOMAINS = new Set([
+  "gmail.com","googlemail.com","yahoo.com","yahoo.co.uk","yahoo.fr",
+  "hotmail.com","hotmail.co.uk","hotmail.fr","outlook.com","live.com",
+  "icloud.com","me.com","protonmail.com","proton.me","aol.com",
+  "msn.com","ymail.com","mail.ru","yandex.ru","yandex.com",
+  "qq.com","163.com","126.com","sina.com",
+  "fast.com.ph","comcast.net","att.net","verizon.net","btinternet.com",
+]);
+// If the second-to-last part is one of these, strip 2 TLD segments
+// e.g. saptco.com.sa → saptco  (not saptco.com)
+const SLD = new Set(["com","org","net","gov","edu","co","ac","ne"]);
+
+function domainToCompany(email: string): string | null {
+  const at = email.indexOf("@");
+  if (at < 0) return null;
+  const domain = email.slice(at + 1).toLowerCase().trim();
+  if (GENERIC_EMAIL_DOMAINS.has(domain)) return null;
+  const parts = domain.split(".");
+  if (parts.length < 2) return null;
+  const nameParts = (parts.length >= 3 && SLD.has(parts[parts.length - 2]))
+    ? parts.slice(0, -2)
+    : parts.slice(0, -1);
+  if (!nameParts.length || nameParts.every(p => !p)) return null;
+  const words = nameParts.join(" ").replace(/-/g, " ").split(" ").filter(Boolean);
+  return words.map(w => w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)).join(" ") || null;
+}
+
 // ─── Contacts list tab ───────────────────────────────────────────────────
 function ContactsTab() {
   const { toast } = useToast();
@@ -530,13 +559,20 @@ function ContactsTab() {
   const [lastSync, setLastSync] = useState<{ total: number; inserted: number; updated: number } | null>(null);
   const [search, setSearch]     = useState("");
 
-  useEffect(() => {
+  // Populate-companies dialog
+  const [populateOpen, setPopulateOpen] = useState(false);
+  type Suggestion = { contact: any; company: string; skip: boolean };
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const loadContacts = () =>
     fetch("/api/hubspot/contacts", { credentials: "include" })
       .then(r => r.ok ? r.json() : [])
       .then(setContacts)
       .catch(() => toast({ title: "Failed to load contacts", variant: "destructive" }))
       .finally(() => setLoading(false));
-  }, []);
+
+  useEffect(() => { loadContacts(); }, []);
 
   async function runSync() {
     setSyncing(true);
@@ -555,6 +591,48 @@ function ContactsTab() {
     }
   }
 
+  function openPopulate() {
+    const rows: Suggestion[] = contacts
+      .filter(c => !c.company?.trim() && c.email)
+      .map(c => ({ contact: c, company: domainToCompany(c.email) ?? "", skip: false }))
+      .filter(s => s.company);
+    if (!rows.length) {
+      toast({ title: "No suggestions", description: "All contacts with emails already have a company or use a generic provider." });
+      return;
+    }
+    setSuggestions(rows);
+    setPopulateOpen(true);
+  }
+
+  async function savePopulate() {
+    const toSave = suggestions.filter(s => !s.skip && s.company.trim());
+    if (!toSave.length) { setPopulateOpen(false); return; }
+    setSaving(true);
+    let saved = 0, failed = 0;
+    for (const s of toSave) {
+      try {
+        const r = await fetch(`/api/hubspot/contacts/${s.contact.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ company: s.company.trim() }),
+        });
+        if (r.ok) {
+          saved++;
+          setContacts(prev => prev.map(c => c.id === s.contact.id ? { ...c, company: s.company.trim() } : c));
+        } else { failed++; }
+      } catch { failed++; }
+    }
+    setSaving(false);
+    setPopulateOpen(false);
+    toast({
+      title: `${saved} compan${saved === 1 ? "y" : "ies"} saved`,
+      description: failed ? `${failed} failed` : undefined,
+      variant: failed ? "destructive" : "default",
+    });
+  }
+
+  const noCompanyCount = contacts.filter(c => !c.company?.trim() && c.email && domainToCompany(c.email)).length;
+
   const filtered = contacts.filter(c => {
     const q = search.toLowerCase();
     return !q || [c.first_name, c.last_name, c.email, c.company, c.job_title].some(v => v?.toLowerCase().includes(q));
@@ -562,17 +640,92 @@ function ContactsTab() {
 
   return (
     <div className="space-y-3">
+      {/* Populate-companies review dialog */}
+      <Dialog open={populateOpen} onOpenChange={v => { if (!v) setPopulateOpen(false); }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-4 h-4" />
+              Populate Company Names — {suggestions.filter(s => !s.skip).length} to save
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Names derived from email domains. Edit any row or tick "Skip" to exclude. Only contacts with no existing company are listed.
+          </p>
+          <div className="overflow-y-auto flex-1 border rounded-lg">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 border-b sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-2 font-semibold">Contact</th>
+                  <th className="text-left px-3 py-2 font-semibold">Email</th>
+                  <th className="text-left px-3 py-2 font-semibold w-44">Company name</th>
+                  <th className="text-center px-3 py-2 font-semibold w-16">Skip</th>
+                </tr>
+              </thead>
+              <tbody>
+                {suggestions.map((s, i) => (
+                  <tr key={s.contact.id} className={`border-t ${i % 2 ? "bg-muted/10" : ""} ${s.skip ? "opacity-40" : ""}`}>
+                    <td className="px-3 py-1.5 font-medium whitespace-nowrap">
+                      {[s.contact.first_name, s.contact.last_name].filter(Boolean).join(" ") || "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-muted-foreground truncate max-w-[200px]">{s.contact.email}</td>
+                    <td className="px-3 py-1">
+                      <input
+                        value={s.company}
+                        disabled={s.skip}
+                        onChange={e => setSuggestions(prev => prev.map((x, j) => j === i ? { ...x, company: e.target.value } : x))}
+                        className="w-full h-7 border rounded px-2 text-xs bg-background disabled:bg-muted/30 disabled:cursor-not-allowed"
+                      />
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={s.skip}
+                        onChange={e => setSuggestions(prev => prev.map((x, j) => j === i ? { ...x, skip: e.target.checked } : x))}
+                        className="w-3.5 h-3.5 cursor-pointer"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t">
+            <span className="text-xs text-muted-foreground">
+              {suggestions.filter(s => s.skip).length} skipped · {suggestions.filter(s => !s.skip).length} will be saved
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setPopulateOpen(false)} disabled={saving}>Cancel</Button>
+              <Button size="sm" onClick={savePopulate} disabled={saving || !suggestions.filter(s => !s.skip).length}>
+                {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Building2 className="w-3.5 h-3.5 mr-1.5" />}
+                {saving ? "Saving…" : `Save ${suggestions.filter(s => !s.skip).length}`}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={runSync} disabled={syncing} className="h-7 text-xs">
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
             {syncing ? "Syncing…" : "Sync from HubSpot"}
           </Button>
+          {contacts.length > 0 && (
+            <Button
+              size="sm" variant="outline"
+              onClick={openPopulate}
+              disabled={loading || noCompanyCount === 0}
+              className="h-7 text-xs"
+              title={noCompanyCount === 0 ? "All contacts already have a company or use generic email providers" : `${noCompanyCount} contacts without company can be filled from email domain`}
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1.5 text-amber-500" />
+              Populate companies{noCompanyCount > 0 ? ` (${noCompanyCount})` : ""}
+            </Button>
+          )}
           <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>
           {lastSync && (
-            <span className="text-[11px] text-emerald-700">
-              · {lastSync.inserted} new, {lastSync.updated} updated
-            </span>
+            <span className="text-[11px] text-emerald-700">· {lastSync.inserted} new, {lastSync.updated} updated</span>
           )}
         </div>
         <input
@@ -621,9 +774,7 @@ function ContactsTab() {
                     ) : "—"}
                   </td>
                   <td className="px-3 py-1.5 text-muted-foreground" data-privacy="blur">
-                    {c.phone ? (
-                      <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.phone}</span>
-                    ) : "—"}
+                    {c.phone ? <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.phone}</span> : "—"}
                   </td>
                   <td className="px-3 py-1.5 text-muted-foreground">{c.job_title ?? "—"}</td>
                   <td className="px-3 py-1.5 font-medium">{c.company ?? "—"}</td>
@@ -635,9 +786,7 @@ function ContactsTab() {
                     ) : "—"}
                   </td>
                   <td className="px-3 py-1.5 text-muted-foreground">
-                    {c.country ? (
-                      <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.city ? `${c.city}, ` : ""}{c.country}</span>
-                    ) : "—"}
+                    {c.country ? <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.city ? `${c.city}, ` : ""}{c.country}</span> : "—"}
                   </td>
                   <td className="px-3 py-1.5 text-muted-foreground font-mono text-[10px]">{c.last_activity_at ?? "—"}</td>
                 </tr>
