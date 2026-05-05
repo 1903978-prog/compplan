@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X, Zap } from "lucide-react";
+import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X, Zap, Pencil, Check, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 // ── Types we read from the API ──────────────────────────────────────────────
@@ -35,6 +35,22 @@ interface ExternalContact {
   name: string;
   email?: string | null;
   kind: string; // "freelancer" | "partner" | ...
+}
+
+// Pricing case — read-only here, used as the upstream source-of-truth
+// for win_probability / start_date / duration_weeks. The Staffing Gantt
+// links cases to proposals by project_name (case-insensitive); when a
+// proposal is missing one of these three fields, we fall back to the
+// case's value, and the user can also click "Copy from case" to persist
+// the case values onto the proposal in one action.
+interface PricingCase {
+  id: number;
+  project_name: string;
+  client_name?: string | null;
+  duration_weeks?: number | null;
+  win_probability?: number | null;
+  start_date?: string | null;
+  outcome?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -86,58 +102,20 @@ export default function StaffingGantt() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [externals, setExternals] = useState<ExternalContact[]>([]);
+  // Pricing cases — read-only source-of-truth for win_probability /
+  // start_date / duration_weeks when the corresponding proposal has
+  // those fields null. Keyed by lowercased project_name in caseByName.
+  const [cases, setCases] = useState<PricingCase[]>([]);
+  // Inline-edit state per proposal id. When non-null for an id, the
+  // card shows input fields instead of the static badge.
+  const [editingFields, setEditingFields] = useState<Record<number, {
+    win_probability: string;
+    start_date: string;
+    duration_weeks: string;
+  }>>({});
   const [loading, setLoading] = useState(true);
   const [showWeighted, setShowWeighted] = useState(true);
   const [showPipeline, setShowPipeline] = useState(true);
-
-  // ── FTE breakdown modal state ───────────────────────────────────────────────
-  const [breakdownWeekIndex, setBreakdownWeekIndex] = useState<number | null>(null);
-
-  // ── TBD card inline start-date editing ────────────────────────────────────
-  const [editingStartDate, setEditingStartDate] = useState<number | null>(null); // proposal id
-
-  async function saveStartDate(proposalId: number, newDate: string) {
-    const proj = proposals.find(p => p.id === proposalId);
-    if (!proj) return;
-    try {
-      const r = await fetch(`/api/pricing/proposals/${proposalId}`, {
-        method: "PUT", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...proj, start_date: newDate || null }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const updated = await r.json();
-      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
-    } catch (e) {
-      toast({ title: "Failed to save start date", variant: "destructive" });
-    } finally {
-      setEditingStartDate(null);
-    }
-  }
-
-  // ── TBD card inline win-probability editing ───────────────────────────────
-  const [editingWinProb, setEditingWinProb] = useState<number | null>(null); // proposal id
-
-  async function saveWinProb(proposalId: number, raw: string) {
-    const proj = proposals.find(p => p.id === proposalId);
-    if (!proj) return;
-    const val = raw === "" ? null : Math.max(0, Math.min(100, Number(raw)));
-    if (raw !== "" && isNaN(val as number)) { setEditingWinProb(null); return; }
-    try {
-      const r = await fetch(`/api/pricing/proposals/${proposalId}`, {
-        method: "PUT", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...proj, win_probability: val }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const updated = await r.json();
-      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
-    } catch (e) {
-      toast({ title: "Failed to save win probability", variant: "destructive" });
-    } finally {
-      setEditingWinProb(null);
-    }
-  }
 
   // ── Assign-to-project modal state ─────────────────────────────────────────
   // Two entry points:
@@ -166,15 +144,6 @@ export default function StaffingGantt() {
     setAssignFor(null);
     setAssignProjectId(String(projectId));
     setAssignKind("team");
-    setAssignRoleLabel("Associate");
-    setUpdateStartDate(true);
-    setAssignModalOpen(true);
-  }
-
-  function openFromProjectModalAsManager(projectId: number) {
-    setAssignFor(null);
-    setAssignProjectId(String(projectId));
-    setAssignKind("manager");
     setAssignRoleLabel("Associate");
     setUpdateStartDate(true);
     setAssignModalOpen(true);
@@ -279,13 +248,144 @@ export default function StaffingGantt() {
       fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/employees",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch("/api/external-contacts",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-    ]).then(([pp, ee, ex]) => {
+      // Pricing cases — used to backfill prob/start/duration on the TBD
+      // cards when the proposal row has those fields null.
+      fetch("/api/pricing/cases",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
+    ]).then(([pp, ee, ex, cs]) => {
       setProposals(Array.isArray(pp) ? pp : []);
       setEmployees(Array.isArray(ee) ? ee : []);
       setExternals(Array.isArray(ex) ? ex : []);
+      setCases(Array.isArray(cs) ? cs : []);
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load staffing data", variant: "destructive" }); setLoading(false); });
   }, [toast]);
+
+  // Lookup map: lowercased project_name → case (most recent revision wins
+  // on duplicates). Strips any trailing single uppercase revision letter
+  // ("RUB07A" → "rub07") so a proposal named "RUB07" still finds case
+  // revision A. Used to fill missing proposal fields with case fallbacks.
+  const caseByName = useMemo(() => {
+    const m = new Map<string, PricingCase>();
+    for (const c of cases) {
+      const raw = (c.project_name ?? "").trim().toLowerCase();
+      if (!raw) continue;
+      const stripped = raw.replace(/[a-z]$/, "");
+      // Latest case wins (assume id ordering reflects creation order)
+      const incumbent = m.get(raw);
+      if (!incumbent || c.id > incumbent.id) m.set(raw, c);
+      const incumbentS = m.get(stripped);
+      if (!incumbentS || c.id > incumbentS.id) m.set(stripped, c);
+    }
+    return m;
+  }, [cases]);
+
+  // Resolve effective prob/start/duration for a proposal, falling back
+  // to the linked pricing case when the proposal's column is null.
+  // Returns the case-derived flag too so the UI can show "(from case)".
+  const effectiveFields = (p: Proposal) => {
+    const raw = (p.project_name ?? "").trim().toLowerCase();
+    const c = caseByName.get(raw) ?? caseByName.get(raw.replace(/[a-z]$/, ""));
+    return {
+      win_probability:
+        p.win_probability != null ? p.win_probability :
+        c?.win_probability != null ? c.win_probability : null,
+      start_date:
+        p.start_date ? p.start_date :
+        c?.start_date ? c.start_date : null,
+      duration_weeks:
+        p.duration_weeks != null ? p.duration_weeks :
+        c?.duration_weeks != null ? c.duration_weeks : null,
+      probFromCase:    p.win_probability == null && c?.win_probability != null,
+      startFromCase:   !p.start_date && !!c?.start_date,
+      durFromCase:     p.duration_weeks == null && c?.duration_weeks != null,
+      hasCase:         !!c,
+    };
+  };
+
+  // Begin inline edit on a proposal card — pre-fills inputs with the
+  // effective values (proposal first, case fallback) so the user starts
+  // from the value they're seeing.
+  const startEdit = (p: Proposal) => {
+    const eff = effectiveFields(p);
+    setEditingFields(prev => ({
+      ...prev,
+      [p.id]: {
+        win_probability: eff.win_probability != null ? String(eff.win_probability) : "",
+        start_date:      eff.start_date ?? "",
+        duration_weeks:  eff.duration_weeks != null ? String(eff.duration_weeks) : "",
+      },
+    }));
+  };
+  const cancelEdit = (id: number) => setEditingFields(prev => {
+    const next = { ...prev };
+    delete next[id];
+    return next;
+  });
+
+  // Save inline edits — PUTs the proposal with the new values. Empty
+  // strings become null. Numbers are clamped to sensible ranges.
+  const saveEdit = async (p: Proposal) => {
+    const drafted = editingFields[p.id];
+    if (!drafted) return;
+    const wp = drafted.win_probability.trim() === ""
+      ? null
+      : Math.max(0, Math.min(100, Number(drafted.win_probability)));
+    const sd = drafted.start_date.trim() === "" ? null : drafted.start_date.trim();
+    const dw = drafted.duration_weeks.trim() === ""
+      ? null
+      : Math.max(0, Number(drafted.duration_weeks));
+    try {
+      const r = await fetch(`/api/pricing/proposals/${p.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...p, win_probability: wp, start_date: sd, duration_weeks: dw }),
+      });
+      if (!r.ok) {
+        const errBody = await r.text().catch(() => "");
+        toast({ title: `Save failed (HTTP ${r.status})`, description: errBody.slice(0, 200), variant: "destructive" });
+        return;
+      }
+      const updated = await r.json();
+      setProposals(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
+      cancelEdit(p.id);
+      toast({ title: "Updated" });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: String(e?.message ?? e), variant: "destructive" });
+    }
+  };
+
+  // One-click "copy from pricing case" — persists prob/start/duration
+  // from the linked case onto the proposal so future loads use the
+  // proposal's own values instead of the dynamic fallback.
+  const copyFromCase = async (p: Proposal) => {
+    const eff = effectiveFields(p);
+    if (!eff.hasCase) {
+      toast({ title: "No matching pricing case found", variant: "destructive" });
+      return;
+    }
+    if (!eff.probFromCase && !eff.startFromCase && !eff.durFromCase) {
+      toast({ title: "Proposal already has all 3 fields — nothing to copy" });
+      return;
+    }
+    try {
+      const r = await fetch(`/api/pricing/proposals/${p.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...p,
+          win_probability: eff.win_probability,
+          start_date:      eff.start_date,
+          duration_weeks:  eff.duration_weeks,
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+      setProposals(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
+      toast({ title: "Synced from pricing case" });
+    } catch (e: any) {
+      toast({ title: "Copy failed", description: String(e?.message ?? e), variant: "destructive" });
+    }
+  };
 
   const weekStart = useMemo(() => startOfWeekMonday(new Date()), []);
   const weeks = useMemo(() => {
@@ -300,16 +400,9 @@ export default function StaffingGantt() {
   };
 
   const people = useMemo(() => {
-    // Build exclusion set first so retired names are never re-added from proposal assignments.
-    const excluded = new Set<string>();
-    for (const e of employees) {
-      if ((e as any).status === "former" || isBackOffice(e)) {
-        excluded.add(e.name.trim().toLowerCase());
-      }
-    }
     const out = new Map<string, { name: string; role?: string }>();
     for (const e of employees) {
-      if (excluded.has(e.name.trim().toLowerCase())) continue;
+      if (isBackOffice(e)) continue;
       out.set(e.name.trim().toLowerCase(), { name: e.name, role: e.current_role_code ?? undefined });
     }
     for (const p of proposals) {
@@ -317,12 +410,12 @@ export default function StaffingGantt() {
       if (!includeP) continue;
       if (p.manager_name) {
         const k = p.manager_name.trim().toLowerCase();
-        if (!out.has(k) && !excluded.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
+        if (!out.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
       }
       for (const m of (p.team_members ?? [])) {
         if (!m.name) continue;
         const k = m.name.trim().toLowerCase();
-        if (!out.has(k) && !excluded.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
+        if (!out.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
       }
     }
     return Array.from(out.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -359,52 +452,78 @@ export default function StaffingGantt() {
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
 
-  // FTE demand per week: count only TEAM MEMBERS (not managers) on won/ongoing
-  // projects + (count × prob) for TBD pipeline. Always weighted by win_probability
-  // for pending — independent of the showWeighted/showPipeline visual toggles,
-  // since this is the demand picture. Managers are excluded from FTE calculations
-  // to show actual billable resource allocation.
-  type BreakdownItem = { projectName: string; outcome: string; manager?: string; teamMembers: string[]; teamCount: number; probability: number; weight: number; contribution: number };
-  const { ftesNeededPerWeek, breakdownPerWeek } = useMemo(() => {
-    const totals = Array<number>(HORIZON_WEEKS).fill(0);
-    const breakdowns = Array<BreakdownItem[]>(HORIZON_WEEKS).fill(null).map(() => []);
+  // ── Monthly ASC demand row ─────────────────────────────────────────────
+  // For each week of the horizon: count ASC FTE demand from
+  //   (a) committed (won) projects: each team-member counted as 1 ASC
+  //   (b) TBD pipeline:             each team-member × win_probability/100
+  // Then aggregate weeks into months and take the PEAK week within each
+  // month — that's the conservative "how many ASC do we need to plan
+  // for this month" number, since hiring on a peak basis is what the
+  // user described in the brief.
+  //
+  // Manager (the EM) is NOT counted toward ASC demand — managers run
+  // the project, ASCs deliver. team_members.length excludes the manager
+  // (the manager lives in p.manager_name, separate field). When team
+  // hasn't been filled in yet, default to 1 ASC slot as a placeholder.
+  const monthlyAscDemand = useMemo(() => {
+    const weeklyCommitted = new Array(HORIZON_WEEKS).fill(0);
+    const weeklyTbd       = new Array(HORIZON_WEEKS).fill(0);
 
     for (const p of proposals) {
-      if (p.outcome === "lost") continue;
-      const span = projectWeeks(p, weekStart);
+      const teamSize = (p.team_members ?? []).length || 1;
+      const eff = effectiveFields(p);
+      // projectWeeks uses raw p.start_date/duration_weeks. Patch it with
+      // case fallbacks before calling so TBDs that only have those
+      // fields on the linked case still appear on the demand row.
+      const patched: Proposal = {
+        ...p,
+        start_date: p.start_date ?? eff.start_date,
+        duration_weeks: p.duration_weeks ?? eff.duration_weeks,
+      };
+      const span = projectWeeks(patched, weekStart);
       if (!span) continue;
 
-      const manager = p.manager_name && (p.manager_name ?? "").trim().length > 0 ? p.manager_name : null;
-      const teamMembers = (p.team_members ?? [])
-        .filter(m => (m.name ?? "").trim().length > 0)
-        .map(m => m.name!);
-      const teamCount = teamMembers.length; // Managers excluded from FTE count
-
-      if (teamCount === 0) continue;
-
-      const isPipeline = p.outcome === "pending";
-      const prob = Math.max(0, Math.min(100, Number(p.win_probability ?? 50)));
-      const weight = isPipeline ? prob / 100 : 1;
-      const contribution = teamCount * weight;
-
-      const breakdownItem: BreakdownItem = {
-        projectName: p.project_name,
-        outcome: p.outcome,
-        manager,
-        teamMembers,
-        teamCount,
-        probability: prob,
-        weight,
-        contribution,
-      };
-
-      for (let w = span.from; w <= span.to; w++) {
-        totals[w] += contribution;
-        breakdowns[w].push(breakdownItem);
+      if (p.outcome === "won") {
+        for (let w = span.from; w <= span.to; w++) {
+          weeklyCommitted[w] += teamSize;
+        }
+      } else if (p.outcome === "pending") {
+        const wp = (eff.win_probability ?? 0) / 100;
+        if (wp > 0) {
+          for (let w = span.from; w <= span.to; w++) {
+            weeklyTbd[w] += teamSize * wp;
+          }
+        }
       }
     }
-    return { ftesNeededPerWeek: totals, breakdownPerWeek: breakdowns };
-  }, [proposals, weekStart]);
+
+    // Group weeks by year-month, take the peak week's value as the
+    // monthly figure (per the user's example: a TBD that contributes 1
+    // FTE in any week of June makes June's monthly demand 1).
+    const months: Array<{
+      label:     string;
+      weekFrom:  number;
+      weekTo:    number;
+      committed: number;
+      tbd:       number;
+    }> = [];
+    for (let w = 0; w < HORIZON_WEEKS; w++) {
+      const d = weeks[w];
+      const key = d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+      const last = months[months.length - 1];
+      if (!last || last.label !== key) {
+        months.push({
+          label: key, weekFrom: w, weekTo: w,
+          committed: weeklyCommitted[w], tbd: weeklyTbd[w],
+        });
+      } else {
+        last.weekTo = w;
+        if (weeklyCommitted[w] > last.committed) last.committed = weeklyCommitted[w];
+        if (weeklyTbd[w]       > last.tbd)       last.tbd       = weeklyTbd[w];
+      }
+    }
+    return months;
+  }, [proposals, weeks, weekStart, caseByName]);
 
   // Availability: human-readable string + actual Date for the first free week.
   // The Date is used when reserving to a TBD project (start_date patch).
@@ -575,85 +694,43 @@ export default function StaffingGantt() {
                 );
               })}
             </tbody>
+            {/* ASC demand by month — peak FTE need = committed + Σ(prob × team) */}
             <tfoot>
-              <tr className="border-t-2 bg-muted/40 font-semibold">
-                <td className="p-2 sticky left-0 bg-muted/60 z-10 w-44">
-                  <div className="flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5" />
-                    FTEs needed
-                  </div>
+              <tr className="border-t-2 border-slate-300 bg-slate-50 dark:bg-slate-900">
+                <td className="p-2 font-semibold text-[11px] sticky left-0 bg-slate-50 dark:bg-slate-900 z-10">
+                  ASC demand
                 </td>
-                <td
-                  className="p-2 sticky left-44 bg-muted/60 z-10 w-28 text-[10px] font-normal text-muted-foreground"
-                  title="Per week: FTEs on won/ongoing projects + Σ(FTEs on TBD × win-probability)"
-                >
-                  won + tbd × prob
+                <td className="p-2 text-[10px] text-muted-foreground sticky left-44 bg-slate-50 dark:bg-slate-900 z-10">
+                  peak / month
                 </td>
-                {ftesNeededPerWeek.map((n, i) => (
-                  <td
-                    key={i}
-                    className="border-l text-center font-mono text-[11px] p-1 min-w-16 cursor-pointer hover:bg-primary/20 transition-colors"
-                    title={n > 0 ? `Click to see breakdown · ${n.toFixed(2)} FTE-equivalents needed week of ${fmtWeek(weeks[i])}` : "no demand"}
-                    onClick={() => n > 0 && setBreakdownWeekIndex(i)}
-                  >
-                    {n > 0 ? n.toFixed(1) : "—"}
-                  </td>
-                ))}
+                {monthlyAscDemand.map((m, i) => {
+                  const span = m.weekTo - m.weekFrom + 1;
+                  const total = m.committed + m.tbd;
+                  // Color-code by demand: green = covered range, amber = stretching,
+                  // red = needs hiring. Threshold values are heuristic — tune later.
+                  const tone =
+                    total >= 4 ? "bg-red-100 text-red-800"     :
+                    total >= 2 ? "bg-amber-100 text-amber-800" :
+                    total >  0 ? "bg-emerald-50  text-emerald-800" :
+                                  "text-muted-foreground";
+                  return (
+                    <td
+                      key={i}
+                      colSpan={span}
+                      className={`text-center p-1.5 border-l text-[10px] font-mono tabular-nums ${tone}`}
+                      title={`${m.label}: ${m.committed.toFixed(1)} committed (won) + ${m.tbd.toFixed(2)} TBD-weighted = ${total.toFixed(2)} ASC FTE peak`}
+                    >
+                      <div className="font-semibold text-xs leading-tight">{total.toFixed(1)}</div>
+                      <div className="opacity-70 text-[9px] leading-tight">
+                        {m.committed.toFixed(0)}+{m.tbd.toFixed(1)}
+                      </div>
+                    </td>
+                  );
+                })}
               </tr>
             </tfoot>
           </table>
         </Card>
-      )}
-
-      {/* ── FTE Breakdown Modal ────────────────────────────────────────────── */}
-      {breakdownWeekIndex !== null && (
-        <Dialog open={breakdownWeekIndex !== null} onOpenChange={(open) => !open && setBreakdownWeekIndex(null)}>
-          <DialogContent className="max-w-2xl max-h-[70vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>FTE Calculation Breakdown</DialogTitle>
-              <DialogDescription>
-                Week of {fmtWeek(weeks[breakdownWeekIndex])} · Total: <span className="font-mono font-bold text-foreground">{ftesNeededPerWeek[breakdownWeekIndex].toFixed(2)}</span> FTE
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              {breakdownPerWeek[breakdownWeekIndex].length === 0 ? (
-                <p className="text-sm text-muted-foreground italic">No projects contributing to this week</p>
-              ) : (
-                breakdownPerWeek[breakdownWeekIndex].map((item, idx) => (
-                  <div key={idx} className="border rounded p-3 space-y-2 text-sm">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="font-semibold">{item.projectName}</div>
-                        <div className="text-[12px] text-muted-foreground">
-                          Status: <span className={item.outcome === "won" ? "text-emerald-600 font-medium" : "text-amber-600 font-medium"}>{item.outcome}</span>
-                          {item.outcome === "pending" && ` · ${item.probability}% win probability`}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-mono font-bold text-lg">{item.contribution.toFixed(2)} FTE</div>
-                        <div className="text-[11px] text-muted-foreground">= {item.teamCount} × {item.weight.toFixed(2)}</div>
-                      </div>
-                    </div>
-                    <div className="text-[12px] text-muted-foreground space-y-1">
-                      {item.manager && <div>Manager: <span className="font-medium">{item.manager}</span></div>}
-                      {item.teamMembers.length > 0 && (
-                        <div>
-                          Team ({item.teamMembers.length}): <span className="font-medium">{item.teamMembers.join(", ")}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-              <div className="border-t pt-3 mt-4">
-                <div className="flex justify-between font-semibold">
-                  <span>Total FTE needed for week of {fmtWeek(weeks[breakdownWeekIndex])}</span>
-                  <span className="font-mono text-lg">{ftesNeededPerWeek[breakdownWeekIndex].toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
       )}
 
       {/* ── Legend ─────────────────────────────────────────────────────────── */}
@@ -692,10 +769,12 @@ export default function StaffingGantt() {
                 ...(p.manager_name ? [{ role: "Manager", name: p.manager_name }] : []),
                 ...(p.team_members ?? []),
               ];
+              const eff = effectiveFields(p);
               const probColor =
-                (p.win_probability ?? 0) >= 70 ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
-                (p.win_probability ?? 0) >= 40 ? "bg-amber-100 text-amber-800 border-amber-300" :
+                (eff.win_probability ?? 0) >= 70 ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
+                (eff.win_probability ?? 0) >= 40 ? "bg-amber-100 text-amber-800 border-amber-300" :
                 "bg-red-100 text-red-800 border-red-300";
+              const isEditing = !!editingFields[p.id];
               return (
                 <Card key={p.id} className="p-3 border-amber-200 space-y-2">
                   <div className="flex items-start justify-between gap-2">
@@ -703,94 +782,87 @@ export default function StaffingGantt() {
                       <div className="font-mono font-bold text-sm truncate">{p.project_name}</div>
                       {p.client_name && <div className="text-[10px] text-muted-foreground truncate">{p.client_name}</div>}
                     </div>
-                    {editingWinProb === p.id ? (
-                      <div className="flex items-center gap-0.5 shrink-0">
-                        <input
-                          autoFocus
-                          type="number"
-                          min={0} max={100}
-                          defaultValue={p.win_probability ?? ""}
-                          placeholder="0-100"
-                          className="w-14 text-[10px] border border-primary rounded px-1 py-0.5 text-foreground bg-background outline-none"
-                          onBlur={e => saveWinProb(p.id, e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                            if (e.key === "Escape") setEditingWinProb(null);
-                          }}
-                        />
-                        <span className="text-[10px] text-muted-foreground">%</span>
-                      </div>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] shrink-0 cursor-pointer ${probColor}`}
-                        title="Click to edit win probability"
-                        onClick={() => setEditingWinProb(p.id)}
-                      >
-                        {p.win_probability != null ? `${p.win_probability}%` : "?%"}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Badge variant="outline" className={`text-[10px] ${probColor}`}>
+                        {eff.win_probability != null ? `${eff.win_probability}%` : "?%"}
+                        {eff.probFromCase && <span className="ml-0.5 text-[8px] opacity-70">·case</span>}
                       </Badge>
-                    )}
+                      {!isEditing && (
+                        <button onClick={() => startEdit(p)} className="text-muted-foreground hover:text-foreground p-0.5" title="Edit prob / start / duration">
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
-                    {p.duration_weeks && <span>{p.duration_weeks}w</span>}
-                    {editingStartDate === p.id ? (
-                      <input
-                        autoFocus
-                        type="date"
-                        defaultValue={p.start_date ?? ""}
-                        className="text-[10px] border border-primary rounded px-1 py-0.5 text-foreground bg-background outline-none"
-                        onBlur={e => saveStartDate(p.id, e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === "Enter") e.currentTarget.blur();
-                          if (e.key === "Escape") setEditingStartDate(null);
-                        }}
-                      />
-                    ) : (
-                      <span
-                        className="cursor-pointer hover:text-primary hover:underline"
-                        title="Click to edit start date"
-                        onClick={() => setEditingStartDate(p.id)}
-                      >
-                        {p.start_date ? `· starts ${p.start_date}` : <span className="italic">· no start date — click to set</span>}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Manager row */}
-                  <div className="text-[10px] space-y-0.5">
-                    {p.manager_name ? (
-                      <div className="flex items-center gap-1 text-muted-foreground">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                        <span className="font-medium truncate">{p.manager_name}</span>
-                        <span className="text-muted-foreground/60">· Manager</span>
-                        {availability[p.manager_name] && (
-                          <span className={`ml-auto shrink-0 ${
-                            availability[p.manager_name] === "available now" ? "text-emerald-600" :
-                            availability[p.manager_name].startsWith(">")     ? "text-red-500" :
-                            "text-amber-600"
-                          }`}>{availability[p.manager_name]}</span>
-                        )}
+                  {isEditing ? (
+                    <div className="space-y-1.5 bg-amber-50/50 -mx-3 px-3 py-2 border-y border-amber-100">
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] w-14 text-muted-foreground shrink-0">Win prob</Label>
+                        <Input
+                          type="number" min="0" max="100"
+                          value={editingFields[p.id]!.win_probability}
+                          onChange={e => setEditingFields(prev => ({ ...prev, [p.id]: { ...prev[p.id]!, win_probability: e.target.value } }))}
+                          className="h-6 text-xs font-mono"
+                          placeholder="%"
+                        />
                       </div>
-                    ) : (
-                      <button
-                        className="flex items-center gap-1 text-muted-foreground/50 italic hover:text-primary transition-colors"
-                        onClick={() => openFromProjectModalAsManager(p.id)}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full border border-dashed border-muted-foreground/40 shrink-0" />
-                        No manager — click to set
-                      </button>
-                    )}
-                  </div>
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] w-14 text-muted-foreground shrink-0">Start</Label>
+                        <Input
+                          type="date"
+                          value={editingFields[p.id]!.start_date}
+                          onChange={e => setEditingFields(prev => ({ ...prev, [p.id]: { ...prev[p.id]!, start_date: e.target.value } }))}
+                          className="h-6 text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] w-14 text-muted-foreground shrink-0">Duration</Label>
+                        <Input
+                          type="number" min="0" step="0.5"
+                          value={editingFields[p.id]!.duration_weeks}
+                          onChange={e => setEditingFields(prev => ({ ...prev, [p.id]: { ...prev[p.id]!, duration_weeks: e.target.value } }))}
+                          className="h-6 text-xs font-mono"
+                          placeholder="weeks"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1 pt-1">
+                        <Button size="sm" className="h-6 text-[10px] flex-1" onClick={() => saveEdit(p)}>
+                          <Check className="w-3 h-3 mr-1" /> Save
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => cancelEdit(p.id)}>Cancel</Button>
+                      </div>
+                      {eff.hasCase && (eff.probFromCase || eff.startFromCase || eff.durFromCase) && (
+                        <button
+                          onClick={() => copyFromCase(p)}
+                          className="text-[10px] text-blue-600 hover:underline flex items-center gap-1"
+                          title="Persist the values shown above (which fall back to the linked pricing case) onto this proposal"
+                        >
+                          <Copy className="w-2.5 h-2.5" /> Copy missing fields from pricing case
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
+                      {eff.duration_weeks != null && (
+                        <span>{eff.duration_weeks}w{eff.durFromCase && <span className="opacity-60"> ·case</span>}</span>
+                      )}
+                      {eff.start_date && (
+                        <span>· starts {eff.start_date}{eff.startFromCase && <span className="opacity-60"> ·case</span>}</span>
+                      )}
+                      {!eff.start_date && <span className="italic">· no start date yet</span>}
+                    </div>
+                  )}
 
-                  {/* Team members */}
-                  {(p.team_members ?? []).length > 0 && (
+                  {/* Already-reserved team members */}
+                  {team.length > 0 && (
                     <div className="text-[10px] text-muted-foreground space-y-0.5">
-                      {(p.team_members ?? []).map((m, i) => (
+                      {team.map((m, i) => (
                         <div key={i} className="flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
                           <span className="font-medium truncate">{m.name}</span>
                           <span className="text-muted-foreground/60">· {m.role}</span>
+                          {/* Show availability of already-assigned members */}
                           {availability[m.name] && (
                             <span className={`ml-auto shrink-0 ${
                               availability[m.name] === "available now" ? "text-emerald-600" :
@@ -808,7 +880,7 @@ export default function StaffingGantt() {
                     className="w-full h-7 text-xs border-amber-300 hover:bg-amber-50"
                     onClick={() => openFromProjectModal(p.id)}
                   >
-                    <UserPlus className="w-3.5 h-3.5 mr-1" /> Reserve team member →
+                    <UserPlus className="w-3.5 h-3.5 mr-1" /> Reserve person →
                   </Button>
                 </Card>
               );
@@ -905,7 +977,7 @@ export default function StaffingGantt() {
               <Select value={assignKind} onValueChange={(v) => setAssignKind(v as "manager" | "team")}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="manager">Manager — replaces current manager</SelectItem>
+                  <SelectItem value="manager">Manager (EM) — replaces current manager</SelectItem>
                   <SelectItem value="team">Team member — added to team</SelectItem>
                 </SelectContent>
               </Select>
@@ -913,28 +985,12 @@ export default function StaffingGantt() {
 
             {assignKind === "team" && (
               <div className="space-y-1">
-                <Label className="text-xs">Role label</Label>
-                <div className="flex gap-1.5 flex-wrap">
-                  {["Associate", "Senior Associate", "Partner", "Manager", "BA"].map(opt => (
-                    <button
-                      key={opt}
-                      type="button"
-                      onClick={() => setAssignRoleLabel(opt)}
-                      className={`px-2.5 py-1 rounded text-xs border transition-colors ${
-                        assignRoleLabel === opt
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "border-border hover:bg-muted"
-                      }`}
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
+                <Label className="text-xs">Team-member role label</Label>
                 <Input
                   value={assignRoleLabel}
                   onChange={(e) => setAssignRoleLabel(e.target.value)}
-                  placeholder="or type custom role…"
-                  className="h-8 text-xs mt-1"
+                  placeholder="e.g. Partner, Senior, BA"
+                  className="h-9 text-sm"
                 />
               </div>
             )}
