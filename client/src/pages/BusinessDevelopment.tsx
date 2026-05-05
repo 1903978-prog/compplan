@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   Target, Plus, Upload, Trash2, Pencil, Save, X, Loader2,
   CheckCircle2, AlertCircle, ExternalLink, Database, RefreshCw, Wifi, WifiOff,
-  Users, Building2, Mail, Phone, MapPin, ArrowRight, Sparkles, GitMerge,
+  Users, Building2, Mail, Phone, MapPin, ArrowRight, Sparkles, GitMerge, Download,
 } from "lucide-react";
 
 // ─── Business Development CRM ────────────────────────────────────────────
@@ -745,10 +745,25 @@ function ContactsTab() {
 
   function loadContacts() {
     return fetch("/api/hubspot/contacts", { credentials: "include" })
-      .then(r => r.ok ? r.json() : [])
+      .then(async r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text().then(t => t.slice(0, 120))}`);
+        return r.json();
+      })
       .then(setContacts)
-      .catch(() => toast({ title: "Failed to load contacts", variant: "destructive" }))
+      .catch((e: any) => toast({ title: "Failed to load contacts", description: e.message, variant: "destructive" }))
       .finally(() => setLoading(false));
+  }
+
+  function downloadContactsCsv() {
+    const cols = ["id","first_name","last_name","email","phone","job_title","company","city","country","lifecycle_stage","lead_status","last_activity_at","hubspot_id"];
+    const escape = (v: any) => v == null ? "" : `"${String(v).replace(/"/g, '""')}"`;
+    const lines = [cols.join(","), ...contacts.map(c => cols.map(k => escape(c[k])).join(","))];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `hubspot-contacts-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   useEffect(() => { loadContacts(); }, []);
@@ -987,6 +1002,11 @@ function ContactsTab() {
             </button>
           ) : null}
           <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>
+          {contacts.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={downloadContactsCsv} className="h-7 text-xs px-2" title="Download CSV">
+              <Download className="w-3.5 h-3.5" />
+            </Button>
+          )}
         </div>
         <input
           value={search}
