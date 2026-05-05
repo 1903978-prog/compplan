@@ -185,10 +185,19 @@ function readCache(): DashCache | null {
 }
 
 function writeCache(employees: any[], candidates: Candidate[], invoices: Invoice[], proposals: PricingProposal[], wonProjects: WonProject[]) {
-  // Guard: never poison the cache with an all-empty payload. A transient
-  // API failure returns [] for every array — if we cached that, the next
-  // cold load would show zeroes until the 10-minute TTL expired.
-  if (employees.length === 0 && candidates.length === 0 && wonProjects.length === 0) return;
+  // Skip writing a fully-empty payload — most likely a transient API failure
+  // (auth blip, 5xx, network glitch). Caching empty arrays would mask real
+  // data behind zeros for the full TTL window. Better to leave any prior
+  // cache in place and let the next successful fetch overwrite it.
+  if (
+    employees.length === 0 &&
+    candidates.length === 0 &&
+    invoices.length === 0 &&
+    proposals.length === 0 &&
+    wonProjects.length === 0
+  ) {
+    return;
+  }
   try {
     localStorage.setItem(DASH_CACHE_KEY, JSON.stringify({ employees, candidates, invoices, proposals, wonProjects, ts: new Date().toISOString() }));
   } catch { /* quota exceeded — ignore */ }
