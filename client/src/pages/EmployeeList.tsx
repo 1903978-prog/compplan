@@ -406,45 +406,82 @@ const ROLE_RANK: Record<string, number> = {
 };
 
 
+// Type-specific base weights for churn signals. Severity multiplier: high=2, medium=1, low=0.5
+const SIGNAL_WEIGHTS: Record<string, number> = {
+  job_interview_signal: 5,
+  resignation_risk_mention: 5,
+  email_to_all_team: 4,
+  linkedin_update: 3,
+  salary_inquiry: 3,
+  many_small_absences: 3,
+  hours_reduction_request: 3,
+  complaint: 2,
+  absence_concern: 2,
+  performance_concern: 2,
+  reduced_engagement: 2,
+  team_conflict: 2,
+  missed_deadline: 2,
+  behavior_change: 2,
+  praise: -2,
+  promotion_signal: -4,
+  salary_increase_happy: -3,
+  new_role_excitement: -2,
+  team_recognition: -1,
+  other: 2,
+};
+const SEV_MULT: Record<string, number> = { high: 2, medium: 1, low: 0.5 };
+
 // Churn risk score (0-100) computed from employee data alone
 function computeChurnScore(emp: any): { score: number; level: "high" | "medium" | "low" } {
   const today = new Date();
   let score = 0;
+
+  // Structural: promo staleness
   const promoDate = emp.last_promo_date
     ? new Date(emp.last_promo_date)
     : emp.hire_date ? new Date(emp.hire_date + "-01") : null;
   if (promoDate && !isNaN(promoDate.getTime())) {
     const monthsSince = (today.getTime() - promoDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-    if (monthsSince > 30) score += 35;
-    else if (monthsSince > 24) score += 25;
+    if (monthsSince > 30) score += 30;
+    else if (monthsSince > 24) score += 20;
   }
+
+  // Structural: performance
   const perf = emp.performance_score;
   if (typeof perf === "number") {
-    if (perf < 6.5) score += 25;
-    else if (perf < 7.0) score += 10;
+    if (perf < 6.5) score += 20;
+    else if (perf < 7.0) score += 8;
   }
-  const hrEvents = emp.hr_events ?? [];
+
+  // HR events — last 90 days, type-specific weight × severity multiplier
+  const cutoff90 = new Date(today); cutoff90.setDate(today.getDate() - 90);
+  const cutoffStr90 = cutoff90.toISOString().slice(0, 10);
+  const hrEvents = (emp.hr_events ?? []).filter((e: any) => String(e.date ?? "") >= cutoffStr90);
   let hrPts = 0;
   for (const ev of hrEvents) {
-    if (["complaint","absence_concern","performance_concern"].includes(ev.type)) {
-      hrPts += ev.severity === "high" ? 20 : ev.severity === "medium" ? 10 : 5;
-    }
+    const base = SIGNAL_WEIGHTS[ev.type as string] ?? 0;
+    hrPts += base * (SEV_MULT[ev.severity as string] ?? 1);
   }
-  score += Math.min(hrPts, 40);
+  score += Math.min(Math.max(hrPts, -20), 50); // protective signals can reduce up to -20
+
+  // Structural: new-hire risk
   const hireParts = emp.hire_date?.split("-").map(Number) ?? [];
   if (hireParts.length >= 2) {
     const hireDate = new Date(hireParts[0], hireParts[1] - 1, 1);
     const tenureMonths = (today.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-    if (tenureMonths < 6) score += 10;
+    if (tenureMonths < 6) score += 8;
   }
+
+  // Structural: no recent rating
   const ratings = emp.monthly_ratings ?? [];
   if (ratings.length > 0) {
-    const cutoff = new Date(today); cutoff.setDate(today.getDate() - 90);
-    const cutoffStr = cutoff.toISOString().slice(0, 7);
-    const recent = ratings.some((r: any) => String(r.month ?? r.date ?? "").slice(0, 7) >= cutoffStr);
-    if (!recent) score += 10;
+    const cutoffRating = new Date(today); cutoffRating.setDate(today.getDate() - 90);
+    const cutoffRatingStr = cutoffRating.toISOString().slice(0, 7);
+    const recent = ratings.some((r: any) => String(r.month ?? r.date ?? "").slice(0, 7) >= cutoffRatingStr);
+    if (!recent) score += 8;
   }
-  score = Math.min(100, score);
+
+  score = Math.min(100, Math.max(0, score));
   return { score, level: score >= 50 ? "high" : score >= 25 ? "medium" : "low" };
 }
 
@@ -2598,7 +2635,7 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
           {/* RIGHT: calculated projections */}
           <div className="space-y-6">
             {/* Project Allocations */}
-            <ProjectAllocations employeeName={form.getValues("name")} employeeId={selectedEmpId} onRefresh={() => {}} />
+            <ProjectAllocations employeeName={form.getValues("name")} employeeId={employee.id} onRefresh={() => {}} />
 
             {/* Promotion Tracks */}
             <Card className="p-4 bg-background">
@@ -3378,6 +3415,37 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
 }
 
 // ── HR Events (churn signal log) ───────────────────────────────────────────
+// Full signal type metadata used by HrEventsSection
+const HR_SIGNAL_META: {
+  type: HrEvent["type"];
+  label: string;
+  chip: string;   // short label for quick-log chips
+  color: string;  // tailwind classes for badge
+  group: "risk" | "protective" | "other";
+}[] = [
+  { type: "job_interview_signal",     label: "Interview signal",   chip: "Interview",    color: "bg-red-100 text-red-800 border-red-300",        group: "risk" },
+  { type: "resignation_risk_mention", label: "Resignation risk",   chip: "Resignation",  color: "bg-red-100 text-red-800 border-red-300",        group: "risk" },
+  { type: "email_to_all_team",        label: "Mass email",         chip: "Mass email",   color: "bg-red-100 text-red-800 border-red-300",        group: "risk" },
+  { type: "linkedin_update",          label: "LinkedIn update",    chip: "LinkedIn",     color: "bg-orange-100 text-orange-800 border-orange-300", group: "risk" },
+  { type: "salary_inquiry",           label: "Salary inquiry",     chip: "Salary ask",   color: "bg-orange-100 text-orange-800 border-orange-300", group: "risk" },
+  { type: "many_small_absences",      label: "Repeated absences",  chip: "Absences",     color: "bg-amber-100 text-amber-800 border-amber-300",  group: "risk" },
+  { type: "hours_reduction_request",  label: "Hours reduction",    chip: "Fewer hours",  color: "bg-amber-100 text-amber-800 border-amber-300",  group: "risk" },
+  { type: "complaint",                label: "Complaint",          chip: "Complaint",    color: "bg-orange-100 text-orange-800 border-orange-300", group: "risk" },
+  { type: "absence_concern",          label: "Absence",            chip: "Absence",      color: "bg-amber-100 text-amber-800 border-amber-300",  group: "risk" },
+  { type: "performance_concern",      label: "Performance issue",  chip: "Perf concern", color: "bg-amber-100 text-amber-800 border-amber-300",  group: "risk" },
+  { type: "reduced_engagement",       label: "Low engagement",     chip: "Disengaged",   color: "bg-amber-100 text-amber-800 border-amber-300",  group: "risk" },
+  { type: "team_conflict",            label: "Team conflict",      chip: "Conflict",     color: "bg-orange-100 text-orange-800 border-orange-300", group: "risk" },
+  { type: "missed_deadline",          label: "Missed deadline",    chip: "Late delivery",color: "bg-yellow-100 text-yellow-800 border-yellow-300", group: "risk" },
+  { type: "behavior_change",          label: "Behavior change",    chip: "Mood shift",   color: "bg-amber-100 text-amber-800 border-amber-300",  group: "risk" },
+  { type: "praise",                   label: "Praise",             chip: "Praise",       color: "bg-emerald-100 text-emerald-800 border-emerald-300", group: "protective" },
+  { type: "promotion_signal",         label: "Promotion signal",   chip: "Promotion",    color: "bg-emerald-100 text-emerald-800 border-emerald-300", group: "protective" },
+  { type: "salary_increase_happy",    label: "Salary increase",    chip: "Raise happy",  color: "bg-emerald-100 text-emerald-800 border-emerald-300", group: "protective" },
+  { type: "new_role_excitement",      label: "Role excitement",    chip: "Excited",      color: "bg-green-100 text-green-800 border-green-300",  group: "protective" },
+  { type: "team_recognition",         label: "Team recognition",   chip: "Recognition",  color: "bg-green-100 text-green-800 border-green-300",  group: "protective" },
+  { type: "other",                    label: "Other",              chip: "Other",        color: "bg-slate-100 text-slate-600 border-slate-200",  group: "other" },
+];
+const HR_SIGNAL_MAP = Object.fromEntries(HR_SIGNAL_META.map(m => [m.type, m]));
+
 function HrEventsSection({ employee }: { employee: EmployeeInput }) {
   const { updateEmployee } = useStore();
   const { toast } = useToast();
@@ -3388,25 +3456,14 @@ function HrEventsSection({ employee }: { employee: EmployeeInput }) {
   const [newNote, setNewNote] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const TYPE_LABELS: Record<HrEvent["type"], string> = {
-    complaint: "Complaint",
-    absence_concern: "Absence",
-    performance_concern: "Performance",
-    praise: "Praise",
-    other: "Other",
-  };
-  const TYPE_COLORS: Record<HrEvent["type"], string> = {
-    complaint: "bg-red-100 text-red-700 border-red-200",
-    absence_concern: "bg-amber-100 text-amber-700 border-amber-200",
-    performance_concern: "bg-orange-100 text-orange-700 border-orange-200",
-    praise: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    other: "bg-slate-100 text-slate-600 border-slate-200",
-  };
   const SEV_COLORS: Record<HrEvent["severity"], string> = {
     high: "bg-red-500 text-white",
     medium: "bg-amber-400 text-white",
     low: "bg-slate-300 text-slate-700",
   };
+
+  const riskSignals = HR_SIGNAL_META.filter(m => m.group === "risk");
+  const protectiveSignals = HR_SIGNAL_META.filter(m => m.group === "protective");
 
   const logEvent = async () => {
     if (!newNote.trim()) { toast({ title: "Add a note", variant: "destructive" }); return; }
@@ -3439,46 +3496,90 @@ function HrEventsSection({ employee }: { employee: EmployeeInput }) {
     <Card className="p-4 space-y-3">
       <h3 className="text-sm font-bold uppercase tracking-wide flex items-center gap-2">
         <AlertTriangle className="w-4 h-4 text-amber-500" />
-        HR Events — Churn Signals ({events.length})
+        Churn Signals ({events.length})
       </h3>
 
       {sorted.length === 0 ? (
-        <p className="text-xs text-muted-foreground italic">No events logged yet.</p>
+        <p className="text-xs text-muted-foreground italic">No signals logged yet.</p>
       ) : (
         <div className="space-y-1.5">
-          {sorted.map(ev => (
-            <div key={ev.id} className="flex items-start gap-2 rounded border p-2 bg-card text-xs">
-              <span className="font-mono text-muted-foreground shrink-0 pt-0.5">{ev.date}</span>
-              <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${TYPE_COLORS[ev.type]}`}>
-                {TYPE_LABELS[ev.type]}
-              </span>
-              <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${SEV_COLORS[ev.severity]}`}>
-                {ev.severity}
-              </span>
-              <span className="flex-1 text-foreground">{ev.note}</span>
-              <button type="button" onClick={() => deleteEvent(ev.id)}
-                className="shrink-0 text-muted-foreground hover:text-destructive transition-colors">
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
+          {sorted.map(ev => {
+            const meta = HR_SIGNAL_MAP[ev.type] ?? HR_SIGNAL_MAP["other"];
+            return (
+              <div key={ev.id} className="flex items-start gap-2 rounded border p-2 bg-card text-xs">
+                <span className="font-mono text-muted-foreground shrink-0 pt-0.5">{ev.date}</span>
+                <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${meta.color}`}>
+                  {meta.label}
+                </span>
+                <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${SEV_COLORS[ev.severity]}`}>
+                  {ev.severity}
+                </span>
+                <span className="flex-1 text-foreground">{ev.note}</span>
+                <button type="button" onClick={() => deleteEvent(ev.id)}
+                  className="shrink-0 text-muted-foreground hover:text-destructive transition-colors">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {/* Add form */}
-      <div className="border-t pt-3 space-y-2">
-        <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Log New Event</p>
-        <div className="flex gap-2 flex-wrap">
-          <Select value={newType} onValueChange={(v) => setNewType(v as HrEvent["type"])}>
-            <SelectTrigger className="h-7 text-xs w-40"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {(Object.keys(TYPE_LABELS) as HrEvent["type"][]).map(t => (
-                <SelectItem key={t} value={t} className="text-xs">{TYPE_LABELS[t]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className="border-t pt-3 space-y-3">
+        <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Log Signal</p>
+
+        {/* Quick-chips: risk */}
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-red-600 font-semibold uppercase tracking-wide">Risk signals</p>
+          <div className="flex flex-wrap gap-1">
+            {riskSignals.map(m => (
+              <button
+                key={m.type}
+                type="button"
+                onClick={() => setNewType(m.type)}
+                className={`px-2 py-0.5 rounded border text-[10px] font-medium transition-all
+                  ${newType === m.type ? "ring-2 ring-offset-1 ring-primary " + m.color : m.color + " opacity-70 hover:opacity-100"}`}
+              >
+                {m.chip}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Quick-chips: protective */}
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-emerald-600 font-semibold uppercase tracking-wide">Protective signals</p>
+          <div className="flex flex-wrap gap-1">
+            {protectiveSignals.map(m => (
+              <button
+                key={m.type}
+                type="button"
+                onClick={() => setNewType(m.type)}
+                className={`px-2 py-0.5 rounded border text-[10px] font-medium transition-all
+                  ${newType === m.type ? "ring-2 ring-offset-1 ring-primary " + m.color : m.color + " opacity-70 hover:opacity-100"}`}
+              >
+                {m.chip}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setNewType("other")}
+              className={`px-2 py-0.5 rounded border text-[10px] font-medium transition-all
+                ${newType === "other" ? "ring-2 ring-offset-1 ring-primary bg-slate-100 text-slate-600 border-slate-200" : "bg-slate-100 text-slate-600 border-slate-200 opacity-70 hover:opacity-100"}`}
+            >
+              Other
+            </button>
+          </div>
+        </div>
+
+        {/* Selected type + severity + note */}
+        <div className="flex gap-2 items-center flex-wrap">
+          <span className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${(HR_SIGNAL_MAP[newType] ?? HR_SIGNAL_MAP["other"]).color}`}>
+            {(HR_SIGNAL_MAP[newType] ?? HR_SIGNAL_MAP["other"]).label}
+          </span>
           <Select value={newSeverity} onValueChange={(v) => setNewSeverity(v as HrEvent["severity"])}>
-            <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-7 text-xs w-24"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="low" className="text-xs">Low</SelectItem>
               <SelectItem value="medium" className="text-xs">Medium</SelectItem>
