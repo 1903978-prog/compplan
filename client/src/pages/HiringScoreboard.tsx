@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -236,6 +236,7 @@ const TIER_SECTIONS: { tier: TierResult; label: string }[] = [
 ];
 
 export default function HiringScoreboard() {
+  const [, setLocation] = useLocation();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -500,7 +501,7 @@ export default function HiringScoreboard() {
                       globalRank++;
                       const rank = globalRank;
                       return (
-                        <TableRow key={r.c.id} className="hover:bg-muted/20">
+                        <TableRow key={r.c.id} className="hover:bg-muted/20 cursor-pointer" onClick={() => setLocation("/hiring")}>
                           <TableCell className="text-[11px] text-muted-foreground font-mono">{rank}</TableCell>
                           <TableCell className="font-semibold text-sm">{r.c.name}</TableCell>
                           <TableCell className="text-xs text-muted-foreground capitalize whitespace-nowrap">

@@ -600,6 +600,44 @@ function Router() {
       <Route path="/hiring/scoreboard" component={HiringScoreboard} />
       <Route path="/hiring/scripts" component={ReadAiScripts} />
       <Route path="/login"><Redirect to="/" /></Route>
+
+      {/* ── Module-prefix aliases (HR / Atlas / Finance) ──────────────────
+          External links and bookmarks may use these prefixes. Redirect
+          each to the canonical internal path. */}
+      {/* HR */}
+      <Route path="/hr"><Redirect to="/" /></Route>
+      <Route path="/hr/employees"><Redirect to="/employees" /></Route>
+      <Route path="/hr/roles"><Redirect to="/roles" /></Route>
+      <Route path="/hr/staffing"><Redirect to="/exec/staffing" /></Route>
+      <Route path="/hr/days-off"><Redirect to="/days-off" /></Route>
+      <Route path="/hr/time-tracker"><Redirect to="/time-tracker" /></Route>
+      <Route path="/hr/settings"><Redirect to="/settings" /></Route>
+      <Route path="/hr/hiring"><Redirect to="/hiring" /></Route>
+      <Route path="/hr/hiring/scoreboard"><Redirect to="/hiring/scoreboard" /></Route>
+      <Route path="/hr/hiring/scripts"><Redirect to="/hiring/scripts" /></Route>
+      {/* Atlas */}
+      <Route path="/atlas"><Redirect to="/agentic" /></Route>
+      <Route path="/atlas/agentic"><Redirect to="/agentic" /></Route>
+      <Route path="/atlas/aios-cycle"><Redirect to="/agentic/aios-cycle" /></Route>
+      <Route path="/atlas/org-chart"><Redirect to="/exec/org-chart" /></Route>
+      <Route path="/atlas/okr"><Redirect to="/exec/okr" /></Route>
+      <Route path="/atlas/ceo-brief"><Redirect to="/ceo-brief" /></Route>
+      <Route path="/atlas/brief-stream"><Redirect to="/exec/brief-stream" /></Route>
+      <Route path="/atlas/excom"><Redirect to="/exec/excom" /></Route>
+      <Route path="/atlas/agents"><Redirect to="/agents" /></Route>
+      <Route path="/atlas/decisions"><Redirect to="/approvals" /></Route>
+      <Route path="/atlas/decision-log"><Redirect to="/logs" /></Route>
+      <Route path="/atlas/templates"><Redirect to="/agentic/templates" /></Route>
+      <Route path="/atlas/deliverables"><Redirect to="/agentic/deliverables" /></Route>
+      <Route path="/atlas/section-map"><Redirect to="/exec/section-map" /></Route>
+      <Route path="/atlas/skills"><Redirect to="/agentic/skills" /></Route>
+      <Route path="/atlas/knowledge"><Redirect to="/agentic/knowledge" /></Route>
+      <Route path="/atlas/build-up"><Redirect to="/agentic/build-up" /></Route>
+      {/* Finance */}
+      <Route path="/finance"><Redirect to="/invoicing" /></Route>
+      <Route path="/finance/invoicing"><Redirect to="/invoicing" /></Route>
+      <Route path="/finance/clients"><Redirect to="/clients" /></Route>
+
       <Route component={NotFound} />
     </Switch>
   );
