@@ -1,4 +1,4 @@
-import { Switch, Route, Link, useLocation } from "wouter";
+import { Switch, Route, Link, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -14,6 +14,7 @@ import DaysOff from "@/pages/DaysOff";
 import Login from "@/pages/login";
 import PricingTool from "@/pages/PricingTool";
 import PricingAdmin from "@/pages/PricingAdmin";
+import PricingDirector from "@/pages/PricingDirector";
 import Hiring from "@/pages/Hiring";
 import TimeTracker from "@/pages/TimeTracker";
 import Proposals from "@/pages/Proposals";
@@ -28,6 +29,7 @@ import AdminTheme from "@/pages/AdminTheme";
 import MicroAIAdmin from "@/pages/MicroAIAdmin";
 import CandidateScores from "@/pages/CandidateScores";
 import HiringScoreboard from "@/pages/HiringScoreboard";
+import ReadAiScripts from "@/pages/ReadAiScripts";
 import { useActiveAIModel } from "@/hooks/use-active-ai-model";
 import AdminBackup from "@/pages/AdminBackup";
 import AdminTrash from "@/pages/AdminTrash";
@@ -46,22 +48,30 @@ import KnowledgeBase  from "@/pages/agentic-org/KnowledgeBase";
 import SectionMap     from "@/pages/agentic-org/SectionMap";
 import ExcomPage      from "@/pages/agentic-org/ExcomPage";
 import AiosCycle     from "@/pages/agentic-org/AiosCycle";
+import DeliverablesAtlas from "@/pages/agentic-org/DeliverablesAtlas";
+import TemplatesAdmin from "@/pages/agentic-org/TemplatesAdmin";
+import BuildUp from "@/pages/BuildUp";
 import CeoBrief from "@/pages/CeoBrief";
 import CeoBriefHistory from "@/pages/CeoBriefHistory";
 import OrgChart from "@/pages/OrgChart";
 import StaffingGantt from "@/pages/StaffingGantt";
 import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
-import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History } from "lucide-react";
+import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen, Wrench, SlidersHorizontal, BarChart3, Mic, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+type NavItem =
+  | { kind?: "link"; href: string; label: string; icon: React.ElementType }
+  | { kind: "divider" }
+  | { kind: "group"; label: string };
 
 function NavDropdown({ label, icon: Icon, items, basePaths }: {
   label: string;
   icon: React.ElementType;
-  items: { href: string; label: string; icon: React.ElementType }[];
+  items: NavItem[];
   basePaths: string[];
 }) {
-  const [location, navigate] = useLocation();
+  const [location, setLocation] = useLocation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const isActive = basePaths.some(p => location === p || location.startsWith(p + "/"));
@@ -74,15 +84,20 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const handleLabelClick = () => {
+    if (open) {
+      setOpen(false);
+    } else {
+      const first = items.find((i): i is Extract<NavItem, { kind?: "link" }> => !i.kind || i.kind === "link");
+      if (first) setLocation(first.href);
+      setOpen(true);
+    }
+  };
+
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => {
-          // Clicking the label always navigates to the first sub-page.
-          // The dropdown also opens so the user can pick a different section.
-          navigate(items[0].href);
-          setOpen(v => !v);
-        }}
+        onClick={handleLabelClick}
         className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-accent ${
           isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground"
         }`}
@@ -92,20 +107,32 @@ function NavDropdown({ label, icon: Icon, items, basePaths }: {
         <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1 w-48 bg-background border rounded-lg shadow-lg z-50 py-1">
-          {items.map(item => (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={() => setOpen(false)}
-              className={`flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors ${
-                location === item.href ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground"
-              }`}
-            >
-              <item.icon className="w-4 h-4" />
-              {item.label}
-            </Link>
-          ))}
+        <div className="absolute top-full left-0 mt-1 w-52 bg-background border rounded-lg shadow-lg z-50 py-1">
+          {items.map((item, idx) => {
+            if (item.kind === "divider") {
+              return <div key={idx} className="border-t my-1" />;
+            }
+            if (item.kind === "group") {
+              return (
+                <div key={idx} className="px-3 pt-2 pb-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">{item.label}</span>
+                </div>
+              );
+            }
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setOpen(false)}
+                className={`flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors ${
+                  location === item.href ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground"
+                }`}
+              >
+                <item.icon className="w-4 h-4" />
+                {item.label}
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
@@ -312,14 +339,31 @@ function Navigation() {
     <nav className="border-b bg-background sticky top-0 z-50">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center gap-6">
-            <h1 className="text-xl font-bold tracking-tight text-primary">
-              EENDIGO COMMAND CENTER <span className="text-[10px] font-normal text-muted-foreground ml-1">v24Mar</span>
-            </h1>
+          <div className="flex items-center gap-4">
+            {/* Brand mark + wordmark */}
+            <div className="flex items-center gap-2.5 shrink-0">
+              {/* Hexagonal ECC logo */}
+              <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+                <defs>
+                  <linearGradient id="ecc-grad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#10b981" />
+                    <stop offset="100%" stopColor="#0d9488" />
+                  </linearGradient>
+                </defs>
+                <polygon points="16,2 28,8.5 28,23.5 16,30 4,23.5 4,8.5" fill="url(#ecc-grad)" />
+                {/* Three horizontal bars = E */}
+                <rect x="10" y="10.5" width="12" height="2" rx="1" fill="white" />
+                <rect x="10" y="15" width="9" height="2" rx="1" fill="white" />
+                <rect x="10" y="19.5" width="12" height="2" rx="1" fill="white" />
+              </svg>
+              <div className="leading-none">
+                <div className="text-[13px] font-black tracking-widest text-primary uppercase whitespace-nowrap">Eendigo</div>
+                <div className="text-[9px] font-semibold tracking-[0.2em] text-muted-foreground uppercase whitespace-nowrap">Command Center</div>
+              </div>
+              <span className="text-[9px] font-mono text-muted-foreground/50 self-end mb-0.5">{typeof __BUILD_LABEL__ !== "undefined" ? __BUILD_LABEL__ : "vDev"}</span>
+            </div>
             <div className="flex items-center gap-1">
-              {/* Executive area — single-screen rollup + the org chart
-                  page that visualises CEO + direct reports, their goals,
-                  OKRs, and the tasks each plans for the next 10 days. */}
+              {/* Executive area */}
               <NavDropdown
                 label="Exec"
                 icon={Activity}
@@ -328,36 +372,39 @@ function Navigation() {
                   { href: "/exec", label: "Dashboard", icon: Activity },
                 ]}
               />
-              {/* AIOS — Autonomous Intelligence Operating System.
-                  Eendigo's AI-native management system: daily operating
-                  cycle, agent coordination, OKR tracking, decision proposals,
-                  and execution conversion. */}
+              {/* ATLAS — Autonomous Intelligence Operating System.
+                  Merged: OKR + OKR Center → single OKR page with tabs.
+                  Merged: CEO Brief + Brief History → single page with tabs.
+                  Engine sub-group: structural/admin Atlas components. */}
               <NavDropdown
-                label="AIOS"
+                label="Atlas"
                 icon={Cpu}
-                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map", "/exec/excom", "/agentic/aios-cycle", "/ceo-brief"]}
+                basePaths={["/agentic", "/agents", "/executive", "/approvals", "/logs", "/exec/org-chart", "/exec/okr", "/exec/brief-stream", "/exec/section-map", "/exec/excom", "/agentic/aios-cycle", "/agentic/build-up", "/agentic/deliverables", "/agentic/templates", "/ceo-brief"]}
                 items={[
                   { href: "/agentic",            label: "Executive Dashboard", icon: Cpu },
-                  { href: "/agentic/aios-cycle", label: "8am AIOS Cycle",      icon: Zap },
-                  { href: "/ceo-brief",          label: "CEO Brief",           icon: Newspaper },
-                  { href: "/ceo-brief/history",  label: "Brief History",       icon: History },
+                  { href: "/agentic/aios-cycle", label: "8am Atlas Cycle",     icon: Zap },
                   { href: "/exec/org-chart",     label: "Org Chart",           icon: Network },
                   { href: "/exec/okr",           label: "OKR",                 icon: Target },
+                  { href: "/ceo-brief",          label: "CEO Brief",           icon: Newspaper },
                   { href: "/exec/brief-stream",  label: "Brief Stream",        icon: Activity },
                   { href: "/exec/excom",         label: "EXCOM",               icon: Building2 },
                   { href: "/agents",             label: "Agent Registry",      icon: Users },
-                  { href: "/exec/section-map",   label: "Section Map",         icon: Map },
-                  { href: "/executive",          label: "OKR Center",          icon: Target },
                   { href: "/approvals",          label: "Decisions",           icon: Shield },
-                  { href: "/agentic/skills",     label: "Skill Factory",       icon: Cpu },
-                  { href: "/agentic/knowledge",  label: "Knowledge Base",      icon: BookOpen },
                   { href: "/logs",               label: "Decision Log",        icon: BookOpen },
+                  { kind: "group", label: "Engine" },
+                  { href: "/agentic/templates",   label: "Templates",          icon: FileText },
+                  { href: "/agentic/deliverables", label: "Deliverables",      icon: PackageOpen },
+                  { href: "/exec/section-map",   label: "Clearance Map",       icon: Map },
+                  { href: "/agentic/skills",     label: "Skill Factory",       icon: Wrench },
+                  { href: "/agentic/knowledge",  label: "Knowledge Base",      icon: BookOpen },
+                  { href: "/agentic/build-up",   label: "Build Up",            icon: Hammer },
                 ]}
               />
+              {/* HR — includes Hiring pipeline + Scoreboard (T17) */}
               <NavDropdown
                 label="HR"
                 icon={Briefcase}
-                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker", "/exec/staffing"]}
+                basePaths={["/", "/employees", "/roles", "/days-off", "/settings", "/time-tracker", "/exec/staffing", "/hiring", "/hiring/scripts"]}
                 items={[
                   { href: "/", label: "Dashboard", icon: LayoutDashboard },
                   { href: "/employees", label: "Employees", icon: Users },
@@ -366,41 +413,32 @@ function Navigation() {
                   { href: "/days-off", label: "Days Off", icon: CalendarDays },
                   { href: "/time-tracker", label: "Time Tracker", icon: Timer },
                   { href: "/settings", label: "Settings", icon: SettingsIcon },
+                  { kind: "group", label: "Hiring" },
+                  { href: "/hiring", label: "Pipeline", icon: UserCheck },
+                  { href: "/hiring/scoreboard", label: "Scoreboard", icon: BarChart3 },
+                  { href: "/hiring/scripts", label: "Read.ai Scripts", icon: Mic },
                 ]}
               />
-              <NavDropdown
-                label="Pricing"
-                icon={DollarSign}
-                basePaths={["/pricing"]}
-                items={[
-                  { href: "/pricing", label: "Pricing Cases", icon: DollarSign },
-                  { href: "/pricing/admin", label: "Pricing Admin", icon: SettingsIcon },
-                ]}
-              />
+              {/* PROPOSALS — merged Pricing + Pitchdeck (was Proposals) + Pitch Creation (T16) */}
               <NavDropdown
                 label="Proposals"
                 icon={FileText}
-                basePaths={["/proposals", "/knowledge"]}
+                basePaths={["/pricing", "/proposals", "/knowledge"]}
                 items={[
-                  { href: "/proposals", label: "Proposals", icon: FileText },
+                  { href: "/pricing", label: "Pricing Cases", icon: DollarSign },
+                  { href: "/pricing/director", label: "Pricing Director", icon: TrendingUp },
+                  { href: "/pricing/admin", label: "Pricing Admin", icon: SlidersHorizontal },
+                  { kind: "group", label: "Pitchdeck" },
+                  { href: "/proposals", label: "Pitchdeck", icon: FileText },
                   { href: "/knowledge", label: "Knowledge Center", icon: BookOpen },
+                  { kind: "group", label: "Pitch Creation" },
                   { href: "/proposals/methodology", label: "Slide Methodology", icon: Layers },
                   { href: "/proposals/backgrounds", label: "Slide Backgrounds", icon: ImageIcon },
                   { href: "/proposals/templates/cover", label: "Slide Templates (PoC)", icon: LayoutTemplate },
                 ]}
               />
               <NavDropdown
-                label="Hiring"
-                icon={UserCheck}
-                basePaths={["/hiring"]}
-                items={[
-                  { href: "/hiring", label: "Pipeline", icon: UserCheck },
-                  { href: "/hiring/scores", label: "Candidate Scoring", icon: Activity },
-                  { href: "/hiring/scoreboard", label: "Scoreboard", icon: Grid3X3 },
-                ]}
-              />
-              <NavDropdown
-                label="AR"
+                label="FINANCE"
                 icon={Receipt}
                 basePaths={["/invoicing", "/clients"]}
                 items={[
@@ -414,6 +452,8 @@ function Navigation() {
                 basePaths={["/bd"]}
                 items={[
                   { href: "/bd", label: "Pipeline", icon: Target },
+                  { href: "/bd/contacts", label: "Contacts", icon: Database },
+                  { href: "/bd/companies", label: "Companies", icon: Database },
                   { href: "/bd/import", label: "Import HubSpot", icon: Database },
                 ]}
               />
@@ -507,6 +547,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/exec" component={ExecDashboard} />
       <Route path="/exec/org-chart" component={OrgChart} />
+      <Route path="/org-chart"><Redirect to="/exec/org-chart" /></Route>
       <Route path="/exec/okr" component={OkrTree} />
       <Route path="/exec/staffing" component={StaffingGantt} />
       <Route path="/exec/brief-stream" component={BriefStream} />
@@ -514,7 +555,7 @@ function Router() {
       <Route path="/agentic" component={AgenticHome} />
       <Route path="/agents" component={AgentRegistry} />
       <Route path="/agents/:id" component={AgentDetail} />
-      <Route path="/executive" component={AgenticExec} />
+      <Route path="/executive"><Redirect to="/exec/okr" /></Route>
       <Route path="/approvals" component={Approvals} />
       <Route path="/logs" component={Logs} />
       <Route path="/agentic/skills" component={AgenticSkills} />
@@ -522,16 +563,22 @@ function Router() {
       <Route path="/exec/section-map" component={SectionMap} />
       <Route path="/exec/excom" component={ExcomPage} />
       <Route path="/agentic/aios-cycle" component={AiosCycle} />
-      <Route path="/ceo-brief/history" component={CeoBriefHistory} />
+      <Route path="/agentic/build-up" component={BuildUp} />
+      <Route path="/agentic/deliverables" component={DeliverablesAtlas} />
+      <Route path="/agentic/templates" component={TemplatesAdmin} />
+      <Route path="/ceo-brief/history"><Redirect to="/ceo-brief?tab=history" /></Route>
       <Route path="/ceo-brief/:id">{() => <CeoBrief />}</Route>
       <Route path="/ceo-brief">{() => <CeoBrief />}</Route>
       <Route path="/bd" component={BusinessDevelopment} />
+      <Route path="/bd/contacts" component={BusinessDevelopment} />
+      <Route path="/bd/companies" component={BusinessDevelopment} />
       <Route path="/bd/import" component={BusinessDevelopment} />
       <Route path="/employees" component={EmployeeList} />
       <Route path="/roles" component={RoleGridPage} />
       <Route path="/days-off" component={DaysOff} />
       <Route path="/settings" component={Settings} />
       <Route path="/pricing" component={PricingTool} />
+      <Route path="/pricing/director" component={PricingDirector} />
       <Route path="/pricing/admin" component={PricingAdmin} />
       <Route path="/time-tracker" component={TimeTracker} />
       <Route path="/proposals" component={Proposals} />
@@ -551,6 +598,8 @@ function Router() {
       <Route path="/admin/micro-ai" component={MicroAIAdmin} />
       <Route path="/hiring/scores" component={CandidateScores} />
       <Route path="/hiring/scoreboard" component={HiringScoreboard} />
+      <Route path="/hiring/scripts" component={ReadAiScripts} />
+      <Route path="/login"><Redirect to="/" /></Route>
       <Route component={NotFound} />
     </Switch>
   );

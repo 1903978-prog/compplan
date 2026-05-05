@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw, TrendingUp, GraduationCap, Brain, Library, ChevronRight, BarChart3 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Target, Sparkles, ListTodo, Activity, ShieldCheck, BookOpen, Map, RefreshCw, TrendingUp, GraduationCap, Brain, Library, ChevronRight, BarChart2, BarChart3 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Agent {
@@ -57,6 +57,12 @@ interface KeyResult { id: number; objective_id: number; title: string; target_va
 interface Idea { id: number; title: string; description: string | null; status: string; impact_score: number | null; effort_score: number | null; risk_score: number | null; total_score: number | null; created_at: string; }
 interface Task { id: number; title: string; description: string | null; deadline: string | null; priority: number; status: string; approval_level: string; approval_status: string; }
 interface LogRow { id: number; timestamp: string; event_type: string; payload: any; }
+interface AgentKpi {
+  id: number; cycle_id: number; agent_name: string; round: string;
+  deliverable_count: number; insight_count: number; idea_count: number; action_count: number;
+  avg_total_score: number | null; insight_score: number | null; action_score: number | null;
+  created_at: string;
+}
 
 interface AgentScore {
   agentId:                 number;
@@ -102,6 +108,7 @@ export default function AgentDetail() {
   const [sectionsPrimary, setSectionsPrimary]   = useState<SectionMapRow[]>([]);
   const [sectionsSecondary, setSectionsSecondary] = useState<SectionMapRow[]>([]);
   const [sources, setSources]                   = useState<AgentSource[]>([]);
+  const [kpis, setKpis]                         = useState<AgentKpi[]>([]);
   // Re-route modal
   const [rerouteRow, setRerouteRow]             = useState<SectionMapRow | null>(null);
   const [rerouteDraft, setRerouteDraft]         = useState("");
@@ -138,12 +145,16 @@ export default function AgentDetail() {
       } else {
         setKrs([]);
       }
-      // Section map — loaded after we know the agent name
+      // Section map + KPI history — loaded after we know the agent name
       if (a?.name) {
         const encoded = encodeURIComponent(a.name);
-        const sm = await fetch(`/api/agentic/section-map/by-agent/${encoded}`, { credentials: "include" }).then(r => r.ok ? r.json() : { primary: [], secondary: [] });
+        const [sm, kpiRows] = await Promise.all([
+          fetch(`/api/agentic/section-map/by-agent/${encoded}`, { credentials: "include" }).then(r => r.ok ? r.json() : { primary: [], secondary: [] }),
+          fetch(`/api/aios/agent-kpis/${encoded}`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
+        ]);
         setSectionsPrimary(Array.isArray(sm.primary) ? sm.primary : []);
         setSectionsSecondary(Array.isArray(sm.secondary) ? sm.secondary : []);
+        setKpis(Array.isArray(kpiRows) ? kpiRows : []);
       }
     } catch {
       toast({ title: "Failed to load agent", variant: "destructive" });
@@ -261,9 +272,9 @@ export default function AgentDetail() {
       </Section>
 
       {/* 1b. Job Description — read by AIOS cycle */}
-      <Section title="Job Description (AIOS)" icon={<BookOpen className="w-4 h-4" />}>
+      <Section title="Job Description (Atlas)" icon={<BookOpen className="w-4 h-4" />}>
         <p className="text-[11px] text-muted-foreground mb-2">
-          Read by the AIOS 8am cycle. Include: mandatory daily activities, KPIs, decision rights, professional behaviour, escalation rules. The richer this is, the better the agent's daily deliverables.
+          Read by the Atlas 8am cycle. Include: mandatory daily activities, KPIs, decision rights, professional behaviour, escalation rules. The richer this is, the better the agent's daily deliverables.
         </p>
         <Textarea
           defaultValue={agent.job_description ?? ""}
@@ -591,7 +602,12 @@ export default function AgentDetail() {
         )}
       </Section>
 
-      {/* 10. Performance Review — computed stats + 6-dimension readiness score */}
+      {/* 10. Atlas KPI history */}
+      <Section title="Atlas output history" icon={<BarChart2 className="w-4 h-4" />}>
+        <KpiSparkline kpis={kpis} />
+      </Section>
+
+      {/* 11. Performance Review — computed stats + 6-dimension readiness score */}
       <PerformanceReviewSection
         agent={agent}
         tasks={tasks}
@@ -626,6 +642,87 @@ export default function AgentDetail() {
           </div>
         </div>
       </Section>
+    </div>
+  );
+}
+
+// ── KPI Sparkline sub-component ──────────────────────────────────────────────
+function KpiSparkline({ kpis }: { kpis: AgentKpi[] }) {
+  // Show only round1 rows, sorted oldest → newest, last 10
+  const r1 = [...kpis.filter(k => k.round === "round1")].reverse().slice(0, 10);
+  if (r1.length === 0) return <p className="text-xs text-muted-foreground italic">No cycle data yet.</p>;
+
+  const latest = r1[r1.length - 1];
+  const maxD = Math.max(...r1.map(k => k.deliverable_count), 1);
+
+  // SVG sparkline — 200×40 viewBox
+  const W = 200; const H = 40; const PAD = 4;
+  const xs = r1.map((_, i) => PAD + (i / Math.max(r1.length - 1, 1)) * (W - PAD * 2));
+  const ys = r1.map(k => H - PAD - ((k.deliverable_count / maxD) * (H - PAD * 2)));
+  const polyline = xs.map((x, i) => `${x},${ys[i]}`).join(" ");
+
+  return (
+    <div className="space-y-3">
+      {/* Stat pills for latest cycle */}
+      <div className="flex items-center flex-wrap gap-2 text-xs">
+        {[
+          { label: "Deliverables", value: latest.deliverable_count, color: "bg-indigo-100 text-indigo-700" },
+          { label: "Insights",     value: latest.insight_count,     color: "bg-blue-100 text-blue-700" },
+          { label: "Ideas",        value: latest.idea_count,        color: "bg-violet-100 text-violet-700" },
+          { label: "Actions",      value: latest.action_count,      color: "bg-emerald-100 text-emerald-700" },
+        ].map(s => (
+          <span key={s.label} className={`px-2 py-0.5 rounded-full font-medium ${s.color}`}>
+            {s.value} {s.label}
+          </span>
+        ))}
+        {latest.avg_total_score != null && (
+          <span className="px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+            avg score {latest.avg_total_score.toFixed(1)}
+          </span>
+        )}
+        <span className="text-muted-foreground text-[10px] ml-auto">latest cycle · {r1.length} data point{r1.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {/* Sparkline + axis label */}
+      <div className="flex items-end gap-3">
+        <div>
+          <div className="text-[9px] text-muted-foreground mb-1 uppercase tracking-wide">Deliverables / cycle (R1)</div>
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-48 h-10 overflow-visible">
+            <polyline
+              points={polyline}
+              fill="none"
+              stroke="hsl(239 84% 67%)"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+            {xs.map((x, i) => (
+              <circle key={i} cx={x} cy={ys[i]} r="2.5"
+                fill="hsl(239 84% 67%)"
+                className="cursor-default"
+              >
+                <title>Cycle {r1[i].cycle_id}: {r1[i].deliverable_count} deliverables</title>
+              </circle>
+            ))}
+          </svg>
+        </div>
+
+        {/* Round 2 comparison pills if any R2 data */}
+        {kpis.some(k => k.round === "round2") && (() => {
+          const latestR2 = kpis.find(k => k.round === "round2" && k.cycle_id === latest.cycle_id);
+          if (!latestR2) return null;
+          return (
+            <div className="border-l pl-3">
+              <div className="text-[9px] text-muted-foreground mb-1 uppercase tracking-wide">Round 2 (latest)</div>
+              <div className="flex flex-col gap-0.5 text-[10px]">
+                <span className="font-mono">{latestR2.deliverable_count} deliverables</span>
+                {latestR2.avg_total_score != null && (
+                  <span className="text-amber-600 font-mono">avg {latestR2.avg_total_score.toFixed(1)}</span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
     </div>
   );
 }

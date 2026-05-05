@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen, FileText } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import OrgTree, { type OrgTreeNode } from "@/components/OrgTree";
 
@@ -29,6 +29,7 @@ interface AiosAgent {
   skills: string[] | null;
   knowledge: string[] | null;
   training: string[] | null;
+  templates: string[] | null;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ interface OrgRole {
   goals: string[];
   okrs: OkrItem[];
   tasks_10d: TaskItem[];
+  templates: string[];
   sort_order: number;
   updated_at: string;
 }
@@ -136,6 +138,10 @@ export default function OrgChart() {
   const [loading, setLoading] = useState(true);
   const [openRole, setOpenRole] = useState<OrgRole | null>(null);
   const [addKnowledgeForRole, setAddKnowledgeForRole] = useState<OrgRole | null>(null);
+  // Side panel for the depth-cap "show direct reports" chevron. When set,
+  // a slide-in panel on the right lists that role's direct reports — the
+  // depth-4+ nodes that the chart hides to keep the layout compact.
+  const [subtreeFor, setSubtreeFor] = useState<OrgRole | null>(null);
   const [knowledgeDraftTitle, setKnowledgeDraftTitle] = useState("");
   const [knowledgeDraftContent, setKnowledgeDraftContent] = useState("");
   const [showFullLog, setShowFullLog] = useState(false);
@@ -225,16 +231,8 @@ export default function OrgChart() {
       setAcceptanceStats(stats);
       setAiosAgents(aios);
 
-      // Start with CEO's direct reports collapsed so the initial view shows
-      // only 3 levels (President → CEO → CXOs). Cards fill the viewport at
-      // ~90% zoom, matching the reference org-chart proportions. Users click
-      // the + toggle on any card to expand its subtree.
-      const depth2Keys = new Set<string>(
-        (orgs as OrgRole[])
-          .filter(r => r.parent_role_key === "ceo")
-          .map(r => r.role_key)
-      );
-      setCollapsedKeys(depth2Keys);
+      // Always fully expanded (per user spec — no +/− toggles).
+      setCollapsedKeys(new Set<string>());
 
       setLoading(false);
     }).catch(() => { toast({ title: "Failed to load org chart", variant: "destructive" }); setLoading(false); });
@@ -336,7 +334,7 @@ export default function OrgChart() {
   // Save edited goals / OKRs / role_name back to the role. Used by the
   // dialog's inline-editable sections (and the editable title in the
   // dialog header).
-  const saveRoleFields = async (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name">>) => {
+  const saveRoleFields = async (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name" | "templates">>) => {
     const r = await fetch(`/api/org-chart/${role.id}`, {
       method: "PUT", credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -446,23 +444,21 @@ export default function OrgChart() {
   };
 
   return (
-    <div className="container mx-auto py-6 w-full max-w-none px-6">
-      <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
-        <div className="flex items-center gap-3">
-          <Network className="w-7 h-7 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Org Chart</h1>
-            <p className="text-sm text-muted-foreground">
-              <Bot className="w-3 h-3 inline" /> AI agent · <User className="w-3 h-3 inline" /> human · solid line = primary boss · dotted line = matrix.
-            </p>
-          </div>
+    <div className="container mx-auto pt-2 pb-6 w-full max-w-none px-6">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Network className="w-4 h-4 text-primary shrink-0" />
+          <h1 className="text-base font-semibold tracking-tight">Org Chart</h1>
+          <span className="text-[11px] text-muted-foreground">
+            <Bot className="w-3 h-3 inline" /> AI · <User className="w-3 h-3 inline" /> human · solid = primary · dotted = matrix
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setShowStartAgents(true)}>
-            <Sparkles className="w-4 h-4 mr-1" /> Start agents
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowStartAgents(true)}>
+            <Sparkles className="w-3.5 h-3.5 mr-1" /> Start agents
           </Button>
-          <Button size="sm" onClick={() => setShowAddRole(true)}>
-            <Plus className="w-4 h-4 mr-1" /> Add role
+          <Button size="sm" className="h-7 text-xs" onClick={() => setShowAddRole(true)}>
+            <Plus className="w-3.5 h-3.5 mr-1" /> Add role
           </Button>
         </div>
       </div>
@@ -613,6 +609,10 @@ export default function OrgChart() {
               onAddKnowledge={(id) => {
                 const r = roles.find(x => x.role_key === id);
                 if (r) setAddKnowledgeForRole(r);
+              }}
+              onShowSubtree={(id) => {
+                const r = roles.find(x => x.role_key === id);
+                if (r) setSubtreeFor(r);
               }}
             />
           </div>
@@ -813,6 +813,83 @@ export default function OrgChart() {
           }
         }}
       />
+
+      {/* ── Direct-reports side panel ──────────────────────────────────
+          Opens when the user clicks the sky-blue chevron on a node
+          whose subtree is hidden by the depth cap (3 layers below CEO).
+          Lists every role whose primary boss is the selected node.
+          Clicking a row closes the panel and opens that role's detail
+          dialog. */}
+      {subtreeFor && (() => {
+        const reports = roles
+          .filter(r => r.parent_role_key === subtreeFor.role_key)
+          .sort((a, b) => a.sort_order - b.sort_order);
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/20"
+              onClick={() => setSubtreeFor(null)}
+            />
+            <div className="fixed top-0 right-0 z-50 h-full w-[380px] max-w-[90vw] bg-card border-l border-slate-200 dark:border-slate-700 shadow-xl flex flex-col">
+              <div className="flex items-start justify-between gap-2 p-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Direct reports of</div>
+                  <div className="text-base font-semibold truncate">{subtreeFor.role_name}</div>
+                  {subtreeFor.person_name && (
+                    <div className="text-xs text-muted-foreground truncate">{subtreeFor.person_name}</div>
+                  )}
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => setSubtreeFor(null)} className="h-7 w-7 p-0 shrink-0">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {reports.length === 0 && (
+                  <div className="text-sm text-muted-foreground italic text-center py-8">
+                    No direct reports.
+                  </div>
+                )}
+                {reports.map(r => {
+                  const overdue = r.tasks_10d.filter(t => t.status !== "done" && daysFromNow(t.due_date) < 0).length;
+                  const knowledgeCount = knowledge.filter(k => k.role_key === r.role_key).length;
+                  const isAgent = (r.kind ?? "agent") === "agent";
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => { setOpenRole(r); setSubtreeFor(null); }}
+                      className="w-full text-left flex items-start gap-3 p-2.5 rounded-md border border-slate-200 dark:border-slate-700 hover:border-slate-400 hover:shadow-sm bg-card"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center font-semibold text-xs shrink-0">
+                        {isAgent ? <Bot className="w-4 h-4" /> : (r.person_name ?? "?").trim().split(/\s+/).map(p => p[0]).slice(0,2).join("").toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm leading-tight truncate">{r.role_name}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {r.person_name || (r.status === "vacant" ? "Vacant" : "—")}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {statusBadge(r.status)}
+                          {overdue > 0 && (
+                            <Badge className="bg-red-100 text-red-700 border-red-200 text-[10px]">{overdue} overdue</Badge>
+                          )}
+                          {knowledgeCount > 0 && (
+                            <Badge variant="secondary" className="text-[10px]">{knowledgeCount} <BookOpen className="w-2.5 h-2.5 inline ml-0.5" /></Badge>
+                          )}
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="p-3 border-t border-slate-100 dark:border-slate-800 text-[11px] text-muted-foreground">
+                Roles below 3 layers under the CEO live here so the chart stays compact.
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -1096,16 +1173,35 @@ function RoleDetailDialog({
   allRoles: OrgRole[];
   aiosAgent?: AiosAgent;
   onUpdateReportsTo: (role: OrgRole, newParent: string | null, isDotted?: boolean) => Promise<void>;
-  onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name">>) => Promise<void>;
+  onSaveFields: (role: OrgRole, patch: Partial<Pick<OrgRole, "goals" | "okrs" | "role_name" | "templates">>) => Promise<void>;
   onCascade: (role: OrgRole) => Promise<void>;
   onClose: () => void;
   onAddKnowledgeFromDialog: () => void;
   onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
   onTaskToggle: (task: TaskItem, newStatus: TaskItem["status"]) => Promise<void>;
 }) {
+  const { toast } = useToast();
+  const [startingWork, setStartingWork] = useState(false);
+  const [workStarted, setWorkStarted] = useState(false);
+
   if (!role) return null;
   const openTasks = role.tasks_10d.filter(t => t.status !== "done");
   const doneTasks = role.tasks_10d.filter(t => t.status === "done");
+
+  const handleStartWork = async () => {
+    if (!aiosAgent) return;
+    setStartingWork(true);
+    try {
+      const res = await fetch(`/api/agentic/agents/${aiosAgent.id}/run`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      setWorkStarted(true);
+      toast({ title: `${aiosAgent.name} started`, description: "Agent routine is running in the background. Deliverables will appear in AIOS." });
+    } catch (err: any) {
+      toast({ title: "Failed to start work", description: err.message, variant: "destructive" });
+    } finally {
+      setStartingWork(false);
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1139,6 +1235,25 @@ function RoleDetailDialog({
                 {role.person_name ?? "(unfilled)"} · last updated {fmtDate(role.updated_at)}
               </DialogDescription>
             </div>
+            {/* Start work button — only for AI agent roles that have an AIOS entry */}
+            {aiosAgent && (
+              <Button
+                size="sm"
+                className={workStarted
+                  ? "shrink-0 bg-emerald-600/20 text-emerald-400 border border-emerald-600/40 hover:bg-emerald-600/30"
+                  : "shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white"}
+                onClick={handleStartWork}
+                disabled={startingWork || workStarted}
+              >
+                {startingWork ? (
+                  <><span className="animate-spin mr-1.5">⚙</span> Starting…</>
+                ) : workStarted ? (
+                  <><Check className="w-3.5 h-3.5 mr-1.5" /> Running</>
+                ) : (
+                  <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Start work</>
+                )}
+              </Button>
+            )}
           </div>
         </DialogHeader>
 
@@ -1380,12 +1495,44 @@ function RoleDetailDialog({
                 <NoteList notes={sources} onArchive={onArchiveKnowledge} showTags />
               </SectionBlock>
 
-              {/* 6 · Skills (AIOS spec: deliverables, skills, training, domain knowledge) */}
+              {/* 6 · Templates (editable list for any role kind) */}
+              <SectionBlock
+                icon={<FileText className="w-3.5 h-3.5 text-rose-500" />}
+                label="Templates"
+                count={(role.templates ?? []).length}
+              >
+                <div className="space-y-1.5 py-1">
+                  {(role.templates ?? []).length === 0
+                    ? <p className="text-xs text-muted-foreground italic">No templates yet.</p>
+                    : (role.templates ?? []).map((t, i) => (
+                      <div key={i} className="flex gap-1 items-start">
+                        <span className="text-muted-foreground pt-1.5 shrink-0">•</span>
+                        <textarea defaultValue={t} rows={Math.max(1, Math.ceil(t.length / 80))}
+                          onBlur={e => {
+                            const v = e.target.value.trim(); if (v === t) return;
+                            const next = v
+                              ? (role.templates ?? []).map((x, j) => j === i ? v : x)
+                              : (role.templates ?? []).filter((_, j) => j !== i);
+                            void onSaveFields(role, { templates: next });
+                          }}
+                          className="flex-1 text-sm leading-snug resize-y border-b border-transparent focus:border-primary outline-none bg-transparent py-1" />
+                        <button onClick={() => void onSaveFields(role, { templates: (role.templates ?? []).filter((_, j) => j !== i) })}
+                          className="text-muted-foreground hover:text-destructive p-1 shrink-0">×</button>
+                      </div>
+                    ))}
+                  <Button size="sm" variant="ghost" className="h-7 text-xs mt-1"
+                    onClick={() => void onSaveFields(role, { templates: [...(role.templates ?? []), "New template"] })}>
+                    <Plus className="w-3 h-3 mr-1" /> Add template
+                  </Button>
+                </div>
+              </SectionBlock>
+
+              {/* 7 · Skills (AIOS spec: deliverables, skills, training, domain knowledge) */}
               {aiosAgent && (
                 <SectionBlock
                   icon={<Lightbulb className="w-3.5 h-3.5 text-primary" />}
                   label="Skills & Profile"
-                  count={(aiosAgent.deliverables?.length ?? 0) + (aiosAgent.skills?.length ?? 0) + (aiosAgent.training?.length ?? 0)}
+                  count={(aiosAgent.deliverables?.length ?? 0) + (aiosAgent.skills?.length ?? 0) + (aiosAgent.training?.length ?? 0) + (aiosAgent.templates?.length ?? 0)}
                 >
                   <div className="space-y-1 py-1">
                     {aiosAgent.function_area && (
@@ -1401,6 +1548,7 @@ function RoleDetailDialog({
                     <SpecGroup icon={<Lightbulb className="w-3 h-3 text-amber-500 shrink-0" />} label="Skills" items={aiosAgent.skills ?? []} />
                     <SpecGroup icon={<BookOpen className="w-3 h-3 text-emerald-500 shrink-0" />} label="Domain Knowledge" items={aiosAgent.knowledge ?? []} />
                     <SpecGroup icon={<GraduationCap className="w-3 h-3 text-purple-500 shrink-0" />} label="Training" items={aiosAgent.training ?? []} />
+                    <SpecGroup icon={<FileText className="w-3 h-3 text-rose-500 shrink-0" />} label="Templates" items={aiosAgent.templates ?? []} />
                   </div>
                 </SectionBlock>
               )}

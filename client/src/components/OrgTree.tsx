@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useLayoutEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Bot, BookOpen, Plus, Minus } from "lucide-react";
+import { Bot, BookOpen, Plus, Minus, ChevronRight } from "lucide-react";
 
 // ─── Public types ─────────────────────────────────────────────────────
 export interface OrgTreeNode {
@@ -27,6 +27,10 @@ interface OrgTreeProps {
   onToggleCollapse: (id: string) => void;
   onOpen: (id: string) => void;
   onAddKnowledge: (id: string) => void;
+  // Fired when the user clicks the chevron on a node whose subtree
+  // exceeds MAX_LAYERS_BELOW_CEO. The page renders a side panel
+  // listing direct reports of this node.
+  onShowSubtree?: (id: string) => void;
 }
 
 // ─── Layout constants ─────────────────────────────────────────────────
@@ -36,17 +40,24 @@ interface OrgTreeProps {
 //   • Dotted-only nodes: horizontal next to their dotted boss.
 // Everyone else stacks vertically below their parent (indented tree).
 const CARD_W   = 200;
-const CARD_H   = 72;
-const INDENT_X = 32;          // indent per depth in the vertical indented tree
-const COL_GAP  = 16;          // gap between CEO-child columns (horizontal exception)
-const V_GAP    = 12;          // vertical gap between successive rows
-const Y_STEP   = CARD_H + V_GAP;  // 84 px per row
+const CARD_H   = 40;          // compact single-line tile (was 72)
+const CARD_H_DEEP = 30;       // even shorter for the deepest 2 levels (N-3+ from CEO)
+const DEEP_LEVEL  = 4;        // depth ≥ this uses CARD_H_DEEP — three levels below CEO
+const INDENT_X = 28;          // indent per depth in the vertical indented tree
+const COL_GAP  = 12;          // gap between CEO-child columns (horizontal exception)
+const V_GAP    = 6;           // vertical gap between successive rows
+// (No fixed Y_STEP — row Y is computed incrementally from each card's
+// height since deep cards are shorter than upper-level cards.)
 const PAD_X    = 20;
 const PAD_TOP  = 14;
 const PAD_BOT  = 28;
 const PEER_GAP = 18;          // above-root vertical gap for peer cards
 const ELBOW_R  = 5;
 const CEO_ID   = "ceo";       // children of this node spread horizontally
+// Cap on visible layers BELOW CEO. CEO row is layer 0; its children
+// are layer 1; etc. Anything past MAX_LAYERS_BELOW_CEO is hidden
+// behind a "show direct reports" chevron that opens the side panel.
+const MAX_LAYERS_BELOW_CEO = 3;
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 function initialsOf(name: string | undefined | null): string {
@@ -59,23 +70,26 @@ function initialsOf(name: string | undefined | null): string {
 
 // ─── Card component ───────────────────────────────────────────────────
 function NodeCard({
-  node, depth, onOpen, onAddKnowledge,
+  node, depth, height, onOpen, onAddKnowledge,
 }: {
   node: OrgTreeNode;
   depth: number;
+  height: number;
   onOpen: () => void;
   onAddKnowledge: () => void;
 }) {
   const isUpper = depth <= 1;
-  const accent = isUpper
+  const isDeep  = height < CARD_H;          // deepest two levels
+  const accent  = isUpper
     ? { stripe: "bg-sky-500",    name: "text-sky-600",    avatarBg: "bg-sky-100",    avatarFg: "text-sky-700" }
     : { stripe: "bg-orange-500", name: "text-orange-600", avatarBg: "bg-orange-100", avatarFg: "text-orange-700" };
 
-  // Role title is the headline (CFO, COO, etc.); person name is the
-  // smaller grey sub-line below. Falls back to person-name as headline
-  // for nodes that have no role title.
-  const headline = node.title?.trim() ? node.title : (node.name ?? "");
-  const sub      = node.title?.trim() && node.name?.trim() ? node.name : "";
+  // Single-line content: role title in bold colour, FIRST name only in
+  // smaller grey on the same line. Surnames intentionally dropped to keep
+  // the card to one row.
+  const role      = node.title?.trim() ?? "";
+  const firstName = node.name?.trim().split(/\s+/)[0] ?? "";
+  const headline  = role || node.name || "";   // fallback if no role
 
   const statusDot =
     node.vacant     ? "bg-red-500"
@@ -83,57 +97,54 @@ function NodeCard({
   : node.fired      ? "bg-slate-400"
                     : "";
 
+  // Sizing tokens — slightly tighter for "deep" (N-3+ from CEO) cards.
+  const avatarBox = isDeep ? "w-5 h-5" : "w-7 h-7";
+  const botSize   = isDeep ? "w-3 h-3" : "w-4 h-4";
+  const initFont  = isDeep ? "text-[9px]" : "text-[11px]";
+  const roleFont  = isDeep ? "text-[11px]" : "text-[12px]";
+  const subFont   = isDeep ? "text-[10px]" : "text-[11px]";
+  const padX      = isDeep ? "pl-1.5 pr-4" : "pl-2 pr-5";
+  const gap       = isDeep ? "gap-1" : "gap-1.5";
+  const stripeH   = isDeep ? "h-[2px]" : "h-[2px]";
+
   return (
     <Card
       onClick={onOpen}
-      title={`${headline}${sub ? " · " + sub : ""}`}
+      title={`${role}${firstName ? " · " + firstName : ""}${node.name && node.name !== firstName ? " (" + node.name + ")" : ""}`}
       className={`group relative cursor-pointer transition-shadow hover:shadow-md overflow-hidden bg-card border-slate-200 dark:border-slate-700 rounded-md select-none ${
         node.highlight ? "ring-2 ring-sky-300/60" : ""
       }`}
-      style={{ width: CARD_W, height: CARD_H }}
+      style={{ width: CARD_W, height }}
     >
-      {/* Top accent stripe */}
-      <div className={`absolute inset-x-0 top-0 h-[3px] ${accent.stripe}`} />
+      <div className={`absolute inset-x-0 top-0 ${stripeH} ${accent.stripe}`} />
 
-      <div className="flex items-center h-full pl-3 pr-8 gap-2.5 pt-[5px]">
-        {/* Avatar */}
+      <div className={`flex items-center h-full ${padX} ${gap}`}>
         <div className="relative shrink-0">
-          <div className={`w-10 h-10 rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold text-[12px]`}>
-            {node.type === "agent" ? <Bot className="w-5 h-5" /> : initialsOf(node.name)}
+          <div className={`${avatarBox} rounded-full ${accent.avatarBg} ${accent.avatarFg} flex items-center justify-center font-semibold ${initFont}`}>
+            {node.type === "agent" ? <Bot className={botSize} /> : initialsOf(node.name)}
           </div>
           {(node.overdueCount ?? 0) > 0 && (
             <span
-              className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500 ring-1 ring-card"
+              className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-1 ring-card"
               title={`${node.overdueCount} overdue`}
             />
           )}
         </div>
 
-        {/* Text */}
-        <div className="flex-1 min-w-0">
-          <div
-            className={`font-semibold text-[13px] leading-snug ${accent.name}`}
-            style={{ display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}
-          >
-            {headline}
-          </div>
-          {sub && (
-            <div
-              className="text-[11px] text-muted-foreground leading-tight mt-0.5"
-              style={{ display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}
-            >
-              {sub}
-            </div>
-          )}
-          {statusDot && (
-            <span className={`inline-block w-1.5 h-1.5 rounded-full mt-0.5 ${statusDot}`} />
+        <div className="flex-1 min-w-0 flex items-baseline gap-1.5 truncate">
+          <span className={`font-semibold ${roleFont} ${accent.name} truncate`}>{headline}</span>
+          {role && firstName && (
+            <span className={`${subFont} text-muted-foreground truncate`}>{firstName}</span>
           )}
         </div>
 
-        {/* Knowledge button — hover-reveal */}
+        {statusDot && (
+          <span className={`shrink-0 inline-block w-1.5 h-1.5 rounded-full ${statusDot}`} />
+        )}
+
         <Button
           size="sm" variant="ghost"
-          className="absolute top-1 right-1 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-0.5 right-0.5 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={(e) => { e.stopPropagation(); onAddKnowledge(); }}
           title="Add knowledge"
         >
@@ -161,6 +172,7 @@ interface LayoutPoint {
   depth: number;
   x: number;   // left edge of card
   y: number;   // top edge of card
+  h: number;   // card height (varies by depth)
   cx: number;  // centre-x of card
   cy: number;  // centre-y of card
   parentId: string | null;
@@ -178,7 +190,7 @@ function computeLayout(
   nodes: OrgTreeNode[],
   collapsedIds: Set<string>,
   excludeIds: Set<string>,
-): { points: LayoutPoint[]; width: number; height: number; maxDepth: number } | null {
+): { points: LayoutPoint[]; width: number; height: number; maxDepth: number; hiddenSubtreeOwners: Set<string> } | null {
   const ROOT_ID = "__virtual_root__";
   const usable  = nodes.filter(n => !excludeIds.has(n.id));
   const byId    = new Map(usable.map(n => [n.id, n]));
@@ -237,28 +249,47 @@ function computeLayout(
   };
   const subtreeWidth = (n: TNode) => CARD_W + subtreeMaxIndent(n) * INDENT_X;
 
+  // Card height shrinks for deeper levels (per CLAUDE.md rule 10 sizing
+  // note): N-3 from CEO and below get a tighter row height so the whole
+  // chart fits without resizing on expand.
+  const cardH = (depth: number) => depth >= DEEP_LEVEL ? CARD_H_DEEP : CARD_H;
+
   // Hybrid layout:
   //   • Default: indented-tree (each child below parent, indented INDENT_X
-  //     to the right). DFS pre-order assigns rows.
+  //     to the right).
   //   • CEO's children: spread horizontally on a single row, each child
   //     occupying its own column wide enough for that child's whole
   //     subtree (which then continues vertically).
-  // collect() returns the next available row AFTER placing the subtree.
+  // collect() returns the next available Y (in pixels) after placing
+  // the subtree. Working in pixel-Y instead of row-count lets us mix
+  // tall and short cards on the same canvas.
+  //
+  // We also track `dfc` (depth from CEO) — resets to 0 when we hit the
+  // CEO node, otherwise inherits parent's dfc + 1 (or stays -1 above
+  // CEO). When dfc reaches MAX_LAYERS_BELOW_CEO and the node still has
+  // children, those children are skipped from the chart and the node
+  // is added to hiddenSubtreeOwners so the UI can render a chevron
+  // pointing into the side panel.
   const points: LayoutPoint[] = [];
   let maxDepth = 0;
+  const hiddenSubtreeOwners = new Set<string>();
 
-  const collect = (n: TNode, depth: number, x: number, row: number): number => {
+  const collect = (n: TNode, depth: number, dfc: number, x: number, y: number): number => {
     if (n.id === ROOT_ID) {
       n._depth = -1;
-      let r = row;
-      for (const c of n.children) r = collect(c, 0, x, r);
-      return r;
+      let curY = y;
+      for (const c of n.children) curY = collect(c, 0, -1, x, curY);
+      return curY;
     }
     n._depth = depth;
     if (depth > maxDepth) maxDepth = depth;
 
+    // Reset depth-from-CEO when we hit the CEO node itself.
+    const cd = n.data?.id === CEO_ID ? 0 : dfc;
+
+    const h  = cardH(depth);
     const px = x;
-    const py = row * Y_STEP + PAD_TOP;
+    const py = y;
 
     points.push({
       id:       n.id,
@@ -266,35 +297,41 @@ function computeLayout(
       depth,
       x:        px,
       y:        py,
+      h,
       cx:       px + CARD_W / 2,
-      cy:       py + CARD_H / 2,
+      cy:       py + h / 2,
       parentId: n.parentId === ROOT_ID ? null : n.parentId,
     });
 
-    if (n.data?.id === CEO_ID && n.children.length > 0) {
-      // Exception 2 in rule 10: CEO's children spread horizontally on
-      // row+1. Each child occupies its own column whose width equals
-      // that child's subtree width.
-      let cx = x;
-      let maxR = row + 1;
-      for (const c of n.children) {
-        const w = subtreeWidth(c);
-        const r = collect(c, depth + 1, cx, row + 1);
-        if (r > maxR) maxR = r;
-        cx += w + COL_GAP;
-      }
-      return maxR;
+    // Cap once we're MAX_LAYERS_BELOW_CEO levels deep below CEO. Anything
+    // deeper moves to the side panel — render a chevron instead.
+    if (cd >= MAX_LAYERS_BELOW_CEO && n.children.length > 0) {
+      hiddenSubtreeOwners.add(n.id);
+      return py + h + V_GAP;
     }
 
-    // Default: vertical indented tree — each child below previous sibling's
-    // subtree, indented one INDENT_X step to the right.
-    let r = row + 1;
-    for (const c of n.children) {
-      r = collect(c, depth + 1, x + INDENT_X, r);
+    if (n.data?.id === CEO_ID && n.children.length > 0) {
+      // Exception 2: CEO's children spread horizontally on the row below.
+      const childY = py + h + V_GAP;
+      let cx = x;
+      let maxBottomY = childY + cardH(depth + 1);
+      for (const c of n.children) {
+        const w = subtreeWidth(c);
+        const r = collect(c, depth + 1, cd + 1, cx, childY);
+        if (r > maxBottomY) maxBottomY = r;
+        cx += w + COL_GAP;
+      }
+      return maxBottomY;
     }
-    return r;
+
+    // Default: vertical indented tree.
+    let nextY = py + h + V_GAP;
+    for (const c of n.children) {
+      nextY = collect(c, depth + 1, cd + 1, x + INDENT_X, nextY);
+    }
+    return nextY;
   };
-  const totalRows = collect(vRoot, 0, PAD_X, 0);
+  const totalBottomY = collect(vRoot, 0, -1, PAD_X, PAD_TOP);
 
   if (points.length === 0) return null;
 
@@ -315,22 +352,26 @@ function computeLayout(
       depth:    bossPt.depth,
       x:        px,
       y:        py,
+      h:        bossPt.h,
       cx:       px + CARD_W / 2,
-      cy:       py + CARD_H / 2,
+      cy:       py + bossPt.h / 2,
       parentId: null,
     });
   }
 
-  // Canvas size — width = rightmost card edge; height = total rows used.
+  // Canvas size — width = rightmost card edge; height = lowest card bottom.
   let maxRight = PAD_X + CARD_W;
+  let maxBottom = totalBottomY;
   for (const p of points) {
     const r = p.x + CARD_W;
     if (r > maxRight) maxRight = r;
+    const b = p.y + p.h;
+    if (b > maxBottom) maxBottom = b;
   }
   const width  = maxRight + PAD_X;
-  const height = totalRows * Y_STEP - V_GAP + PAD_TOP + PAD_BOT;
+  const height = maxBottom + PAD_BOT;
 
-  return { points, width, height, maxDepth };
+  return { points, width, height, maxDepth, hiddenSubtreeOwners };
 }
 
 // Indented-tree bracket: from parent's bottom (at the bracket-X column)
@@ -372,7 +413,7 @@ function tBracket(pcx: number, py: number, ccx: number, cy: number): string {
 
 // ─── Component ────────────────────────────────────────────────────────
 export default function OrgTree({
-  nodes, peerIds = [], collapsedIds, onToggleCollapse, onOpen, onAddKnowledge,
+  nodes, peerIds = [], collapsedIds, onToggleCollapse, onOpen, onAddKnowledge, onShowSubtree,
 }: OrgTreeProps) {
   const [zoom, setZoom]       = useState(1);
   const [fitZoom, setFitZoom] = useState(1);
@@ -395,7 +436,11 @@ export default function OrgTree({
     return s;
   }, [nodes]);
 
-  // Auto-fit on first render and whenever the canvas changes.
+  // Auto-fit ONCE on initial render. Subsequent layout changes (e.g.
+  // user clicks + to expand) keep the existing zoom — the chart does
+  // NOT resize on expand, per user spec. fitZoom is still updated so
+  // the manual "Fit" button refits to current canvas if needed.
+  const initialFitDone = useRef(false);
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el || !layout) return;
@@ -410,15 +455,18 @@ export default function OrgTree({
     const scaleY = ch / totalH;
     const fit    = Math.max(0.18, Math.min(scaleX, scaleY, 1) * 0.92);
     setFitZoom(fit);
-    setZoom(fit);
-    setPan({ x: 0, y: 0 });
+    if (!initialFitDone.current) {
+      setZoom(fit);
+      setPan({ x: 0, y: 0 });
+      initialFitDone.current = true;
+    }
   }, [layout?.width, layout?.height, peerIds.length]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!layout) {
     return <div className="text-sm text-muted-foreground italic p-4">No roles to display.</div>;
   }
 
-  const { points, width, height } = layout;
+  const { points, width, height, hiddenSubtreeOwners } = layout;
 
   const peerNodes = peerIds.map(id => nodeById.get(id)).filter((n): n is OrgTreeNode => !!n);
   const peerBand  = peerNodes.length > 0 ? peerNodes.length * (CARD_H + PEER_GAP) : 0;
@@ -451,13 +499,12 @@ export default function OrgTree({
     }
   }
 
-  // Anchor helpers for indented-tree bracket connectors:
-  // parent's bracket-X (offset INDENT_X/2 from left edge) at parent's bottom Y
-  //   → child's left-edge X at child's mid-Y.
+  // Anchor helpers — use each point's own height (p.h) since deeper
+  // levels are shorter than upper ones.
   const brkX    = (p: LayoutPoint) => p.x + INDENT_X / 2;            // bracket vertical-line X
-  const bottomY = (p: LayoutPoint) => p.y + treeOffY + CARD_H;       // parent bottom edge Y
+  const bottomY = (p: LayoutPoint) => p.y + treeOffY + p.h;          // parent bottom edge Y
   const leftCX  = (p: LayoutPoint) => p.x;                           // child left edge X
-  const midY    = (p: LayoutPoint) => p.y + treeOffY + CARD_H / 2;   // child mid Y
+  const midY    = (p: LayoutPoint) => p.y + treeOffY + p.h / 2;      // child mid Y
 
   // ─ Pan + zoom ─────────────────────────────────────────────────────
   const onWheel = (e: React.WheelEvent) => {
@@ -592,6 +639,7 @@ export default function OrgTree({
                 <NodeCard
                   node={{ ...peer, highlight: true }}
                   depth={0}
+                  height={CARD_H}
                   onOpen={() => onOpen(peer.id)}
                   onAddKnowledge={() => onAddKnowledge(peer.id)}
                 />
@@ -610,36 +658,36 @@ export default function OrgTree({
               <NodeCard
                 node={{ ...p.data, highlight: p === rootPoint ? true : p.data.highlight }}
                 depth={p.depth}
+                height={p.h}
                 onOpen={() => onOpen(p.id)}
                 onAddKnowledge={() => onAddKnowledge(p.id)}
               />
             </div>
           ))}
 
-          {/* Collapse/expand toggles. CEO uses a centred toggle below the
-              card (top-down bracket). Everyone else uses a left-aligned
-              toggle on the indented-tree bracket line. */}
+          {/* Collapse/expand toggles intentionally NOT rendered — chart is
+              always fully expanded per user spec. Removed from the DOM
+              entirely. */}
+
+          {/* "Show direct reports" chevron — placed on the right edge of
+              cards whose subtree is hidden by the depth cap. Distinct
+              from any +/- toggle (which is gone): this opens the side
+              panel rather than expanding the chart in place. */}
           {points
-            .filter(p => hasChildren.has(p.id))
+            .filter(p => hiddenSubtreeOwners.has(p.id))
             .map(p => {
-              const isCeoTopDown = p.data.id === CEO_ID;
-              const tx = isCeoTopDown
-                ? p.cx - 8                          // centred under card
-                : p.x + INDENT_X / 2 - 8;           // on the indented bracket line
-              const ty = p.y + treeOffY + CARD_H + 2;
-              const collapsed = collapsedIds.has(p.id);
+              const tx = p.x + CARD_W - 6;        // overlap right edge of card
+              const ty = p.y + treeOffY + p.h / 2 - 9;
               return (
                 <button
-                  key={`tg-${p.id}`}
+                  key={`sub-${p.id}`}
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onToggleCollapse(p.id); }}
-                  title={collapsed ? "Expand" : "Collapse"}
-                  className="absolute z-10 w-4 h-4 rounded-full bg-card border border-slate-300 flex items-center justify-center hover:border-slate-500 hover:shadow"
+                  onClick={(e) => { e.stopPropagation(); onShowSubtree?.(p.id); }}
+                  title="Show direct reports"
+                  className="absolute z-10 w-[18px] h-[18px] rounded-full bg-sky-500 text-white border border-white flex items-center justify-center shadow hover:bg-sky-600"
                   style={{ left: tx, top: ty }}
                 >
-                  {collapsed
-                    ? <Plus  className="w-2.5 h-2.5 text-slate-600" />
-                    : <Minus className="w-2.5 h-2.5 text-slate-600" />}
+                  <ChevronRight className="w-3 h-3" />
                 </button>
               );
             })}

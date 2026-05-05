@@ -14,7 +14,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db.js";
 import { assignLevel, levelToSchema, cached, useLocalAiFirst } from "./microAI/index.js";
-import { sql, eq, and } from "drizzle-orm";
+import { sql, eq, and, inArray } from "drizzle-orm";
 import {
   agents as agentsTable,
   objectives,
@@ -29,6 +29,7 @@ import {
   ceoBriefs,
   coworkOutputs,
   coworkLetters,
+  agentKpis,
 } from "../shared/schema.js";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -120,6 +121,35 @@ export async function resumeAiosCycle(cycleId: number) {
   await db.update(aiosCycles).set({ status: "running", updated_at: now } as any).where(eq(aiosCycles.id, cycleId));
   await log(cycleId, "system", null, "cycle_resumed", "Cycle resumed by President.", "working", "info");
   pushSSE(cycleId, { type: "status", status: "running" });
+}
+
+// ── Agent KPI recorder ────────────────────────────────────────────────────────
+async function recordAgentKpi(
+  cycleId: number,
+  agentName: string,
+  deliverables: any[],
+  round: "round1" | "round2"
+) {
+  const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const insights = deliverables.filter(d => d.deliverable_type === "insight");
+  const ideas    = deliverables.filter(d => d.deliverable_type === "idea");
+  const actions  = deliverables.filter(d => d.deliverable_type === "action");
+  const allScores     = deliverables.map(d => d.total_score).filter((s): s is number => s != null);
+  const insightScores = insights.map(d => d.total_score).filter((s): s is number => s != null);
+  const actionScores  = actions.map(d => d.total_score).filter((s): s is number => s != null);
+  await db.insert(agentKpis).values({
+    cycle_id:          cycleId,
+    agent_name:        agentName,
+    round,
+    deliverable_count: deliverables.length,
+    insight_count:     insights.length,
+    idea_count:        ideas.length,
+    action_count:      actions.length,
+    avg_total_score:   avg(allScores),
+    insight_score:     avg(insightScores),
+    action_score:      avg(actionScores),
+    created_at:        new Date().toISOString(),
+  } as any);
 }
 
 // ── Main orchestration ────────────────────────────────────────────────────────
@@ -218,6 +248,8 @@ export async function runDailyAiosCycle(cycleId: number): Promise<void> {
         `${agent.name} completed: ${insights.length} insights, ${ideas.length} ideas, ${actions.length} actions, ${cowork.length} CoWork requests.`,
         "completed", "info");
 
+      await recordAgentKpi(cycleId, agent.name, deliverables, "round1");
+
       // Update cycle counters
       await db.update(aiosCycles).set({
         agents_processed: agentsProcessed,
@@ -304,11 +336,37 @@ function buildAgentContext(agent: any, agentObjectives: any[], agentTasks: any[]
   return lines.join("\n");
 }
 
+// ── Agent rating signal ───────────────────────────────────────────────────────
+async function getAgentRatingSignal(agentName: string): Promise<string> {
+  try {
+    const rows = await db.execute(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE human_rating = 1)  AS up,
+        COUNT(*) FILTER (WHERE human_rating = -1) AS down
+      FROM aios_deliverables
+      WHERE agent_name = ${agentName}
+        AND human_rating IS NOT NULL
+        AND CAST(created_at AS TIMESTAMP) > NOW() - INTERVAL '14 days'
+    `);
+    const row = (rows as any).rows?.[0];
+    const up = Number(row?.up ?? 0);
+    const down = Number(row?.down ?? 0);
+    if (up + down === 0) return "";
+    const pct = Math.round((up / (up + down)) * 100);
+    if (pct >= 70) return `\n[QUALITY SIGNAL: Your recent deliverables were rated ${pct}% positive (${up}👍 ${down}👎 over 14 days). Keep the same level of specificity and evidence.]`;
+    if (pct <= 40) return `\n[QUALITY SIGNAL: Your recent deliverables were rated only ${pct}% positive (${up}👍 ${down}👎 over 14 days). Focus on more concrete, actionable, evidence-based insights this cycle.]`;
+    return `\n[QUALITY SIGNAL: Your recent deliverables were rated ${pct}% positive (${up}👍 ${down}👎 over 14 days). Aim for greater specificity and impact.]`;
+  } catch {
+    return "";
+  }
+}
+
 // ── Generate agent deliverables via Claude ───────────────────────────────────
 async function generateAgentDeliverables(cycleId: number, agent: any, context: string): Promise<any[]> {
+  const ratingSignal = await getAgentRatingSignal(agent.name);
   const system = `You are ${agent.name}, an AI agent at Eendigo, an AI-powered management consulting firm.
 You are executing your daily AIOS analysis cycle.
-Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.`;
+Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.${ratingSignal}`;
 
   const user = `${context}
 
@@ -778,9 +836,19 @@ export async function runRound2(cycleId: number): Promise<void> {
 
       await log(cycleId, "agent", agent.name, "round2_agent_completed",
         `${agent.name} Round 2: ${deliverables.length} updated deliverables.`, "completed", "info");
+
+      await recordAgentKpi(cycleId, agent.name, deliverables, "round2");
     }
 
-    await db.update(aiosCycles).set({ status: "round2_completed", updated_at: nowStr() } as any).where(eq(aiosCycles.id, cycleId));
+    // Regenerate CEO brief incorporating Round 2 deliverables
+    await log(cycleId, "system", null, "round2_ceo_brief", "Updating CEO brief with Round 2 findings.", "working", "info");
+    await db.delete(ceoBriefs).where(eq(ceoBriefs.cycle_id, cycleId));
+    const allAgentsForCeo = await db.select().from(agentsTable);
+    await runCeoConsolidation(cycleId, allAgentsForCeo);
+    const newPrompt = await generateCoworkPrompt(cycleId);
+    await log(cycleId, "system", null, "round2_ceo_brief_done", "CEO brief updated.", "completed", "info");
+
+    await db.update(aiosCycles).set({ status: "round2_completed", updated_at: nowStr(), cowork_prompt: newPrompt } as any).where(eq(aiosCycles.id, cycleId));
     await log(cycleId, "system", null, "round2_finished",
       `Round 2 complete — ${total} updated deliverables generated.`, "completed", "info");
     pushSSE(cycleId, { type: "status", status: "round2_completed" });
@@ -847,5 +915,81 @@ Return exactly 3 insights, 3 ideas, 3 actions.`;
   } catch (e: any) {
     console.error(`[AIOS] Round 2 generation failed for ${agent.name}:`, e.message);
     return [];
+  }
+}
+
+// ── Single-agent run (triggered from org chart "Start work" button) ───────────
+export async function runSingleAgent(agentId: number): Promise<{ cycleId: number; deliverableCount: number }> {
+  const now = () => new Date().toISOString();
+
+  // Load agent
+  const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, agentId));
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  // Create a dedicated micro-cycle for this run
+  const today = now().slice(0, 10);
+  const [cycleRow] = await db.insert(aiosCycles).values({
+    cycle_date: today,
+    cycle_type: "daily",
+    status: "running",
+    started_by: agent.name,
+    started_at: now(),
+    created_at: now(),
+    updated_at: now(),
+  } as any).returning();
+  const cycleId = cycleRow.id;
+
+  try {
+    await log(cycleId, "agent", agent.name, "agent_started", `${agent.name} starting on-demand work.`, "working", "info");
+
+    // Load context data
+    const allObjectives = await db.select().from(objectives).where(eq((objectives as any).agent_id, agentId));
+    const allTasks      = await db.select().from(tasks).where(eq((tasks as any).agent_id, agentId));
+    const sectionMap    = await db.select().from(agentSectionMap);
+    const allKnowledge  = await db.select().from(agentKnowledge);
+
+    const agentSections = sectionMap.filter(sm =>
+      sm.primary_agent.toLowerCase().includes(agent.name.toLowerCase().split(" ")[0]) ||
+      agent.name.toLowerCase().includes(sm.primary_agent.toLowerCase().split(" ")[0])
+    );
+    const agentKb = allKnowledge.filter(k =>
+      k.role_key && agent.name.toLowerCase().includes(k.role_key.toLowerCase().replace(/-/g, " ").split(" ")[0])
+    );
+
+    const agentContext = buildAgentContext(agent, allObjectives, allTasks, agentSections, agentKb);
+    const deliverables = await generateAgentDeliverables(cycleId, agent, agentContext);
+
+    // Persist deliverables
+    for (const d of deliverables) {
+      await db.insert(aiosDeliverables).values({
+        cycle_id: cycleId,
+        agent_id: agent.id,
+        agent_name: agent.name,
+        ...d,
+        created_at: now(),
+      } as any);
+    }
+
+    await recordAgentKpi(cycleId, agent.name, deliverables, "round1");
+
+    await db.update(aiosCycles).set({
+      status: "completed",
+      completed_at: now(),
+      agents_processed: 1,
+      insights_count: deliverables.filter(d => d.deliverable_type === "insight").length,
+      ideas_count:    deliverables.filter(d => d.deliverable_type === "idea").length,
+      actions_count:  deliverables.filter(d => d.deliverable_type === "action").length,
+      updated_at: now(),
+    } as any).where(eq(aiosCycles.id, cycleId));
+
+    pushSSE(cycleId, { type: "status", status: "completed" });
+    await log(cycleId, "agent", agent.name, "agent_completed", `${agent.name} on-demand run complete: ${deliverables.length} deliverables.`, "completed", "info");
+
+    return { cycleId, deliverableCount: deliverables.length };
+  } catch (err: any) {
+    console.error(`[AIOS] Single-agent run failed for ${agent.name}:`, err);
+    await db.update(aiosCycles).set({ status: "failed", updated_at: now() } as any).where(eq(aiosCycles.id, cycleId));
+    await log(cycleId, "agent", agent.name, "agent_failed", `On-demand run failed: ${err.message}`, "failed", "critical");
+    throw err;
   }
 }

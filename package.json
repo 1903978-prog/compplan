@@ -8,6 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test": "vitest run",
     "db:push": "drizzle-kit push",
     "postinstall": "test \"$RENDER\" = \"true\" || playwright install chromium || echo 'playwright browser install skipped (dev only)'"
   },
@@ -58,9 +59,12 @@
     "drizzle-zod": "^0.7.0",
     "embla-carousel-react": "^8.6.0",
     "express": "^5.0.1",
+    "express-rate-limit": "^8.4.1",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.453.0",
+    "mammoth": "^1.12.0",
     "node-cron": "^4.2.1",
+    "pdf-parse": "^1.1.4",
     "pg": "^8.16.3",
     "playwright": "^1.47.2",
     "pptxgenjs": "^3.12.0",
@@ -71,9 +75,11 @@
     "react-resizable-panels": "^2.1.7",
     "tailwind-merge": "^2.6.1",
     "tailwindcss-animate": "^1.0.7",
+    "unzipper": "^0.12.3",
     "uuid": "^13.0.0",
     "vaul": "^1.1.2",
     "wouter": "^3.3.5",
+    "xlsx": "^0.18.5",
     "zod": "^3.24.2",
     "zod-validation-error": "^3.4.0",
     "zustand": "^5.0.11"
@@ -93,7 +99,8 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.5",
     "typescript": "5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^4.1.5"
   },
   "overrides": {
     "drizzle-kit": {

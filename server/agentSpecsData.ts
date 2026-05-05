@@ -28,6 +28,8 @@ export interface AgentSpec {
   knowledge: string[];
   /** Books / frameworks / courses the agent studies. */
   training: string[];
+  /** Reusable document templates the agent owns or uses. */
+  templates?: string[];
 }
 
 export const AGENT_SPECS: AgentSpec[] = [

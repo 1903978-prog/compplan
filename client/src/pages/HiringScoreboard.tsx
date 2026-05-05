@@ -4,27 +4,23 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, RefreshCw, Download, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowLeft, RefreshCw, Download, ArrowUpDown, ArrowUp, ArrowDown, SlidersHorizontal } from "lucide-react";
 import { parseCandidateInfo } from "./Hiring";
 
 // ── Hiring Scoreboard ──────────────────────────────────────────────────
-// Flat, read-only table mirroring the Eendigo admin page's columns so
-// the hiring lead sees EVERY data point captured per candidate:
-//   Date · Logic · Verbal · Excel · P1 · P2 · TG · Intro · CS Rate · CS LM
-// plus the manual-only composite inputs (HSA / PPT / Final) and the
-// final Weighted Average.
+// Flat table of every candidate with per-test scores and a weighted
+// composite. Columns: Date · Logic · Verbal · Excel · P1 · P2 · TG ·
+// Intro · CS Rate · CS LM (HSA / PPT / Final removed — CS LM is the
+// authoritative case-study number).
 //
-// Data flow:
-//   `info` blob   →  parseCandidateInfo() →  detail fields (sub-scores, dates)
-//   `scores` JSON →  manual overrides (Candidate Scoring page)
-//   Manual entries ALWAYS win over parsed values — they represent a
-//   deliberate human decision.
-//
-// Weighted Avg uses the 6-test rubric (HSA 30 · TG 25 · Case 25 · Intro
-// 10 · PPT 5 · Final 5). TG sub-scores and CS Rate are *display-only*
-// — they don't double-count in the composite because TG overall and
-// CS LM already capture the headline number for those sections.
+// Table is split into 4 tier sections:
+//   Tier 1  — meets all tier-1 score thresholds
+//   Tier 2  — meets tier-2 but not tier-1 thresholds
+//   Tier 3  — active candidates below tier-2 thresholds
+//   OUT     — stage is "out" (rejected / withdrawn)
 // ───────────────────────────────────────────────────────────────────────
 
 interface Candidate {
@@ -37,43 +33,128 @@ interface Candidate {
   created_at: string;
 }
 
-// Composite rubric — matches CandidateScores.tsx. Seven stages now drive
-// the Weighted Avg in the order HSA → PPT → Excel → TG → Intro → Case → LM
-// case. (LM case = partner's review of the case study; same id 'final'
-// kept for back-compat with stored manual scores.)
-const WEIGHTS: Record<string, number> = {
-  hsa: 25, ppt: 10, excel: 10, testgorilla: 15, intro_call: 10, case_study: 15, final: 15,
+// ── Composite weights — no longer include HSA, PPT, or Final ──────────
+// Old 7-key rubric (hsa 25 · ppt 10 · excel 10 · tg 15 · intro 10 · case 15 · final 15)
+// was condensed: hsa+ppt+final weight redistributed proportionally across the
+// 4 remaining keys → excel 20 · tg 30 · intro 20 · case 30.
+const WEIGHTS_KEY = "scoreboard_weights_v2"; // bump version so old 7-key cache is ignored
+const DEFAULT_WEIGHTS: Record<string, number> = {
+  excel: 20, testgorilla: 30, intro_call: 20, case_study: 30,
+};
+const WEIGHT_LABELS: Record<string, string> = {
+  excel: "Excel", testgorilla: "TG", intro_call: "Intro", case_study: "CS LM",
 };
 
-// Display columns in the table, left-to-right. Each column pulls from
-// either the parsed `info` or the manual `scores` JSON.
-//   kind:
-//     "text"     — render as plain text (e.g. applied date)
-//     "score"    — render as coloured score cell (0-100)
-//   sortKey used for column click-to-sort.
+function loadWeights(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(WEIGHTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      if (typeof parsed === "object" && Object.keys(DEFAULT_WEIGHTS).every(k => typeof parsed[k] === "number")) return parsed;
+    }
+  } catch {}
+  return { ...DEFAULT_WEIGHTS };
+}
+
+// Weights dialog
+function WeightsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [draft, setDraft] = useState<Record<string, number>>(() => loadWeights());
+  const total = Object.values(draft).reduce((a, b) => a + b, 0);
+  const valid = total === 100;
+
+  const save = () => {
+    if (!valid) return;
+    localStorage.setItem(WEIGHTS_KEY, JSON.stringify(draft));
+    onClose();
+    window.location.reload();
+  };
+
+  const reset = () => setDraft({ ...DEFAULT_WEIGHTS });
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader>
+          <DialogTitle>Composite Weights</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground mb-3">All weights must sum to 100. Changes apply immediately.</p>
+        <div className="space-y-2">
+          {Object.entries(draft).map(([k, v]) => (
+            <div key={k} className="flex items-center gap-2">
+              <Label className="w-16 text-xs">{WEIGHT_LABELS[k] ?? k}</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={v}
+                onChange={e => setDraft(prev => ({ ...prev, [k]: Number(e.target.value) }))}
+                className="h-7 w-20 text-sm"
+              />
+            </div>
+          ))}
+          <div className={`text-xs font-mono pt-1 ${valid ? "text-emerald-700" : "text-red-600 font-bold"}`}>
+            Sum: {total} / 100 {!valid && "— must equal 100"}
+          </div>
+        </div>
+        <div className="flex gap-2 pt-2">
+          <Button size="sm" onClick={save} disabled={!valid}>Save</Button>
+          <Button size="sm" variant="outline" onClick={reset}>Reset defaults</Button>
+          <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface Col {
   key: string;
   label: string;
-  sub?: string;           // tiny hint under the header (e.g. "w25")
+  sub?: string;
   kind: "text" | "score";
   align?: "left" | "center";
   width?: string;
 }
-const COLS: Col[] = [
+
+// HSA, PPT and Final removed. CS LM (case_study) is the authoritative
+// case-study headline — same data, no duplication needed.
+const STATIC_COLS: Col[] = [
   { key: "applied",     label: "Applied",   kind: "text",  align: "left",   width: "w-20" },
   { key: "logic",       label: "Logic",     kind: "score", align: "center" },
   { key: "verbal",      label: "Verbal",    kind: "score", align: "center" },
   { key: "excel",       label: "Excel",     kind: "score", align: "center" },
   { key: "pres1",       label: "P1",        kind: "score", align: "center" },
   { key: "pres2",       label: "P2",        kind: "score", align: "center" },
-  { key: "testgorilla", label: "TG",        sub: "w25",    kind: "score", align: "center" },
-  { key: "intro_call",  label: "Intro",     sub: "w10",    kind: "score", align: "center" },
+  { key: "testgorilla", label: "TG",        kind: "score", align: "center" },
+  { key: "intro_call",  label: "Intro",     kind: "score", align: "center" },
   { key: "cs_rate",     label: "CS Rate",   kind: "score", align: "center" },
-  { key: "case_study",  label: "CS LM",     sub: "w25",    kind: "score", align: "center" },
-  { key: "hsa",         label: "HSA",       sub: "w30",    kind: "score", align: "center" },
-  { key: "ppt",         label: "PPT",       sub: "w5",     kind: "score", align: "center" },
-  { key: "final",       label: "Final",     sub: "w5",     kind: "score", align: "center" },
+  { key: "case_study",  label: "CS LM",     kind: "score", align: "center" },
 ];
+
+// ── Tier thresholds ───────────────────────────────────────────────────
+// Missing scores are assumed optimistically to pass (candidate mid-funnel
+// isn't unfairly penalised vs one who has completed every test).
+// OUT is stage-driven (stage === "out"), not score-driven.
+const TIER_THRESHOLDS = {
+  tier1: { logic: 78, verbal: 100, testgorilla: 71, intro_call: 50, case_study: 60 },
+  tier2: { logic: 68, verbal: 80,  testgorilla: 60, intro_call: 40, case_study: 50 },
+} as const;
+const TIER_FIELDS = ["logic", "verbal", "testgorilla", "intro_call", "case_study"] as const;
+type TierResult = "Tier 1" | "Tier 2" | "Tier 3" | "OUT";
+
+function computeTier(row: Record<string, number | string | null>, stage?: string): TierResult {
+  if (stage === "out") return "OUT";
+  const meetsTier = (thresholds: Record<string, number>) =>
+    TIER_FIELDS.every(f => {
+      const v = row[f];
+      if (typeof v !== "number") return true; // missing → optimistic pass
+      return v >= thresholds[f];
+    });
+  if (meetsTier(TIER_THRESHOLDS.tier1)) return "Tier 1";
+  if (meetsTier(TIER_THRESHOLDS.tier2)) return "Tier 2";
+  return "Tier 3";
+}
+
+// ─────────────────────────────────────────────────────────────────────
 
 function scoreColor(n: number | null | undefined): string {
   if (n == null) return "bg-muted/20 text-muted-foreground";
@@ -84,9 +165,20 @@ function scoreColor(n: number | null | undefined): string {
   return "bg-red-300 text-red-950 font-semibold";
 }
 
-// Normalise a TG sub-score label from the parser into our column key.
-// The parser preserves whatever label the sync wrote ("Logic", "Verbal",
-// "Excel", "Pres1", "Presentation 1", "Pres 2", etc.) so we match loosely.
+function tierStyle(t: TierResult): string {
+  if (t === "Tier 1") return "bg-emerald-100 text-emerald-800 border border-emerald-300";
+  if (t === "Tier 2") return "bg-amber-100 text-amber-800 border border-amber-300";
+  if (t === "Tier 3") return "bg-orange-100 text-orange-800 border border-orange-300";
+  return "bg-red-100 text-red-700 border border-red-300"; // OUT
+}
+
+function tierSepStyle(t: TierResult): string {
+  if (t === "Tier 1") return "bg-emerald-50 border-b border-emerald-200 text-emerald-800";
+  if (t === "Tier 2") return "bg-amber-50 border-b border-amber-200 text-amber-800";
+  if (t === "Tier 3") return "bg-orange-50 border-b border-orange-200 text-orange-800";
+  return "bg-red-50 border-b border-red-200 text-red-700"; // OUT
+}
+
 function mapSubLabel(label: string): string | null {
   const l = label.toLowerCase().replace(/\s+/g, "");
   if (l.includes("logic"))  return "logic";
@@ -97,45 +189,35 @@ function mapSubLabel(label: string): string | null {
   return null;
 }
 
-// Resolve every display field for one candidate.
-// Returns:
-//   text fields  → string or ""
-//   score fields → number or null
-// Manual `scores[k]` always wins over parsed values for the 6 composite
-// keys. TG sub-scores and CS Rate live only in the parsed blob today
-// (no manual override yet — add one here if the team wants it later).
 function resolveRow(c: Candidate): Record<string, number | string | null> {
   const parsed = parseCandidateInfo(c.info ?? "");
   const manual = c.scores ?? {};
   const out: Record<string, number | string | null> = {
     applied: parsed.applied || "",
-    logic:  null, verbal: null, excel: null, pres1: null, pres2: null,
+    logic: null, verbal: null, excel: null, pres1: null, pres2: null,
     testgorilla: null, intro_call: null, cs_rate: null, case_study: null,
-    hsa: null, ppt: null, final: null,
   };
-  // TG sub-scores (parser-only)
+  // TG sub-scores from parser
   for (const { label, pct } of parsed.tgScores) {
     const k = mapSubLabel(label);
     if (k) out[k] = pct;
   }
   // Headline scores from parser
-  if (parsed.tgOverall  != null) out.testgorilla = parsed.tgOverall;
-  if (parsed.introScore != null) out.intro_call  = parsed.introScore;
-  if (parsed.csRateScore != null) out.cs_rate    = parsed.csRateScore;
-  if (parsed.csLMScore  != null) out.case_study  = parsed.csLMScore;
-  // Manual override wins for the seven composite keys (added 'excel'
-  // alongside 'ppt' as a separate test — the Excel parsed sub-score
-  // still lights up the Excel column when no manual override is set).
-  for (const k of ["hsa", "testgorilla", "case_study", "intro_call", "ppt", "excel", "final"]) {
+  if (parsed.tgOverall   != null) out.testgorilla = parsed.tgOverall;
+  if (parsed.introScore  != null) out.intro_call  = parsed.introScore;
+  if (parsed.csRateScore != null) out.cs_rate     = parsed.csRateScore;
+  if (parsed.csLMScore   != null) out.case_study  = parsed.csLMScore;
+  // Manual override wins for composite keys
+  for (const k of ["testgorilla", "case_study", "intro_call", "excel"]) {
     const v = manual[k];
     if (typeof v === "number") out[k] = v;
   }
   return out;
 }
 
-function compositeScore(row: Record<string, number | string | null>): number | null {
+function compositeScore(row: Record<string, number | string | null>, weights: Record<string, number>): number | null {
   let num = 0, den = 0;
-  for (const [k, w] of Object.entries(WEIGHTS)) {
+  for (const [k, w] of Object.entries(weights)) {
     const v = row[k];
     if (typeof v === "number") { num += v * w; den += w; }
   }
@@ -143,7 +225,15 @@ function compositeScore(row: Record<string, number | string | null>): number | n
   return Math.round(num / den);
 }
 
-type SortKey = "name" | "stage" | "composite" | "filled" | string;
+type SortKey = "name" | "stage" | "composite" | "filled" | "tier" | string;
+
+// Tier section definitions — order is fixed
+const TIER_SECTIONS: { tier: TierResult; label: string }[] = [
+  { tier: "Tier 1", label: "Tier 1" },
+  { tier: "Tier 2", label: "Tier 2" },
+  { tier: "Tier 3", label: "Tier 3" },
+  { tier: "OUT",    label: "OUT" },
+];
 
 export default function HiringScoreboard() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -151,6 +241,18 @@ export default function HiringScoreboard() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("composite");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [weightsOpen, setWeightsOpen] = useState(false);
+  const [weights, setWeightsState] = useState<Record<string, number>>(loadWeights);
+
+  const handleWeightsClose = () => {
+    setWeightsOpen(false);
+    setWeightsState(loadWeights());
+  };
+
+  const cols = useMemo<Col[]>(() => STATIC_COLS.map(c => ({
+    ...c,
+    sub: weights[c.key] != null ? `w${weights[c.key]}` : undefined,
+  })), [weights]);
 
   const load = async () => {
     setLoading(true);
@@ -166,16 +268,17 @@ export default function HiringScoreboard() {
   };
   useEffect(() => { load(); }, []);
 
+  const maxFilled = Object.keys(weights).length;
+
   const rows = useMemo(() => {
     return candidates.map(c => {
       const row = resolveRow(c);
-      const composite = compositeScore(row);
-      // "Filled" = how many of the 6 composite tests have a number.
-      // Used to flag mid-funnel candidates and to sort by completeness.
-      const filled = Object.keys(WEIGHTS).filter(k => typeof row[k] === "number").length;
-      return { c, row, composite, filled };
+      const composite = compositeScore(row, weights);
+      const filled = Object.keys(weights).filter(k => typeof row[k] === "number").length;
+      const tier = computeTier(row, c.stage);
+      return { c, row, composite, filled, tier };
     });
-  }, [candidates]);
+  }, [candidates, weights]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -196,6 +299,10 @@ export default function HiringScoreboard() {
         if (sortKey === "stage")     return (r.c.stage ?? "").toLowerCase();
         if (sortKey === "composite") return r.composite ?? -1;
         if (sortKey === "filled")    return r.filled;
+        if (sortKey === "tier") {
+          const order: Record<TierResult, number> = { "Tier 1": 1, "Tier 2": 2, "Tier 3": 3, "OUT": 4 };
+          return order[r.tier];
+        }
         const v = r.row[sortKey];
         if (typeof v === "number") return v;
         if (typeof v === "string") return v.toLowerCase();
@@ -225,17 +332,15 @@ export default function HiringScoreboard() {
       : <ArrowUp className="w-3 h-3 inline ml-1" />;
   };
 
-  // CSV export — honours current sort + filter. Every visible column is
-  // exported so Excel / Google Sheets gets a 1:1 copy of the on-screen
-  // view (easy to paste into the Eendigo admin or email to the team).
   const exportCsv = () => {
-    const headerCells = ["Name", "Stage", ...COLS.map(c => c.label), "Weighted Avg", "Filled /6"];
+    const headerCells = ["Name", "Stage", "Tier", ...cols.map(c => c.label), "Weighted Avg", `Filled /${maxFilled}`];
     const lines = [headerCells.join(",")];
     for (const r of sorted) {
       const cells: string[] = [
         `"${r.c.name.replace(/"/g, '""')}"`,
         r.c.stage ?? "",
-        ...COLS.map(col => {
+        r.tier,
+        ...cols.map(col => {
           const v = r.row[col.key];
           if (v == null) return "";
           return typeof v === "number" ? String(v) : `"${String(v).replace(/"/g, '""')}"`;
@@ -254,11 +359,15 @@ export default function HiringScoreboard() {
     URL.revokeObjectURL(url);
   };
 
+  // Total colspan for separator rows: # + Name + Stage + cols + WeightedAvg + Filled + Tier
+  const totalCols = 3 + cols.length + 3;
+
   return (
     <div>
+      <WeightsDialog open={weightsOpen} onClose={handleWeightsClose} />
       <PageHeader
         title="Hiring Scoreboard"
-        description="Every candidate, every test score — mirrors the Eendigo admin page. Weighted Avg uses HSA (30) · TG (25) · CS LM (25) · Intro (10) · PPT (5) · Final (5). Missing scores are skipped and their weight redistributed."
+        description="Every candidate, every test score. Weighted Avg uses the configured weights. Missing scores are skipped and their weight redistributed."
         actions={
           <div className="flex gap-2">
             <Link href="/hiring">
@@ -266,9 +375,9 @@ export default function HiringScoreboard() {
                 <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Pipeline
               </Button>
             </Link>
-            <Link href="/hiring/scores">
-              <Button variant="outline" size="sm">Candidate Scoring</Button>
-            </Link>
+            <Button variant="outline" size="sm" onClick={() => setWeightsOpen(true)}>
+              <SlidersHorizontal className="w-3.5 h-3.5 mr-1" /> Weights
+            </Button>
             <Button variant="outline" size="sm" onClick={load}>
               <RefreshCw className="w-3.5 h-3.5 mr-1" /> Reload
             </Button>
@@ -291,8 +400,19 @@ export default function HiringScoreboard() {
             {sorted.length} candidate{sorted.length === 1 ? "" : "s"}
             {search && ` (filtered from ${rows.length})`}
           </div>
-          <div className="text-[10px] text-muted-foreground italic ml-auto">
-            Sub-scores (Logic · Verbal · Excel · P1 · P2) are displayed only — TG overall already carries their weight. CS Rate is the assessor rating; CS LM is the final line-manager decision (authoritative for the composite).
+          <div className="text-[10px] text-muted-foreground italic ml-auto space-y-0.5">
+            <div>Sub-scores (Logic · Verbal · P1 · P2) are display-only — TG overall already carries their weight.</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold not-italic">Tiers</span>
+              <span className="bg-emerald-100 text-emerald-800 px-1 rounded text-[9px] font-semibold">T1</span>
+              <span>Logic≥78 · Verbal≥100 · TG≥71 · Intro≥50 · CS≥60</span>
+              <span className="bg-amber-100 text-amber-800 px-1 rounded text-[9px] font-semibold">T2</span>
+              <span>Logic≥68 · Verbal≥80 · TG≥60 · Intro≥40 · CS≥50</span>
+              <span className="bg-orange-100 text-orange-800 px-1 rounded text-[9px] font-semibold">T3</span>
+              <span>Below T2 · still active</span>
+              <span className="bg-red-100 text-red-700 px-1 rounded text-[9px] font-semibold">OUT</span>
+              <span>Stage = Out</span>
+            </div>
           </div>
         </div>
 
@@ -320,7 +440,7 @@ export default function HiringScoreboard() {
                   >
                     Stage<SortIcon k="stage" />
                   </TableHead>
-                  {COLS.map(col => (
+                  {cols.map(col => (
                     <TableHead
                       key={col.key}
                       className={`cursor-pointer select-none hover:bg-muted/50 ${col.align === "center" ? "text-center" : ""} ${col.width ?? ""}`}
@@ -344,49 +464,85 @@ export default function HiringScoreboard() {
                     className="cursor-pointer select-none hover:bg-muted/50 text-center"
                     onClick={() => toggleSort("filled")}
                   >
-                    / 6<SortIcon k="filled" />
+                    /{maxFilled}<SortIcon k="filled" />
+                  </TableHead>
+                  <TableHead
+                    className="cursor-pointer select-none hover:bg-muted/50 text-center font-bold"
+                    onClick={() => toggleSort("tier")}
+                  >
+                    Tier<SortIcon k="tier" />
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((r, i) => (
-                  <TableRow key={r.c.id} className="hover:bg-muted/20">
-                    <TableCell className="text-[11px] text-muted-foreground font-mono">{i + 1}</TableCell>
-                    <TableCell className="font-semibold text-sm">
-                      <Link href="/hiring/scores" className="hover:underline">
-                        {r.c.name}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground capitalize whitespace-nowrap">
-                      {(r.c.stage ?? "").replace(/_/g, " ")}
-                    </TableCell>
-                    {COLS.map(col => {
-                      const v = r.row[col.key];
-                      if (col.kind === "text") {
-                        return (
-                          <TableCell key={col.key} className={`text-xs whitespace-nowrap ${col.align === "center" ? "text-center" : ""}`}>
-                            {typeof v === "string" && v ? v : <span className="text-muted-foreground">—</span>}
-                          </TableCell>
-                        );
-                      }
-                      return (
-                        <TableCell key={col.key} className="text-center">
-                          <span className={`inline-flex items-center justify-center w-11 h-7 rounded font-mono text-[11px] ${scoreColor(typeof v === "number" ? v : null)}`}>
-                            {typeof v === "number" ? (v % 1 === 0 ? v : v.toFixed(1)) : "—"}
-                          </span>
+                {(() => {
+                  let globalRank = 0;
+                  return TIER_SECTIONS.flatMap(({ tier, label }) => {
+                    const group = sorted.filter(r => r.tier === tier);
+                    if (group.length === 0) return [];
+
+                    const sepRow = (
+                      <TableRow key={`sep-${tier}`}>
+                        <TableCell colSpan={totalCols} className={`py-1.5 px-4 ${tierSepStyle(tier)}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex items-center px-2 h-5 rounded-full text-[10px] font-bold ${tierStyle(tier)}`}>
+                              {label}
+                            </span>
+                            <span className="text-[11px] font-medium">
+                              {group.length} candidate{group.length !== 1 ? "s" : ""}
+                            </span>
+                          </div>
                         </TableCell>
+                      </TableRow>
+                    );
+
+                    const dataRows = group.map(r => {
+                      globalRank++;
+                      const rank = globalRank;
+                      return (
+                        <TableRow key={r.c.id} className="hover:bg-muted/20">
+                          <TableCell className="text-[11px] text-muted-foreground font-mono">{rank}</TableCell>
+                          <TableCell className="font-semibold text-sm">{r.c.name}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground capitalize whitespace-nowrap">
+                            {(r.c.stage ?? "").replace(/_/g, " ")}
+                          </TableCell>
+                          {cols.map(col => {
+                            const v = r.row[col.key];
+                            if (col.kind === "text") {
+                              return (
+                                <TableCell key={col.key} className={`text-xs whitespace-nowrap ${col.align === "center" ? "text-center" : ""}`}>
+                                  {typeof v === "string" && v ? v : <span className="text-muted-foreground">—</span>}
+                                </TableCell>
+                              );
+                            }
+                            return (
+                              <TableCell key={col.key} className="text-center">
+                                <span className={`inline-flex items-center justify-center w-11 h-7 rounded font-mono text-[11px] ${scoreColor(typeof v === "number" ? v : null)}`}>
+                                  {typeof v === "number" ? (v % 1 === 0 ? v : v.toFixed(1)) : "—"}
+                                </span>
+                              </TableCell>
+                            );
+                          })}
+                          <TableCell className="text-center">
+                            <span className={`inline-flex items-center justify-center w-14 h-8 rounded font-mono text-sm ${scoreColor(r.composite)}`}>
+                              {r.composite ?? "—"}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-center text-xs text-muted-foreground font-mono">
+                            {r.filled}/{maxFilled}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <span className={`inline-flex items-center justify-center px-2 h-6 rounded-full text-[11px] font-semibold ${tierStyle(r.tier)}`}>
+                              {r.tier}
+                            </span>
+                          </TableCell>
+                        </TableRow>
                       );
-                    })}
-                    <TableCell className="text-center">
-                      <span className={`inline-flex items-center justify-center w-14 h-8 rounded font-mono text-sm ${scoreColor(r.composite)}`}>
-                        {r.composite ?? "—"}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center text-xs text-muted-foreground font-mono">
-                      {r.filled}/6
-                    </TableCell>
-                  </TableRow>
-                ))}
+                    });
+
+                    return [sepRow, ...dataRows];
+                  });
+                })()}
               </TableBody>
             </Table>
           </div>

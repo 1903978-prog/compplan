@@ -90,6 +90,9 @@ export default function StaffingGantt() {
   const [showWeighted, setShowWeighted] = useState(true);
   const [showPipeline, setShowPipeline] = useState(true);
 
+  // ── FTE breakdown modal state ───────────────────────────────────────────────
+  const [breakdownWeekIndex, setBreakdownWeekIndex] = useState<number | null>(null);
+
   // ── Assign-to-project modal state ─────────────────────────────────────────
   // Two entry points:
   //   (A) Person-first  → click UserPlus on a row → assignFor is set, project blank
@@ -242,9 +245,16 @@ export default function StaffingGantt() {
   };
 
   const people = useMemo(() => {
+    // Build exclusion set first so retired names are never re-added from proposal assignments.
+    const excluded = new Set<string>();
+    for (const e of employees) {
+      if ((e as any).status === "former" || isBackOffice(e)) {
+        excluded.add(e.name.trim().toLowerCase());
+      }
+    }
     const out = new Map<string, { name: string; role?: string }>();
     for (const e of employees) {
-      if (isBackOffice(e)) continue;
+      if (excluded.has(e.name.trim().toLowerCase())) continue;
       out.set(e.name.trim().toLowerCase(), { name: e.name, role: e.current_role_code ?? undefined });
     }
     for (const p of proposals) {
@@ -252,12 +262,12 @@ export default function StaffingGantt() {
       if (!includeP) continue;
       if (p.manager_name) {
         const k = p.manager_name.trim().toLowerCase();
-        if (!out.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
+        if (!out.has(k) && !excluded.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
       }
       for (const m of (p.team_members ?? [])) {
         if (!m.name) continue;
         const k = m.name.trim().toLowerCase();
-        if (!out.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
+        if (!out.has(k) && !excluded.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
       }
     }
     return Array.from(out.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -293,6 +303,53 @@ export default function StaffingGantt() {
     }
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
+
+  // FTE demand per week: full count for won/ongoing projects + (count × prob)
+  // for TBD pipeline. Counted from `manager_name` + `team_members`, so a TBD
+  // proposal with no team yet contributes 0 (no signal of headcount needed).
+  // Always weighted by win_probability for pending — independent of the
+  // showWeighted/showPipeline visual toggles, since this is the demand picture.
+  type BreakdownItem = { projectName: string; outcome: string; manager?: string; teamMembers: string[]; teamCount: number; probability: number; weight: number; contribution: number };
+  const { ftesNeededPerWeek, breakdownPerWeek } = useMemo(() => {
+    const totals = Array<number>(HORIZON_WEEKS).fill(0);
+    const breakdowns = Array<BreakdownItem[]>(HORIZON_WEEKS).fill(null).map(() => []);
+
+    for (const p of proposals) {
+      if (p.outcome === "lost") continue;
+      const span = projectWeeks(p, weekStart);
+      if (!span) continue;
+
+      const manager = p.manager_name && (p.manager_name ?? "").trim().length > 0 ? p.manager_name : null;
+      const teamMembers = (p.team_members ?? [])
+        .filter(m => (m.name ?? "").trim().length > 0)
+        .map(m => m.name!);
+      const teamCount = (manager ? 1 : 0) + teamMembers.length;
+
+      if (teamCount === 0) continue;
+
+      const isPipeline = p.outcome === "pending";
+      const prob = Math.max(0, Math.min(100, Number(p.win_probability ?? 50)));
+      const weight = isPipeline ? prob / 100 : 1;
+      const contribution = teamCount * weight;
+
+      const breakdownItem: BreakdownItem = {
+        projectName: p.project_name,
+        outcome: p.outcome,
+        manager,
+        teamMembers,
+        teamCount,
+        probability: prob,
+        weight,
+        contribution,
+      };
+
+      for (let w = span.from; w <= span.to; w++) {
+        totals[w] += contribution;
+        breakdowns[w].push(breakdownItem);
+      }
+    }
+    return { ftesNeededPerWeek: totals, breakdownPerWeek: breakdowns };
+  }, [proposals, weekStart]);
 
   // Availability: human-readable string + actual Date for the first free week.
   // The Date is used when reserving to a TBD project (start_date patch).
@@ -463,8 +520,85 @@ export default function StaffingGantt() {
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="border-t-2 bg-muted/40 font-semibold">
+                <td className="p-2 sticky left-0 bg-muted/60 z-10 w-44">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    FTEs needed
+                  </div>
+                </td>
+                <td
+                  className="p-2 sticky left-44 bg-muted/60 z-10 w-28 text-[10px] font-normal text-muted-foreground"
+                  title="Per week: FTEs on won/ongoing projects + Σ(FTEs on TBD × win-probability)"
+                >
+                  won + tbd × prob
+                </td>
+                {ftesNeededPerWeek.map((n, i) => (
+                  <td
+                    key={i}
+                    className="border-l text-center font-mono text-[11px] p-1 min-w-16 cursor-pointer hover:bg-primary/20 transition-colors"
+                    title={n > 0 ? `Click to see breakdown · ${n.toFixed(2)} FTE-equivalents needed week of ${fmtWeek(weeks[i])}` : "no demand"}
+                    onClick={() => n > 0 && setBreakdownWeekIndex(i)}
+                  >
+                    {n > 0 ? n.toFixed(1) : "—"}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
           </table>
         </Card>
+      )}
+
+      {/* ── FTE Breakdown Modal ────────────────────────────────────────────── */}
+      {breakdownWeekIndex !== null && (
+        <Dialog open={breakdownWeekIndex !== null} onOpenChange={(open) => !open && setBreakdownWeekIndex(null)}>
+          <DialogContent className="max-w-2xl max-h-[70vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>FTE Calculation Breakdown</DialogTitle>
+              <DialogDescription>
+                Week of {fmtWeek(weeks[breakdownWeekIndex])} · Total: <span className="font-mono font-bold text-foreground">{ftesNeededPerWeek[breakdownWeekIndex].toFixed(2)}</span> FTE
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {breakdownPerWeek[breakdownWeekIndex].length === 0 ? (
+                <p className="text-sm text-muted-foreground italic">No projects contributing to this week</p>
+              ) : (
+                breakdownPerWeek[breakdownWeekIndex].map((item, idx) => (
+                  <div key={idx} className="border rounded p-3 space-y-2 text-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-semibold">{item.projectName}</div>
+                        <div className="text-[12px] text-muted-foreground">
+                          Status: <span className={item.outcome === "won" ? "text-emerald-600 font-medium" : "text-amber-600 font-medium"}>{item.outcome}</span>
+                          {item.outcome === "pending" && ` · ${item.probability}% win probability`}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-mono font-bold text-lg">{item.contribution.toFixed(2)} FTE</div>
+                        <div className="text-[11px] text-muted-foreground">= {item.teamCount} × {item.weight.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="text-[12px] text-muted-foreground space-y-1">
+                      {item.manager && <div>Manager: <span className="font-medium">{item.manager}</span></div>}
+                      {item.teamMembers.length > 0 && (
+                        <div>
+                          Team ({item.teamMembers.length}): <span className="font-medium">{item.teamMembers.join(", ")}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+              <div className="border-t pt-3 mt-4">
+                <div className="flex justify-between font-semibold">
+                  <span>Total FTE needed for week of {fmtWeek(weeks[breakdownWeekIndex])}</span>
+                  <span className="font-mono text-lg">{ftesNeededPerWeek[breakdownWeekIndex].toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* ── Legend ─────────────────────────────────────────────────────────── */}

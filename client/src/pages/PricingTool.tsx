@@ -75,6 +75,9 @@ interface PricingCase {
   expected_impact_eur?: number | null;    // expected € impact on client's P&L
   win_probability?: number | null;        // 0-100 — Livio's estimate of winning; drives 24-week HR staffing forecast
   start_date?: string | null;             // YYYY-MM-DD expected delivery start
+  // outcome: 'won' | 'lost' | null. Set via "Mark as Won / Lost" inside case.
+  // Cases with an outcome move to the "Won/Lost Pricings" tab.
+  outcome?: string | null;
   // proposal_options_count: 1 = single-option mode (only Option 1 rendered),
   // 3 = full 3-option mode. Hidden options keep their state in case_timelines
   // so toggling back is lossless.
@@ -646,11 +649,34 @@ function ArcGauge({ ratio, label, denomLabel, maxRatio = 0.2, benchmark }: {
 
 type CountryFeeRow = { country: string; won: number; lost: number; winRate: number | null; avgWon: number | null; avgLost: number | null; avgWonWeekly: number | null; avgLostWeekly: number | null; };
 
+// ── Module-level data cache ────────────────────────────────────────────────
+// Lives OUTSIDE the React component so it survives SPA navigation.
+// The component unmounts/remounts every time the user changes pages — without
+// this cache every visit re-runs the full 5-endpoint waterfall (4-6 seconds).
+// With the cache, re-visits are instant (<20ms). Cache TTL = 5 minutes.
+interface _PricingDataCache {
+  settings:         any | null;
+  cases:            any[];
+  proposals:        any[];
+  employees:        any[];
+  externalContacts: any[];
+  loadedAt:         number | null; // ms epoch
+}
+const _pricingCache: _PricingDataCache = {
+  settings: null, cases: [], proposals: [], employees: [], externalContacts: [], loadedAt: null,
+};
+const _CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+function _isCacheFresh() {
+  return _pricingCache.loadedAt !== null && (Date.now() - _pricingCache.loadedAt) < _CACHE_TTL_MS;
+}
+function _invalidatePricingCache() { _pricingCache.loadedAt = null; }
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function PricingTool() {
   const { toast } = useToast();
   const [view, setView] = useState<"list" | "form">("list");
-  const [cases, setCases] = useState<any[]>([]);
-  const [proposals, setProposals] = useState<PricingProposal[]>([]);
+  const [cases, setCases] = useState<any[]>(_pricingCache.cases);
+  const [proposals, setProposals] = useState<PricingProposal[]>(_pricingCache.proposals as PricingProposal[]);
 
   // ── Component-wide NET1 lookup ──────────────────────────────────────────
   // Maps project_name (lower) → canonical_net_weekly from the matching case.
@@ -686,8 +712,10 @@ export default function PricingTool() {
     const weeks = p.duration_weeks ?? 0;
     return weeks > 0 ? Math.round(wk * weeks) : (p.total_fee ?? 0);
   };
-  const [settings, setSettings] = useState<PricingSettings | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<PricingSettings | null>(
+    _pricingCache.settings ? { ...DEFAULT_PRICING_SETTINGS, ..._pricingCache.settings } : null
+  );
+  const [loading, setLoading] = useState(!_isCacheFresh());
   // Tracks which of the three parallel loads failed (if any). Surfaced as a
   // red banner with a Retry button so the user never silently sees "0" tabs
   // when the real cause was a transient fetch failure (e.g. a Render deploy
@@ -724,7 +752,11 @@ export default function PricingTool() {
   // 0% commitment whenever the duration changes. Options 2 and 3 stay
   // user-editable. Runs only when duration_weeks actually changes so it
   // doesn't stomp on a user's Option 2/3 edits.
+  // "wonlost_cases" tab removed — won/lost projects already live in
+  // the All Projects tab (renamed from "Past Projects"), so the
+  // separate Won/Lost listing was redundant.
   const [mainTab, setMainTab] = useState<"cases" | "history" | "winloss">("cases");
+  const [bubbleTip, setBubbleTip] = useState<{ p: PricingProposal; outcome: "won" | "lost"; x: number; y: number } | null>(null);
   // Won Projects moved to the AR / Invoicing page (Task 11) — no state here.
   const [historyForm, setHistoryForm] = useState<PricingProposal>(emptyProposal());
   const [editingProposalId, setEditingProposalId] = useState<number | null>(null);
@@ -736,7 +768,43 @@ export default function PricingTool() {
   // { id, name, current_role_code }. Falls back to an empty list if the
   // /api/employees endpoint is unreachable (auth/503) — the team picker
   // then shows an empty dropdown with a hint to check the connection.
-  const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>([]);
+  const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>(_pricingCache.employees);
+  // External contacts (partners / freelancers) — used by the Manager (EM)
+  // and Team picker dropdowns so the user can assign people who aren't on
+  // the /employees rich roster.
+  const [externalContacts, setExternalContacts] = useState<Array<{ id: number; name: string; kind: string }>>(_pricingCache.externalContacts);
+
+  // Unified people list for the Manager (EM) dropdown.
+  // Tier 1 = internal EM1/EM2 employees + external partners (alphabetical)
+  // Tier 2 = external freelancers (alphabetical)
+  // Dedup by name — if a person appears in both employees and external_contacts
+  // the employee entry wins.
+  const peopleOptions = useMemo(() => {
+    type Person = { name: string; kind: "employee" | "partner" | "freelancer" | "other"; sublabel?: string };
+    const byName = new Map<string, Person>();
+    // Only EM1/EM2 and Partner-role employees are eligible to lead a project
+    for (const e of employees) {
+      const code = (e.current_role_code ?? "").toUpperCase();
+      const isEligible = code === "EM1" || code === "EM2" || code.includes("PARTNER");
+      if (!isEligible) continue;
+      byName.set(e.name, { name: e.name, kind: "employee", sublabel: e.current_role_code });
+    }
+    for (const c of externalContacts) {
+      if (byName.has(c.name)) continue; // employee entry wins
+      const k = (c.kind || "").toLowerCase();
+      const kind: Person["kind"] =
+        k === "partner"    ? "partner"
+      : k === "freelancer" ? "freelancer"
+                           : "other";
+      byName.set(c.name, { name: c.name, kind, sublabel: c.kind });
+    }
+    const all = Array.from(byName.values());
+    const tier1 = all.filter(p => p.kind === "employee" || p.kind === "partner")
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const tier2 = all.filter(p => p.kind === "freelancer")
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { tier1, tier2 };
+  }, [employees, externalContacts]);
   // Which proposal row is currently having its team edited (Past Projects
   // → click "Pick team" / current roster button → opens the dialog).
   // Null = dialog closed. Holds a draft so dialog edits don't mutate the
@@ -822,6 +890,23 @@ export default function PricingTool() {
   const isExcluded = (p: PricingProposal): boolean => !!(p.excluded_from_analysis);
   const analysisProposals = useMemo(() => proposals.filter(p => !isExcluded(p)), [proposals]);
 
+  // ── Duplicate proposal detection ───────────────────────────────────────
+  // Groups proposals by (client_name + project_name + rounded total fee).
+  // Any group with 2+ entries is a suspected duplicate.
+  const duplicateGroups = useMemo(() => {
+    const feeOf = (p: PricingProposal) =>
+      Math.round(p.total_fee ?? p.weekly_price * (p.duration_weeks ?? 0));
+    const keyOf = (p: PricingProposal) =>
+      `${(p.client_name ?? "").toLowerCase().trim()}|${(p.project_name ?? "").toLowerCase().trim()}|${feeOf(p)}`;
+    const map = new Map<string, PricingProposal[]>();
+    for (const p of proposals) {
+      const k = keyOf(p);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(p);
+    }
+    return Array.from(map.values()).filter(g => g.length > 1);
+  }, [proposals]);
+
   // Fees-by-region analysis (groups by admin region, not individual country)
   const computeFeesByCountry = (ps: PricingProposal[]): CountryFeeRow[] => {
     const relevant = ps.filter(p => p.outcome === "won" || p.outcome === "lost");
@@ -875,85 +960,103 @@ export default function PricingTool() {
     throw lastErr;
   };
 
-  const loadAll = async () => {
-    setLoading(true);
+  // ── loadAll: parallel fetch + module-level cache ──────────────────────────
+  // opts.force = true  → skip cache, always hit the network (used after mutations)
+  // opts.silent = true → don't show the loading spinner (background refresh)
+  const loadAll = async (opts?: { force?: boolean; silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    const force  = opts?.force  === true;
+
+    // ── Cache hit: serve instantly from memory ──────────────────────────────
+    if (!force && _isCacheFresh()) {
+      setSettings(_pricingCache.settings ?? DEFAULT_PRICING_SETTINGS);
+      setCases(_pricingCache.cases);
+      setProposals(_pricingCache.proposals as PricingProposal[]);
+      setEmployees(_pricingCache.employees);
+      setExternalContacts(_pricingCache.externalContacts);
+      setLoading(false);
+      return;
+    }
+
+    if (!silent) setLoading(true);
     const errors: { settings?: string; cases?: string; proposals?: string } = {};
 
-    // Settings
-    let merged: PricingSettings | null = null;
-    try {
-      const sData = await loadOne<any>("/api/pricing/settings");
+    // ── ALL four endpoints in parallel (single round-trip budget) ──────────
+    const [sResult, cResult, ePairResult, pResult] = await Promise.allSettled([
+      loadOne<any>("/api/pricing/settings"),
+      loadOne<any[]>("/api/pricing/cases"),
+      Promise.all([
+        loadOne<any[]>("/api/employees"),
+        loadOne<any[]>("/api/external-contacts"),
+      ]),
+      loadOne<any[]>("/api/pricing/proposals"),
+    ]);
+
+    // Settings — default to DEFAULT_PRICING_SETTINGS so merged is always non-null
+    let merged: PricingSettings = DEFAULT_PRICING_SETTINGS;
+    if (sResult.status === "fulfilled") {
+      const sData = sResult.value;
       merged = { ...DEFAULT_PRICING_SETTINGS, ...sData };
-      if (!merged.roles?.length) merged.roles = DEFAULT_PRICING_SETTINGS.roles;
-      if (!merged.regions?.length) merged.regions = DEFAULT_PRICING_SETTINGS.regions;
-      if (!merged.ownership_multipliers?.length) merged.ownership_multipliers = DEFAULT_PRICING_SETTINGS.ownership_multipliers;
+      if (!merged.roles?.length)                  merged.roles                  = DEFAULT_PRICING_SETTINGS.roles;
+      if (!merged.regions?.length)                merged.regions                = DEFAULT_PRICING_SETTINGS.regions;
+      if (!merged.ownership_multipliers?.length)  merged.ownership_multipliers  = DEFAULT_PRICING_SETTINGS.ownership_multipliers;
       if (!merged.revenue_band_multipliers?.length) merged.revenue_band_multipliers = DEFAULT_PRICING_SETTINGS.revenue_band_multipliers;
       if (!merged.sensitivity_multipliers?.length) merged.sensitivity_multipliers = DEFAULT_PRICING_SETTINGS.sensitivity_multipliers;
       setSettings(merged);
-    } catch (err: any) {
-      errors.settings = err.message ?? "Failed to load settings";
-      console.error("[PricingTool] settings load failed:", err);
-      // Only fall back to defaults if we have NO settings yet.
-      // This preserves prior state if the user was already loaded.
+      _pricingCache.settings = merged;
+    } else {
+      errors.settings = (sResult.reason as any)?.message ?? "Failed to load settings";
+      console.error("[PricingTool] settings load failed:", sResult.reason);
       setSettings(prev => prev ?? DEFAULT_PRICING_SETTINGS);
     }
 
-    // Cases — preserve previous on failure, do NOT reset to []
-    try {
-      const cData = await loadOne<any[]>("/api/pricing/cases");
-      setCases(Array.isArray(cData) ? cData : []);
-    } catch (err: any) {
-      errors.cases = err.message ?? "Failed to load pricing cases";
-      console.error("[PricingTool] cases load failed:", err);
-      // IMPORTANT: do not call setCases here — keep whatever is already in state.
+    // Cases
+    if (cResult.status === "fulfilled") {
+      const cases = Array.isArray(cResult.value) ? cResult.value : [];
+      setCases(cases);
+      _pricingCache.cases = cases;
+    } else {
+      errors.cases = (cResult.reason as any)?.message ?? "Failed to load pricing cases";
+      console.error("[PricingTool] cases load failed:", cResult.reason);
+      // Preserve previous state — do NOT reset to []
     }
 
-    // Employees — best-effort. Used by the team-picker dialog on Past
-    // Projects rows. If unreachable the picker shows an empty list with
-    // a hint; doesn't block the rest of the page.
-    try {
-      const eData = await loadOne<any[]>("/api/employees");
-      setEmployees(Array.isArray(eData)
-        ? eData.map(e => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
-        : []);
-    } catch (err: any) {
-      console.warn("[PricingTool] employees load failed (team-picker will be empty):", err);
+    // Employees + external contacts (single combined fetch, no duplicate)
+    if (ePairResult.status === "fulfilled") {
+      const [eData, ecData] = ePairResult.value;
+      const emps = Array.isArray(eData)
+        ? eData
+            .filter((e: any) => e.status !== "former") // retired staff not in dropdowns
+            .map((e: any) => ({ id: e.id, name: e.name, current_role_code: e.current_role_code }))
+        : [];
+      const exts = Array.isArray(ecData)
+        ? ecData.map((x: any) => ({ id: x.id, name: x.name, kind: x.kind ?? "freelancer" }))
+        : [];
+      setEmployees(emps);
+      setExternalContacts(exts);
+      _pricingCache.employees        = emps;
+      _pricingCache.externalContacts = exts;
+    } else {
+      console.warn("[PricingTool] employees/contacts load failed (dropdowns will use cached data):", ePairResult.reason);
     }
 
-    // Proposals — preserve previous on failure, do NOT reset to []
-    try {
-      const pData = await loadOne<any[]>("/api/pricing/proposals");
-      const rawProposals: PricingProposal[] = Array.isArray(pData)
-        ? pData.map((p: any) => ({ ...p, pe_owned: p.pe_owned === 1 || p.pe_owned === true }))
+    // Proposals
+    if (pResult.status === "fulfilled") {
+      const rawProposals: PricingProposal[] = Array.isArray(pResult.value)
+        ? pResult.value.map((p: any) => ({ ...p, pe_owned: p.pe_owned === 1 || p.pe_owned === true }))
         : [];
 
-      // Auto-normalize fund names against canonical list (non-fatal)
+      // Auto-normalize fund names against canonical list (non-fatal, fire-and-forget)
       const canonicalFunds: string[] = merged?.funds ?? DEFAULT_PRICING_SETTINGS.funds ?? [];
-      const toNormalize = rawProposals.filter(p => {
-        if (!p.fund_name) return false;
+      for (const p of rawProposals) {
+        if (!p.fund_name) continue;
         const lName = p.fund_name.toLowerCase().trim();
-        const exact = canonicalFunds.find(c => c.toLowerCase() === lName);
-        if (exact) return false;
-        const sub = canonicalFunds.find(c => {
-          const lc = c.toLowerCase();
-          return lName.includes(lc) || lc.includes(lName);
-        });
-        if (sub) return true;
-        const token = canonicalFunds.find(c => {
-          const tokens = c.toLowerCase().split(/\s+/);
-          return tokens.some(t => t.length >= 3 && lName.includes(t));
-        });
-        return !!token;
-      });
-
-      for (const p of toNormalize) {
-        const lName = (p.fund_name ?? "").toLowerCase().trim();
+        if (canonicalFunds.find(c => c.toLowerCase() === lName)) continue;
         const normalized =
-          canonicalFunds.find(c => c.toLowerCase() === lName) ??
           canonicalFunds.find(c => { const lc = c.toLowerCase(); return lName.includes(lc) || lc.includes(lName); }) ??
           canonicalFunds.find(c => c.toLowerCase().split(/\s+/).some(t => t.length >= 3 && lName.includes(t)));
         if (normalized && p.id) {
-          rawProposals.forEach(r => { if (r.id === p.id) r.fund_name = normalized; });
+          p.fund_name = normalized;
           fetch(`/api/pricing/proposals/${p.id}`, {
             method: "PUT", credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -963,26 +1066,38 @@ export default function PricingTool() {
       }
 
       setProposals(rawProposals);
-    } catch (err: any) {
-      errors.proposals = err.message ?? "Failed to load past projects";
-      console.error("[PricingTool] proposals load failed:", err);
-      // IMPORTANT: do not call setProposals here — keep whatever is already in state.
+      _pricingCache.proposals = rawProposals;
+    } else {
+      errors.proposals = (pResult.reason as any)?.message ?? "Failed to load past projects";
+      console.error("[PricingTool] proposals load failed:", pResult.reason);
+      // Preserve previous state — do NOT reset to []
     }
 
-    // Won Projects moved to AR / Invoicing page (Task 11).
+    // Update cache timestamp only when core data loaded successfully
+    if (!errors.cases && !errors.proposals) {
+      _pricingCache.loadedAt = Date.now();
+    }
 
     setLoadErrors(errors);
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   useEffect(() => { loadAll(); }, []);
 
-  // Auto-retry when the tab becomes visible again (user was on another tab
-  // during a deploy and comes back — we transparently refetch).
+  // Auto-refresh on window focus: if cache has expired since the user was
+  // last on this page, silently re-fetch in the background.
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState === "visible" && Object.keys(loadErrors).length > 0) {
-        loadAll();
+      if (document.visibilityState !== "visible") return;
+      // Error recovery: always retry if something failed
+      if (Object.keys(loadErrors).length > 0) {
+        _invalidatePricingCache();
+        loadAll({ force: true });
+        return;
+      }
+      // Stale cache: silently refresh without a spinner
+      if (!_isCacheFresh()) {
+        loadAll({ silent: true });
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
@@ -1078,7 +1193,8 @@ export default function PricingTool() {
       if (data == null) setEditingBenchmarks(false);
       if (!silent) {
         toast({ title: "Benchmarks saved" });
-        loadAll();
+        _invalidatePricingCache();
+        loadAll({ force: true });
       }
       // Silent path: skip toast and loadAll so rapid stepper clicks don't
       // spam the UI or race against each other with stale server reads.
@@ -1132,7 +1248,7 @@ export default function PricingTool() {
   const deleteCase = async (id: number) => {
     if (!confirm("Delete this pricing case?")) return;
     await fetch(`/api/pricing/cases/${id}`, { method: "DELETE", credentials: "include" });
-    loadAll();
+    _invalidatePricingCache(); loadAll({ force: true });
   };
 
   const saveProb = async (id: number) => {
@@ -1294,7 +1410,7 @@ export default function PricingTool() {
       const conflictMsg = conflicts.length > 0 ? `, ${conflicts.length} conflict(s) need review` : "";
       setExcelPasteResult({ ok: true, msg: `Imported ${inserted}, skipped ${skipped} exact duplicates${conflictMsg}` });
       if (conflicts.length === 0) setExcelPaste("");
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } catch {
       setExcelPasteResult({ ok: false, msg: "Import failed" });
     } finally {
@@ -1319,7 +1435,7 @@ export default function PricingTool() {
           body: JSON.stringify(payload),
         });
       }
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     }
     // Either way, remove this conflict from the list
     setImportConflicts(prev => prev.filter(c => c !== conflict));
@@ -1345,30 +1461,64 @@ export default function PricingTool() {
     setSavingProposal(true);
     try {
       const payload = { ...historyForm, pe_owned: historyForm.pe_owned ? 1 : 0 };
+      let r: Response;
       if (editingProposalId) {
-        await fetch(`/api/pricing/proposals/${editingProposalId}`, {
+        r = await fetch(`/api/pricing/proposals/${editingProposalId}`, {
           method: "PUT", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        // Auto-sync client fields to sibling projects
-        const synced = await syncClientFields(historyForm);
-        toast({ title: "Proposal updated", description: synced > 0 ? `${synced} sibling project${synced > 1 ? "s" : ""} synced.` : undefined });
       } else {
-        await fetch("/api/pricing/proposals", {
+        r = await fetch("/api/pricing/proposals", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+      }
+      // Verify save actually succeeded — without this the toast would
+      // claim success even on 401/5xx and the user would think their
+      // edits (e.g. end_date) persisted when they hadn't.
+      if (!r.ok) {
+        const errBody = await r.text().catch(() => "");
+        console.error("[PricingTool] save proposal failed:", r.status, errBody);
+        toast({
+          title: `Save failed (HTTP ${r.status})`,
+          description: errBody.slice(0, 200) || "See console for details.",
+          variant: "destructive",
+        });
+        return;  // keep the form open so the user can retry / copy values
+      }
+      // Read back the saved row so we know the server actually persisted
+      // every field. Drives the "Proposal updated/saved" toast below and
+      // the subsequent loadAll() refresh.
+      const saved = await r.json().catch(() => null);
+      if (editingProposalId) {
+        const synced = await syncClientFields(historyForm);
+        const droppedFields: string[] = [];
+        if (historyForm.end_date && saved?.end_date !== historyForm.end_date) droppedFields.push("end_date");
+        if (historyForm.start_date && saved?.start_date !== historyForm.start_date) droppedFields.push("start_date");
+        if (historyForm.manager_name && saved?.manager_name !== historyForm.manager_name) droppedFields.push("manager_name");
+        if (droppedFields.length > 0) {
+          toast({
+            title: "Saved, but some fields didn't persist",
+            description: `Server dropped: ${droppedFields.join(", ")}. Check console.`,
+            variant: "destructive",
+          });
+          console.warn("[PricingTool] fields dropped on PUT:", droppedFields, { sent: historyForm, saved });
+        } else {
+          toast({ title: "Proposal updated", description: synced > 0 ? `${synced} sibling project${synced > 1 ? "s" : ""} synced.` : undefined });
+        }
+      } else {
         toast({ title: "Proposal saved" });
       }
       setShowHistoryForm(false);
       setShowEditProposalForm(false);
       setEditingProposalId(null);
       setHistoryForm(emptyProposal());
-      loadAll();
-    } catch {
-      toast({ title: "Failed to save", variant: "destructive" });
+      _invalidatePricingCache(); loadAll({ force: true });
+    } catch (e: any) {
+      console.error("[PricingTool] save proposal threw:", e);
+      toast({ title: "Failed to save", description: String(e?.message ?? e), variant: "destructive" });
     } finally {
       setSavingProposal(false);
     }
@@ -1601,15 +1751,18 @@ export default function PricingTool() {
           </div>
         )}
         {/* Manager — the EM running the engagement day-to-day.
-            Hybrid input: dropdown of all employees (the common case) +
-            "Other (type below)" mode for external partners / freelancers
-            who aren't in /employees. The stored value is always a free
-            string so existing rows + non-employee names round-trip. */}
+            Shows only Engagement Managers (EM1/EM2), Partners, and
+            external freelancers/partners — other employee levels are
+            not eligible to lead a project. Falls back to "Other" for
+            names saved before this filter was introduced. */}
         <div className="space-y-1">
           <Label className="text-xs">Manager (EM)</Label>
           {(() => {
-            const managerInList = !!historyForm.manager_name
-              && employees.some(e => e.name === historyForm.manager_name);
+            const allNames = new Set([
+              ...peopleOptions.tier1.map(p => p.name),
+              ...peopleOptions.tier2.map(p => p.name),
+            ]);
+            const managerInList = !!historyForm.manager_name && allNames.has(historyForm.manager_name);
             const isCustom = !!historyForm.manager_name && !managerInList;
             return (
               <div className="space-y-1">
@@ -1625,17 +1778,32 @@ export default function PricingTool() {
                     else setHistoryForm(f => ({ ...f, manager_name: v }));
                   }}
                 >
-                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick employee…" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick manager…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— none —</SelectItem>
-                    {employees.length === 0 && (
+                    {peopleOptions.tier1.length === 0 && peopleOptions.tier2.length === 0 && (
                       <div className="px-2 py-2 text-[11px] text-muted-foreground italic">
-                        No employees loaded — add them in /employees.
+                        No eligible managers — add EM/Partner employees or freelancers.
                       </div>
                     )}
-                    {employees.map(e => (
-                      <SelectItem key={e.id} value={e.name}>
-                        {e.name}{e.current_role_code ? ` · ${e.current_role_code}` : ""}
+                    {peopleOptions.tier1.length > 0 && (
+                      <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Managers &amp; Partners
+                      </div>
+                    )}
+                    {peopleOptions.tier1.map(p => (
+                      <SelectItem key={`t1-${p.name}`} value={p.name}>
+                        {p.name}{p.sublabel ? ` · ${p.sublabel}` : ""}
+                      </SelectItem>
+                    ))}
+                    {peopleOptions.tier2.length > 0 && (
+                      <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground border-t border-slate-200 mt-1">
+                        Freelancers
+                      </div>
+                    )}
+                    {peopleOptions.tier2.map(p => (
+                      <SelectItem key={`t2-${p.name}`} value={p.name}>
+                        {p.name}{p.sublabel ? ` · ${p.sublabel}` : ""}
                       </SelectItem>
                     ))}
                     <SelectItem value="__other__">— Other (type a name) —</SelectItem>
@@ -1647,7 +1815,7 @@ export default function PricingTool() {
                     value={historyForm.manager_name ?? ""}
                     onChange={e => setHistoryForm(f => ({ ...f, manager_name: e.target.value || null }))}
                     className="h-7 text-xs"
-                    placeholder="Custom name (e.g. external partner)"
+                    placeholder="Custom name"
                   />
                 )}
               </div>
@@ -2378,8 +2546,25 @@ export default function PricingTool() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      toast({ title: `Project marked as ${outcome}`, description: `${payload.project_name} saved to win/loss history` });
-      loadAll();
+
+      // Stamp the case itself so it moves to the Won/Lost tab.
+      if (form.id) {
+        await fetch(`/api/pricing/cases/${form.id}`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_name: form.project_name, outcome }),
+        });
+      }
+
+      toast({
+        title: `Project marked as ${outcome}`,
+        description: `${displayProjectName(form.project_name, form.revision_letter)} marked ${outcome}`,
+      });
+      setView("list");
+      // Land on the All Projects tab where the now-resolved row appears
+      // alongside everything else.
+      setMainTab("history");
+      _invalidatePricingCache(); loadAll({ force: true });
     } catch {
       toast({ title: "Failed to save", variant: "destructive" });
     } finally {
@@ -2390,7 +2575,14 @@ export default function PricingTool() {
   const deleteProposal = async (id: number) => {
     if (!confirm("Delete this past proposal?")) return;
     await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
-    loadAll();
+    _invalidatePricingCache(); loadAll({ force: true });
+  };
+
+  const deleteDuplicate = async (id: number) => {
+    const res = await fetch(`/api/pricing/proposals/${id}`, { method: "DELETE", credentials: "include" });
+    if (!res.ok) { alert(`Delete failed (${res.status}) — please refresh and try again.`); return; }
+    setProposals(prev => prev.filter(p => p.id !== id));
+    _invalidatePricingCache();
   };
 
   // Propagate region / fund / revenue / ebitda from one proposal to all same-client proposals.
@@ -2453,7 +2645,7 @@ export default function PricingTool() {
       });
     } catch {
       toast({ title: "Failed to update", variant: "destructive" });
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     }
   };
 
@@ -2542,7 +2734,7 @@ export default function PricingTool() {
       toast({ title: status === "final" ? "Case finalised" : "Saved as draft" });
       _lastSavedCanonicalRef.current = canonicalNetWeekly;
       setView("list");
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } catch {
       toast({ title: "Failed to save case", variant: "destructive" });
     } finally {
@@ -2579,7 +2771,7 @@ export default function PricingTool() {
       if (parts.length === 0) parts.push("Already in sync — no changes needed.");
       else parts.push("(restorable from /admin/trash)");
       toast({ title: "TBD sync complete", description: parts.join(" · ") });
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } finally {
       setBackfillingTbd(false);
     }
@@ -2707,7 +2899,7 @@ export default function PricingTool() {
         description: (parts.join(" · ") || "Nothing to do.") + (failures.length > 0 ? `\n${failures.join("\n")}` : ""),
         variant: failed > 0 ? "destructive" : undefined,
       });
-      loadAll();
+      _invalidatePricingCache(); loadAll({ force: true });
     } finally {
       setBackfillingCanonical(false);
     }
@@ -3008,10 +3200,20 @@ export default function PricingTool() {
       : canonicalGrossWeekly;
   }, [canonicalGrossWeekly, variableFeePct]);
 
+  // Active cases (no outcome yet) — distinct from resolved (won/lost)
+  // ones that now appear inline in the All Projects tab.
+  const activeCases = cases.filter((c: any) => !c.outcome || (c.outcome !== "won" && c.outcome !== "lost"));
+
+  /** Strip the trailing revision letter (e.g. "RUB07A" → "RUB07"). */
+  const wonDisplayName = (c: any): string => {
+    const full = displayProjectName(c.project_name, c.revision_letter);
+    return full.replace(/[A-Z]$/, "");
+  };
+
   // Stats for list view
-  const avgTarget = cases.length
-    ? cases.filter(c => c.recommendation?.target_weekly).reduce((s, c) => s + (c.recommendation?.target_weekly ?? 0), 0)
-      / cases.filter(c => c.recommendation?.target_weekly).length || 0
+  const avgTarget = activeCases.length
+    ? activeCases.filter((c: any) => c.recommendation?.target_weekly).reduce((s: number, c: any) => s + (c.recommendation?.target_weekly ?? 0), 0)
+      / activeCases.filter((c: any) => c.recommendation?.target_weekly).length || 0
     : 0;
 
   // ── LIST VIEW ───────────────────────────────────────────────────────────────
@@ -3072,7 +3274,7 @@ export default function PricingTool() {
               {Object.entries(loadErrors).map(([k, v]) => `${k} (${v})`).join(" • ")}.
               {" "}Previously loaded data is preserved. Click Retry to try again.
             </div>
-            <Button size="sm" variant="outline" onClick={loadAll}>
+            <Button size="sm" variant="outline" onClick={() => { _invalidatePricingCache(); loadAll({ force: true }); }}>
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
             </Button>
           </div>
@@ -3081,9 +3283,9 @@ export default function PricingTool() {
         {/* Tab navigation */}
         <div className="flex gap-1 border-b">
           {([
-            { id: "cases" as const, label: "Pricing Cases", icon: DollarSign, count: cases.length },
-            { id: "history" as const, label: "Past Projects", icon: History, count: proposals.length },
-            { id: "winloss" as const, label: "Win-Loss", icon: TrendingUp, count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
+            { id: "cases" as const,   label: "Pricing Cases", icon: DollarSign, count: activeCases.length },
+            { id: "history" as const, label: "All Projects",  icon: History,    count: proposals.length },
+            { id: "winloss" as const, label: "Win-Loss",      icon: TrendingUp, count: proposals.filter(p => p.outcome === "won" || p.outcome === "lost").length },
           ]).map(tab => (
             <button
               key={tab.id}
@@ -3103,15 +3305,31 @@ export default function PricingTool() {
           ))}
         </div>
 
+        {/* Refresh button — below the tab bar */}
+        <div className="flex justify-end pt-1.5 pb-0.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { _invalidatePricingCache(); loadAll({ force: true }); }}
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground text-xs h-7"
+            title="Force-reload all data from the database"
+          >
+            <RefreshCw className={`w-3 h-3 mr-1.5 ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Loading…" : "Refresh"}
+          </Button>
+        </div>
+
         {mainTab === "cases" ? (
           <>
             {/* Stats */}
             <div className="grid grid-cols-4 gap-4">
               {[
-                { label: "Total Cases", value: cases.length, icon: Users },
-                { label: "With Recommendations", value: cases.filter(c => c.recommendation).length, icon: TrendingUp },
-                { label: "Avg Target / Week", value: avgTarget > 0 ? fmt(avgTarget) : "—", icon: DollarSign },
-                { label: "Past Proposals", value: proposals.length, icon: TrendingDown },
+                { label: "Total Cases",           value: activeCases.length, icon: Users },
+                { label: "With Recommendations",  value: activeCases.filter((c: any) => c.recommendation).length, icon: TrendingUp },
+                { label: "Avg Target / Week",     value: avgTarget > 0 ? fmt(avgTarget) : "—", icon: DollarSign },
+                // "Proposals" = finalized cases still TBD (Final, no won/lost outcome yet).
+                { label: "Proposals (TBD)",       value: activeCases.filter((c: any) => c.status === "final").length, icon: TrendingDown },
               ].map(stat => (
                 <Card key={stat.label} className="p-4">
                   <div className="flex items-center justify-between">
@@ -3153,13 +3371,13 @@ export default function PricingTool() {
             {/* Cases table */}
             {loading ? (
               <div className="text-center py-12 text-muted-foreground">Loading...</div>
-            ) : cases.length === 0 ? (
+            ) : activeCases.length === 0 ? (
               <Card className="py-16">
                 <CardContent className="flex flex-col items-center gap-4">
                   <DollarSign className="w-12 h-12 text-muted-foreground/30" />
                   <div className="text-center">
-                    <p className="font-semibold text-lg">No pricing cases yet</p>
-                    <p className="text-sm text-muted-foreground">Create your first case to get started</p>
+                    <p className="font-semibold text-lg">No active pricing cases</p>
+                    <p className="text-sm text-muted-foreground">Create a new case, or check the Won/Lost Pricings tab for resolved deals</p>
                   </div>
                   <Button onClick={openNewForm}><Plus className="w-4 h-4 mr-2" /> New Pricing Case</Button>
                 </CardContent>
@@ -3175,6 +3393,7 @@ export default function PricingTool() {
                       <TableHead>Region</TableHead>
                       <TableHead>Duration</TableHead>
                       <TableHead>Target / wk</TableHead>
+                      <TableHead>Total fees</TableHead>
                       <TableHead className="w-14 text-center">Band</TableHead>
                       <TableHead className="w-16 text-center">Prob %</TableHead>
                       <TableHead>Status</TableHead>
@@ -3183,7 +3402,7 @@ export default function PricingTool() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {cases.map(c => {
+                    {activeCases.map(c => {
                       // Target/wk = the option that matches THIS case's
                       // duration_weeks. The user's mental model is "what's
                       // the per-week rate I'm actually quoting on this case"
@@ -3390,6 +3609,9 @@ export default function PricingTool() {
                         <TableCell className="font-semibold text-emerald-600">
                           {centralWk > 0 ? fmt(centralWk) : "—"}
                         </TableCell>
+                        <TableCell className="font-semibold text-emerald-600">
+                          {centralWk > 0 && c.duration_weeks ? fmt(Math.round(centralWk * c.duration_weeks)) : "—"}
+                        </TableCell>
                         <TableCell className="text-center">
                           {(() => {
                             const price = centralWk;
@@ -3436,7 +3658,7 @@ export default function PricingTool() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={c.status === "final" ? "default" : "secondary"} className="text-xs capitalize">
-                            {c.status}
+                            {c.status === "final" ? "TBD" : c.status}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
@@ -3461,7 +3683,7 @@ export default function PricingTool() {
             )}
           </>
         ) : mainTab === "history" ? (
-          /* ── PAST PROJECTS TAB ─────────────────────────────────────── */
+          /* ── ALL PROJECTS TAB (was "Past Projects") ─────────────────── */
           <div className="space-y-4">
             {/* Backfill TBD from cases — creates a "pending" proposal
                 row for every saved pricing case that doesn't have one
@@ -3491,7 +3713,7 @@ export default function PricingTool() {
                     const r = await fetch("/api/pricing/proposals/normalize-names", { method: "POST", credentials: "include" });
                     const d = await r.json();
                     toast({ title: `Names normalized`, description: d.count > 0 ? d.renamed.join(", ") : "All names already consistent." });
-                    if (d.count > 0) await loadAll();
+                    if (d.count > 0) { _invalidatePricingCache(); await loadAll({ force: true }); }
                   } catch { toast({ title: "Normalize failed", variant: "destructive" }); }
                 }}
               >
@@ -3913,6 +4135,48 @@ export default function PricingTool() {
         {/* ── WIN-LOSS ANALYSIS TAB ──────────────────────────────── */}
         {mainTab === "winloss" && (
           <div className="space-y-6">
+
+            {/* ── Duplicate proposals banner ─────────────────────────────── */}
+            {duplicateGroups.length > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 px-4 py-3 space-y-3">
+                <div className="flex items-center gap-2 text-amber-800 dark:text-amber-400">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-sm font-semibold">
+                    {duplicateGroups.length} duplicate group{duplicateGroups.length > 1 ? "s" : ""} detected — same client, project code, and fee
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {duplicateGroups.map((group, gi) => {
+                    // Sort ascending by id; keep[0] is the oldest — offer to delete the rest
+                    const sorted = [...group].sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+                    const keep = sorted[0];
+                    const toDelete = sorted.slice(1);
+                    return (
+                      <div key={gi} className="rounded-md bg-amber-100 dark:bg-amber-900/30 px-3 py-2 text-xs space-y-1">
+                        <div className="font-medium text-amber-900 dark:text-amber-300">
+                          {keep.client_name || keep.project_name} · {keep.project_name} · {Math.round(keep.total_fee ?? keep.weekly_price * (keep.duration_weeks ?? 0)).toLocaleString("it-IT")} €
+                        </div>
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <span className="text-amber-700 dark:text-amber-400">
+                            Keep #{keep.id} ({keep.proposal_date}), delete:
+                          </span>
+                          {toDelete.map(p => (
+                            <button
+                              key={p.id}
+                              onClick={() => deleteDuplicate(p.id!)}
+                              className="inline-flex items-center gap-1 rounded px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/60 font-medium transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              #{p.id} ({p.proposal_date})
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* ── Fees by Country (live — always recomputed from current proposals) ── */}
             <Card>
@@ -4606,17 +4870,23 @@ export default function PricingTool() {
                               {won.map((p, i) => (
                                 <circle key={`w${i}`} cx={xAt(proposalNet1(p))}
                                   cy={padT + 12 + (i % 3) * 10} r="3.5"
-                                  fill="#10b981" opacity="0.85" stroke="#065f46" strokeWidth="0.4">
-                                  <title>{p.project_name} · Won · {fmtFull(proposalNet1(p))}/wk</title>
-                                </circle>
+                                  fill="#10b981" opacity="0.85" stroke="#065f46" strokeWidth="0.4"
+                                  style={{ cursor: "pointer" }}
+                                  onMouseEnter={e => setBubbleTip({ p, outcome: "won", x: e.clientX, y: e.clientY })}
+                                  onMouseMove={e => setBubbleTip(t => t ? { ...t, x: e.clientX, y: e.clientY } : t)}
+                                  onMouseLeave={() => setBubbleTip(null)}
+                                />
                               ))}
                               {/* Lost dots — x position = NET1 */}
                               {lost.map((p, i) => (
                                 <circle key={`l${i}`} cx={xAt(proposalNet1(p))}
                                   cy={padT + 45 + (i % 3) * 10} r="3.5"
-                                  fill="#ef4444" opacity="0.85" stroke="#7f1d1d" strokeWidth="0.4">
-                                  <title>{p.project_name} · Lost · {fmtFull(proposalNet1(p))}/wk</title>
-                                </circle>
+                                  fill="#ef4444" opacity="0.85" stroke="#7f1d1d" strokeWidth="0.4"
+                                  style={{ cursor: "pointer" }}
+                                  onMouseEnter={e => setBubbleTip({ p, outcome: "lost", x: e.clientX, y: e.clientY })}
+                                  onMouseMove={e => setBubbleTip(t => t ? { ...t, x: e.clientX, y: e.clientY } : t)}
+                                  onMouseLeave={() => setBubbleTip(null)}
+                                />
                               ))}
                               {/* Scale labels */}
                               <text x={padL} y={H - 4} fontSize="7" fill="#94a3b8">{fmtK2(sMin)}</text>
@@ -4893,6 +5163,34 @@ export default function PricingTool() {
           </div>
         )}
 
+      {/* Bubble tooltip — fixed to viewport, follows mouse */}
+      {bubbleTip && (() => {
+        const p = bubbleTip.p;
+        const dateStr = p.proposal_date ?? "";
+        const [yyyy, mm] = dateStr.split("-");
+        const dateFmt = mm && yyyy ? `${mm}/${yyyy.slice(2)}` : dateStr;
+        const sym = getCurrencyForRegion(p.region).symbol;
+        const total = proposalNet1Total(p);
+        const wk = proposalNet1(p);
+        const weeks = p.duration_weeks ?? 0;
+        return (
+          <div
+            style={{ position: "fixed", left: bubbleTip.x + 14, top: bubbleTip.y - 56, pointerEvents: "none", zIndex: 9999 }}
+            className="bg-popover border border-border rounded-lg shadow-xl px-3 py-2 text-xs min-w-[140px]"
+          >
+            <div className="font-semibold text-foreground">{p.project_name}</div>
+            <div className="text-muted-foreground mt-0.5">{dateFmt}</div>
+            <div className="font-mono text-foreground mt-1">
+              {sym}{Math.round(total).toLocaleString("it-IT")}
+              {weeks > 0 && <span className="text-muted-foreground text-[10px] ml-1">({weeks}w × {sym}{Math.round(wk / 1000)}k)</span>}
+            </div>
+            <div className={`mt-1 text-[10px] font-medium ${bubbleTip.outcome === "won" ? "text-emerald-600" : "text-red-500"}`}>
+              {bubbleTip.outcome === "won" ? "Won" : "Lost"}
+            </div>
+          </div>
+        );
+      })()}
+
       </div>
     );
   }
@@ -4900,24 +5198,35 @@ export default function PricingTool() {
   // ── FORM VIEW ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      {/* Form header — sticky so the back arrow + title stay visible while
-          the user scrolls through the long edit form. top-0 sits flush
-          against the top of the scroll container; bg + subtle border keep
-          the content underneath legible as it slides past. z-30 stays
-          below the global app nav (which has its own sticky/fixed layer)
-          but above any inline cards. */}
-      <div className="sticky top-0 z-30 -mx-4 px-4 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b">
+      {/* Form header — FIXED so it never scrolls away regardless of the
+          overflow-x-hidden context on <main>. Sits at top-16 (64px = nav
+          height) so it appears flush below the global nav bar. A spacer
+          div below reserves the same height so form content starts below. */}
+      <div className="fixed top-16 inset-x-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="max-w-full mx-auto px-6 md:px-10 py-2">
         <div className="flex items-center gap-3">
           <button onClick={() => setView("list")}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded">
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div>
+          <div className="flex-1 min-w-0">
             <h1 className="text-xl font-bold">{form.id ? "Edit Pricing Case" : "New Pricing Case"}</h1>
             <p className="text-sm text-muted-foreground">Fill in the details — pricing recommendation updates live</p>
           </div>
+          {/* Save buttons duplicated here so they're always reachable without scrolling */}
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="outline" size="sm" onClick={() => handleSave("draft")} disabled={saving}>
+              Save draft
+            </Button>
+            <Button size="sm" onClick={() => handleSave("final")} disabled={saving}>
+              {saving ? "Saving…" : "Save & Finalise"}
+            </Button>
+          </div>
+        </div>
         </div>
       </div>
+      {/* Spacer — same height as the fixed header so content starts below it */}
+      <div className="h-14" />
 
       <div className="space-y-5">
 
@@ -7803,6 +8112,7 @@ export default function PricingTool() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }

@@ -6,6 +6,9 @@ import { rm, readFile } from "fs/promises";
 // which helps cold start times
 const allowlist = [
   "@anthropic-ai/sdk",
+  "mammoth",
+  "pdf-parse",
+  "unzipper",
   "@google/generative-ai",
   "axios",
   "connect-pg-simple",
@@ -47,6 +50,13 @@ async function buildAll() {
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
 
+  // Optional peer-deps that bundled packages reference via lazy require()
+  // but we never actually invoke at runtime — mark external so esbuild
+  // leaves the require alone instead of failing to resolve.
+  // Example: unzipper's s3_v3 helper requires '@aws-sdk/client-s3', but
+  // we only use unzipper for local PPTX zip extraction.
+  const optionalPeers = ["@aws-sdk/client-s3"];
+
   await esbuild({
     entryPoints: ["server/index.ts"],
     platform: "node",
@@ -57,7 +67,7 @@ async function buildAll() {
       "process.env.NODE_ENV": '"production"',
     },
     minify: true,
-    external: externals,
+    external: [...externals, ...optionalPeers],
     logLevel: "info",
   });
 }

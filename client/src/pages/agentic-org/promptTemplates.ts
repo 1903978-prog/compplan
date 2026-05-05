@@ -151,7 +151,7 @@ export function buildCoworkPrompt(input: {
   }
 
   // ── AIOS agent tasks & ideas ─────────────────────────────────────────
-  lines.push("## AIOS — Agent tasks & ideas");
+  lines.push("## Atlas — Agent tasks & ideas");
   for (const a of input.agents) {
     const ideas = (input.recentIdeasByAgent.get(a.id) ?? []).slice(0, 3);
     const tasks = input.openTasks.filter(t => t.agent_id === a.id).slice(0, 3);
@@ -416,7 +416,7 @@ export function buildCommitteePrompt(d: CommitteeInput): string {
 
   const overdueCount = d.tasks.filter(t => t.deadline && t.deadline < d.date && t.status !== "done").length;
 
-  return `# AIOS Weekly Executive Committee — ${d.date}
+  return `# Atlas Weekly Executive Committee — ${d.date}
 
 You are running a structured weekly Executive Committee for Eendigo's AI agent organisation. Every agent briefly shares: (1) status vs their objectives, (2) main tasks in flight, (3) cross-agent dependencies or resource needs, (4) ideas they want to propose, (5) decisions they need from a boss or Livio.
 
@@ -490,7 +490,7 @@ export function buildBoardMeetingPrompt(d: BoardMeetingInput): string {
     return `${a.name}: ${objs.length} objectives | ${doneTasks}/${allTasks} tasks done${topIdea ? ` | Top idea: "${topIdea.title}"` : ""}`;
   }).join("\n");
 
-  return `# AIOS Monthly Board Meeting — ${d.date}
+  return `# Atlas Monthly Board Meeting — ${d.date}
 
 You are running the monthly Board Meeting for Eendigo's AI-powered consulting firm. Participants: Livio (Chair), CEO, COO, CFO, CHRO, CMO, SVP Sales.
 

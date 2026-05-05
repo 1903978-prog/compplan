@@ -227,8 +227,6 @@ function ReadAIMeetingsCard() {
       ];
       if (transcript) {
         lines.push("", "Full transcript:", transcript);
-      } else {
-        lines.push("", "(Transcript not cached — ask Claude to refresh the Read.ai seed or set READ_AI_TOKEN for live fetch.)");
       }
       const full = lines.join("\n");
       await navigator.clipboard.writeText(full);

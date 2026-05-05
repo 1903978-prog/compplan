@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, real, jsonb, uuid, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, real, jsonb, uuid, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -159,6 +159,16 @@ export interface EmployeeCalculationResult {
   policy_applied: string;
 }
 
+// ─── HR event log (complaints, concerns, absence patterns, praise) ───────────
+export interface HrEvent {
+  id: string;                 // uuid-like
+  date: string;               // YYYY-MM-DD
+  type: "complaint" | "absence_concern" | "performance_concern" | "praise" | "other";
+  note: string;
+  severity: "low" | "medium" | "high";
+  logged_by?: string;
+}
+
 // ─── PostgreSQL tables ───────────────────────────────────────────────────────
 
 export const employees = pgTable("employees", {
@@ -186,6 +196,9 @@ export const employees = pgTable("employees", {
   onboarding_ratings: jsonb("onboarding_ratings").$type<OnboardingWeek[]>().default([]),
   yearly_reviews: jsonb("yearly_reviews").$type<YearlyReview[]>().default([]),
   comex_areas: jsonb("comex_areas").$type<ComexAreas>().default({}),
+  status: text("status").notNull().default("active"),    // "active" | "former"
+  retired_at: text("retired_at"),
+  hr_events: jsonb("hr_events").$type<HrEvent[]>().default([]),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees);
@@ -360,6 +373,13 @@ export const pricingCases = pgTable("pricing_cases", {
   // forecast uses created_at as a proxy. Livio sets this when the case is
   // being prepared; confirms it before signing.
   start_date: text("start_date"),
+  // outcome: 'won' | 'lost' | null. Set when the user clicks "Mark as Won/Lost"
+  // on the case. Cases with an outcome are hidden from the active "Pricing Cases"
+  // tab and shown in the "Won/Lost Pricings" tab instead.
+  outcome: text("outcome"),
+  // partner_id: optional FK to the partners table. Records which external
+  // firm referred or co-pitched this deal. Null = direct Eendigo origination.
+  partner_id: integer("partner_id"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -480,6 +500,7 @@ export const pricingProposals = pgTable("pricing_proposals", {
     blockers?: string[];
     pct_complete?: number;
   }[]>(),
+  partner_id: integer("partner_id"),
 });
 
 // ─── Employee Tasks (TDL) ────────────────────────────────────────────────────
@@ -893,11 +914,78 @@ export const bdDeals = pgTable("bd_deals", {
   region: text("region"),
   last_activity_at: text("last_activity_at"),              // Last touchpoint from HubSpot
   imported_at: text("imported_at"),                        // When row first came in from HubSpot
+  partner_id: integer("partner_id"),
+  linked_proposal_id: integer("linked_proposal_id"),       // FK to pricing_proposals — set by BD/proposal sync
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
 export type BdDeal = typeof bdDeals.$inferSelect;
 export type InsertBdDeal = typeof bdDeals.$inferInsert;
+
+// ── HubSpot Contacts ─────────────────────────────────────────────────────────
+// Full contact list synced from HubSpot via Private App token.
+// Requires crm.objects.contacts.read scope. Upserted by hubspot_id.
+export const hubspotContacts = pgTable("hubspot_contacts", {
+  id: serial("id").primaryKey(),
+  hubspot_id: text("hubspot_id").notNull().unique(),
+  first_name: text("first_name"),
+  last_name: text("last_name"),
+  email: text("email"),
+  phone: text("phone"),
+  job_title: text("job_title"),
+  company: text("company"),
+  company_hubspot_id: text("company_hubspot_id"),
+  lifecycle_stage: text("lifecycle_stage"),
+  lead_status: text("lead_status"),
+  owner_id: text("owner_id"),
+  city: text("city"),
+  country: text("country"),
+  last_activity_at: text("last_activity_at"),
+  synced_at: text("synced_at").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type HubspotContact = typeof hubspotContacts.$inferSelect;
+
+// ── HubSpot Companies ─────────────────────────────────────────────────────────
+// Company/account list synced from HubSpot via Private App token.
+// Requires crm.objects.companies.read scope. Upserted by hubspot_id.
+export const hubspotCompanies = pgTable("hubspot_companies", {
+  id: serial("id").primaryKey(),
+  hubspot_id: text("hubspot_id").notNull().unique(),
+  name: text("name"),
+  domain: text("domain"),
+  industry: text("industry"),
+  num_employees: text("num_employees"),
+  annual_revenue: real("annual_revenue"),
+  country: text("country"),
+  city: text("city"),
+  phone: text("phone"),
+  description: text("description"),
+  lifecycle_stage: text("lifecycle_stage"),
+  owner_id: text("owner_id"),
+  last_activity_at: text("last_activity_at"),
+  synced_at: text("synced_at").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type HubspotCompany = typeof hubspotCompanies.$inferSelect;
+
+// ── Partner Firms ────────────────────────────────────────────────────────────
+// External firms that refer or co-pitch deals to Eendigo. A partner_id FK
+// on pricing_cases, pricing_proposals, and bd_deals records attribution.
+export const partners = pgTable("partners", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  type: text("type").notNull().default("referral"), // "referral" | "co-pitch" | "channel" | "other"
+  contact_name: text("contact_name"),
+  contact_email: text("contact_email"),
+  notes: text("notes"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type Partner = typeof partners.$inferSelect;
+export type InsertPartner = typeof partners.$inferInsert;
 
 // ── Harvest Invoice Tracking ────────────────────────────────────────────────
 // Snapshot of last-seen state per invoice (for change detection)
@@ -1106,6 +1194,7 @@ export const orgAgents = pgTable("org_agents", {
     note?: string;
   }[]>().notNull().default([]),
   sort_order: integer("sort_order").notNull().default(0),
+  templates: jsonb("templates").$type<string[]>().notNull().default([]),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -1212,6 +1301,10 @@ export const agents = pgTable("agents", {
   skills: jsonb("skills").$type<string[]>(),
   knowledge: jsonb("knowledge").$type<string[]>(),
   training: jsonb("training").$type<string[]>(),
+  templates: jsonb("templates").$type<string[]>(),
+  // KM agent extensions (additive — existing AIOS agents default to 'aios_classic')
+  agent_type: text("agent_type").notNull().default("aios_classic"),   // aios_classic | km_specialist | km_router
+  knowledge_base_path: text("knowledge_base_path"),                    // relative path within KM root
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -1471,6 +1564,7 @@ export const aiosDeliverables = pgTable("aios_deliverables", {
   research_topic:       text("research_topic"),
   business_question:    text("business_question"),
   expected_output:      text("expected_output"),
+  human_rating:         integer("human_rating"),   // 1 = thumbs up, -1 = thumbs down, null = unrated
   created_at:           text("created_at").notNull(),
 });
 export type AiosDeliverable = typeof aiosDeliverables.$inferSelect;
@@ -1533,6 +1627,51 @@ export const coworkLetters = pgTable("cowork_letters", {
   created_at:                text("created_at").notNull(),
 });
 export type CoworkLetter = typeof coworkLetters.$inferSelect;
+
+// ── Agent KPIs — per-agent output metrics per cycle ──────────────────────────
+export const agentKpis = pgTable("agent_kpis", {
+  id:                serial("id").primaryKey(),
+  cycle_id:          integer("cycle_id").notNull(),
+  agent_name:        text("agent_name").notNull(),
+  round:             text("round").notNull().default("round1"),   // "round1" | "round2"
+  deliverable_count: integer("deliverable_count").notNull().default(0),
+  insight_count:     integer("insight_count").notNull().default(0),
+  idea_count:        integer("idea_count").notNull().default(0),
+  action_count:      integer("action_count").notNull().default(0),
+  avg_total_score:   real("avg_total_score"),      // average total_score across all deliverables
+  insight_score:     real("insight_score"),         // average total_score of insights
+  action_score:      real("action_score"),          // average total_score of actions
+  created_at:        text("created_at").notNull(),
+});
+export type AgentKpi = typeof agentKpis.$inferSelect;
+
+// ── KM Query Sessions ─────────────────────────────────────────────────────────
+// One row per user question sent to runKmCycle(). Stores router decision,
+// all specialist outputs (in km_outputs), and the final synthesised answer.
+export const kmSessions = pgTable("km_sessions", {
+  id:              uuid("id").primaryKey().defaultRandom(),
+  user_query:      text("user_query").notNull(),
+  router_output:   jsonb("router_output").$type<{ agents_to_call: string[]; reasoning: string } | null>().default(null),
+  status:          text("status").notNull().default("pending"), // pending | running | completed | failed
+  final_answer:    text("final_answer"),
+  total_sources:   jsonb("total_sources").$type<string[]>().default([]),
+  error:           text("error"),
+  created_at:      text("created_at").notNull(),
+  completed_at:    text("completed_at"),
+});
+export type KmSession = typeof kmSessions.$inferSelect;
+
+export const kmOutputs = pgTable("km_outputs", {
+  id:           serial("id").primaryKey(),
+  session_id:   uuid("session_id").notNull(),
+  agent_name:   text("agent_name").notNull(),
+  answer:       text("answer"),
+  sources:      jsonb("sources").$type<string[]>().default([]),
+  confidence:   text("confidence"),                              // high | medium | low
+  raw_response: text("raw_response"),
+  created_at:   text("created_at").notNull(),
+});
+export type KmOutput = typeof kmOutputs.$inferSelect;
 
 // ── CEO Brief Runs (in-app CEO Brief feature) ────────────────────────────────
 // Separate from the AIOS ceo_briefs table above (which is tied to aios_cycles).

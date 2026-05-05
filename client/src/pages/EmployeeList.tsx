@@ -9,11 +9,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw, Printer, Mail, User } from "lucide-react";
+import { Plus, Trash2, Search, Info, Upload, History, TrendingUp, CheckCircle2, X, MessageSquare, BookOpen, Calendar, Grid3X3, ListTodo, Check, Clock, AlertTriangle, Pencil, RefreshCw, Printer, Mail, User, UserX, UserCheck, ChevronUp, ChevronDown } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { employeeInputSchema, type EmployeeInput, type CompletedTest, type EmployeeTask, type YearlyReview, COMEX_AREAS } from "@shared/schema";
+import { employeeInputSchema, type EmployeeInput, type CompletedTest, type EmployeeTask, type YearlyReview, type HrEvent, COMEX_AREAS } from "@shared/schema";
 import { v4 as uuidv4 } from "uuid";
 import { useToast } from "@/hooks/use-toast";
 import { calculateEmployeeMetrics, grossToRal } from "@/lib/calculations";
@@ -406,13 +406,56 @@ const ROLE_RANK: Record<string, number> = {
 };
 
 
+// Churn risk score (0-100) computed from employee data alone
+function computeChurnScore(emp: any): { score: number; level: "high" | "medium" | "low" } {
+  const today = new Date();
+  let score = 0;
+  const promoDate = emp.last_promo_date
+    ? new Date(emp.last_promo_date)
+    : emp.hire_date ? new Date(emp.hire_date + "-01") : null;
+  if (promoDate && !isNaN(promoDate.getTime())) {
+    const monthsSince = (today.getTime() - promoDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+    if (monthsSince > 30) score += 35;
+    else if (monthsSince > 24) score += 25;
+  }
+  const perf = emp.performance_score;
+  if (typeof perf === "number") {
+    if (perf < 6.5) score += 25;
+    else if (perf < 7.0) score += 10;
+  }
+  const hrEvents = emp.hr_events ?? [];
+  let hrPts = 0;
+  for (const ev of hrEvents) {
+    if (["complaint","absence_concern","performance_concern"].includes(ev.type)) {
+      hrPts += ev.severity === "high" ? 20 : ev.severity === "medium" ? 10 : 5;
+    }
+  }
+  score += Math.min(hrPts, 40);
+  const hireParts = emp.hire_date?.split("-").map(Number) ?? [];
+  if (hireParts.length >= 2) {
+    const hireDate = new Date(hireParts[0], hireParts[1] - 1, 1);
+    const tenureMonths = (today.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+    if (tenureMonths < 6) score += 10;
+  }
+  const ratings = emp.monthly_ratings ?? [];
+  if (ratings.length > 0) {
+    const cutoff = new Date(today); cutoff.setDate(today.getDate() - 90);
+    const cutoffStr = cutoff.toISOString().slice(0, 7);
+    const recent = ratings.some((r: any) => String(r.month ?? r.date ?? "").slice(0, 7) >= cutoffStr);
+    if (!recent) score += 10;
+  }
+  score = Math.min(100, score);
+  return { score, level: score >= 50 ? "high" : score >= 25 ? "medium" : "low" };
+}
+
 export default function EmployeeList() {
-  const { employees, addEmployee, updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
+  const { employees, addEmployee, updateEmployee, deleteEmployee, retireEmployee, unretireEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
   const [mainTab, setMainTab] = useState<"employees" | "tdl" | "performance" | "external">("employees");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
+  const [showFormer, setShowFormer] = useState(false);
   const { toast } = useToast();
 
   // ── TDL state ─────────────────────────────────────────────────────────────
@@ -456,6 +499,8 @@ export default function EmployeeList() {
   // company-wide mailing list. CRUD via /api/external-contacts.
   type ExternalContact = {
     id: number; name: string; email: string; kind: string; created_at: string;
+    daily_rate?: number | null;
+    daily_rate_currency?: string | null;
     is_employee?: boolean;
     employee_id?: string;
     employee_role_code?: string;
@@ -465,6 +510,14 @@ export default function EmployeeList() {
   const [newExtName, setNewExtName] = useState("");
   const [newExtEmail, setNewExtEmail] = useState("");
   const [newExtKind, setNewExtKind] = useState<string>("freelancer");
+  const [newExtRate, setNewExtRate] = useState<string>("");
+  const [newExtRateCurrency, setNewExtRateCurrency] = useState<string>("EUR");
+  const [editingExtId, setEditingExtId] = useState<number | null>(null);
+  const [editExtName, setEditExtName] = useState<string>("");
+  const [editExtEmail, setEditExtEmail] = useState<string>("");
+  const [editExtKind, setEditExtKind] = useState<string>("freelancer");
+  const [editExtRate, setEditExtRate] = useState<string>("");
+  const [editExtRateCurrency, setEditExtRateCurrency] = useState<string>("EUR");
   const loadExternalContacts = async () => {
     try {
       const r = await fetch("/api/external-contacts", { credentials: "include" });
@@ -482,10 +535,15 @@ export default function EmployeeList() {
       const r = await fetch("/api/external-contacts", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newExtName.trim(), email: newExtEmail.trim(), kind: newExtKind }),
+        body: JSON.stringify({
+          name: newExtName.trim(), email: newExtEmail.trim(), kind: newExtKind,
+          daily_rate: newExtRate ? Number(newExtRate) : null,
+          daily_rate_currency: newExtRateCurrency,
+        }),
       });
       if (r.ok) {
         setNewExtName(""); setNewExtEmail(""); setNewExtKind("freelancer");
+        setNewExtRate(""); setNewExtRateCurrency("EUR");
         loadExternalContacts();
         toast({ title: "Contact added" });
       } else {
@@ -493,6 +551,39 @@ export default function EmployeeList() {
       }
     } catch {
       toast({ title: "Failed to add contact", variant: "destructive" });
+    }
+  };
+
+  const startEditExt = (c: ExternalContact) => {
+    setEditingExtId(c.id);
+    setEditExtName(c.name);
+    setEditExtEmail(c.email);
+    setEditExtKind(c.kind);
+    setEditExtRate(c.daily_rate != null ? String(c.daily_rate) : "");
+    setEditExtRateCurrency(c.daily_rate_currency ?? "EUR");
+  };
+
+  const saveEditExt = async (id: number) => {
+    if (!editExtName.trim() || !editExtEmail.trim()) return;
+    try {
+      const r = await fetch(`/api/external-contacts/${id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editExtName.trim(), email: editExtEmail.trim(), kind: editExtKind,
+          daily_rate: editExtRate ? Number(editExtRate) : null,
+          daily_rate_currency: editExtRateCurrency,
+        }),
+      });
+      if (r.ok) {
+        setEditingExtId(null);
+        loadExternalContacts();
+        toast({ title: "Contact updated" });
+      } else {
+        toast({ title: "Failed to update", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to update", variant: "destructive" });
     }
   };
 
@@ -781,11 +872,15 @@ Thanks,`;
   };
 
   const filteredEmployees = useMemo(() => {
-    // Sort alphabetically by name (case-insensitive, locale-aware).
-    // Was previously sorted by role rank desc — switched per user
-    // request to make the roster easier to scan when looking up
-    // someone by name.
     return employees
+      .filter(e => (e as any).status !== "former")
+      .filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  }, [employees, search]);
+
+  const formerEmployees = useMemo(() => {
+    return employees
+      .filter(e => (e as any).status === "former")
       .filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   }, [employees, search]);
@@ -1251,7 +1346,7 @@ Thanks,`;
             {/* Add form */}
             <div className="p-4 border-b bg-muted/10">
               <div className="flex gap-2 items-end flex-wrap">
-                <div className="min-w-[180px] flex-1">
+                <div className="min-w-[160px] flex-1">
                   <Label className="text-xs mb-1 block">Name</Label>
                   <Input
                     placeholder="e.g. Mario Rossi"
@@ -1260,7 +1355,7 @@ Thanks,`;
                     className="h-9 text-sm"
                   />
                 </div>
-                <div className="min-w-[220px] flex-1">
+                <div className="min-w-[200px] flex-1">
                   <Label className="text-xs mb-1 block">Email</Label>
                   <Input
                     type="email"
@@ -1270,7 +1365,7 @@ Thanks,`;
                     className="h-9 text-sm"
                   />
                 </div>
-                <div className="min-w-[160px]">
+                <div className="min-w-[140px]">
                   <Label className="text-xs mb-1 block">Type</Label>
                   <Select value={newExtKind} onValueChange={v => setNewExtKind(v)}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
@@ -1283,6 +1378,31 @@ Thanks,`;
                       <SelectItem value="advisor">Advisor</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="flex gap-1 items-end">
+                  <div className="w-[90px]">
+                    <Label className="text-xs mb-1 block">Daily rate</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={newExtRate}
+                      onChange={e => setNewExtRate(e.target.value)}
+                      className="h-9 text-sm"
+                    />
+                  </div>
+                  <div className="w-[80px]">
+                    <Label className="text-xs mb-1 block">CCY</Label>
+                    <Select value={newExtRateCurrency} onValueChange={v => setNewExtRateCurrency(v)}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="EUR">EUR</SelectItem>
+                        <SelectItem value="USD">USD</SelectItem>
+                        <SelectItem value="CHF">CHF</SelectItem>
+                        <SelectItem value="GBP">GBP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <Button onClick={addExternalContact} disabled={!newExtName.trim() || !newExtEmail.trim()}>
                   <Plus className="w-4 h-4 mr-1" /> Add
@@ -1301,73 +1421,160 @@ Thanks,`;
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
-                    <TableHead className="w-[140px]">Type</TableHead>
+                    <TableHead className="w-[130px]">Type</TableHead>
+                    <TableHead className="w-[150px]">Daily rate</TableHead>
                     <TableHead className="w-[80px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {[...externalContacts]
                     .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
-                    .map(c => (
-                      <TableRow key={c.id} className="hover:bg-muted/20">
-                        <TableCell className="font-semibold text-sm">{c.name}</TableCell>
-                        <TableCell className="text-xs font-mono">
-                          <a href={`mailto:${c.email}`} className="text-primary hover:underline">
-                            {c.email}
-                          </a>
-                        </TableCell>
-                        <TableCell>
-                          {(() => {
-                            // If a matching employee record exists, show
-                            // the live employee role (e.g. EM1, A2, INT)
-                            // — that's the source of truth. Otherwise
-                            // fall back to the stored kind for true
-                            // externals (founders, partners, advisors).
-                            if (c.is_employee && c.employee_role_code) {
-                              const code = c.employee_role_code.toLowerCase();
-                              const cls =
-                                code.startsWith("em") ? "bg-emerald-100 text-emerald-800" :
-                                code === "int"        ? "bg-amber-100 text-amber-800" :
-                                code.startsWith("a")  ? "bg-blue-100 text-blue-800" :
-                                code.startsWith("p")  ? "bg-violet-100 text-violet-800" :
-                                                        "bg-slate-100 text-slate-800";
-                              return (
-                                <span
-                                  className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium ${cls}`}
-                                  title={c.employee_role_name ?? c.employee_role_code}
+                    .map(c => {
+                      const isEditing = editingExtId === c.id;
+                      if (isEditing) {
+                        return (
+                          <TableRow key={c.id} className="bg-muted/20">
+                            <TableCell>
+                              <Input
+                                value={editExtName}
+                                onChange={e => setEditExtName(e.target.value)}
+                                className="h-8 text-sm w-full"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                type="email"
+                                value={editExtEmail}
+                                onChange={e => setEditExtEmail(e.target.value)}
+                                className="h-8 text-xs font-mono w-full"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Select value={editExtKind} onValueChange={v => setEditExtKind(v)}>
+                                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="freelancer">Freelancer</SelectItem>
+                                  <SelectItem value="partner">Partner</SelectItem>
+                                  <SelectItem value="manager">Manager</SelectItem>
+                                  <SelectItem value="intern">Intern</SelectItem>
+                                  <SelectItem value="founder">Founder</SelectItem>
+                                  <SelectItem value="advisor">Advisor</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  placeholder="0"
+                                  value={editExtRate}
+                                  onChange={e => setEditExtRate(e.target.value)}
+                                  className="h-8 text-sm w-[72px]"
+                                />
+                                <Select value={editExtRateCurrency} onValueChange={v => setEditExtRateCurrency(v)}>
+                                  <SelectTrigger className="h-8 text-xs w-[62px]"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="EUR">EUR</SelectItem>
+                                    <SelectItem value="USD">USD</SelectItem>
+                                    <SelectItem value="CHF">CHF</SelectItem>
+                                    <SelectItem value="GBP">GBP</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={() => saveEditExt(c.id)}
+                                  disabled={!editExtName.trim() || !editExtEmail.trim()}
+                                  className="text-emerald-600 hover:text-emerald-700 p-1 rounded transition-colors disabled:opacity-40"
+                                  title="Save"
                                 >
-                                  {c.employee_role_code}
-                                  <span className="ml-1 text-[8px] opacity-60">EMP</span>
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingExtId(null)}
+                                  className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors"
+                                  title="Cancel"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+                      // ── Read-only row ──────────────────────────────
+                      return (
+                        <TableRow key={c.id} className="hover:bg-muted/20 group">
+                          <TableCell className="font-semibold text-sm">{c.name}</TableCell>
+                          <TableCell className="text-xs font-mono">
+                            <a href={`mailto:${c.email}`} className="text-primary hover:underline">
+                              {c.email}
+                            </a>
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              if (c.is_employee && c.employee_role_code) {
+                                const code = c.employee_role_code.toLowerCase();
+                                const cls =
+                                  code.startsWith("em") ? "bg-emerald-100 text-emerald-800" :
+                                  code === "int"        ? "bg-amber-100 text-amber-800" :
+                                  code.startsWith("a")  ? "bg-blue-100 text-blue-800" :
+                                  code.startsWith("p")  ? "bg-violet-100 text-violet-800" :
+                                                          "bg-slate-100 text-slate-800";
+                                return (
+                                  <span
+                                    className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium ${cls}`}
+                                    title={c.employee_role_name ?? c.employee_role_code}
+                                  >
+                                    {c.employee_role_code}
+                                    <span className="ml-1 text-[8px] opacity-60">EMP</span>
+                                  </span>
+                                );
+                              }
+                              const cls =
+                                c.kind === "partner"    ? "bg-violet-100 text-violet-800" :
+                                c.kind === "freelancer" ? "bg-blue-100 text-blue-800" :
+                                c.kind === "manager"    ? "bg-emerald-100 text-emerald-800" :
+                                c.kind === "intern"     ? "bg-amber-100 text-amber-800" :
+                                c.kind === "founder"    ? "bg-rose-100 text-rose-800" :
+                                c.kind === "advisor"    ? "bg-cyan-100 text-cyan-800" :
+                                                          "bg-muted text-muted-foreground";
+                              return (
+                                <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium uppercase ${cls}`}>
+                                  {c.kind}
                                 </span>
                               );
-                            }
-                            // Stored-kind fallback for non-employees.
-                            const cls =
-                              c.kind === "partner"    ? "bg-violet-100 text-violet-800" :
-                              c.kind === "freelancer" ? "bg-blue-100 text-blue-800" :
-                              c.kind === "manager"    ? "bg-emerald-100 text-emerald-800" :
-                              c.kind === "intern"     ? "bg-amber-100 text-amber-800" :
-                              c.kind === "founder"    ? "bg-rose-100 text-rose-800" :
-                              c.kind === "advisor"    ? "bg-cyan-100 text-cyan-800" :
-                                                        "bg-muted text-muted-foreground";
-                            return (
-                              <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium uppercase ${cls}`}>
-                                {c.kind}
-                              </span>
-                            );
-                          })()}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <button
-                            onClick={() => deleteExternalContact(c.id, c.name)}
-                            className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
-                            title="Remove"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                            })()}
+                          </TableCell>
+                          <TableCell className="text-sm font-mono" data-privacy="blur">
+                            {c.daily_rate != null
+                              ? `${c.daily_rate_currency ?? "EUR"} ${Number(c.daily_rate).toLocaleString()}`
+                              : <span className="text-muted-foreground text-xs italic">—</span>}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => startEditExt(c)}
+                                className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => deleteExternalContact(c.id, c.name)}
+                                className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
+                                title="Remove"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                 </TableBody>
               </Table>
             )}
@@ -1397,6 +1604,7 @@ Thanks,`;
               <TableHead className="text-center">Paychecks</TableHead>
               <TableHead className="text-right">Meal Voucher</TableHead>
               <TableHead className="w-[180px]">Band Position</TableHead>
+              <TableHead className="text-center">Churn Risk</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1473,13 +1681,27 @@ Thanks,`;
                     <TableCell>
                       <BandPosition metrics={metrics} />
                     </TableCell>
+                    <TableCell className="text-center">
+                      {(() => {
+                        if ((emp as any).status === "former") return <span className="text-muted-foreground text-xs">—</span>;
+                        const { score, level } = computeChurnScore(emp);
+                        if (level === "low") return <span className="text-[11px] text-muted-foreground font-mono">{score}</span>;
+                        return (
+                          <span className={`inline-flex items-center justify-center w-10 h-6 rounded text-[11px] font-bold font-mono ${
+                            level === "high" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                          }`} title={level}>
+                            {score}
+                          </span>
+                        );
+                      })()}
+                    </TableCell>
                   </TableRow>
                 </React.Fragment>
               );
             })}
             {filteredEmployees.length === 0 && (
                 <TableRow>
-                    <TableCell colSpan={15} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={16} className="text-center py-12 text-muted-foreground">
                         No employees found.
                     </TableCell>
                 </TableRow>
@@ -1487,6 +1709,62 @@ Thanks,`;
           </TableBody>
         </Table>}
       </Card>
+      )}
+
+      {/* ── Former Employees ────────────────────────────────────────────────── */}
+      {formerEmployees.length > 0 && (
+        <Card className="border-slate-200">
+          <button
+            onClick={() => setShowFormer(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <UserX className="w-4 h-4" />
+              Former Employees ({formerEmployees.length})
+            </span>
+            {showFormer ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          {showFormer && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Hire Date</TableHead>
+                  <TableHead>Retired</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {formerEmployees.map(emp => (
+                  <TableRow
+                    key={emp.id}
+                    className="hover:bg-muted/50 text-muted-foreground"
+                  >
+                    <TableCell className="font-medium cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{emp.name}</TableCell>
+                    <TableCell className="cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{emp.current_role_code}</TableCell>
+                    <TableCell className="cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{emp.hire_date}</TableCell>
+                    <TableCell className="cursor-pointer" onClick={() => setSelectedEmpId(emp.id)}>{(emp as any).retired_at ?? "—"}</TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-7 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                        onClick={async () => {
+                          if (confirm(`Reinstate ${emp.name} as an active employee?`)) {
+                            await unretireEmployee(emp.id);
+                          }
+                        }}
+                      >
+                        Unretire
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
       )}
 
       <EmployeeDialog
@@ -1499,7 +1777,7 @@ Thanks,`;
 }
 
 function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onBack: () => void }) {
-  const { updateEmployee, deleteEmployee, roleGrid, settings } = useStore();
+  const { updateEmployee, retireEmployee, unretireEmployee, roleGrid, settings } = useStore();
   const { toast } = useToast();
   const metrics = calculateEmployeeMetrics(employee, roleGrid, settings);
 
@@ -1698,10 +1976,18 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee.id]);
 
-  const handleDetailDelete = async () => {
-    if (confirm("Are you sure you want to delete this employee?")) {
-      await deleteEmployee(employee.id);
-      toast({ title: "Employee deleted" });
+  const handleRetire = async () => {
+    if (confirm(`Retire ${employee.name}? They will be moved to Former Employees. No data is deleted.`)) {
+      await retireEmployee(employee.id);
+      toast({ title: `${employee.name} retired`, description: "Moved to Former Employees. All data retained." });
+      onBack();
+    }
+  };
+
+  const handleUnretire = async () => {
+    if (confirm(`Reinstate ${employee.name} as an active employee?`)) {
+      await unretireEmployee(employee.id);
+      toast({ title: `${employee.name} reinstated`, description: "Moved back to active employees." });
       onBack();
     }
   };
@@ -2868,12 +3154,24 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
             adding/removing an asset doesn't dirty the employee form. */}
         <EmployeeAssetsSection employeeId={employee.id} />
 
+        {/* HR Events — churn signals logged against this employee */}
+        <HrEventsSection employee={employee} />
+
         {/* Save + Delete buttons */}
         <div className="flex justify-between items-center pt-4 border-t">
-          <Button type="button" variant="destructive" onClick={handleDetailDelete}>
-            <Trash2 className="w-4 h-4 mr-2" />
-            Delete Employee
-          </Button>
+          {(employee as any).status === "former" ? (
+            <Button type="button" variant="outline" onClick={handleUnretire}
+              className="text-emerald-700 border-emerald-300 hover:border-emerald-400 hover:bg-emerald-50">
+              <UserCheck className="w-4 h-4 mr-2" />
+              Unretire Employee
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" onClick={handleRetire}
+              className="text-slate-600 border-slate-300 hover:border-slate-400 hover:bg-slate-50">
+              <UserX className="w-4 h-4 mr-2" />
+              Retire Employee
+            </Button>
+          )}
           <Button type="submit" disabled={saveState !== "idle"}
             className={saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : ""}>
             {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save Employee"}
@@ -2881,6 +3179,132 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
         </div>
       </form>
     </div>
+  );
+}
+
+// ── HR Events (churn signal log) ───────────────────────────────────────────
+function HrEventsSection({ employee }: { employee: EmployeeInput }) {
+  const { updateEmployee } = useStore();
+  const { toast } = useToast();
+  const events: HrEvent[] = (employee as any).hr_events ?? [];
+
+  const [newType, setNewType] = useState<HrEvent["type"]>("complaint");
+  const [newSeverity, setNewSeverity] = useState<HrEvent["severity"]>("medium");
+  const [newNote, setNewNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const TYPE_LABELS: Record<HrEvent["type"], string> = {
+    complaint: "Complaint",
+    absence_concern: "Absence",
+    performance_concern: "Performance",
+    praise: "Praise",
+    other: "Other",
+  };
+  const TYPE_COLORS: Record<HrEvent["type"], string> = {
+    complaint: "bg-red-100 text-red-700 border-red-200",
+    absence_concern: "bg-amber-100 text-amber-700 border-amber-200",
+    performance_concern: "bg-orange-100 text-orange-700 border-orange-200",
+    praise: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    other: "bg-slate-100 text-slate-600 border-slate-200",
+  };
+  const SEV_COLORS: Record<HrEvent["severity"], string> = {
+    high: "bg-red-500 text-white",
+    medium: "bg-amber-400 text-white",
+    low: "bg-slate-300 text-slate-700",
+  };
+
+  const logEvent = async () => {
+    if (!newNote.trim()) { toast({ title: "Add a note", variant: "destructive" }); return; }
+    setSaving(true);
+    const newEvent: HrEvent = {
+      id: uuidv4(),
+      date: new Date().toISOString().slice(0, 10),
+      type: newType,
+      severity: newSeverity,
+      note: newNote.trim(),
+    };
+    try {
+      await updateEmployee(employee.id, { ...employee, hr_events: [...events, newEvent] } as any);
+      setNewNote("");
+      toast({ title: "Event logged" });
+    } catch {
+      toast({ title: "Failed to log event", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteEvent = async (id: string) => {
+    await updateEmployee(employee.id, { ...employee, hr_events: events.filter(e => e.id !== id) } as any);
+  };
+
+  const sorted = [...events].sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <Card className="p-4 space-y-3">
+      <h3 className="text-sm font-bold uppercase tracking-wide flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 text-amber-500" />
+        HR Events — Churn Signals ({events.length})
+      </h3>
+
+      {sorted.length === 0 ? (
+        <p className="text-xs text-muted-foreground italic">No events logged yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {sorted.map(ev => (
+            <div key={ev.id} className="flex items-start gap-2 rounded border p-2 bg-card text-xs">
+              <span className="font-mono text-muted-foreground shrink-0 pt-0.5">{ev.date}</span>
+              <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${TYPE_COLORS[ev.type]}`}>
+                {TYPE_LABELS[ev.type]}
+              </span>
+              <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${SEV_COLORS[ev.severity]}`}>
+                {ev.severity}
+              </span>
+              <span className="flex-1 text-foreground">{ev.note}</span>
+              <button type="button" onClick={() => deleteEvent(ev.id)}
+                className="shrink-0 text-muted-foreground hover:text-destructive transition-colors">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add form */}
+      <div className="border-t pt-3 space-y-2">
+        <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Log New Event</p>
+        <div className="flex gap-2 flex-wrap">
+          <Select value={newType} onValueChange={(v) => setNewType(v as HrEvent["type"])}>
+            <SelectTrigger className="h-7 text-xs w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {(Object.keys(TYPE_LABELS) as HrEvent["type"][]).map(t => (
+                <SelectItem key={t} value={t} className="text-xs">{TYPE_LABELS[t]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={newSeverity} onValueChange={(v) => setNewSeverity(v as HrEvent["severity"])}>
+            <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="low" className="text-xs">Low</SelectItem>
+              <SelectItem value="medium" className="text-xs">Medium</SelectItem>
+              <SelectItem value="high" className="text-xs">High</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Brief note…"
+            className="h-7 text-xs flex-1"
+            value={newNote}
+            onChange={(e) => setNewNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); logEvent(); } }}
+          />
+          <Button type="button" size="sm" className="h-7 text-xs px-3" disabled={saving} onClick={logEvent}>
+            {saving ? "…" : "Log"}
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

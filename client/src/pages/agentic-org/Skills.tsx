@@ -197,7 +197,7 @@ export default function Skills() {
       <div className="flex items-center gap-3">
         <Cpu className="w-7 h-7 text-primary" />
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Atlas</p>
           <h1 className="text-2xl font-bold tracking-tight">Skill Factory</h1>
           <p className="text-sm text-muted-foreground">{skills.length} CoWork skills · {queue.length} approved proposals awaiting COO drafting</p>
         </div>

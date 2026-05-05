@@ -1,11 +1,11 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { useParams } from "wouter";
+import { useParams, useLocation, Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Loader2, Play, Check, X, Pencil, Clock, RefreshCw } from "lucide-react";
+import { Loader2, Play, Check, X, Pencil, Clock, RefreshCw, Newspaper, History, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -300,6 +300,110 @@ function FilterBar({
   );
 }
 
+// ─── Brief History (embedded tab) ────────────────────────────────────────────
+
+interface BriefSummary {
+  id: string;
+  generatedAt: string;
+  generatedBy: string;
+  status: string;
+  durationMs: number | null;
+  model: string | null;
+  tokenInput: number | null;
+  tokenOutput: number | null;
+  decisionCount: number;
+  approvedCount: number;
+  rejectedCount: number;
+  pendingCount: number;
+}
+
+function HistoryTab() {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<BriefSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch("/api/ceo-brief/history?limit=50", { credentials: "include" })
+      .then(r => r.json())
+      .then(setRows)
+      .catch((e: Error) => toast({ variant: "destructive", title: "Failed to load history", description: e.message }))
+      .finally(() => setLoading(false));
+  }, [toast]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-muted-foreground py-8">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+      </div>
+    );
+  }
+  if (rows.length === 0) {
+    return <p className="text-muted-foreground py-8 text-center">No briefs generated yet.</p>;
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 border-b">
+          <tr>
+            <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
+            <th className="text-left px-4 py-2 font-medium text-muted-foreground">Trigger</th>
+            <th className="text-center px-4 py-2 font-medium text-muted-foreground">Decisions</th>
+            <th className="text-center px-4 py-2 font-medium text-muted-foreground">Approved</th>
+            <th className="text-center px-4 py-2 font-medium text-muted-foreground">Pending</th>
+            <th className="text-left px-4 py-2 font-medium text-muted-foreground">Status</th>
+            <th className="text-left px-4 py-2 font-medium text-muted-foreground">Duration</th>
+            <th className="px-4 py-2" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map(r => (
+            <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+              <td className="px-4 py-2.5 font-mono text-xs">
+                {new Date(r.generatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
+              </td>
+              <td className="px-4 py-2.5">
+                <Badge variant="outline" className="text-xs">{r.generatedBy}</Badge>
+              </td>
+              <td className="px-4 py-2.5 text-center">{r.decisionCount}</td>
+              <td className="px-4 py-2.5 text-center">
+                {r.approvedCount > 0
+                  ? <span className="text-emerald-700 font-medium">{r.approvedCount}</span>
+                  : <span className="text-muted-foreground">—</span>}
+              </td>
+              <td className="px-4 py-2.5 text-center">
+                {r.pendingCount > 0
+                  ? <span className="text-amber-700 font-medium">{r.pendingCount}</span>
+                  : <span className="text-muted-foreground">0</span>}
+              </td>
+              <td className="px-4 py-2.5">
+                <Badge
+                  variant="outline"
+                  className={r.status === "success"
+                    ? "border-emerald-300 text-emerald-700"
+                    : "border-red-300 text-red-700"}
+                >
+                  {r.status}
+                </Badge>
+              </td>
+              <td className="px-4 py-2.5 text-muted-foreground">
+                {r.durationMs != null ? `${(r.durationMs / 1000).toFixed(1)}s` : "—"}
+              </td>
+              <td className="px-4 py-2.5 text-right">
+                <Link href={`/ceo-brief/${r.id}`}>
+                  <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs">
+                    <ExternalLink className="w-3 h-3" /> View
+                  </Button>
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 interface CeoBriefProps {
@@ -310,12 +414,24 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
   const { toast } = useToast();
   const params = useParams<{ id?: string }>();
   const briefIdFromUrl = params?.id;
-  // If a specific brief ID is in the URL, treat it as read-only (historical view)
   const readOnly = readOnlyProp ?? !!briefIdFromUrl;
+
+  // Tab: "brief" (default) or "history" — read from URL search param
+  const [location, setLocation] = useLocation();
+  const urlParams = new URLSearchParams(location.includes("?") ? location.split("?")[1] : "");
+  const activeTab = briefIdFromUrl ? "brief" : (urlParams.get("tab") === "history" ? "history" : "brief");
+  const setTab = (tab: "brief" | "history") => {
+    setLocation(tab === "history" ? "/ceo-brief?tab=history" : "/ceo-brief");
+  };
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [data, setData] = useState<BriefResponse>({ brief: null, decisions: [] });
+  const [cycleKpis, setCycleKpis] = useState<Array<{
+    agent_name: string; deliverable_count: number;
+    insight_count: number; idea_count: number; action_count: number;
+    avg_total_score: number | null;
+  }>>([]);
   const [filters, setFilters] = useState<Filters>({
     agents: [], types: [], approvalLevels: [], statuses: [],
   });
@@ -337,6 +453,14 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
   }, [briefIdFromUrl, toast]);
 
   useEffect(() => { fetchBrief(); }, [fetchBrief]);
+
+  // Load latest-cycle KPIs for header row
+  useEffect(() => {
+    fetch("/api/aios/agent-kpis", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => setCycleKpis(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+  }, []);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -400,24 +524,64 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
 
   const brief = data.brief;
 
+  // Tab bar (always rendered at top)
+  const tabBar = !briefIdFromUrl ? (
+    <div className="flex gap-1 border-b mb-4">
+      <button
+        onClick={() => setTab("brief")}
+        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          activeTab === "brief"
+            ? "border-primary text-primary"
+            : "border-transparent text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Newspaper className="w-3.5 h-3.5" /> Latest Brief
+      </button>
+      <button
+        onClick={() => setTab("history")}
+        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          activeTab === "history"
+            ? "border-primary text-primary"
+            : "border-transparent text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <History className="w-3.5 h-3.5" /> History
+      </button>
+    </div>
+  ) : null;
+
+  // History tab — render and return early
+  if (activeTab === "history") {
+    return (
+      <div className="space-y-4">
+        {tabBar}
+        <h1 className="text-2xl font-bold tracking-tight">CEO Brief History</h1>
+        <HistoryTab />
+      </div>
+    );
+  }
+
   // ── Empty state: no brief yet ──────────────────────────────────────────────
   if (!loading && !brief) {
     return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4">
-        <p className="text-muted-foreground text-lg">No CEO Brief generated yet for today.</p>
-        {!readOnly && (
-          <Button
-            size="lg"
-            onClick={handleGenerate}
-            disabled={generating}
-            className="gap-2"
-          >
-            {generating
-              ? <><Loader2 className="w-5 h-5 animate-spin" /> Generating brief... (~30s)</>
-              : <><Play className="w-5 h-5" /> Run Today's Brief</>
-            }
-          </Button>
-        )}
+      <div className="space-y-4">
+        {tabBar}
+        <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
+          <p className="text-muted-foreground text-lg">No CEO Brief generated yet for today.</p>
+          {!readOnly && (
+            <Button
+              size="lg"
+              onClick={handleGenerate}
+              disabled={generating}
+              className="gap-2"
+            >
+              {generating
+                ? <><Loader2 className="w-5 h-5 animate-spin" /> Generating brief... (~30s)</>
+                : <><Play className="w-5 h-5" /> Run Today's Brief</>
+              }
+            </Button>
+          )}
+        </div>
       </div>
     );
   }
@@ -430,6 +594,7 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
 
   return (
     <div className="space-y-4">
+      {tabBar}
       {/* Header */}
       <div className="flex flex-col gap-1 md:flex-row md:items-start md:justify-between">
         <div>
@@ -442,6 +607,21 @@ export default function CeoBrief({ readOnly: readOnlyProp }: CeoBriefProps) {
               {stats.pending} pending · {stats.approved} approved · {stats.rejected} rejected · {stats.postponed} postponed
               {brief.generatedBy === "scheduled" && <span className="ml-2 text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">scheduled</span>}
             </p>
+          )}
+          {cycleKpis.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {cycleKpis.map(k => (
+                <span
+                  key={k.agent_name}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200"
+                  title={`${k.insight_count} insights · ${k.idea_count} ideas · ${k.action_count} actions${k.avg_total_score != null ? ` · avg score ${k.avg_total_score.toFixed(1)}` : ""}`}
+                >
+                  <span className="font-semibold">{k.agent_name.replace(" Agent", "")}</span>
+                  <span className="opacity-60">·</span>
+                  <span>{k.deliverable_count} deliverables</span>
+                </span>
+              ))}
+            </div>
           )}
         </div>
         {!readOnly && (

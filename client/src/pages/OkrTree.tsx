@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Target, UserPlus, AlertTriangle, Bot, User, Check, X as XIcon, Clock, Plus, Trash2, Link as LinkIcon, Lightbulb, ListTodo } from "lucide-react";
+import { Target, UserPlus, AlertTriangle, Bot, User, Check, X as XIcon, Clock, Plus, Trash2, Link as LinkIcon, Lightbulb, ListTodo, LayoutGrid } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import AgenticExec from "@/pages/agentic-org/Executive";
 
 // Maps OkrTree role_key values → AIOS agent names (agents table)
 const ROLE_KEY_TO_AIOS: Record<string, string> = {
@@ -244,6 +245,7 @@ function flattenTree(n: OkrNode, out: OkrNode[] = []): OkrNode[] {
 
 export default function OkrTree() {
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<"tree" | "center">("tree");
   const [agents, setAgents] = useState<OrgAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [nodeDataByKey, setNodeDataByKey] = useState<Record<string, NodeData>>({});
@@ -390,8 +392,39 @@ export default function OkrTree() {
     return <div className="container mx-auto py-8 text-sm text-muted-foreground">Loading OKR tree…</div>;
   }
 
+  const tabBar = (
+    <div className="flex gap-1 border-b mb-4">
+      <button
+        onClick={() => setActiveTab("tree")}
+        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          activeTab === "tree" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Target className="w-3.5 h-3.5" /> OKR Tree
+      </button>
+      <button
+        onClick={() => setActiveTab("center")}
+        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          activeTab === "center" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <LayoutGrid className="w-3.5 h-3.5" /> OKR Center
+      </button>
+    </div>
+  );
+
+  if (activeTab === "center") {
+    return (
+      <div>
+        {tabBar}
+        <AgenticExec />
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto py-6 max-w-[1900px] space-y-6">
+      {tabBar}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="flex items-start gap-3">
           <Target className="w-7 h-7 text-primary mt-1" />
@@ -778,7 +811,7 @@ function NodeSidePanel({
           {agenticAgent && (
             <section className="border-t pt-4 space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
-                <Bot className="w-3.5 h-3.5" /> AIOS · {agenticAgent.name}
+                <Bot className="w-3.5 h-3.5" /> Atlas · {agenticAgent.name}
               </h3>
 
               {/* Top 3 ideas */}

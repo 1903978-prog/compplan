@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Sun, Coffee, Play, RefreshCw, Copy, Upload, FileText,
   AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, Zap,
-  History, ShieldAlert, ChevronRight, BarChart2
+  History, ShieldAlert, ChevronRight, BarChart2, ThumbsUp, ThumbsDown
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -27,13 +27,17 @@ interface AiosLog {
 interface AiosDeliverable {
   id: number; cycle_id: number; agent_id: number; agent_name?: string;
   deliverable_type: string; rank: number; title: string; description?: string;
-  total_score?: number; status: string;
+  total_score?: number; status: string; human_rating?: number | null;
 }
 interface CeoBrief {
   id: number; cycle_id: number; executive_summary?: string;
   top_insights: any[]; top_ideas: any[]; top_actions: any[];
   top_cowork_requests: any[]; conflicts: any[]; decisions_required: any[];
   autonomous_actions: any[]; coo_proposals: any[]; cowork_prompt?: string;
+}
+interface CoworkLetter {
+  id: number; cycle_id: number; agent_name?: string;
+  raw_letter_text: string; status: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -75,6 +79,8 @@ export default function AiosCycle() {
   const [logs, setLogs]             = useState<AiosLog[]>([]);
   const [deliverables, setDeliverables] = useState<AiosDeliverable[]>([]);
   const [ceoBrief, setCeoBrief]     = useState<CeoBrief | null>(null);
+  const [coworkLetters, setCoworkLetters] = useState<CoworkLetter[]>([]);
+  const [expandedLetters, setExpandedLetters] = useState<Set<number>>(new Set());
   const [starting, setStarting]     = useState(false);
   const [showPaste, setShowPaste]   = useState(false);
   const [pasteDraft, setPasteDraft] = useState("");
@@ -105,26 +111,40 @@ export default function AiosCycle() {
     setLogs([]);
     setDeliverables([]);
     setCeoBrief(null);
+    setCoworkLetters([]);
     lastLogId.current = 0;
     setShowHistory(false);
-    const [logs, d, b] = await Promise.all([
+    const [logs, d, b, ltrs] = await Promise.all([
       fetch(`/api/aios/cycles/${c.id}/logs`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(`/api/aios/cycles/${c.id}/deliverables`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(`/api/aios/cycles/${c.id}/ceo-brief`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`/api/aios/cycles/${c.id}/cowork-letters`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
     ]);
     setLogs(logs);
     if (logs.length > 0) lastLogId.current = logs[logs.length - 1].id;
     setDeliverables(d);
     if (b) setCeoBrief(b);
+    setCoworkLetters(ltrs);
+  }, []);
+
+  const rateDeliverable = useCallback(async (id: number, rating: 1 | -1 | null) => {
+    await fetch(`/api/aios/deliverables/${id}/rate`, {
+      method: "PATCH", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rating }),
+    });
+    setDeliverables(prev => prev.map(d => d.id === id ? { ...d, human_rating: rating } : d));
   }, []);
 
   const loadCycleData = useCallback(async (id: number) => {
-    const [d, b] = await Promise.all([
+    const [d, b, ltrs] = await Promise.all([
       fetch(`/api/aios/cycles/${id}/deliverables`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
       fetch(`/api/aios/cycles/${id}/ceo-brief`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`/api/aios/cycles/${id}/cowork-letters`, { credentials: "include" }).then(r => r.ok ? r.json() : []),
     ]);
     setDeliverables(d);
     if (b) setCeoBrief(b);
+    setCoworkLetters(ltrs);
   }, []);
 
   const stopPolling = useCallback(() => {
@@ -190,7 +210,7 @@ export default function AiosCycle() {
       const { cycleId } = await r.json();
       await loadLatestCycle();
       startPolling(cycleId);
-      toast({ title: "AIOS cycle started", description: `Cycle #${cycleId} running. Watch the activity log.` });
+      toast({ title: "Atlas cycle started", description: `Cycle #${cycleId} running. Watch the activity log.` });
     } catch (e: any) {
       toast({ title: "Failed to start", description: e.message, variant: "destructive" });
     }
@@ -286,14 +306,14 @@ export default function AiosCycle() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Zap className="w-4 h-4 text-amber-500" /> AIOS Daily Control Panel
+              <Zap className="w-4 h-4 text-amber-500" /> Atlas Daily Control Panel
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
               <Button onClick={startCycle} disabled={starting || anyRunning || isPaused} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                 {starting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sun className="w-4 h-4 mr-2" />}
-                8am — Start AIOS
+                8am — Start Atlas
               </Button>
               <Button onClick={startCycle} disabled={starting || anyRunning || isPaused} variant="outline">
                 <Play className="w-4 h-4 mr-2" /> Start Work
@@ -305,7 +325,7 @@ export default function AiosCycle() {
               )}
               {isPaused && (
                 <Button onClick={resumeCycle} className="bg-blue-600 hover:bg-blue-700 text-white">
-                  <Play className="w-4 h-4 mr-2" /> Resume AIOS
+                  <Play className="w-4 h-4 mr-2" /> Resume Atlas
                 </Button>
               )}
               {canRunR2 && (
@@ -416,7 +436,7 @@ export default function AiosCycle() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between text-sm">
-                <span>Current AIOS Cycle — #{cycle.id} · {cycle.cycle_date}</span>
+                <span>Current Atlas Cycle — #{cycle.id} · {cycle.cycle_date}</span>
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${CYCLE_STATUS_BADGE[cycle.status] ?? "bg-slate-100 text-slate-600"}`}>
                   {cycle.status.replace(/_/g, " ")}
                 </span>
@@ -501,6 +521,20 @@ export default function AiosCycle() {
                                   {d.total_score != null && (
                                     <Badge variant="outline" className="text-[10px] h-4 shrink-0">{d.total_score}</Badge>
                                   )}
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); void rateDeliverable(d.id, d.human_rating === 1 ? null : 1); }}
+                                    className={`shrink-0 rounded hover:bg-emerald-100 p-0.5 transition-colors ${d.human_rating === 1 ? "text-emerald-600" : "text-muted-foreground/40 hover:text-emerald-600"}`}
+                                    title="Good"
+                                  >
+                                    <ThumbsUp className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); void rateDeliverable(d.id, d.human_rating === -1 ? null : -1); }}
+                                    className={`shrink-0 rounded hover:bg-red-100 p-0.5 transition-colors ${d.human_rating === -1 ? "text-red-500" : "text-muted-foreground/40 hover:text-red-500"}`}
+                                    title="Not useful"
+                                  >
+                                    <ThumbsDown className="w-3 h-3" />
+                                  </button>
                                 </div>
                               ))}
                             </div>
@@ -582,6 +616,48 @@ export default function AiosCycle() {
         )}
 
         {/* CoWork Prompt Box */}
+        {/* CoWork Letters (parsed from pasted output) */}
+        {coworkLetters.length > 0 && (
+          <Card className="border-indigo-200">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm text-indigo-700">
+                <FileText className="w-4 h-4" /> CoWork Letters — {coworkLetters.length} parsed
+                <span className="text-[10px] text-muted-foreground font-normal ml-auto">Click to expand</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {coworkLetters.map(l => {
+                const open = expandedLetters.has(l.id);
+                return (
+                  <div key={l.id} className="border-b last:border-b-0">
+                    <button
+                      onClick={() => setExpandedLetters(prev => {
+                        const s = new Set(prev);
+                        if (s.has(l.id)) s.delete(l.id); else s.add(l.id);
+                        return s;
+                      })}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-xs hover:bg-muted/20 text-left"
+                    >
+                      {open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                      <span className="font-medium">Letter to {l.agent_name ?? "Unknown"}</span>
+                      <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-semibold ${l.status === "round2_processed" ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600"}`}>
+                        {l.status}
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="px-6 pb-3">
+                        <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono bg-slate-50 border rounded p-2 max-h-[300px] overflow-y-auto">
+                          {l.raw_letter_text}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+
         {cycle?.cowork_prompt && (
           <Card>
             <CardHeader className="pb-2">
@@ -621,14 +697,15 @@ export default function AiosCycle() {
         <div className="w-[360px] shrink-0 border-l flex flex-col bg-slate-950 text-slate-100">
           <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Live Activity</span>
-            {isRunning && <span className="flex items-center gap-1 text-xs text-blue-400"><Loader2 className="w-3 h-3 animate-spin" /> Running</span>}
-            {isPaused  && <span className="text-xs text-amber-400">Paused</span>}
-            {isDone    && <span className="text-xs text-emerald-400">Complete</span>}
+            {isRunning   && <span className="flex items-center gap-1 text-xs text-blue-400"><Loader2 className="w-3 h-3 animate-spin" /> Round 1</span>}
+            {isR2Running && <span className="flex items-center gap-1 text-xs text-indigo-400"><Loader2 className="w-3 h-3 animate-spin" /> Round 2</span>}
+            {isPaused    && <span className="text-xs text-amber-400">Paused</span>}
+            {isDone      && <span className="text-xs text-emerald-400">Complete</span>}
           </div>
           <div className="flex-1 overflow-y-auto">
             <div className="p-2 space-y-1 font-mono text-[11px]">
               {logs.length === 0 && (
-                <div className="text-slate-500 italic p-2">No activity yet. Click "8am — Start AIOS" to begin.</div>
+                <div className="text-slate-500 italic p-2">No activity yet. Click "8am — Start Atlas" to begin.</div>
               )}
               {logs.map(l => (
                 <div key={l.id} className={`flex gap-2 items-start leading-snug ${l.severity === "critical" ? "text-red-400" : l.severity === "warning" ? "text-amber-400" : "text-slate-300"}`}>

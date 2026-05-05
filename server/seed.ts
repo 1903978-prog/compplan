@@ -208,6 +208,14 @@ export async function seedDatabase() {
     )
   `);
 
+  // ── Indexes for fast Pricing Tool queries ──────────────────────────────
+  // These are safe to run multiple times (IF NOT EXISTS). On a small table
+  // (~50-200 rows) the queries are already fast, but these indexes eliminate
+  // the sequential scan entirely and reduce sort cost for the ORDER BY columns.
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pricing_proposals_date    ON pricing_proposals (proposal_date)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pricing_proposals_outcome ON pricing_proposals (outcome)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pricing_cases_status      ON pricing_cases     (status)`);
+
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS hiring_candidates (
       id SERIAL PRIMARY KEY,
@@ -422,6 +430,55 @@ export async function seedDatabase() {
   // without blocking manual rows (which leave hubspot_id NULL).
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS bd_deals_hubspot_id_unique ON bd_deals (hubspot_id) WHERE hubspot_id IS NOT NULL`);
 
+  // HubSpot Contacts — synced via Private App token (crm.objects.contacts.read).
+  // See shared/schema.ts ▸ hubspotContacts. Upserted by hubspot_id.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS hubspot_contacts (
+      id SERIAL PRIMARY KEY,
+      hubspot_id TEXT NOT NULL UNIQUE,
+      first_name TEXT,
+      last_name TEXT,
+      email TEXT,
+      phone TEXT,
+      job_title TEXT,
+      company TEXT,
+      company_hubspot_id TEXT,
+      lifecycle_stage TEXT,
+      lead_status TEXT,
+      owner_id TEXT,
+      city TEXT,
+      country TEXT,
+      last_activity_at TEXT,
+      synced_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  // HubSpot Companies — synced via Private App token (crm.objects.companies.read).
+  // See shared/schema.ts ▸ hubspotCompanies. Upserted by hubspot_id.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS hubspot_companies (
+      id SERIAL PRIMARY KEY,
+      hubspot_id TEXT NOT NULL UNIQUE,
+      name TEXT,
+      domain TEXT,
+      industry TEXT,
+      num_employees TEXT,
+      annual_revenue REAL,
+      country TEXT,
+      city TEXT,
+      phone TEXT,
+      description TEXT,
+      lifecycle_stage TEXT,
+      owner_id TEXT,
+      last_activity_at TEXT,
+      synced_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // Raw free-text the user pastes into the "Slide Template Instructions"
   // bulk-parse dialog. Persisted so it survives reloads.
   await db.execute(sql`ALTER TABLE deck_template_configs ADD COLUMN IF NOT EXISTS slide_instructions_text TEXT NOT NULL DEFAULT ''`);
@@ -575,13 +632,18 @@ export async function seedDatabase() {
   // Employees page's "Copy all emails" button.
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS external_contacts (
-      id           SERIAL PRIMARY KEY,
-      name         TEXT NOT NULL,
-      email        TEXT NOT NULL UNIQUE,
-      kind         TEXT NOT NULL DEFAULT 'freelancer',
-      created_at   TEXT NOT NULL
+      id                   SERIAL PRIMARY KEY,
+      name                 TEXT NOT NULL,
+      email                TEXT NOT NULL UNIQUE,
+      kind                 TEXT NOT NULL DEFAULT 'freelancer',
+      created_at           TEXT NOT NULL,
+      daily_rate           NUMERIC,
+      daily_rate_currency  TEXT NOT NULL DEFAULT 'EUR'
     )
   `);
+  // Add daily_rate columns to existing tables (idempotent — IF NOT EXISTS).
+  await db.execute(sql`ALTER TABLE external_contacts ADD COLUMN IF NOT EXISTS daily_rate NUMERIC`);
+  await db.execute(sql`ALTER TABLE external_contacts ADD COLUMN IF NOT EXISTS daily_rate_currency TEXT NOT NULL DEFAULT 'EUR'`);
   // Pre-seed the standing roster on first boot. Idempotent: only inserts
   // when the email isn't already present, so the user can rename/delete
   // freely without the seed re-creating rows.
@@ -848,6 +910,7 @@ export async function seedDatabase() {
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'agent'`);
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS email TEXT`);
   await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS dotted_parent_role_keys JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await db.execute(sql`ALTER TABLE org_agents ADD COLUMN IF NOT EXISTS templates JSONB NOT NULL DEFAULT '[]'::jsonb`);
   // Pre-set the CFO ↔ CCO matrix per co-CEO direction: CFO primarily under
   // CEO (solid), dotted-line to CCO because CFO does contracts/invoicing/
   // expense-reports for sales engagements. Idempotent — only adds 'cco'
@@ -867,6 +930,26 @@ export async function seedDatabase() {
   // before a proposal is finalised and moves to pricing_proposals.
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS win_probability REAL`);
   await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS start_date TEXT`);
+  // outcome = 'won' | 'lost' | null. When set, the case moves to the
+  // "Won/Lost Pricings" tab and is hidden from the active Pricing Cases list.
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS outcome TEXT`);
+
+  // ── Partners table + partner_id FKs ─────────────────────────────────────
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS partners (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'referral',
+      contact_name TEXT,
+      contact_email TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`ALTER TABLE pricing_cases ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+  await db.execute(sql`ALTER TABLE pricing_proposals ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
+  await db.execute(sql`ALTER TABLE bd_deals ADD COLUMN IF NOT EXISTS partner_id INTEGER`);
 
   // (Removed) Seed pricing_cases for specific reference projects (EMV01,
   // SCHA01) — these were development scaffolding for the three-timeline
@@ -1207,6 +1290,9 @@ Run with: node eendigo_template.js',
     ON CONFLICT (role_code) DO NOTHING
   `);
 
+  // Add hr_events column if missing (T12 migration)
+  await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS hr_events jsonb DEFAULT '[]'::jsonb`);
+
   // Seed employees if empty
   const existingEmployees = await db.select().from(employees);
   if (existingEmployees.length === 0) {
@@ -1215,18 +1301,13 @@ Run with: node eendigo_template.js',
     console.log(`Seeded ${SEED_EMPLOYEES.length} employees`);
   }
 
-  // Fix Defne: she is A2, not S1 — correct role and salary history
+  // Promote Defne to S1 (as of 2026-05-04)
   await db.execute(sql`
     UPDATE employees
-    SET current_role_code = 'A2',
-        last_promo_date = '2024-03-01',
-        current_gross_fixed_year = 36387
-    WHERE id = 'emp-defne' AND current_role_code = 'S1'
-  `);
-  await db.execute(sql`
-    UPDATE salary_history
-    SET role_code = 'A2', effective_date = '2025-09-01', note = 'Salary increase'
-    WHERE employee_id = 'emp-defne' AND role_code = 'S1'
+    SET current_role_code = 'S1',
+        last_promo_date = '2026-05-04',
+        current_gross_fixed_year = 38480
+    WHERE id = 'emp-defne' AND current_role_code = 'A2'
   `);
 
   // Ensure Defne has BA and A1 salary history entries (may be missing if DB was seeded before these were added)
@@ -1251,6 +1332,13 @@ Run with: node eendigo_template.js',
       ('emp-defne', '2024-03-01', 'A2',  34307, 13, 'Promotion to A2'),
       ('emp-defne', '2025-09-01', 'A2',  36387, 13, 'Salary increase')`);
     console.log("Seeded Defne salary history");
+  }
+  // Ensure Defne S1 promotion is in salary history
+  const defneS1Count = await db.execute(sql`SELECT COUNT(*) as cnt FROM salary_history WHERE employee_id = 'emp-defne' AND role_code = 'S1'`);
+  if (parseInt((defneS1Count.rows[0] as any).cnt) === 0) {
+    await db.execute(sql`INSERT INTO salary_history (employee_id, effective_date, role_code, gross_fixed_year, months_paid, note) VALUES
+      ('emp-defne', '2026-05-04', 'S1', 38480, 13, 'Promotion to S1')`);
+    console.log("Added Defne S1 promotion to salary history");
   }
 
   // Seed Malika salary history (idempotent)
@@ -1894,22 +1982,44 @@ If projected balance after payout in any of SQ1 or LLC < €5,000 → P0 to CEO.
     `);
   }
 
-  // ── Data fix: remove duplicate "L&D Manager" ─────────────────────────
-  // Two rows with role_name = 'L&D Manager' exist under hiring-manager:
+  // ── Data fix: remove duplicate "L&D Manager" (ONE-SHOT) ───────────────
+  // Two rows with role_name = 'L&D Manager' once existed under
+  // hiring-manager:
   //   id=24 key='ld-manager'  (seeded by the sub-agent pass above — keep)
   //   id=10 key='l-d-manager' (older manual entry — remove)
-  // Migrate any knowledge/proposals linked to the stale key first, then delete.
+  // Without a guard, the DELETE below runs on EVERY boot and would
+  // silently nuke any future role with key='l-d-manager' the user
+  // creates. We track this in seed_migrations and skip the block once
+  // it has been applied.
   await db.execute(sql`
-    UPDATE agent_knowledge SET role_key = 'ld-manager'
-    WHERE role_key = 'l-d-manager'
+    CREATE TABLE IF NOT EXISTS seed_migrations (
+      name        TEXT PRIMARY KEY,
+      applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `);
-  await db.execute(sql`
-    UPDATE agent_proposals SET role_key = 'ld-manager'
-    WHERE role_key = 'l-d-manager'
+  const _ldDedupeRows = await db.execute(sql`
+    SELECT 1 FROM seed_migrations WHERE name = 'l-d-manager-dedupe-2026-05'
   `);
-  await db.execute(sql`
-    DELETE FROM org_agents WHERE role_key = 'l-d-manager'
-  `);
+  const _ldDedupeAlreadyApplied = ((_ldDedupeRows as any).rows ?? _ldDedupeRows).length > 0;
+  if (!_ldDedupeAlreadyApplied) {
+    // Migrate any knowledge/proposals linked to the stale key first, then delete.
+    await db.execute(sql`
+      UPDATE agent_knowledge SET role_key = 'ld-manager'
+      WHERE role_key = 'l-d-manager'
+    `);
+    await db.execute(sql`
+      UPDATE agent_proposals SET role_key = 'ld-manager'
+      WHERE role_key = 'l-d-manager'
+    `);
+    await db.execute(sql`
+      DELETE FROM org_agents WHERE role_key = 'l-d-manager'
+    `);
+    await db.execute(sql`
+      INSERT INTO seed_migrations (name) VALUES ('l-d-manager-dedupe-2026-05')
+      ON CONFLICT (name) DO NOTHING
+    `);
+    console.log("[seed] Applied one-shot migration: l-d-manager-dedupe-2026-05");
+  }
 
   // ── Data fix: Henry Kissinger "Advisor" parent ─────────────────────────
   // The Advisor row had parent_role_key = 'president'. Since president is
@@ -3284,6 +3394,9 @@ Sequential IDs: PAR-001.
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS role_title TEXT`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS job_description TEXT`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS function_area TEXT`);
+    // Employee retirement columns
+    await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
+    await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS retired_at TEXT`);
     // Structured spec arrays (sourced from server/agentSpecsData.ts).
     // jsonb arrays so the UI / other agents can iterate them directly
     // without parsing the long-form JD blob. Idempotent — only added.
@@ -3291,6 +3404,7 @@ Sequential IDs: PAR-001.
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS skills JSONB`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge JSONB`);
     await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS training JSONB`);
+    await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS templates JSONB`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS aios_cycles (
         id SERIAL PRIMARY KEY,
@@ -3415,6 +3529,91 @@ Sequential IDs: PAR-001.
         created_at TEXT NOT NULL
       )
     `);
+
+  await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_kpis (
+        id SERIAL PRIMARY KEY,
+        cycle_id INTEGER NOT NULL,
+        agent_name TEXT NOT NULL,
+        round TEXT NOT NULL DEFAULT 'round1',
+        deliverable_count INTEGER NOT NULL DEFAULT 0,
+        insight_count INTEGER NOT NULL DEFAULT 0,
+        idea_count INTEGER NOT NULL DEFAULT 0,
+        action_count INTEGER NOT NULL DEFAULT 0,
+        avg_total_score REAL,
+        insight_score REAL,
+        action_score REAL,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+  // ── Deliverable human feedback ────────────────────────────────────────────────
+  await db.execute(sql`ALTER TABLE aios_deliverables ADD COLUMN IF NOT EXISTS human_rating INTEGER`);
+
+  // ── KM agent extensions on agents table ──────────────────────────────────────
+  await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS agent_type          TEXT NOT NULL DEFAULT 'aios_classic'`);
+  await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge_base_path TEXT`);
+
+  // ── KM sessions + outputs tables ─────────────────────────────────────────────
+  await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS km_sessions (
+        id            UUID  PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_query    TEXT  NOT NULL,
+        router_output JSONB,
+        status        TEXT  NOT NULL DEFAULT 'pending',
+        final_answer  TEXT,
+        total_sources JSONB DEFAULT '[]',
+        error         TEXT,
+        created_at    TEXT  NOT NULL,
+        completed_at  TEXT
+      )
+    `);
+  await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS km_outputs (
+        id           SERIAL PRIMARY KEY,
+        session_id   UUID   NOT NULL REFERENCES km_sessions(id) ON DELETE CASCADE,
+        agent_name   TEXT   NOT NULL,
+        answer       TEXT,
+        sources      JSONB  DEFAULT '[]',
+        confidence   TEXT,
+        raw_response TEXT,
+        created_at   TEXT   NOT NULL
+      )
+    `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS km_outputs_session_idx ON km_outputs(session_id)`);
+
+  // ── Seed 16 KM agents (idempotent — skip if name already exists) ─────────────
+  {
+    const kmAgentDefs = [
+      { name: "diagnostic-agent",       mission: "Diagnostic & Due Diligence specialist. Methodology, frameworks, commercial DD, and past project references.", agent_type: "km_specialist", knowledge_base_path: "01. By topic/01. Diagnostic & DD/"          },
+      { name: "strategy-gtm-agent",     mission: "Strategy & GTM specialist. Strategic planning, marketing, distributor management, and past projects.",         agent_type: "km_specialist", knowledge_base_path: "01. By topic/02. Strategy & Marketing/"        },
+      { name: "sfe-agent",              mission: "Sales Force Effectiveness specialist. SFE diagnostic, account planning, forecasting, CRM, coaching, KPIs.",   agent_type: "km_specialist", knowledge_base_path: "01. By topic/03. SFE & Sales Effectiveness/"    },
+      { name: "hunting-capdb-agent",    mission: "CAPDB & Hunting specialist. Account plans, segmentation, cross-sell, calibration workshops.",                  agent_type: "km_specialist", knowledge_base_path: "01. By topic/04. CAPDB & Hunting/"              },
+      { name: "pricing-agent",          mission: "Pricing specialist. Pricing strategy, GTN, distribution, diagnostics, tenders, past projects.",               agent_type: "km_specialist", knowledge_base_path: "01. By topic/05. Pricing/"                      },
+      { name: "incentives-agent",       mission: "Incentives & OKR specialist. Incentive plan design, OKR frameworks, performance mechanics.",                  agent_type: "km_specialist", knowledge_base_path: "01. By topic/06. Incentives/"                    },
+      { name: "org-governance-agent",   mission: "Organization & Governance specialist. Org design, RACI, job descriptions, assessment, coaching, comms.",      agent_type: "km_specialist", knowledge_base_path: "01. By topic/07. Organization & Governance/"    },
+      { name: "transformation-agent",   mission: "Transformation & Change specialist. Change management, PMI, transformation methodology.",                     agent_type: "km_specialist", knowledge_base_path: "01. By topic/08. Transformation & Change/"        },
+      { name: "digital-ai-agent",       mission: "Digital & AI specialist. AI strategy, digital strategy, advanced analytics, multichannel, past projects.",    agent_type: "km_specialist", knowledge_base_path: "01. By topic/09. AI Digital Analytics/"          },
+      { name: "war-room-agent",         mission: "War Room specialist. War room methodology, execution discipline, past project references.",                    agent_type: "km_specialist", knowledge_base_path: "01. By topic/10. War rooms/"                      },
+      { name: "operations-agent",       mission: "Operations specialist. Operational processes and operational excellence frameworks.",                          agent_type: "km_specialist", knowledge_base_path: "01. By topic/11. Operations/"                     },
+      { name: "pmo-agent",              mission: "PMO & Action Plans specialist. PMO templates, action plans, email templates, project management.",            agent_type: "km_specialist", knowledge_base_path: "01. By topic/12. PMO & Action plans/"              },
+      { name: "project-closeout-agent", mission: "Project Closeout specialist. Closeout methodology, end-of-project action plans, lessons learned.",           agent_type: "km_specialist", knowledge_base_path: "01. By topic/13. Project closeout/"              },
+      { name: "comex-playbooks-agent",  mission: "COMEX Playbooks specialist. General playbooks and engagement-specific playbooks (Sandoz, Syngenta, PIF).",   agent_type: "km_specialist", knowledge_base_path: "01. By topic/14. Comex playbooks/"              },
+      { name: "misc-agent",             mission: "Miscellaneous KM specialist. Catch-all for topics not covered by dedicated specialist agents.",              agent_type: "km_specialist", knowledge_base_path: "01. By topic/15. Misc/"                           },
+      { name: "km-router-agent",        mission: "KM Router. Receives any user question and routes to the 1-3 most relevant KM specialist agents.",           agent_type: "km_router",     knowledge_base_path: null                                              },
+    ] as const;
+    const now = new Date().toISOString();
+    for (const def of kmAgentDefs) {
+      const existing = await db.execute(sql`SELECT 1 FROM agents WHERE name = ${def.name} LIMIT 1`);
+      if ((existing as any).rows?.length === 0) {
+        await db.execute(sql`
+            INSERT INTO agents (name, mission, status, agent_type, knowledge_base_path, created_at, updated_at)
+            VALUES (${def.name}, ${def.mission}, 'active', ${def.agent_type}, ${def.knowledge_base_path ?? null}, ${now}, ${now})
+          `);
+        console.log(`[seed] KM agent inserted: ${def.name}`);
+      }
+    }
+  }
 
   // ── Seed job descriptions for known agents (idempotent — only sets when NULL) ──
   type AgentJd = { name_fragment: string; role_title: string; function_area: string; jd: string };
@@ -3642,6 +3841,21 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
       created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+
+  // ── template_renders — every micro-AI template render is logged here ─
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS template_renders (
+      id             SERIAL PRIMARY KEY,
+      agent          TEXT NOT NULL,
+      template_slug  TEXT NOT NULL,
+      rendered_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+      slots          JSONB,
+      output         TEXT,
+      used_in        TEXT
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS template_renders_agent_idx ON template_renders (agent, rendered_at DESC)`);
+
   // ── Apply structured agent specs from agentSpecsData.ts ──────────────
   // Match by exact name (cards.json was authored to match agents.name 1:1).
   // For each spec we:
@@ -3693,6 +3907,7 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
         skills                       = ${JSON.stringify(spec.skills)}::jsonb,
         knowledge                    = ${JSON.stringify(spec.knowledge)}::jsonb,
         training                     = ${JSON.stringify(spec.training)}::jsonb,
+        templates                    = ${JSON.stringify(spec.templates ?? [])}::jsonb,
         decision_rights_autonomous   = ${auto},
         decision_rights_livio        = ${livio},
         skill_gaps                   = ${spec.skills.join("\n")},
@@ -3730,6 +3945,76 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
           )
         `);
       }
+    }
+  }
+
+  // ── Agent section map seed (idempotent — only inserts if table empty) ─────
+  {
+    const existing = await db.execute(sql`SELECT COUNT(*) AS c FROM agent_section_map`);
+    const count = parseInt((existing as any).rows?.[0]?.c ?? "0", 10);
+    if (count === 0) {
+      const now = new Date().toISOString();
+      type SectionRow = {
+        module: string; section: string; subsection: string;
+        primary_agent: string; secondary_agents: string; why: string; frequency: string;
+      };
+      const rows: SectionRow[] = [
+        // ── Executive Module ─────────────────────────────────────────────────
+        { module: "Executive", section: "Dashboard", subsection: "Company KPIs & Metrics Overview", primary_agent: "CEO", secondary_agents: "COO,CFO", why: "CEO must monitor top-line KPIs daily to steer the company.", frequency: "Daily" },
+        { module: "Executive", section: "Dashboard", subsection: "Active Project Revenue & Pipeline", primary_agent: "CEO", secondary_agents: "CFO,BD", why: "Revenue health requires CEO attention daily.", frequency: "Daily" },
+        { module: "Executive", section: "OKR Center", subsection: "Company OKR Progress & Key Results", primary_agent: "CEO", secondary_agents: "COO", why: "CEO owns OKR accountability and must review progress.", frequency: "Daily" },
+        { module: "Executive", section: "OKR Tree", subsection: "Agent-Level OKR Drill-Down", primary_agent: "COO", secondary_agents: "CEO", why: "COO manages cross-agent OKR alignment.", frequency: "Daily" },
+        { module: "Executive", section: "EXCOM", subsection: "EXCOM Meeting Agenda & Decisions", primary_agent: "COO", secondary_agents: "CEO", why: "COO prepares and follows up on EXCOM outcomes.", frequency: "Daily" },
+        { module: "Executive", section: "CEO Brief", subsection: "Daily CEO Brief Generation & Quality", primary_agent: "CEO", secondary_agents: "COO", why: "CEO must validate brief accuracy and completeness.", frequency: "Daily" },
+        { module: "Executive", section: "Decisions", subsection: "Pending Decisions & Approval Queue", primary_agent: "CEO", secondary_agents: "COO", why: "CEO must clear decision bottlenecks daily.", frequency: "Daily" },
+        { module: "Executive", section: "Decision Log", subsection: "Past Decision Audit Trail", primary_agent: "COO", secondary_agents: "CEO", why: "COO tracks decision implementation.", frequency: "Weekly" },
+        { module: "Executive", section: "AIOS Cycle", subsection: "Cycle Quality, Coverage & Gaps", primary_agent: "COO", secondary_agents: "CEO", why: "COO owns AIOS system improvement.", frequency: "Daily" },
+        { module: "Executive", section: "Section Map", subsection: "Agent-Section Assignment Coverage", primary_agent: "COO", secondary_agents: "", why: "COO ensures every app section has an agent owner.", frequency: "Weekly" },
+        { module: "Executive", section: "Org Chart", subsection: "Org Structure & Reporting Lines", primary_agent: "COO", secondary_agents: "CEO,CHRO", why: "COO maintains org design accuracy.", frequency: "Weekly" },
+        { module: "Executive", section: "Agent Registry", subsection: "Agent Status, Missions & Job Descriptions", primary_agent: "COO", secondary_agents: "CEO", why: "COO ensures agents are properly configured.", frequency: "Daily" },
+        { module: "Executive", section: "Knowledge Base", subsection: "Agent Knowledge Base Coverage & Freshness", primary_agent: "COO", secondary_agents: "", why: "COO ensures KB is up to date for all agents.", frequency: "Weekly" },
+        { module: "Executive", section: "Skill Factory", subsection: "Agent Skills & CoWork Capabilities", primary_agent: "COO", secondary_agents: "", why: "COO develops agent capabilities over time.", frequency: "Weekly" },
+
+        // ── People Module ────────────────────────────────────────────────────
+        { module: "People", section: "Employees", subsection: "Headcount, Roles & Compensation Overview", primary_agent: "CHRO", secondary_agents: "COO,CFO", why: "CHRO owns people data accuracy and compensation compliance.", frequency: "Daily" },
+        { module: "People", section: "Employees", subsection: "Promotion Eligibility & Track Assignments", primary_agent: "CHRO", secondary_agents: "COO", why: "CHRO must surface promotion decisions proactively.", frequency: "Weekly" },
+        { module: "People", section: "Role Grid", subsection: "Role Band Calibration & Pay Ranges", primary_agent: "CHRO", secondary_agents: "CFO", why: "CHRO ensures role grid reflects market positioning.", frequency: "Weekly" },
+        { module: "People", section: "Staffing Gantt", subsection: "Project Staffing Coverage & Gaps", primary_agent: "COO", secondary_agents: "CHRO,BD", why: "COO ensures delivery capacity matches pipeline.", frequency: "Daily" },
+        { module: "People", section: "Days Off", subsection: "Leave Planning & Capacity Impact", primary_agent: "CHRO", secondary_agents: "COO", why: "CHRO monitors leave patterns affecting delivery.", frequency: "Weekly" },
+        { module: "People", section: "Time Tracker", subsection: "Billable vs Non-Billable Hours Mix", primary_agent: "CHRO", secondary_agents: "CFO", why: "CHRO tracks utilization and identifies overwork signals.", frequency: "Weekly" },
+
+        // ── Proposals Module ─────────────────────────────────────────────────
+        { module: "Proposals", section: "Proposals", subsection: "Open Proposals — Status, Win Probability & Actions", primary_agent: "Proposal", secondary_agents: "BD,CEO", why: "Proposal Agent drives active proposal quality and momentum.", frequency: "Daily" },
+        { module: "Proposals", section: "Proposals", subsection: "Won / Lost Outcomes & Lessons Learned", primary_agent: "Proposal", secondary_agents: "BD", why: "Proposal Agent continuously improves win rate from past data.", frequency: "Weekly" },
+        { module: "Proposals", section: "Pricing Cases", subsection: "Pricing Waterfall — NET1 to GROSS1 Calibration", primary_agent: "Proposal", secondary_agents: "CFO,BD", why: "Proposal Agent ensures pricing is competitive and margin-safe.", frequency: "Daily" },
+        { module: "Proposals", section: "Pricing Cases", subsection: "Benchmark Win Rate by Price Band", primary_agent: "BD", secondary_agents: "Proposal,CEO", why: "BD Agent monitors price acceptance vs. market.", frequency: "Weekly" },
+        { module: "Proposals", section: "Knowledge Center", subsection: "Proposal Content Library & Methodology Gaps", primary_agent: "Proposal", secondary_agents: "", why: "Proposal Agent maintains content quality.", frequency: "Weekly" },
+        { module: "Proposals", section: "Slide Methodology", subsection: "Slide Logic, Narrative Structure & Template Quality", primary_agent: "Proposal", secondary_agents: "", why: "Proposal Agent owns slide quality standards.", frequency: "Weekly" },
+
+        // ── Hiring Module ────────────────────────────────────────────────────
+        { module: "Hiring", section: "Pipeline", subsection: "Candidate Pipeline — Stages & Velocity", primary_agent: "CHRO", secondary_agents: "CEO", why: "CHRO drives hiring velocity and quality.", frequency: "Daily" },
+        { module: "Hiring", section: "Candidate Scoring", subsection: "Score Distribution & Assessment Coverage", primary_agent: "CHRO", secondary_agents: "", why: "CHRO ensures objective, consistent candidate assessment.", frequency: "Weekly" },
+        { module: "Hiring", section: "Scoreboard", subsection: "Top Candidates & Offer Readiness", primary_agent: "CHRO", secondary_agents: "CEO", why: "CHRO surfaces top candidates for CEO decision.", frequency: "Weekly" },
+
+        // ── Finance Module ───────────────────────────────────────────────────
+        { module: "Finance", section: "Invoicing", subsection: "Overdue Invoices & Cash Collection Risk", primary_agent: "CFO", secondary_agents: "BD,CEO", why: "CFO must track cash collection and flag overdue items.", frequency: "Daily" },
+        { module: "Finance", section: "Invoicing", subsection: "Revenue Recognition & Monthly Close", primary_agent: "CFO", secondary_agents: "COO", why: "CFO ensures accurate revenue reporting.", frequency: "Weekly" },
+        { module: "Finance", section: "Client Ledger", subsection: "Client Revenue, Margin & Payment History", primary_agent: "CFO", secondary_agents: "BD,CEO", why: "CFO monitors client-level P&L health.", frequency: "Weekly" },
+
+        // ── Sales Module ─────────────────────────────────────────────────────
+        { module: "Sales", section: "BD Pipeline", subsection: "Lead Volume, Stage Progression & Deal Velocity", primary_agent: "BD", secondary_agents: "CEO,COO", why: "BD Agent manages the full sales funnel.", frequency: "Daily" },
+        { module: "Sales", section: "BD Pipeline", subsection: "At-Risk Deals & Required Actions", primary_agent: "BD", secondary_agents: "CEO", why: "BD Agent flags deals requiring CEO intervention.", frequency: "Daily" },
+        { module: "Sales", section: "BD Pipeline", subsection: "Win Rate by Service Type & Client Segment", primary_agent: "BD", secondary_agents: "Proposal,CEO", why: "BD Agent calibrates targeting and messaging.", frequency: "Weekly" },
+        { module: "Sales", section: "Client Ledger", subsection: "Upsell & Expansion Signals", primary_agent: "BD", secondary_agents: "CFO", why: "BD Agent identifies revenue expansion opportunities.", frequency: "Weekly" },
+      ];
+
+      for (const r of rows) {
+        await db.execute(sql`
+          INSERT INTO agent_section_map (module, section, subsection, primary_agent, secondary_agents, why, frequency, created_at, updated_at)
+          VALUES (${r.module}, ${r.section}, ${r.subsection}, ${r.primary_agent}, ${r.secondary_agents}, ${r.why}, ${r.frequency}, ${now}, ${now})
+        `);
+      }
+      console.log(`[seed] Seeded ${rows.length} agent section map entries.`);
     }
   }
   }

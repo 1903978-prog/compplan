@@ -2,9 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, microAiLog, aiResponseCache, pricingRules } from "@shared/schema";
-import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2 } from "./aiosService";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, microAiLog, aiResponseCache, pricingRules, agentKpis, kmSessions, kmOutputs, invoiceSnapshots, bdDeals, employees, pricingCases } from "@shared/schema";
+import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2, runSingleAgent } from "./aiosService";
+import { runKmCycle, getKmSessions, getKmSessionDetail } from "./kmService";
 import { runCeoBrief } from "./ceoBriefRunner";
+import { listTemplates, loadTemplate, loadTemplateRaw, render as renderTemplate, saveTemplate } from "./microAI/templateEngine";
 import { ceoBriefRuns, ceoBriefRunDecisions } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, gte, count, sum } from "drizzle-orm";
@@ -125,6 +127,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // ── Template engine (micro-AI) ───────────────────────────────────────
+  // List, fetch, render and save markdown templates. Renders are logged
+  // into template_renders so we can see token-free deliverable volume.
+  app.get("/api/templates", requireAuth, (req, res) => {
+    const agent = (req.query.agent as string | undefined)?.trim() || undefined;
+    res.json(listTemplates(agent));
+  });
+  app.get("/api/templates/:agent/:slug", requireAuth, (req, res) => {
+    try {
+      const { meta, body } = loadTemplate(req.params.agent, req.params.slug);
+      const raw = loadTemplateRaw(req.params.agent, req.params.slug);
+      res.json({ meta, body, raw });
+    } catch (err: any) {
+      res.status(404).json({ message: err?.message ?? "Template not found" });
+    }
+  });
+  app.post("/api/templates/render", requireAuth, async (req, res) => {
+    try {
+      const { agent, slug, slots, used_in } = req.body ?? {};
+      if (!agent || !slug) return res.status(400).json({ message: "agent and slug are required" });
+      const result = renderTemplate(agent, slug, slots ?? {});
+      try {
+        await db.execute(sql`
+          INSERT INTO template_renders (agent, template_slug, slots, output, used_in)
+          VALUES (${agent}, ${slug}, ${JSON.stringify(slots ?? {})}::jsonb, ${result.body}, ${used_in ?? null})
+        `);
+      } catch { /* logging is best-effort */ }
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+  app.post("/api/templates/:agent/:slug", requireAuth, (req, res) => {
+    try {
+      const { content } = req.body ?? {};
+      if (typeof content !== "string" || !content.includes("---")) {
+        return res.status(400).json({ message: "content must be a markdown string with frontmatter" });
+      }
+      saveTemplate(req.params.agent, req.params.slug, content);
+      const { meta, body } = loadTemplate(req.params.agent, req.params.slug);
+      res.json({ meta, body });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Save failed" });
+    }
+  });
+
+  // ── Agent template callsites — 5 high-volume wired endpoints ─────────────
+  // These replace Claude calls for predictable structured deliverables.
+  // Each fetches live data, maps it to template slots, and renders via
+  // templateEngine.render() — zero LLM tokens.
+
+  // 1. AR: generate reminder email for an overdue invoice.
+  //    Picks the right template based on days overdue.
+  //    POST /api/ar/invoices/:invoiceId/generate-reminder
+  app.post("/api/ar/invoices/:invoiceId/generate-reminder", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.invoiceId, 10);
+      const [inv] = await db.select().from(invoiceSnapshots).where(eq(invoiceSnapshots.invoice_id, id));
+      if (!inv) return res.status(404).json({ message: "Invoice not found" });
+      const { contact_name = req.body.contact_name ?? inv.client_name ?? "there",
+              sender_name  = req.body.sender_name  ?? "Livio" } = req.body ?? {};
+      const dueDate = inv.due_date ? new Date(inv.due_date) : null;
+      const daysOverdue = dueDate ? Math.floor((Date.now() - dueDate.getTime()) / 86400000) : 0;
+      let slug = "reminder_t0_gentle";
+      if (daysOverdue >= 60) slug = "escalation_t60";
+      else if (daysOverdue >= 30) slug = "reminder_t30_urgent";
+      else if (daysOverdue >= 15) slug = "reminder_t15_firm";
+      const slots: Record<string, string> = {
+        client_name: inv.client_name ?? "",
+        contact_name,
+        invoice_number: inv.invoice_number ?? String(inv.invoice_id),
+        invoice_date: inv.invoice_created_at?.slice(0, 10) ?? "",
+        amount: `€${((inv.amount ?? 0) / 100).toLocaleString("en-EU")}`,
+        due_date: inv.due_date ?? "",
+        days_overdue: String(daysOverdue),
+        payment_details: req.body.payment_details ?? "IBAN: [see invoice]",
+        sender_name,
+        senior_contact_name: req.body.senior_contact_name ?? contact_name,
+      };
+      const result = renderTemplate("ar_agent", slug, slots);
+      res.json({ ...result, days_overdue: daysOverdue, slug });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 2. BD: generate cold outreach email for a deal.
+  //    Slug determined by contact_count in body (0 = first touch, 1 = second).
+  //    POST /api/bd/deals/:id/generate-outreach
+  app.post("/api/bd/deals/:id/generate-outreach", requireAuth, async (req, res) => {
+    try {
+      const [deal] = await db.select().from(bdDeals).where(eq(bdDeals.id, parseInt(req.params.id, 10)));
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const { touch = 1, sender_name = "Livio", sender_role = "President" } = req.body ?? {};
+      const slug = touch === 2 ? "cold_second_touch"
+                 : touch === 0 ? "warm_intro"
+                 : "cold_first_touch";
+      const slots: Record<string, string> = {
+        prospect_name: deal.contact_name ?? deal.client_name ?? "",
+        prospect_role: req.body.prospect_role ?? "Decision Maker",
+        prospect_company: deal.client_name ?? "",
+        sector: deal.industry ?? req.body.sector ?? "your industry",
+        pain_point: req.body.pain_point ?? "current transformation priorities",
+        our_angle: req.body.our_angle ?? "accelerate your strategic agenda with AI-native consulting",
+        original_angle: req.body.original_angle ?? "AI-native consulting",
+        new_hook: req.body.new_hook ?? "I came across a recent development that may be directly relevant.",
+        referrer_name: req.body.referrer_name ?? "",
+        context: req.body.context ?? "",
+        sender_name,
+        sender_role,
+      };
+      const result = renderTemplate("bd_agent", slug, slots);
+      res.json({ ...result, deal_id: deal.id, slug });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 3. CFO: generate P&L summary. Caller provides all slots in body.
+  //    POST /api/cfo/generate-pnl-summary
+  app.post("/api/cfo/generate-pnl-summary", requireAuth, async (req, res) => {
+    try {
+      const result = renderTemplate("cfo_agent", "pnl_summary", req.body ?? {});
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 4. CHRO: generate 30-60-90 onboarding plan for an employee.
+  //    POST /api/chro/employees/:id/generate-onboarding
+  app.post("/api/chro/employees/:id/generate-onboarding", requireAuth, async (req, res) => {
+    try {
+      const [emp] = await db.select().from(employees).where(eq(employees.id, req.params.id));
+      if (!emp) return res.status(404).json({ message: "Employee not found" });
+      const slots: Record<string, unknown> = {
+        employee: emp.name,
+        role: req.body.role ?? emp.current_role_code ?? "",
+        start_date: emp.hire_date ?? req.body.start_date ?? "",
+        buddy: req.body.buddy ?? "",
+        day30_milestones: req.body.day30_milestones ?? [],
+        day60_milestones: req.body.day60_milestones ?? [],
+        day90_milestones: req.body.day90_milestones ?? [],
+        key_stakeholders: req.body.key_stakeholders ?? [],
+        ...req.body,
+      };
+      const result = renderTemplate("chro_agent", "onboarding_30_60_90", slots);
+      res.json({ ...result, employee_id: emp.id });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
+  // 5. Delivery: generate weekly project status report.
+  //    Hydrates project_name and client from pricingCases if project_id given.
+  //    POST /api/delivery/projects/:id/generate-status
+  app.post("/api/delivery/projects/:id/generate-status", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const [project] = await db.select().from(pricingCases).where(eq(pricingCases.id, id));
+      const slots: Record<string, unknown> = {
+        project_name: project?.project_name ?? req.body.project_name ?? "",
+        client: project?.client_name ?? req.body.client ?? "",
+        week: req.body.week ?? new Date().toISOString().slice(0, 10),
+        overall_rag: req.body.overall_rag ?? "🟢 Green",
+        schedule_rag: req.body.schedule_rag ?? "🟢 Green",
+        budget_rag: req.body.budget_rag ?? "🟢 Green",
+        scope_rag: req.body.scope_rag ?? "🟢 Green",
+        budget_used_pct: req.body.budget_used_pct ?? "0",
+        accomplishments: req.body.accomplishments ?? [],
+        next_week: req.body.next_week ?? [],
+        blockers: req.body.blockers ?? [],
+        ...req.body,
+      };
+      const result = renderTemplate("delivery_officer", "project_status", slots);
+      res.json({ ...result, project_id: id });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message ?? "Render failed" });
+    }
+  });
+
   // ── Diagnostic row counts (unauthenticated, read-only) ────────────────────
   // Temporary endpoint to diagnose the "Pricing section empty" report.
   // Returns row counts for the key tables so we can tell whether the data
@@ -163,7 +346,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // re-run of the idempotent SEED_PROPOSALS insert. Returns how many rows
   // were inserted. Safe: the insert uses WHERE NOT EXISTS on project_name
   // so it never duplicates or touches existing rows.
-  app.post("/api/diag/reseed-proposals", async (_req, res) => {
+  app.post("/api/diag/reseed-proposals", requireAuth, async (_req, res) => {
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
@@ -217,6 +400,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (e) {
       console.error("[code-download] failed:", e);
       if (!res.headersSent) res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // ── Save code zip directly to LOCAL_BACKUP_DIR ──────────────────────
+  // POST /api/admin/save-code-local — runs git archive and writes the zip
+  // to process.env.LOCAL_BACKUP_DIR (set in .env). Returns { saved, path }.
+  // Only meaningful when the server is running on the same machine as the
+  // user (i.e. local dev). On Render LOCAL_BACKUP_DIR is unset → 400.
+  app.post("/api/admin/save-code-local", requireAuth, async (_req, res) => {
+    const dir = process.env.LOCAL_BACKUP_DIR?.trim();
+    if (!dir) {
+      return res.status(400).json({ error: "LOCAL_BACKUP_DIR is not set in .env" });
+    }
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `compplan-code-${date}.zip`;
+      const dest = path.join(dir, filename);
+      const out = fs.createWriteStream(dest);
+      const git = spawn("git", ["archive", "--format=zip", "HEAD"], { cwd: process.cwd() });
+      git.stdout.pipe(out);
+      await new Promise<void>((resolve, reject) => {
+        out.on("finish", resolve);
+        out.on("error", reject);
+        git.on("error", reject);
+        git.on("close", (code) => { if (code !== 0) reject(new Error(`git archive exited ${code}`)); });
+      });
+      res.json({ saved: true, path: dest, filename });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Save DB backup directly to LOCAL_BACKUP_DIR ──────────────────────
+  // POST /api/admin/save-backup-local — same dump as download-backup but
+  // writes directly to LOCAL_BACKUP_DIR instead of streaming to browser.
+  app.post("/api/admin/save-backup-local", requireAuth, async (_req, res) => {
+    const dir = process.env.LOCAL_BACKUP_DIR?.trim();
+    if (!dir) {
+      return res.status(400).json({ error: "LOCAL_BACKUP_DIR is not set in .env" });
+    }
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const { db: localDb } = await import("./db");
+      const { sql: localSql } = await import("drizzle-orm");
+      const dump: Record<string, any[]> = {};
+      for (const t of BACKUP_TABLES) {
+        try {
+          const r = await localDb.execute(localSql.raw(`SELECT * FROM ${t}`));
+          dump[t] = r.rows as any[];
+        } catch {
+          dump[t] = [];
+        }
+      }
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `compplan-backup-${date}.json`;
+      const dest = path.join(dir, filename);
+      fs.writeFileSync(dest, JSON.stringify({ exportedAt: new Date().toISOString(), schemaVersion: 2, tables: dump }, null, 2), "utf8");
+      res.json({ saved: true, path: dest, filename });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 
@@ -715,7 +959,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Whitelist editable fields. role_key, parent_role_key, sort_order are
       // structural and shouldn't be changed via this endpoint (use a
       // dedicated migration if the org tree shape changes).
-      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d", "parent_role_key", "kind", "email", "dotted_parent_role_keys"]) {
+      for (const k of ["role_name", "person_name", "status", "goals", "okrs", "tasks_10d", "parent_role_key", "kind", "email", "dotted_parent_role_keys", "templates"]) {
         if (k in req.body) allowed[k] = req.body[k];
       }
       // Validate kind
@@ -759,6 +1003,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (Array.isArray(allowed.goals)) allowed.goals = (allowed.goals as unknown[]).slice(0, 30);
       if (Array.isArray(allowed.okrs)) allowed.okrs = (allowed.okrs as unknown[]).slice(0, 10);
       if (Array.isArray(allowed.tasks_10d)) allowed.tasks_10d = (allowed.tasks_10d as unknown[]).slice(0, 50);
+      if (Array.isArray(allowed.templates)) allowed.templates = (allowed.templates as unknown[]).slice(0, 50);
       allowed.updated_at = new Date().toISOString();
       const rows = await db.update(orgAgents).set(allowed as any).where(eq(orgAgents.id, id)).returning();
       if (rows.length === 0) { res.status(404).json({ message: "Role not found" }); return; }
@@ -877,7 +1122,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const r = await db.execute(sql`
-        SELECT id, name, email, kind, created_at
+        SELECT id, name, email, kind, created_at, daily_rate, daily_rate_currency
         FROM external_contacts
         ORDER BY name ASC
       `);
@@ -918,20 +1163,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/external-contacts", requireAuth, async (req, res) => {
     try {
-      const { name, email, kind } = req.body ?? {};
+      const { name, email, kind, daily_rate, daily_rate_currency } = req.body ?? {};
       if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
-      // Free-text kind — front-end offers a curated dropdown
-      // (freelancer, partner, manager, intern, founder, advisor, …)
-      // but any string is accepted. Default if empty/missing.
       const k = (typeof kind === "string" && kind.trim()) ? kind.trim().toLowerCase() : "freelancer";
+      const rate = daily_rate != null && daily_rate !== "" ? Number(daily_rate) : null;
+      const ccy = (typeof daily_rate_currency === "string" && daily_rate_currency.trim()) ? daily_rate_currency.trim().toUpperCase() : "EUR";
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const now = new Date().toISOString();
       const r = await db.execute(sql`
-        INSERT INTO external_contacts (name, email, kind, created_at)
-        VALUES (${String(name).trim()}, ${String(email).trim().toLowerCase()}, ${k}, ${now})
-        ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind
-        RETURNING id, name, email, kind, created_at
+        INSERT INTO external_contacts (name, email, kind, created_at, daily_rate, daily_rate_currency)
+        VALUES (${String(name).trim()}, ${String(email).trim().toLowerCase()}, ${k}, ${now}, ${rate}, ${ccy})
+        ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind,
+          daily_rate = EXCLUDED.daily_rate, daily_rate_currency = EXCLUDED.daily_rate_currency
+        RETURNING id, name, email, kind, created_at, daily_rate, daily_rate_currency
       `);
       res.status(201).json(r.rows[0]);
     } catch (e: any) {
@@ -942,19 +1187,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/external-contacts/:id", requireAuth, async (req, res) => {
     try {
       const id = safeInt(req.params.id);
-      const { name, email, kind } = req.body ?? {};
+      const { name, email, kind, daily_rate, daily_rate_currency } = req.body ?? {};
       if (!name || !email) { res.status(400).json({ message: "name and email required" }); return; }
-      // Free-text kind — front-end offers a curated dropdown
-      // (freelancer, partner, manager, intern, founder, advisor, …)
-      // but any string is accepted. Default if empty/missing.
       const k = (typeof kind === "string" && kind.trim()) ? kind.trim().toLowerCase() : "freelancer";
+      const rate = daily_rate != null && daily_rate !== "" ? Number(daily_rate) : null;
+      const ccy = (typeof daily_rate_currency === "string" && daily_rate_currency.trim()) ? daily_rate_currency.trim().toUpperCase() : "EUR";
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       const r = await db.execute(sql`
         UPDATE external_contacts
-        SET name = ${String(name).trim()}, email = ${String(email).trim().toLowerCase()}, kind = ${k}
+        SET name = ${String(name).trim()}, email = ${String(email).trim().toLowerCase()},
+            kind = ${k}, daily_rate = ${rate}, daily_rate_currency = ${ccy}
         WHERE id = ${id}
-        RETURNING id, name, email, kind, created_at
+        RETURNING id, name, email, kind, created_at, daily_rate, daily_rate_currency
       `);
       if (r.rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
       res.json(r.rows[0]);
@@ -1002,6 +1247,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Soft-delete to trash_bin (30-day TTL).
     await trashAndDelete("employees", req.params.id);
     res.status(204).end();
+  });
+
+  // PATCH /api/employees/:id/retire — mark as former + cascade cleanup in one TX.
+  // Cascade logic lives in storage.retireEmployee (transactional).
+  app.patch("/api/employees/:id/retire", requireAuth, async (req, res) => {
+    try {
+      await storage.retireEmployee(req.params.id);
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // PATCH /api/employees/:id/unretire — reinstate a former employee to active.
+  app.patch("/api/employees/:id/unretire", requireAuth, async (req, res) => {
+    try {
+      await storage.unretireEmployee(req.params.id);
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
   // ── Asset types (admin-managed taxonomy: PC, ThinkCell, Monitor, …) ─────
@@ -1995,10 +2257,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("[read-ai] live transcript fetch failed:", e);
       }
     }
+    const { READ_AI_SEED } = await import("./readAISeed");
+    const meeting = READ_AI_SEED.find((m) => m.id === id);
+    if (meeting?.transcript) {
+      res.json({ source: "seed", transcript: meeting.transcript });
+      return;
+    }
     res.json({
       source: "seed",
       transcript: null,
-      message: "Transcript not cached locally. Ask Claude to refresh the Read.ai seed (pulls full transcript via MCP) or set READ_AI_TOKEN once Read.ai enables static API keys.",
+      message: "Transcript not cached — ask Claude to refresh the Read.ai seed or set READ_AI_TOKEN for live fetch.",
     });
   });
 
@@ -3077,6 +3345,14 @@ Extract visual and content patterns from the image. Only suggest additions that 
         adminConfigMap[cfg.slide_id] = cfg;
       }
 
+      // G3: find the matching pricing case to copy fee timelines into the deck.
+      // Match on client_name = company_name (case-insensitive). Pick the row
+      // with the highest id when multiple cases exist for the same client.
+      const allCases = await storage.getPricingCases();
+      const matchingCase = allCases
+        .filter(c => (c.client_name ?? "").toLowerCase() === (proposal.company_name ?? "").toLowerCase())
+        .sort((a, b) => b.id - a.id)[0] ?? null;
+
       const buffer = await generateProposalDeck(
         {
           company_name: proposal.company_name,
@@ -3091,6 +3367,8 @@ Extract visual and content patterns from the image. Only suggest additions that 
           slide_selection: (proposal.slide_selection as any[]) || [],
           admin_configs: adminConfigMap,
           deck_template: deckTemplate || undefined,
+          case_timelines: matchingCase?.case_timelines ?? null,
+          case_discounts: matchingCase?.case_discounts ?? null,
         },
         template,
       );
@@ -4038,9 +4316,84 @@ RULES:
     try {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
-      const r = await db.execute(sql`SELECT * FROM bd_deals ORDER BY updated_at DESC`);
+      let r: any;
+      try {
+        r = await db.execute(sql`
+          SELECT
+            d.*,
+            p.project_name        AS proposal_project_name,
+            p.revision_letter     AS proposal_revision_letter,
+            p.weekly_price        AS proposal_weekly_price,
+            p.total_fee           AS proposal_total_fee,
+            p.duration_weeks      AS proposal_duration_weeks,
+            p.outcome             AS proposal_outcome,
+            p.sector              AS proposal_sector
+          FROM bd_deals d
+          LEFT JOIN pricing_proposals p ON p.id = d.linked_proposal_id
+          ORDER BY d.updated_at DESC
+        `);
+      } catch {
+        // linked_proposal_id column may not exist yet if db:push hasn't run — fall back
+        r = await db.execute(sql`SELECT * FROM bd_deals ORDER BY updated_at DESC`);
+      }
       res.json(r.rows);
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/bd/deals/sync-proposals — match each deal to a pricing proposal
+  // by client_name (case-insensitive). Sets linked_proposal_id on matched deals.
+  // Takes the most recent proposal per client.
+  app.post("/api/bd/deals/sync-proposals", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+
+      const deals: any = await db.execute(sql`SELECT id, client_name, name FROM bd_deals`);
+      let proposals: any;
+      try {
+        proposals = await db.execute(sql`
+          SELECT id, client_name, project_name, revision_letter, weekly_price, total_fee, proposal_date
+          FROM pricing_proposals ORDER BY proposal_date DESC
+        `);
+      } catch {
+        // revision_letter column may not exist yet — fall back without it
+        proposals = await db.execute(sql`
+          SELECT id, client_name, project_name, weekly_price, total_fee, proposal_date
+          FROM pricing_proposals ORDER BY proposal_date DESC
+        `);
+      }
+
+      let matched = 0, unmatched = 0;
+      const results: { deal: string; proposal: string | null; matched: boolean }[] = [];
+
+      for (const deal of deals.rows) {
+        const needle = (deal.client_name ?? deal.name ?? "").toLowerCase().trim();
+        if (!needle) { unmatched++; continue; }
+
+        // Find first proposal whose client_name contains the deal name or vice versa
+        const hit = proposals.rows.find((p: any) => {
+          const hay = (p.client_name ?? "").toLowerCase().trim();
+          return hay && (hay.includes(needle) || needle.includes(hay));
+        });
+
+        if (hit) {
+          await db.execute(sql`
+            UPDATE bd_deals SET linked_proposal_id = ${hit.id}, updated_at = ${new Date().toISOString()}
+            WHERE id = ${deal.id}
+          `);
+          matched++;
+          results.push({ deal: deal.client_name ?? deal.name, proposal: `${hit.project_name}${hit.revision_letter ?? ""}`, matched: true });
+        } else {
+          unmatched++;
+          results.push({ deal: deal.client_name ?? deal.name, proposal: null, matched: false });
+        }
+      }
+
+      res.json({ ok: true, matched, unmatched, results });
+    } catch (err: any) {
+      console.error("[bd/sync-proposals] failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -4102,6 +4455,7 @@ RULES:
         industry:         "industry" in b ? b.industry : cur.industry,
         region:           "region" in b ? b.region : cur.region,
         last_activity_at: "last_activity_at" in b ? b.last_activity_at : cur.last_activity_at,
+        partner_id:       "partner_id" in b ? (b.partner_id ?? null) : cur.partner_id,
       };
 
       const r = await db.execute(sql`
@@ -4140,6 +4494,68 @@ RULES:
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ── Partners CRUD ──────────────────────────────────────────────────────
+  app.get("/api/partners", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const r = await db.execute(sql`SELECT * FROM partners ORDER BY name ASC`);
+      res.json((r as any).rows ?? r);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post("/api/partners", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const b = req.body ?? {};
+      if (!b.name || typeof b.name !== "string" || !b.name.trim()) {
+        res.status(400).json({ error: "name is required" }); return;
+      }
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        INSERT INTO partners (name, type, contact_name, contact_email, notes, created_at, updated_at)
+        VALUES (${b.name.trim()}, ${b.type ?? "referral"}, ${b.contact_name ?? null},
+                ${b.contact_email ?? null}, ${b.notes ?? null}, ${now}, ${now})
+        RETURNING *
+      `);
+      res.status(201).json(((r as any).rows ?? r)[0]);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.put("/api/partners/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const id = safeInt(req.params.id);
+      const b = req.body ?? {};
+      const now = new Date().toISOString();
+      const r = await db.execute(sql`
+        UPDATE partners SET
+          name          = COALESCE(${b.name ?? null}, name),
+          type          = COALESCE(${b.type ?? null}, type),
+          contact_name  = ${b.contact_name ?? null},
+          contact_email = ${b.contact_email ?? null},
+          notes         = ${b.notes ?? null},
+          updated_at    = ${now}
+        WHERE id = ${id}
+        RETURNING *
+      `);
+      const rows = (r as any).rows ?? r;
+      if (rows.length === 0) { res.status(404).json({ error: "not found" }); return; }
+      res.json(rows[0]);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete("/api/partners/:id", requireAuth, async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`DELETE FROM partners WHERE id = ${safeInt(req.params.id)}`);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // POST /api/bd/import/hubspot — accepts a HubSpot Deal CSV (as a string
@@ -4261,6 +4677,363 @@ RULES:
       res.json({ ok: true, mode: "commit", total: normalised.length, inserted, updated, skipped });
     } catch (err: any) {
       console.error("[bd/import/hubspot] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── HubSpot live API sync ───────────────────────────────────────────────────
+  // Requires HUBSPOT_TOKEN env var (Private App token from HubSpot settings →
+  // Integrations → Private Apps). Fetches all non-archived deals, maps them
+  // to bd_deals schema, upserts by hubspot_id. Called from the BD import tab.
+  app.get("/api/hubspot/status", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.json({ configured: false, message: "HUBSPOT_TOKEN not set in environment." });
+      return;
+    }
+    // Quick ping: fetch 1 deal to verify auth
+    try {
+      const r = await fetch(
+        "https://api.hubapi.com/crm/v3/objects/deals?limit=1&archived=false",
+        { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+      );
+      if (r.status === 401) {
+        res.json({ configured: true, valid: false, message: "Token invalid or expired." });
+        return;
+      }
+      if (!r.ok) {
+        res.json({ configured: true, valid: false, message: `HubSpot returned ${r.status}` });
+        return;
+      }
+      const data: any = await r.json();
+      res.json({ configured: true, valid: true, total: data?.total ?? null });
+    } catch (e: any) {
+      res.json({ configured: true, valid: false, message: e.message });
+    }
+  });
+
+  app.post("/api/hubspot/sync", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.status(400).json({ error: "HUBSPOT_TOKEN not configured. Add it to your environment variables." });
+      return;
+    }
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const DEAL_PROPS = [
+        "dealname", "amount", "dealstage", "pipeline", "closedate",
+        "hs_deal_stage_probability", "description", "hubspot_owner_id",
+        "hs_lastactivitydate", "dealtype",
+      ].join(",");
+
+      let after: string | null = null;
+      const allDeals: any[] = [];
+
+      // Paginate through all deals
+      for (let page = 0; page < 20; page++) {
+        const url = `https://api.hubapi.com/crm/v3/objects/deals?limit=100&archived=false&properties=${DEAL_PROPS}${after ? `&after=${after}` : ""}`;
+        const r = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        });
+        if (!r.ok) throw new Error(`HubSpot API returned ${r.status}: ${await r.text()}`);
+        const data: any = await r.json();
+        allDeals.push(...(data.results ?? []));
+        if (data.paging?.next?.after) {
+          after = data.paging.next.after;
+        } else {
+          break;
+        }
+      }
+
+      // Map HubSpot deal → bd_deals row
+      const now = new Date().toISOString();
+      let inserted = 0, updated = 0, skipped = 0;
+
+      for (const deal of allDeals) {
+        try {
+          const p = deal.properties ?? {};
+          const amount = p.amount ? Number(p.amount) : null;
+          const prob = p.hs_deal_stage_probability ? Math.round(Number(p.hs_deal_stage_probability) * 100) : null;
+          const row = {
+            hubspot_id:       String(deal.id),
+            name:             p.dealname || "Untitled deal",
+            client_name:      null as string | null,
+            contact_name:     null as string | null,
+            contact_email:    null as string | null,
+            stage:            normaliseHubspotStage(p.dealstage ?? ""),
+            amount:           amount !== null && !isNaN(amount) ? amount : null,
+            currency:         "EUR",
+            probability:      prob,
+            close_date:       p.closedate ? p.closedate.slice(0, 10) : null,
+            source:           "hubspot_api",
+            owner:            p.hubspot_owner_id ?? null,
+            notes:            p.description ?? null,
+            industry:         null as string | null,
+            region:           null as string | null,
+            last_activity_at: p.hs_lastactivitydate ? p.hs_lastactivitydate.slice(0, 10) : null,
+            imported_at:      now,
+          };
+
+          // Upsert by hubspot_id
+          const existing: any = await db.execute(sql`SELECT id FROM bd_deals WHERE hubspot_id = ${row.hubspot_id}`);
+          if (existing.rows?.length > 0) {
+            await db.execute(sql`
+              UPDATE bd_deals SET
+                name = ${row.name}, stage = ${row.stage}, amount = ${row.amount},
+                probability = ${row.probability}, close_date = ${row.close_date},
+                source = ${row.source}, owner = ${row.owner}, notes = ${row.notes},
+                last_activity_at = ${row.last_activity_at}, imported_at = ${row.imported_at},
+                updated_at = ${now}
+              WHERE hubspot_id = ${row.hubspot_id}
+            `);
+            updated++;
+          } else {
+            await db.execute(sql`
+              INSERT INTO bd_deals (
+                hubspot_id, name, client_name, contact_name, contact_email,
+                stage, amount, currency, probability, close_date, source, owner,
+                notes, industry, region, last_activity_at, imported_at, created_at, updated_at
+              ) VALUES (
+                ${row.hubspot_id}, ${row.name}, ${row.client_name}, ${row.contact_name}, ${row.contact_email},
+                ${row.stage}, ${row.amount}, ${row.currency}, ${row.probability}, ${row.close_date},
+                ${row.source}, ${row.owner}, ${row.notes}, ${row.industry}, ${row.region},
+                ${row.last_activity_at}, ${row.imported_at}, ${now}, ${now}
+              )
+            `);
+            inserted++;
+          }
+        } catch (e: any) {
+          skipped++;
+          console.warn("[hubspot/sync] deal skipped:", e.message);
+        }
+      }
+
+      res.json({ ok: true, total: allDeals.length, inserted, updated, skipped });
+    } catch (err: any) {
+      console.error("[hubspot/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── HubSpot Contacts sync ───────────────────────────────────────────────────
+  // Requires crm.objects.contacts.read scope on the Private App.
+  app.get("/api/hubspot/contacts", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const rows: any = await db.execute(sql`
+        SELECT * FROM hubspot_contacts ORDER BY last_name, first_name
+      `);
+      res.json(rows.rows ?? []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/hubspot/contacts/sync", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.status(400).json({ error: "HUBSPOT_TOKEN not configured." });
+      return;
+    }
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const CONTACT_PROPS = [
+        "firstname", "lastname", "email", "phone", "jobtitle",
+        "company", "associatedcompanyid", "lifecyclestage", "hs_lead_status",
+        "hubspot_owner_id", "city", "country", "notes_last_activity",
+      ].join(",");
+
+      let after: string | null = null;
+      const allContacts: any[] = [];
+
+      for (let page = 0; page < 50; page++) {
+        const url = `https://api.hubapi.com/crm/v3/objects/contacts?limit=100&archived=false&properties=${CONTACT_PROPS}${after ? `&after=${after}` : ""}`;
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        if (r.status === 403) {
+          const body = await r.json().catch(() => ({}));
+          res.status(403).json({ error: "Missing scope: crm.objects.contacts.read", detail: body });
+          return;
+        }
+        if (!r.ok) throw new Error(`HubSpot API ${r.status}: ${await r.text()}`);
+        const data: any = await r.json();
+        allContacts.push(...(data.results ?? []));
+        if (data.paging?.next?.after) after = data.paging.next.after;
+        else break;
+      }
+
+      const now = new Date().toISOString();
+      let inserted = 0, updated = 0, skipped = 0;
+
+      for (const contact of allContacts) {
+        try {
+          const p = contact.properties ?? {};
+          const row = {
+            hubspot_id:         String(contact.id),
+            first_name:         p.firstname ?? null,
+            last_name:          p.lastname ?? null,
+            email:              p.email ?? null,
+            phone:              p.phone ?? null,
+            job_title:          p.jobtitle ?? null,
+            company:            p.company ?? null,
+            company_hubspot_id: p.associatedcompanyid ? String(p.associatedcompanyid) : null,
+            lifecycle_stage:    p.lifecyclestage ?? null,
+            lead_status:        p.hs_lead_status ?? null,
+            owner_id:           p.hubspot_owner_id ?? null,
+            city:               p.city ?? null,
+            country:            p.country ?? null,
+            last_activity_at:   p.notes_last_activity ? p.notes_last_activity.slice(0, 10) : null,
+          };
+          const existing: any = await db.execute(sql`SELECT id FROM hubspot_contacts WHERE hubspot_id = ${row.hubspot_id}`);
+          if (existing.rows?.length > 0) {
+            await db.execute(sql`
+              UPDATE hubspot_contacts SET
+                first_name = ${row.first_name}, last_name = ${row.last_name},
+                email = ${row.email}, phone = ${row.phone}, job_title = ${row.job_title},
+                company = ${row.company}, company_hubspot_id = ${row.company_hubspot_id},
+                lifecycle_stage = ${row.lifecycle_stage}, lead_status = ${row.lead_status},
+                owner_id = ${row.owner_id}, city = ${row.city}, country = ${row.country},
+                last_activity_at = ${row.last_activity_at}, synced_at = ${now}, updated_at = ${now}
+              WHERE hubspot_id = ${row.hubspot_id}
+            `);
+            updated++;
+          } else {
+            await db.execute(sql`
+              INSERT INTO hubspot_contacts (
+                hubspot_id, first_name, last_name, email, phone, job_title,
+                company, company_hubspot_id, lifecycle_stage, lead_status,
+                owner_id, city, country, last_activity_at, synced_at, created_at, updated_at
+              ) VALUES (
+                ${row.hubspot_id}, ${row.first_name}, ${row.last_name}, ${row.email}, ${row.phone},
+                ${row.job_title}, ${row.company}, ${row.company_hubspot_id}, ${row.lifecycle_stage},
+                ${row.lead_status}, ${row.owner_id}, ${row.city}, ${row.country},
+                ${row.last_activity_at}, ${now}, ${now}, ${now}
+              )
+            `);
+            inserted++;
+          }
+        } catch (e: any) {
+          skipped++;
+          console.warn("[hubspot/contacts/sync] contact skipped:", e.message);
+        }
+      }
+
+      res.json({ ok: true, total: allContacts.length, inserted, updated, skipped });
+    } catch (err: any) {
+      console.error("[hubspot/contacts/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── HubSpot Companies sync ──────────────────────────────────────────────────
+  // Requires crm.objects.companies.read scope on the Private App.
+  app.get("/api/hubspot/companies", requireAuth, async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const rows: any = await db.execute(sql`
+        SELECT * FROM hubspot_companies ORDER BY name
+      `);
+      res.json(rows.rows ?? []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/hubspot/companies/sync", requireAuth, async (_req, res) => {
+    const token = process.env.HUBSPOT_TOKEN ?? "";
+    if (!token) {
+      res.status(400).json({ error: "HUBSPOT_TOKEN not configured." });
+      return;
+    }
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const COMPANY_PROPS = [
+        "name", "domain", "industry", "numberofemployees", "annualrevenue",
+        "country", "city", "phone", "description", "lifecyclestage",
+        "hubspot_owner_id", "notes_last_activity",
+      ].join(",");
+
+      let after: string | null = null;
+      const allCompanies: any[] = [];
+
+      for (let page = 0; page < 50; page++) {
+        const url = `https://api.hubapi.com/crm/v3/objects/companies?limit=100&archived=false&properties=${COMPANY_PROPS}${after ? `&after=${after}` : ""}`;
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        if (r.status === 403) {
+          const body = await r.json().catch(() => ({}));
+          res.status(403).json({ error: "Missing scope: crm.objects.companies.read", detail: body });
+          return;
+        }
+        if (!r.ok) throw new Error(`HubSpot API ${r.status}: ${await r.text()}`);
+        const data: any = await r.json();
+        allCompanies.push(...(data.results ?? []));
+        if (data.paging?.next?.after) after = data.paging.next.after;
+        else break;
+      }
+
+      const now = new Date().toISOString();
+      let inserted = 0, updated = 0, skipped = 0;
+
+      for (const company of allCompanies) {
+        try {
+          const p = company.properties ?? {};
+          const rev = p.annualrevenue ? Number(p.annualrevenue) : null;
+          const row = {
+            hubspot_id:       String(company.id),
+            name:             p.name ?? null,
+            domain:           p.domain ?? null,
+            industry:         p.industry ?? null,
+            num_employees:    p.numberofemployees ?? null,
+            annual_revenue:   rev !== null && !isNaN(rev) ? rev : null,
+            country:          p.country ?? null,
+            city:             p.city ?? null,
+            phone:            p.phone ?? null,
+            description:      p.description ?? null,
+            lifecycle_stage:  p.lifecyclestage ?? null,
+            owner_id:         p.hubspot_owner_id ?? null,
+            last_activity_at: p.notes_last_activity ? p.notes_last_activity.slice(0, 10) : null,
+          };
+          const existing: any = await db.execute(sql`SELECT id FROM hubspot_companies WHERE hubspot_id = ${row.hubspot_id}`);
+          if (existing.rows?.length > 0) {
+            await db.execute(sql`
+              UPDATE hubspot_companies SET
+                name = ${row.name}, domain = ${row.domain}, industry = ${row.industry},
+                num_employees = ${row.num_employees}, annual_revenue = ${row.annual_revenue},
+                country = ${row.country}, city = ${row.city}, phone = ${row.phone},
+                description = ${row.description}, lifecycle_stage = ${row.lifecycle_stage},
+                owner_id = ${row.owner_id}, last_activity_at = ${row.last_activity_at},
+                synced_at = ${now}, updated_at = ${now}
+              WHERE hubspot_id = ${row.hubspot_id}
+            `);
+            updated++;
+          } else {
+            await db.execute(sql`
+              INSERT INTO hubspot_companies (
+                hubspot_id, name, domain, industry, num_employees, annual_revenue,
+                country, city, phone, description, lifecycle_stage, owner_id,
+                last_activity_at, synced_at, created_at, updated_at
+              ) VALUES (
+                ${row.hubspot_id}, ${row.name}, ${row.domain}, ${row.industry},
+                ${row.num_employees}, ${row.annual_revenue}, ${row.country}, ${row.city},
+                ${row.phone}, ${row.description}, ${row.lifecycle_stage}, ${row.owner_id},
+                ${row.last_activity_at}, ${now}, ${now}, ${now}
+              )
+            `);
+            inserted++;
+          }
+        } catch (e: any) {
+          skipped++;
+          console.warn("[hubspot/companies/sync] company skipped:", e.message);
+        }
+      }
+
+      res.json({ ok: true, total: allCompanies.length, inserted, updated, skipped });
+    } catch (err: any) {
+      console.error("[hubspot/companies/sync] failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -5351,6 +6124,18 @@ RULES:
       const id = safeInt(req.params.id);
       await db.delete(agentsTable).where(eq(agentsTable.id, id));
       res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // POST /api/agentic/agents/:id/run — trigger one agent's daily routine on-demand
+  app.post("/api/agentic/agents/:id/run", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      // Fire-and-forget: return immediately, run in background
+      res.json({ started: true, agentId: id });
+      runSingleAgent(id).catch(err =>
+        console.error(`[AIOS] Background single-agent run failed for agent ${id}:`, err)
+      );
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
@@ -7608,6 +8393,73 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // GET /api/aios/agent-kpis/:agentName — last 10 KPI rows for a given agent (both rounds)
+  app.get("/api/aios/agent-kpis/:agentName", requireAuth, async (req, res) => {
+    try {
+      const name = decodeURIComponent(String((req.params as any).agentName));
+      const rows = await db
+        .select()
+        .from(agentKpis)
+        .where(eq(agentKpis.agent_name, name))
+        .orderBy(desc(agentKpis.id))
+        .limit(20);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/agent-kpis — latest cycle KPIs for all agents (round1 only, most recent cycle)
+  app.get("/api/aios/agent-kpis", requireAuth, async (req, res) => {
+    try {
+      // Find the latest cycle that has KPI rows
+      const [latest] = await db
+        .select({ cycle_id: agentKpis.cycle_id })
+        .from(agentKpis)
+        .orderBy(desc(agentKpis.id))
+        .limit(1);
+      if (!latest) return res.json([]);
+      const rows = await db
+        .select()
+        .from(agentKpis)
+        .where(and(
+          eq(agentKpis.cycle_id, latest.cycle_id),
+          eq(agentKpis.round, "round1")
+        ));
+      res.json(rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // PATCH /api/aios/deliverables/:id/rate — record human thumbs-up (+1) or thumbs-down (-1)
+  app.patch("/api/aios/deliverables/:id/rate", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { rating } = req.body ?? {};
+      if (rating !== 1 && rating !== -1 && rating !== null) {
+        res.status(400).json({ message: "rating must be 1, -1, or null" });
+        return;
+      }
+      await db.execute(sql`UPDATE aios_deliverables SET human_rating = ${rating} WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/aios/deliverables/agent-ratings — avg human_rating per agent (last 30 days)
+  app.get("/api/aios/deliverables/agent-ratings", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT agent_name,
+               COUNT(*)                                              AS total_rated,
+               ROUND(AVG(human_rating::numeric), 2)                 AS avg_rating,
+               COUNT(*) FILTER (WHERE human_rating = 1)             AS thumbs_up,
+               COUNT(*) FILTER (WHERE human_rating = -1)            AS thumbs_down
+        FROM aios_deliverables
+        WHERE human_rating IS NOT NULL
+          AND CAST(created_at AS TIMESTAMP) > NOW() - INTERVAL '30 days'
+        GROUP BY agent_name
+      `);
+      res.json((rows as any).rows ?? []);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── CEO Brief (in-app daily brief with decisions) ─────────────────────────
 
   // POST /api/ceo-brief/generate — run a new CEO Brief and wait for it
@@ -7878,6 +8730,21 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── KM Agent Routes ────────────────────────────────────────────────────────
+
+  // POST /api/km/query — run a KM query cycle
+  app.post("/api/km/query", requireAuth, async (req, res) => {
+    try {
+      const { query } = req.body ?? {};
+      if (!query || typeof query !== "string" || !query.trim()) {
+        res.status(400).json({ message: "query is required" });
+        return;
+      }
+      const result = await runKmCycle(query.trim());
+      res.json(result);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   /**
    * POST /api/agentic/extract-commitments
    * D17 Commitment Extractor — parses free text (email, meeting notes, transcript)
@@ -7929,6 +8796,24 @@ RULES:
         classify(text, "intent",    labels),
       ]);
       res.json({ urgency, sentiment, intent });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/km/sessions — list recent KM sessions
+  app.get("/api/km/sessions", requireAuth, async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(String(req.query.limit ?? "20"), 10) || 20, 100);
+      const sessions = await getKmSessions(limit);
+      res.json(sessions);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // GET /api/km/sessions/:id — session detail + specialist outputs
+  app.get("/api/km/sessions/:id", requireAuth, async (req, res) => {
+    try {
+      const detail = await getKmSessionDetail(req.params.id);
+      if (!detail.session) { res.status(404).json({ message: "Session not found" }); return; }
+      res.json(detail);
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

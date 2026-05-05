@@ -153,7 +153,7 @@ export default function SectionMap() {
     { keywords: ["Proposal", "Slide", "Template", "Pitch Deck", "Methodology", "Background"], agent: "Proposal Agent", confidence: "high" },
     { keywords: ["Knowledge", "Methodology", "CKO"], agent: "CKO", confidence: "high" },
     { keywords: ["Project", "Delivery", "Staffing", "Gantt", "Capacity", "COO"], agent: "COO", confidence: "high" },
-    { keywords: ["AIOS", "Brief", "Decision", "Approval", "OKR", "Objective", "Agent", "Section Map"], agent: "CEO", confidence: "medium" },
+    { keywords: ["Atlas", "Brief", "Decision", "Approval", "OKR", "Objective", "Agent", "Section Map"], agent: "CEO", confidence: "medium" },
     { keywords: ["Exec", "Dashboard", "Strategy", "President", "EXCOM"], agent: "President", confidence: "medium" },
     { keywords: ["Settings", "Backup", "Asset", "Admin"], agent: "COO", confidence: "medium" },
     { keywords: ["Time", "Days Off", "Leave"], agent: "CHRO", confidence: "medium" },
@@ -240,7 +240,7 @@ export default function SectionMap() {
         <div className="flex items-center gap-3">
           <MapIcon className="w-7 h-7 text-primary" />
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">AIOS · PHASE 3</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Atlas · PHASE 3</p>
             <h1 className="text-2xl font-bold tracking-tight">Agent ↔ App-Section Map</h1>
             <p className="text-sm text-muted-foreground">{rows.length} subsections · {filtered.length} shown · {agents.length} agents</p>
           </div>
