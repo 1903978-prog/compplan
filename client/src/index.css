@@ -107,6 +107,23 @@
   * {
     @apply border-border;
   }
+  /* Global compact scale ─────────────────────────────────────────────────
+     The app has too many KPI cards / nav items / table columns to fit at
+     browser zoom 100% on a typical 1440-wide laptop screen — running at
+     80% zoom was the workaround. Lowering the root font-size from 16 px
+     to 13 px makes every Tailwind rem-based value (text, spacing, widths,
+     gaps, heights, radii) shrink to ~81%, which is the equivalent of a
+     built-in 80% zoom that survives reload.
+
+     Borders stay at their pixel widths (good — keeps lines crisp) and
+     anything explicitly sized in pixels (e.g. some chart internals) is
+     unaffected.
+
+     If this ever feels too small, raise to 14 px (~88%) or remove the
+     rule to restore the CSS default. */
+  html {
+    font-size: 13px;
+  }
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary/10 selection:text-primary;
     font-family: var(--font-sans);
