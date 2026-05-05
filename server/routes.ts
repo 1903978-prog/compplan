@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import https from "https";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
 import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, microAiLog, aiResponseCache, pricingRules, agentKpis, kmSessions, kmOutputs, invoiceSnapshots, bdDeals, employees, pricingCases } from "@shared/schema";
@@ -107,8 +108,59 @@ async function logApiUsage(endpoint: string, response: any) {
   } catch { /* non-fatal */ }
 }
 
+// ── Payment schedule scrape ───────────────────────────────────────────────
+const PAY_SCHED_URL = "https://56.228.34.234/pay/view/RiZG9MVRyyQ11J6xp6iYINI1LDXquYao";
+const PAY_SCHED_TTL = 60 * 60 * 1000; // 1 hour
+
+interface PayScheduleRow {
+  day: number; sq1_usd: number; sq1_eur: number; eend_usd: number; eend_eur: number;
+}
+let paySchedCache: { data: PayScheduleRow[]; ts: number } | null = null;
+
+function parsePayScheduleHtml(html: string): PayScheduleRow[] {
+  const rows: PayScheduleRow[] = [];
+  const parts = html.split(/<td class="due-label">/);
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    const dayMatch = part.match(/^(\d+)/);
+    if (!dayMatch) continue;
+    const amounts = Array.from(part.matchAll(/<td[^>]*class="amount[^"]*"[^>]*>([\d.]+)<\/td>/g));
+    if (amounts.length < 4) continue;
+    rows.push({
+      day:      parseInt(dayMatch[1], 10),
+      sq1_usd:  parseFloat(amounts[0][1]),
+      sq1_eur:  parseFloat(amounts[1][1]),
+      eend_usd: parseFloat(amounts[2][1]),
+      eend_eur: parseFloat(amounts[3][1]),
+    });
+  }
+  return rows;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
+
+  app.get("/api/payment-schedule", requireAuth, async (_req, res) => {
+    if (paySchedCache && Date.now() - paySchedCache.ts < PAY_SCHED_TTL) {
+      return res.json(paySchedCache.data);
+    }
+    try {
+      const data = await new Promise<PayScheduleRow[]>((resolve, reject) => {
+        const req = https.get(PAY_SCHED_URL, { rejectUnauthorized: false }, (resp) => {
+          let html = "";
+          resp.on("data", (chunk) => (html += chunk));
+          resp.on("end", () => resolve(parsePayScheduleHtml(html)));
+        });
+        req.on("error", reject);
+      });
+      paySchedCache = { data, ts: Date.now() };
+      return res.json(data);
+    } catch (e) {
+      console.error("[payment-schedule]", e);
+      if (paySchedCache) return res.json(paySchedCache.data);
+      return res.status(502).json({ error: "Failed to fetch payment schedule" });
+    }
+  });
 
   // ── Version / health (unauthenticated) ────────────────────────────────────
   // Returns the git SHA baked in at build time (via RENDER_GIT_COMMIT,

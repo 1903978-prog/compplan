@@ -236,14 +236,27 @@ export default function ExecDashboard() {
   const [roundDetailIdx, setRoundDetailIdx] = useState<number | null>(null);
 
   // ── Payment round manual overrides ─────────────────────────────────────
-  // 4 overridable values per round: SQ1 EUR, SQ1 USD, LLC EUR, LLC USD.
-  // Legacy keys "eur"/"usd" are read as fallback for SQ1 EUR / LLC USD.
-  type RoundAccount = "eur_sq1" | "usd_sq1" | "eur_llc" | "usd_llc";
-  type RoundOverrides = Record<string, {
-    eur_sq1?: number | null; usd_sq1?: number | null;
-    eur_llc?: number | null; usd_llc?: number | null;
-    eur?: number | null; usd?: number | null; // legacy fallback
-  }>;
+  // 4 overridable values per round: SQ1 USD, SQ1 EUR, EEND USD, EEND EUR.
+  // Scraped from external payment schedule URL; overrides layer on top.
+  type RoundAccount = "usd_sq1" | "eur_sq1" | "usd_eend" | "eur_eend";
+  interface PayScheduleRow { day: number; sq1_usd: number; sq1_eur: number; eend_usd: number; eend_eur: number; }
+  const ACCT_TO_SCRAPED: Record<RoundAccount, keyof PayScheduleRow> = {
+    usd_sq1: "sq1_usd", eur_sq1: "sq1_eur", usd_eend: "eend_usd", eur_eend: "eend_eur",
+  };
+  const ACCT_META: Array<{ account: RoundAccount; label: string; symbol: string }> = [
+    { account: "usd_sq1",  label: "SQ1 USD",  symbol: "$" },
+    { account: "eur_sq1",  label: "SQ1 EUR",  symbol: "€" },
+    { account: "usd_eend", label: "EEND USD", symbol: "$" },
+    { account: "eur_eend", label: "EEND EUR", symbol: "€" },
+  ];
+  const [paySchedule, setPaySchedule] = useState<PayScheduleRow[]>([]);
+  useEffect(() => {
+    fetch("/api/payment-schedule", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((d: PayScheduleRow[]) => setPaySchedule(d))
+      .catch(() => {});
+  }, []);
+  type RoundOverrides = Record<string, Partial<Record<RoundAccount, number | null>>>;
   const OVERRIDES_KEY = "compplan_payment_round_overrides";
   const localDateKey = (d: Date) => {
     const p = (n: number) => String(n).padStart(2, "0");
@@ -254,12 +267,7 @@ export default function ExecDashboard() {
       const stored = localStorage.getItem(OVERRIDES_KEY);
       if (stored) return JSON.parse(stored) as RoundOverrides;
     } catch { /* ignore */ }
-    const seed: RoundOverrides = {
-      [localDateKey(new Date(2026, 4, 5))]:  { eur_sq1: 10200 },
-      [localDateKey(new Date(2026, 4, 15))]: { eur_sq1: 25000, usd_llc: 43000 },
-    };
-    try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(seed)); } catch { /* ignore */ }
-    return seed;
+    return {};
   });
   const [overrideEdit, setOverrideEdit] = useState<{ roundIdx: number; account: RoundAccount } | null>(null);
 
@@ -973,18 +981,13 @@ export default function ExecDashboard() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {([
-                { account: "eur_sq1" as RoundAccount, label: "SQ1 EUR", symbol: "€", autoVal: round.eur_total },
-                { account: "usd_sq1" as RoundAccount, label: "SQ1 USD", symbol: "$", autoVal: 0 },
-                { account: "eur_llc" as RoundAccount, label: "LLC EUR", symbol: "€", autoVal: 0 },
-                { account: "usd_llc" as RoundAccount, label: "LLC USD", symbol: "$", autoVal: round.usd_total },
-              ]).map(({ account, label, symbol, autoVal }) => {
+              {ACCT_META.map(({ account, label, symbol }) => {
                 const dateKey = localDateKey(round.date);
                 const ovr = paymentRoundOverrides[dateKey];
-                // Legacy fallback: eur_sq1 ← old "eur", usd_llc ← old "usd"
-                const legacyVal = account === "eur_sq1" ? (ovr?.eur ?? null) : account === "usd_llc" ? (ovr?.usd ?? null) : null;
-                const overridden = ovr?.[account] != null || (legacyVal != null && ovr?.[account] === undefined);
-                const displayVal = ovr?.[account] != null ? (ovr[account] as number) : legacyVal != null ? legacyVal : autoVal;
+                const scrapedField = ACCT_TO_SCRAPED[account];
+                const scraped = paySchedule.find(r => r.day === round.date.getDate())?.[scrapedField] ?? null;
+                const overridden = ovr?.[account] != null;
+                const displayVal = overridden ? (ovr![account] as number) : scraped;
                 const isEditing = overrideEdit?.roundIdx === idx && overrideEdit?.account === account;
                 return (
                   <div
@@ -1006,7 +1009,7 @@ export default function ExecDashboard() {
                         type="text"
                         inputMode="numeric"
                         className="w-full text-lg font-bold tabular-nums text-blue-900 bg-transparent border-b border-blue-400 outline-none"
-                        defaultValue={displayVal > 0 ? String(Math.round(displayVal)) : ""}
+                        defaultValue={displayVal != null && displayVal > 0 ? String(Math.round(displayVal)) : ""}
                         placeholder="0"
                         onBlur={e => saveOverride(round.date, account, e.target.value)}
                         onKeyDown={e => {
@@ -1016,7 +1019,7 @@ export default function ExecDashboard() {
                       />
                     ) : (
                       <div className="text-lg font-bold tabular-nums text-blue-900" data-privacy="blur">
-                        {displayVal > 0 ? `${symbol}${Math.round(displayVal).toLocaleString("it-IT")}` : "—"}
+                        {displayVal != null && displayVal > 0 ? `${symbol}${Math.round(displayVal).toLocaleString("it-IT")}` : "—"}
                       </div>
                     )}
                   </div>
@@ -1071,25 +1074,23 @@ export default function ExecDashboard() {
               {(() => {
                 const dateKey = localDateKey(round.date);
                 const ovr = paymentRoundOverrides[dateKey];
-                const boxes = [
-                  { account: "eur_sq1" as RoundAccount, label: "SQ1 EUR", symbol: "€", autoVal: round.eur_total, legacy: ovr?.eur ?? null },
-                  { account: "usd_sq1" as RoundAccount, label: "SQ1 USD", symbol: "$", autoVal: 0, legacy: null },
-                  { account: "eur_llc" as RoundAccount, label: "LLC EUR", symbol: "€", autoVal: 0, legacy: null },
-                  { account: "usd_llc" as RoundAccount, label: "LLC USD", symbol: "$", autoVal: round.usd_total, legacy: ovr?.usd ?? null },
-                ];
                 return (
                   <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2 text-sm">
-                    {boxes.map(({ account, label, symbol, autoVal, legacy }) => {
-                      const val = ovr?.[account] != null ? (ovr[account] as number) : legacy != null ? legacy : autoVal;
-                      const isManual = ovr?.[account] != null || (legacy != null && ovr?.[account] === undefined);
-                      if (val <= 0 && !isManual) return null;
+                    {ACCT_META.map(({ account, label, symbol }) => {
+                      const scrapedField = ACCT_TO_SCRAPED[account];
+                      const scraped = paySchedule.find(r => r.day === round.date.getDate())?.[scrapedField] ?? null;
+                      const isManual = ovr?.[account] != null;
+                      const val = isManual ? (ovr![account] as number) : scraped;
+                      if ((val == null || val <= 0) && !isManual) return null;
                       return (
                         <div key={account} className={`rounded p-2 text-center ${isManual ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
                           <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">{label}{isManual && " ✎"}</div>
                           <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
-                            {symbol}{Math.round(val).toLocaleString("it-IT")}
+                            {val != null && val > 0 ? `${symbol}${Math.round(val).toLocaleString("it-IT")}` : "—"}
                           </div>
-                          {isManual && <div className="text-[9px] text-amber-500 mt-0.5">manual · auto: {symbol}{Math.round(autoVal).toLocaleString("it-IT")}</div>}
+                          {isManual && scraped != null && scraped > 0 && (
+                            <div className="text-[9px] text-amber-500 mt-0.5">manual · auto: {symbol}{Math.round(scraped).toLocaleString("it-IT")}</div>
+                          )}
                         </div>
                       );
                     })}
