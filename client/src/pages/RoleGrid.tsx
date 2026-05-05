@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { RoleGridRow } from "@shared/schema";
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { BenchmarkPanel } from "@/components/BenchmarkPanel";
 import { BarChart2, Plus, Trash2 } from "lucide-react";
@@ -252,7 +252,7 @@ export default function RoleGridPage() {
                 // Index of the first separate role (for the separator row)
                 const firstSeparateIdx = gridState.findIndex(isSeparateRole);
                 return gridState.map((row, index) => (
-                  <>
+                  <Fragment key={row.role_code || index}>
                   {/* Visual separator before standalone roles */}
                   {index === firstSeparateIdx && firstSeparateIdx !== -1 && (
                     <TableRow key="__separator__" className="bg-muted/40 border-t-2 border-border pointer-events-none">
@@ -261,7 +261,7 @@ export default function RoleGridPage() {
                       </TableCell>
                     </TableRow>
                   )}
-                  <TableRow key={row.role_code}>
+                  <TableRow>
                     <TableCell className="p-1">
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
                         onClick={() => handleDeleteRole(index)}>
@@ -430,7 +430,7 @@ export default function RoleGridPage() {
                       </>);
                     })()}
                   </TableRow>
-                  </>
+                  </Fragment>
                 ))
               })()}
             </TableBody>
