@@ -115,6 +115,30 @@ export default function StaffingGantt() {
     }
   }
 
+  // ── TBD card inline win-probability editing ───────────────────────────────
+  const [editingWinProb, setEditingWinProb] = useState<number | null>(null); // proposal id
+
+  async function saveWinProb(proposalId: number, raw: string) {
+    const proj = proposals.find(p => p.id === proposalId);
+    if (!proj) return;
+    const val = raw === "" ? null : Math.max(0, Math.min(100, Number(raw)));
+    if (raw !== "" && isNaN(val as number)) { setEditingWinProb(null); return; }
+    try {
+      const r = await fetch(`/api/pricing/proposals/${proposalId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...proj, win_probability: val }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+    } catch (e) {
+      toast({ title: "Failed to save win probability", variant: "destructive" });
+    } finally {
+      setEditingWinProb(null);
+    }
+  }
+
   // ── Assign-to-project modal state ─────────────────────────────────────────
   // Two entry points:
   //   (A) Person-first  → click UserPlus on a row → assignFor is set, project blank
@@ -670,9 +694,33 @@ export default function StaffingGantt() {
                       <div className="font-mono font-bold text-sm truncate">{p.project_name}</div>
                       {p.client_name && <div className="text-[10px] text-muted-foreground truncate">{p.client_name}</div>}
                     </div>
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${probColor}`}>
-                      {p.win_probability != null ? `${p.win_probability}%` : "?%"}
-                    </Badge>
+                    {editingWinProb === p.id ? (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <input
+                          autoFocus
+                          type="number"
+                          min={0} max={100}
+                          defaultValue={p.win_probability ?? ""}
+                          placeholder="0-100"
+                          className="w-14 text-[10px] border border-primary rounded px-1 py-0.5 text-foreground bg-background outline-none"
+                          onBlur={e => saveWinProb(p.id, e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setEditingWinProb(null);
+                          }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">%</span>
+                      </div>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] shrink-0 cursor-pointer ${probColor}`}
+                        title="Click to edit win probability"
+                        onClick={() => setEditingWinProb(p.id)}
+                      >
+                        {p.win_probability != null ? `${p.win_probability}%` : "?%"}
+                      </Badge>
+                    )}
                   </div>
 
                   <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">

@@ -1617,7 +1617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // the previously client-side fetch which had a silent catch and could
   // leave the row uncreated if the call ever failed. Idempotent — uses
   // case-insensitive project_name match against pricing_proposals.
-  async function ensureTbdProposalForFinalCase(caseRow: { id?: number; project_name?: string | null; status?: string | null; client_name?: string | null; fund_name?: string | null; region?: string | null; pe_owned?: number | null; revenue_band?: string | null; price_sensitivity?: string | null; duration_weeks?: number | null; sector?: string | null; project_type?: string | null; recommendation?: any }) {
+  async function ensureTbdProposalForFinalCase(caseRow: { id?: number; project_name?: string | null; status?: string | null; client_name?: string | null; fund_name?: string | null; region?: string | null; pe_owned?: number | null; revenue_band?: string | null; price_sensitivity?: string | null; duration_weeks?: number | null; sector?: string | null; project_type?: string | null; recommendation?: any; win_probability?: number | null }) {
     if (caseRow.status !== "final") return;
     const name = (caseRow.project_name ?? "").trim();
     if (!name) return;
@@ -1651,14 +1651,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (matching.outcome === "pending" && (matching.id != null)) {
         const nameStale = (matching.project_name ?? "").trim() !== name;
         const priceStale = weeklyNet > 0 && (matching.weekly_price !== weeklyNet || matching.total_fee !== totalFee);
-        if (nameStale || priceStale) {
+        const probStale = caseRow.win_probability != null && matching.win_probability !== caseRow.win_probability;
+        if (nameStale || priceStale || probStale) {
           await storage.updatePricingProposal(matching.id, {
-            project_name: name,  // normalize name to match case
+            project_name: name,
             ...(weeklyNet > 0 ? {
               weekly_price: weeklyNet,
               total_fee: totalFee,
               duration_weeks: caseRow.duration_weeks ?? matching.duration_weeks,
             } : {}),
+            ...(caseRow.win_probability != null ? { win_probability: caseRow.win_probability } : {}),
           });
         }
       }
@@ -1679,6 +1681,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       weekly_price: weeklyNet,
       total_fee: totalFee,
       outcome: "pending",
+      win_probability: caseRow.win_probability ?? null,
       sector: caseRow.sector ?? null,
       project_type: caseRow.project_type ?? null,
     });
@@ -1868,11 +1871,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // ── PROB SYNC phase: copy win_probability from case → pending proposal ─
+      const caseByBaseName = new Map<string, typeof cases[number]>();
+      for (const c of cases) {
+        if (c.status !== "final") continue;
+        const n = (c.project_name ?? "").trim().toLowerCase();
+        if (!n) continue;
+        caseByBaseName.set(n, c);
+        caseByBaseName.set(n.replace(/[a-z]+$/, ""), c); // base-code fallback
+      }
+      let probSynced = 0;
+      for (const p of proposals) {
+        if (p.outcome !== "pending" || p.id == null) continue;
+        const pn = (p.project_name ?? "").trim().toLowerCase();
+        const matchedCase = caseByBaseName.get(pn) ?? caseByBaseName.get(pn.replace(/[a-z]+$/, ""));
+        if (!matchedCase || matchedCase.win_probability == null) continue;
+        if (p.win_probability !== matchedCase.win_probability) {
+          await storage.updatePricingProposal(p.id, { win_probability: matchedCase.win_probability });
+          probSynced++;
+        }
+      }
+
       res.json({
         ok: true,
         inserted: toCreate.length,
         deleted: stale.length,
         deduped: dedupCount,
+        probSynced,
         finalCases: finals.length,
       });
     } catch (e) {
@@ -1953,6 +1978,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/pricing/proposals/:id", requireAuth, async (req, res) => {
     const p = await storage.updatePricingProposal(safeInt(req.params.id), req.body);
+    // When win_probability is explicitly set, mirror it to the linked pricing case.
+    if (req.body.win_probability != null && p.project_name) {
+      try {
+        const cases = await storage.getPricingCases();
+        const pn = (p.project_name ?? "").trim().toLowerCase();
+        const base = pn.replace(/[a-z]+$/, "");
+        const linked = cases.find(c => {
+          const cn = (c.project_name ?? "").trim().toLowerCase();
+          return cn === pn || cn.replace(/[a-z]+$/, "") === base || (base !== pn && cn === base);
+        });
+        if (linked?.id != null) {
+          await storage.updatePricingCase(linked.id, { win_probability: req.body.win_probability });
+        }
+      } catch (_) { /* non-critical */ }
+    }
     res.json(p);
   });
 
