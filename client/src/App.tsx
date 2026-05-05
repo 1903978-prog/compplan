@@ -31,6 +31,7 @@ import CandidateScores from "@/pages/CandidateScores";
 import HiringScoreboard from "@/pages/HiringScoreboard";
 import ReadAiScripts from "@/pages/ReadAiScripts";
 import { useActiveAIModel } from "@/hooks/use-active-ai-model";
+import { useToast } from "@/hooks/use-toast";
 import AdminBackup from "@/pages/AdminBackup";
 import AdminTrash from "@/pages/AdminTrash";
 import KnowledgeCenter from "@/pages/KnowledgeCenter";
@@ -152,6 +153,7 @@ function Navigation() {
   const [apiActive, setApiActive] = useState(false);
   const [apiCost, setApiCost] = useState<{ month: string; today: string } | null>(null);
   const [location] = useLocation();
+  const { toast } = useToast();
   // Active AI model — rendered as a small abbreviation next to the cost
   // badge so the user always sees which provider/model this session will use.
   const { model: activeAIModel } = useActiveAIModel();
@@ -319,10 +321,14 @@ function Navigation() {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: "Failed to update API state" }));
-      alert(err.message || "Failed to update API state");
+      toast({ title: "API state error", description: err.message || "Failed to update API state", variant: "destructive" });
       return;
     }
     setApiPaused(newState);
+    toast({
+      title: newState ? "API paused" : "API active",
+      description: newState ? "All agent calls are now blocked." : "Agents can make LLM calls.",
+    });
   };
 
   const handleLogout = async () => {
@@ -554,6 +560,30 @@ function Router() {
       <Route path="/exec" component={ExecDashboard} />
       <Route path="/exec/org-chart" component={OrgChart} />
       <Route path="/org-chart"><Redirect to="/exec/org-chart" /></Route>
+
+      {/* ── Module-prefix redirects ────────────────────────────────────────
+          Users who guess /hr/*, /atlas/*, or /finance/* get redirected to
+          the real route instead of landing on the 404 page. */}
+      <Route path="/hr"><Redirect to="/" /></Route>
+      <Route path="/hr/employees"><Redirect to="/employees" /></Route>
+      <Route path="/hr/roles"><Redirect to="/roles" /></Route>
+      <Route path="/hr/staffing"><Redirect to="/exec/staffing" /></Route>
+      <Route path="/hr/days-off"><Redirect to="/days-off" /></Route>
+      <Route path="/hr/time-tracker"><Redirect to="/time-tracker" /></Route>
+      <Route path="/hr/settings"><Redirect to="/settings" /></Route>
+      <Route path="/hr/hiring"><Redirect to="/hiring" /></Route>
+      <Route path="/hr/hiring/scoreboard"><Redirect to="/hiring/scoreboard" /></Route>
+      <Route path="/hr/hiring/scripts"><Redirect to="/hiring/scripts" /></Route>
+      <Route path="/atlas"><Redirect to="/agentic" /></Route>
+      <Route path="/atlas/aios-cycle"><Redirect to="/agentic/aios-cycle" /></Route>
+      <Route path="/atlas/deliverables"><Redirect to="/agentic/deliverables" /></Route>
+      <Route path="/atlas/templates"><Redirect to="/agentic/templates" /></Route>
+      <Route path="/atlas/skills"><Redirect to="/agentic/skills" /></Route>
+      <Route path="/atlas/knowledge"><Redirect to="/agentic/knowledge" /></Route>
+      <Route path="/atlas/build-up"><Redirect to="/agentic/build-up" /></Route>
+      <Route path="/finance"><Redirect to="/invoicing" /></Route>
+      <Route path="/finance/invoicing"><Redirect to="/invoicing" /></Route>
+      <Route path="/finance/clients"><Redirect to="/clients" /></Route>
       <Route path="/exec/okr" component={OkrTree} />
       <Route path="/exec/staffing" component={StaffingGantt} />
       <Route path="/exec/brief-stream" component={BriefStream} />
