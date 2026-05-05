@@ -527,6 +527,9 @@ function ContactsTab() {
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading]   = useState(true);
   const [syncing, setSyncing]   = useState(false);
+  // Cursor for HubSpot pagination. null = start from beginning (or last page reached).
+  const [afterCursor, setAfterCursor] = useState<string | null>(null);
+  const [batchCount, setBatchCount]   = useState(0); // how many batches fetched this session
   const [lastSync, setLastSync] = useState<{ total: number; inserted: number; updated: number } | null>(null);
   const [search, setSearch]     = useState("");
 
@@ -541,11 +544,26 @@ function ContactsTab() {
   async function runSync() {
     setSyncing(true);
     try {
-      const r = await fetch("/api/hubspot/contacts/sync", { method: "POST", credentials: "include" });
+      // Send current cursor (null = first page). Server returns nextAfter for
+      // the next batch, or null when all pages are exhausted.
+      const r = await fetch("/api/hubspot/contacts/sync", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ after: afterCursor }),
+      });
       const data = await parseJsonOrSurface(r);
       if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
-      toast({ title: `Contacts synced — ${data.inserted} new, ${data.updated} updated` });
+      const nextBatch = batchCount + 1;
+      setBatchCount(nextBatch);
+      if (data.nextAfter) {
+        setAfterCursor(data.nextAfter);
+        toast({ title: `Batch ${nextBatch} synced — ${data.inserted} new, ${data.updated} updated`, description: "More contacts available — click again for next 100." });
+      } else {
+        setAfterCursor(null); // reset for next full sync
+        toast({ title: `All contacts synced (${nextBatch} batch${nextBatch !== 1 ? "es" : ""}) — ${data.inserted} new, ${data.updated} updated` });
+      }
       const fresh = await fetch("/api/hubspot/contacts", { credentials: "include" });
       setContacts(await fresh.json());
     } catch (e: any) {
@@ -554,6 +572,8 @@ function ContactsTab() {
       setSyncing(false);
     }
   }
+
+  const hasMore = afterCursor !== null;
 
   const filtered = contacts.filter(c => {
     const q = search.toLowerCase();
@@ -566,10 +586,15 @@ function ContactsTab() {
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={runSync} disabled={syncing} className="h-7 text-xs">
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Syncing…" : "Sync from HubSpot"}
+            {syncing ? "Syncing…" : hasMore ? "Sync next 100" : "Sync from HubSpot"}
           </Button>
+          {hasMore && (
+            <span className="text-[11px] text-amber-700 font-medium">
+              batch {batchCount} done · more available
+            </span>
+          )}
           <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>
-          {lastSync && (
+          {lastSync && !hasMore && (
             <span className="text-[11px] text-emerald-700">
               · {lastSync.inserted} new, {lastSync.updated} updated
             </span>
