@@ -2,8 +2,8 @@ services:
   - type: web
     name: compplan
     runtime: node
-    buildCommand: npm run build && npm run db:push
-    startCommand: npm start
+    buildCommand: npm run build
+    startCommand: npm run db:push && npm start
     envVars:
       - key: NODE_ENV
         value: production
