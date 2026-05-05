@@ -29,6 +29,33 @@ async function checkApiPaused(): Promise<boolean> {
   return !!(settings as any).api_paused;
 }
 
+// Neon free tier returns 28P01 on startup connections while compute wakes up.
+// Create hiring_offers lazily on the first actual HTTP request instead.
+let _hiringOffersPromise: Promise<void> | null = null;
+function ensureHiringOffersTable(): Promise<void> {
+  if (!_hiringOffersPromise) {
+    _hiringOffersPromise = db.execute(sql`
+      CREATE TABLE IF NOT EXISTS hiring_offers (
+        id                     SERIAL PRIMARY KEY,
+        candidate_name         TEXT    NOT NULL,
+        role_offered           TEXT    NOT NULL DEFAULT '',
+        yearly_gross_eur       REAL,
+        age                    INTEGER,
+        past_prof_tenure_years REAL,
+        test_results           JSONB   DEFAULT '{}',
+        languages              JSONB   DEFAULT '[]',
+        outcome                TEXT    NOT NULL DEFAULT 'pending',
+        decline_reason         TEXT,
+        decision_date          TEXT,
+        notes                  TEXT,
+        created_at             TEXT    NOT NULL,
+        updated_at             TEXT    NOT NULL
+      )
+    `).then(() => {}).catch(err => { _hiringOffersPromise = null; throw err; });
+  }
+  return _hiringOffersPromise;
+}
+
 async function guardApiAsync(res: any): Promise<boolean> {
   if (await checkApiPaused()) {
     res.status(503).json({ message: "API usage is paused. Enable it from the top bar to continue." });
@@ -2223,6 +2250,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // accepted N% of the time for this role + profile".
   app.get("/api/hiring/offers", requireAuth, async (_req, res) => {
     try {
+      await ensureHiringOffersTable();
       const rows = await db.execute(sql`
         SELECT id, candidate_name, role_offered, yearly_gross_eur, age,
                past_prof_tenure_years, test_results, languages, outcome,
@@ -2236,6 +2264,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/hiring/offers", requireAuth, async (req, res) => {
     try {
+      await ensureHiringOffersTable();
       const now = new Date().toISOString();
       const b = req.body ?? {};
       if (!b.candidate_name || typeof b.candidate_name !== "string" || !b.candidate_name.trim()) {
@@ -2269,6 +2298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/hiring/offers/:id", requireAuth, async (req, res) => {
     try {
+      await ensureHiringOffersTable();
       const id = safeInt(req.params.id);
       const b = req.body ?? {};
       const now = new Date().toISOString();
@@ -2317,6 +2347,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/hiring/offers/:id", requireAuth, async (req, res) => {
     try {
+      await ensureHiringOffersTable();
       const ok = await trashAndDelete("hiring_offers", safeInt(req.params.id));
       res.status(ok ? 204 : 404).end();
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
