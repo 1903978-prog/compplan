@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X, Zap, Pencil, Check, Copy } from "lucide-react";
+import { CalendarRange, Filter, Users, AlertCircle, UserPlus, X, Zap, Pencil, Check, Copy, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 // ── Types we read from the API ──────────────────────────────────────────────
@@ -114,6 +114,7 @@ export default function StaffingGantt() {
     duration_weeks: string;
   }>>({});
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [showWeighted, setShowWeighted] = useState(true);
   const [showPipeline, setShowPipeline] = useState(true);
 
@@ -243,22 +244,33 @@ export default function StaffingGantt() {
     }
   }
 
-  useEffect(() => {
+  function loadGanttData() {
+    setFetchError(null);
+    setLoading(true);
+    const safe = (url: string) =>
+      fetch(url, { credentials: "include" }).then(async r => {
+        if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
+        const body = await r.json().catch(() => { throw new Error(`${url} → invalid JSON (server may be restarting)`); });
+        return body;
+      });
     Promise.all([
-      fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-      fetch("/api/employees",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
-      fetch("/api/external-contacts",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-      // Pricing cases — used to backfill prob/start/duration on the TBD
-      // cards when the proposal row has those fields null.
-      fetch("/api/pricing/cases",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
+      safe("/api/pricing/proposals"),
+      safe("/api/employees"),
+      safe("/api/external-contacts"),
+      safe("/api/pricing/cases"),
     ]).then(([pp, ee, ex, cs]) => {
       setProposals(Array.isArray(pp) ? pp : []);
       setEmployees(Array.isArray(ee) ? ee : []);
       setExternals(Array.isArray(ex) ? ex : []);
       setCases(Array.isArray(cs) ? cs : []);
       setLoading(false);
-    }).catch(() => { toast({ title: "Failed to load staffing data", variant: "destructive" }); setLoading(false); });
-  }, [toast]);
+    }).catch((e: Error) => {
+      setFetchError(e.message);
+      setLoading(false);
+    });
+  }
+
+  useEffect(() => { loadGanttData(); }, []);
 
   // Lookup map: lowercased project_name → case (most recent revision wins
   // on duplicates). Strips any trailing single uppercase revision letter
@@ -584,6 +596,18 @@ export default function StaffingGantt() {
 
   return (
     <div className="container mx-auto py-6 max-w-[1400px]">
+      {fetchError && (
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">Failed to load staffing data</p>
+            <p className="mt-0.5 text-red-700 break-all">{fetchError}</p>
+          </div>
+          <Button size="sm" variant="outline" className="shrink-0 h-7 border-red-300 text-red-700 hover:bg-red-100" onClick={loadGanttData}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+          </Button>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <CalendarRange className="w-7 h-7 text-primary" />
