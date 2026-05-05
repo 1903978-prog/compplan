@@ -171,6 +171,15 @@ export default function StaffingGantt() {
     setAssignModalOpen(true);
   }
 
+  function openFromProjectModalAsManager(projectId: number) {
+    setAssignFor(null);
+    setAssignProjectId(String(projectId));
+    setAssignKind("manager");
+    setAssignRoleLabel("Associate");
+    setUpdateStartDate(true);
+    setAssignModalOpen(true);
+  }
+
   function closeAssignModal() {
     setAssignFor(null);
     setAssignProjectId("");
@@ -748,15 +757,40 @@ export default function StaffingGantt() {
                     )}
                   </div>
 
-                  {/* Already-reserved team members */}
-                  {team.length > 0 && (
+                  {/* Manager row */}
+                  <div className="text-[10px] space-y-0.5">
+                    {p.manager_name ? (
+                      <div className="flex items-center gap-1 text-muted-foreground">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                        <span className="font-medium truncate">{p.manager_name}</span>
+                        <span className="text-muted-foreground/60">· Manager</span>
+                        {availability[p.manager_name] && (
+                          <span className={`ml-auto shrink-0 ${
+                            availability[p.manager_name] === "available now" ? "text-emerald-600" :
+                            availability[p.manager_name].startsWith(">")     ? "text-red-500" :
+                            "text-amber-600"
+                          }`}>{availability[p.manager_name]}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        className="flex items-center gap-1 text-muted-foreground/50 italic hover:text-primary transition-colors"
+                        onClick={() => openFromProjectModalAsManager(p.id)}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full border border-dashed border-muted-foreground/40 shrink-0" />
+                        No manager — click to set
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Team members */}
+                  {(p.team_members ?? []).length > 0 && (
                     <div className="text-[10px] text-muted-foreground space-y-0.5">
-                      {team.map((m, i) => (
+                      {(p.team_members ?? []).map((m, i) => (
                         <div key={i} className="flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
                           <span className="font-medium truncate">{m.name}</span>
                           <span className="text-muted-foreground/60">· {m.role}</span>
-                          {/* Show availability of already-assigned members */}
                           {availability[m.name] && (
                             <span className={`ml-auto shrink-0 ${
                               availability[m.name] === "available now" ? "text-emerald-600" :
@@ -774,7 +808,7 @@ export default function StaffingGantt() {
                     className="w-full h-7 text-xs border-amber-300 hover:bg-amber-50"
                     onClick={() => openFromProjectModal(p.id)}
                   >
-                    <UserPlus className="w-3.5 h-3.5 mr-1" /> Reserve person →
+                    <UserPlus className="w-3.5 h-3.5 mr-1" /> Reserve team member →
                   </Button>
                 </Card>
               );
