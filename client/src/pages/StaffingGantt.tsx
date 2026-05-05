@@ -115,6 +115,30 @@ export default function StaffingGantt() {
     }
   }
 
+  // ── TBD card inline win-probability editing ───────────────────────────────
+  const [editingWinProb, setEditingWinProb] = useState<number | null>(null); // proposal id
+
+  async function saveWinProb(proposalId: number, raw: string) {
+    const proj = proposals.find(p => p.id === proposalId);
+    if (!proj) return;
+    const val = raw === "" ? null : Math.max(0, Math.min(100, Number(raw)));
+    if (raw !== "" && isNaN(val as number)) { setEditingWinProb(null); return; }
+    try {
+      const r = await fetch(`/api/pricing/proposals/${proposalId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...proj, win_probability: val }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+    } catch (e) {
+      toast({ title: "Failed to save win probability", variant: "destructive" });
+    } finally {
+      setEditingWinProb(null);
+    }
+  }
+
   // ── Assign-to-project modal state ─────────────────────────────────────────
   // Two entry points:
   //   (A) Person-first  → click UserPlus on a row → assignFor is set, project blank
@@ -142,6 +166,15 @@ export default function StaffingGantt() {
     setAssignFor(null);
     setAssignProjectId(String(projectId));
     setAssignKind("team");
+    setAssignRoleLabel("Associate");
+    setUpdateStartDate(true);
+    setAssignModalOpen(true);
+  }
+
+  function openFromProjectModalAsManager(projectId: number) {
+    setAssignFor(null);
+    setAssignProjectId(String(projectId));
+    setAssignKind("manager");
     setAssignRoleLabel("Associate");
     setUpdateStartDate(true);
     setAssignModalOpen(true);
@@ -670,9 +703,33 @@ export default function StaffingGantt() {
                       <div className="font-mono font-bold text-sm truncate">{p.project_name}</div>
                       {p.client_name && <div className="text-[10px] text-muted-foreground truncate">{p.client_name}</div>}
                     </div>
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${probColor}`}>
-                      {p.win_probability != null ? `${p.win_probability}%` : "?%"}
-                    </Badge>
+                    {editingWinProb === p.id ? (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <input
+                          autoFocus
+                          type="number"
+                          min={0} max={100}
+                          defaultValue={p.win_probability ?? ""}
+                          placeholder="0-100"
+                          className="w-14 text-[10px] border border-primary rounded px-1 py-0.5 text-foreground bg-background outline-none"
+                          onBlur={e => saveWinProb(p.id, e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setEditingWinProb(null);
+                          }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">%</span>
+                      </div>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] shrink-0 cursor-pointer ${probColor}`}
+                        title="Click to edit win probability"
+                        onClick={() => setEditingWinProb(p.id)}
+                      >
+                        {p.win_probability != null ? `${p.win_probability}%` : "?%"}
+                      </Badge>
+                    )}
                   </div>
 
                   <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
@@ -700,15 +757,40 @@ export default function StaffingGantt() {
                     )}
                   </div>
 
-                  {/* Already-reserved team members */}
-                  {team.length > 0 && (
+                  {/* Manager row */}
+                  <div className="text-[10px] space-y-0.5">
+                    {p.manager_name ? (
+                      <div className="flex items-center gap-1 text-muted-foreground">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                        <span className="font-medium truncate">{p.manager_name}</span>
+                        <span className="text-muted-foreground/60">· Manager</span>
+                        {availability[p.manager_name] && (
+                          <span className={`ml-auto shrink-0 ${
+                            availability[p.manager_name] === "available now" ? "text-emerald-600" :
+                            availability[p.manager_name].startsWith(">")     ? "text-red-500" :
+                            "text-amber-600"
+                          }`}>{availability[p.manager_name]}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        className="flex items-center gap-1 text-muted-foreground/50 italic hover:text-primary transition-colors"
+                        onClick={() => openFromProjectModalAsManager(p.id)}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full border border-dashed border-muted-foreground/40 shrink-0" />
+                        No manager — click to set
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Team members */}
+                  {(p.team_members ?? []).length > 0 && (
                     <div className="text-[10px] text-muted-foreground space-y-0.5">
-                      {team.map((m, i) => (
+                      {(p.team_members ?? []).map((m, i) => (
                         <div key={i} className="flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
                           <span className="font-medium truncate">{m.name}</span>
                           <span className="text-muted-foreground/60">· {m.role}</span>
-                          {/* Show availability of already-assigned members */}
                           {availability[m.name] && (
                             <span className={`ml-auto shrink-0 ${
                               availability[m.name] === "available now" ? "text-emerald-600" :
@@ -726,7 +808,7 @@ export default function StaffingGantt() {
                     className="w-full h-7 text-xs border-amber-300 hover:bg-amber-50"
                     onClick={() => openFromProjectModal(p.id)}
                   >
-                    <UserPlus className="w-3.5 h-3.5 mr-1" /> Reserve person →
+                    <UserPlus className="w-3.5 h-3.5 mr-1" /> Reserve team member →
                   </Button>
                 </Card>
               );
@@ -823,7 +905,7 @@ export default function StaffingGantt() {
               <Select value={assignKind} onValueChange={(v) => setAssignKind(v as "manager" | "team")}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="manager">Manager (EM) — replaces current manager</SelectItem>
+                  <SelectItem value="manager">Manager — replaces current manager</SelectItem>
                   <SelectItem value="team">Team member — added to team</SelectItem>
                 </SelectContent>
               </Select>
@@ -831,12 +913,28 @@ export default function StaffingGantt() {
 
             {assignKind === "team" && (
               <div className="space-y-1">
-                <Label className="text-xs">Team-member role label</Label>
+                <Label className="text-xs">Role label</Label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {["Associate", "Senior Associate", "Partner", "Manager", "BA"].map(opt => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setAssignRoleLabel(opt)}
+                      className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+                        assignRoleLabel === opt
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border hover:bg-muted"
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
                 <Input
                   value={assignRoleLabel}
                   onChange={(e) => setAssignRoleLabel(e.target.value)}
-                  placeholder="e.g. Partner, Senior, BA"
-                  className="h-9 text-sm"
+                  placeholder="or type custom role…"
+                  className="h-8 text-xs mt-1"
                 />
               </div>
             )}

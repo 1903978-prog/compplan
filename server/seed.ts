@@ -4023,6 +4023,25 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
   // Eendigo's fee corridors by geography × client size × complexity.
   // Idempotent: only inserts rules that don't already exist by rule_name.
   await seedPricingRules();
+
+  // ── Retroactive win_probability sync: case → pending proposal ──────────
+  // Copies win_probability from each final pricing_case to its linked
+  // pending pricing_proposal (matched by project_name or base-code).
+  // Safe to run repeatedly — only updates rows where the values diverge.
+  await db.execute(sql`
+    UPDATE pricing_proposals pp
+    SET    win_probability = pc.win_probability
+    FROM   pricing_cases pc
+    WHERE  pc.status = 'final'
+      AND  pc.win_probability IS NOT NULL
+      AND  pp.outcome = 'pending'
+      AND  (
+             LOWER(TRIM(pp.project_name)) = LOWER(TRIM(pc.project_name))
+          OR REGEXP_REPLACE(LOWER(TRIM(pp.project_name)), '[a-z]+$', '')
+               = REGEXP_REPLACE(LOWER(TRIM(pc.project_name)), '[a-z]+$', '')
+           )
+      AND  (pp.win_probability IS NULL OR pp.win_probability <> pc.win_probability)
+  `);
 }
 
 const PRICING_RULE_SEEDS: Array<{
