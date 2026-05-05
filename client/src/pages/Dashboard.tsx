@@ -335,7 +335,11 @@ export default function Dashboard() {
                             <div className="mt-1.5 flex flex-wrap gap-1 items-center">
                               <ClipboardList className="w-3 h-3 text-amber-500 shrink-0" />
                               {pendingTests.map(t => (
-                                <span key={t.id} className="text-[10px] bg-amber-50 border border-amber-200 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                                <span
+                                  key={t.id}
+                                  className="text-[10px] bg-amber-50 border border-amber-200 text-amber-700 px-1.5 py-0.5 rounded font-medium cursor-default select-none"
+                                  title={`Required test for next promotion to ${emp.next_role_code}`}
+                                >
                                   {t.name}
                                 </span>
                               ))}
