@@ -412,6 +412,14 @@ export default function StaffingGantt() {
   };
 
   const people = useMemo(() => {
+    // Two-pass: build exclusion set first so retired/back-office names are
+    // never re-added when we later scan proposal assignments.
+    const excluded = new Set<string>();
+    for (const e of employees) {
+      if ((e as any).status === "former" || isBackOffice(e)) {
+        excluded.add(e.name.trim().toLowerCase());
+      }
+    }
     const out = new Map<string, { name: string; role?: string }>();
     for (const e of employees) {
       if (isBackOffice(e)) continue;
@@ -422,12 +430,12 @@ export default function StaffingGantt() {
       if (!includeP) continue;
       if (p.manager_name) {
         const k = p.manager_name.trim().toLowerCase();
-        if (!out.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
+        if (!excluded.has(k) && !out.has(k)) out.set(k, { name: p.manager_name, role: "EM" });
       }
       for (const m of (p.team_members ?? [])) {
         if (!m.name) continue;
         const k = m.name.trim().toLowerCase();
-        if (!out.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
+        if (!excluded.has(k) && !out.has(k)) out.set(k, { name: m.name, role: m.role || undefined });
       }
     }
     return Array.from(out.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -464,78 +472,57 @@ export default function StaffingGantt() {
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
 
-  // ── Monthly ASC demand row ─────────────────────────────────────────────
-  // For each week of the horizon: count ASC FTE demand from
-  //   (a) committed (won) projects: each team-member counted as 1 ASC
-  //   (b) TBD pipeline:             each team-member × win_probability/100
-  // Then aggregate weeks into months and take the PEAK week within each
-  // month — that's the conservative "how many ASC do we need to plan
-  // for this month" number, since hiring on a peak basis is what the
-  // user described in the brief.
-  //
-  // Manager (the EM) is NOT counted toward ASC demand — managers run
-  // the project, ASCs deliver. team_members.length excludes the manager
-  // (the manager lives in p.manager_name, separate field). When team
-  // hasn't been filled in yet, default to 1 ASC slot as a placeholder.
-  const monthlyAscDemand = useMemo(() => {
-    const weeklyCommitted = new Array(HORIZON_WEEKS).fill(0);
-    const weeklyTbd       = new Array(HORIZON_WEEKS).fill(0);
-
+  // ── Per-project FTE demand build-up ──────────────────────────────────────
+  // One row per active project: team FTEs × probability (1 for won, prob/100
+  // for TBD). Managers excluded — capacity is the team beneath them.
+  type FteRow = {
+    projectId: number;
+    projectName: string;
+    clientName: string | null;
+    outcome: "won" | "pending";
+    probability: number;
+    teamCount: number;
+    perWeek: (number | null)[];
+  };
+  const fteBuildUp = useMemo(() => {
+    const rows: FteRow[] = [];
     for (const p of proposals) {
-      const teamSize = (p.team_members ?? []).length || 1;
-      const eff = effectiveFields(p);
-      // projectWeeks uses raw p.start_date/duration_weeks. Patch it with
-      // case fallbacks before calling so TBDs that only have those
-      // fields on the linked case still appear on the demand row.
-      const patched: Proposal = {
-        ...p,
-        start_date: p.start_date ?? eff.start_date,
-        duration_weeks: p.duration_weeks ?? eff.duration_weeks,
-      };
-      const span = projectWeeks(patched, weekStart);
+      if (p.outcome !== "won" && p.outcome !== "pending") continue;
+      const span = projectWeeks(p, weekStart);
       if (!span) continue;
-
-      if (p.outcome === "won") {
-        for (let w = span.from; w <= span.to; w++) {
-          weeklyCommitted[w] += teamSize;
-        }
-      } else if (p.outcome === "pending") {
-        const wp = (eff.win_probability ?? 0) / 100;
-        if (wp > 0) {
-          for (let w = span.from; w <= span.to; w++) {
-            weeklyTbd[w] += teamSize * wp;
-          }
-        }
+      const teamCount = (p.team_members ?? []).filter(
+        m => (m.name ?? "").trim().length > 0,
+      ).length;
+      if (teamCount === 0) continue;
+      const isPipeline = p.outcome === "pending";
+      const probability = isPipeline
+        ? Math.max(0, Math.min(100, Number(p.win_probability ?? 50))) / 100
+        : 1;
+      const contribution = teamCount * probability;
+      const perWeek: (number | null)[] = Array(HORIZON_WEEKS).fill(null);
+      for (let w = span.from; w <= span.to; w++) perWeek[w] = contribution;
+      rows.push({
+        projectId: p.id,
+        projectName: p.project_name,
+        clientName: p.client_name ?? null,
+        outcome: isPipeline ? "pending" : "won",
+        probability,
+        teamCount,
+        perWeek,
+      });
+    }
+    rows.sort((a, b) => {
+      if (a.outcome !== b.outcome) return a.outcome === "won" ? -1 : 1;
+      return a.projectName.localeCompare(b.projectName);
+    });
+    const totalPerWeek = Array<number>(HORIZON_WEEKS).fill(0);
+    for (const r of rows) {
+      for (let w = 0; w < HORIZON_WEEKS; w++) {
+        if (r.perWeek[w] != null) totalPerWeek[w] += r.perWeek[w]!;
       }
     }
-
-    // Group weeks by year-month, take the peak week's value as the
-    // monthly figure (per the user's example: a TBD that contributes 1
-    // FTE in any week of June makes June's monthly demand 1).
-    const months: Array<{
-      label:     string;
-      weekFrom:  number;
-      weekTo:    number;
-      committed: number;
-      tbd:       number;
-    }> = [];
-    for (let w = 0; w < HORIZON_WEEKS; w++) {
-      const d = weeks[w];
-      const key = d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
-      const last = months[months.length - 1];
-      if (!last || last.label !== key) {
-        months.push({
-          label: key, weekFrom: w, weekTo: w,
-          committed: weeklyCommitted[w], tbd: weeklyTbd[w],
-        });
-      } else {
-        last.weekTo = w;
-        if (weeklyCommitted[w] > last.committed) last.committed = weeklyCommitted[w];
-        if (weeklyTbd[w]       > last.tbd)       last.tbd       = weeklyTbd[w];
-      }
-    }
-    return months;
-  }, [proposals, weeks, weekStart, caseByName]);
+    return { rows, totalPerWeek };
+  }, [proposals, weekStart]);
 
   // Availability: human-readable string + actual Date for the first free week.
   // The Date is used when reserving to a TBD project (start_date patch).
@@ -718,39 +705,81 @@ export default function StaffingGantt() {
                 );
               })}
             </tbody>
-            {/* ASC demand by month — peak FTE need = committed + Σ(prob × team) */}
+            {/* FTE build-up — per-project demand rows + total */}
             <tfoot>
-              <tr className="border-t-2 border-slate-300 bg-slate-50 dark:bg-slate-900">
-                <td className="p-2 font-semibold text-[11px] sticky left-0 bg-slate-50 dark:bg-slate-900 z-10">
-                  ASC demand
+              <tr className="border-t-2 bg-muted/30">
+                <td className="p-2 sticky left-0 bg-muted/60 z-10 w-44 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" colSpan={2}>
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    FTEs needed — build-up
+                  </div>
                 </td>
-                <td className="p-2 text-[10px] text-muted-foreground sticky left-44 bg-slate-50 dark:bg-slate-900 z-10">
-                  peak / month
-                </td>
-                {monthlyAscDemand.map((m, i) => {
-                  const span = m.weekTo - m.weekFrom + 1;
-                  const total = m.committed + m.tbd;
-                  // Color-code by demand: green = covered range, amber = stretching,
-                  // red = needs hiring. Threshold values are heuristic — tune later.
-                  const tone =
-                    total >= 4 ? "bg-red-100 text-red-800"     :
-                    total >= 2 ? "bg-amber-100 text-amber-800" :
-                    total >  0 ? "bg-emerald-50  text-emerald-800" :
-                                  "text-muted-foreground";
-                  return (
-                    <td
-                      key={i}
-                      colSpan={span}
-                      className={`text-center p-1.5 border-l text-[10px] font-mono tabular-nums ${tone}`}
-                      title={`${m.label}: ${m.committed.toFixed(1)} committed (won) + ${m.tbd.toFixed(2)} TBD-weighted = ${total.toFixed(2)} ASC FTE peak`}
-                    >
-                      <div className="font-semibold text-xs leading-tight">{total.toFixed(1)}</div>
-                      <div className="opacity-70 text-[9px] leading-tight">
-                        {m.committed.toFixed(0)}+{m.tbd.toFixed(1)}
+                <td className="border-l p-0" colSpan={HORIZON_WEEKS} />
+              </tr>
+              {fteBuildUp.rows.length === 0 ? (
+                <tr className="bg-muted/20">
+                  <td className="p-2 sticky left-0 bg-muted/40 z-10 text-[10px] italic text-muted-foreground" colSpan={2}>
+                    no active projects
+                  </td>
+                  <td className="border-l" colSpan={HORIZON_WEEKS} />
+                </tr>
+              ) : fteBuildUp.rows.map(row => {
+                const isPipeline = row.outcome === "pending";
+                const probPct = Math.round(row.probability * 100);
+                return (
+                  <tr key={row.projectId} className="bg-muted/15 hover:bg-muted/30">
+                    <td className="p-1.5 sticky left-0 bg-background z-10 w-44">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-semibold text-[11px] truncate" title={row.clientName ? `${row.projectName} · ${row.clientName}` : row.projectName}>
+                          {row.projectName}
+                        </span>
+                        {isPipeline ? (
+                          <Badge variant="outline" className="text-[8px] py-0 h-3.5 shrink-0 bg-amber-50 border-amber-300 text-amber-800">
+                            TBD {probPct}%
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[8px] py-0 h-3.5 shrink-0 bg-emerald-50 border-emerald-300 text-emerald-800">
+                            WON
+                          </Badge>
+                        )}
                       </div>
                     </td>
-                  );
-                })}
+                    <td className="p-1.5 sticky left-44 bg-background z-10 w-28 text-[10px] font-mono text-muted-foreground"
+                      title={isPipeline ? `${row.teamCount} FTEs × ${probPct}% = ${(row.teamCount * row.probability).toFixed(2)}` : `${row.teamCount} FTEs`}
+                    >
+                      {isPipeline ? `${row.teamCount} × ${probPct}%` : `${row.teamCount} FTE${row.teamCount === 1 ? "" : "s"}`}
+                    </td>
+                    {row.perWeek.map((v, i) => (
+                      <td key={i}
+                        className={`border-l text-center font-mono text-[11px] p-1 min-w-16 ${v == null ? "text-muted-foreground/40" : isPipeline ? "text-amber-700" : ""}`}
+                        title={v != null ? `${row.projectName} · ${v.toFixed(2)} FTE-equivalents · week of ${fmtWeek(weeks[i])}` : `${row.projectName} not active week of ${fmtWeek(weeks[i])}`}
+                      >
+                        {v == null ? "—" : v.toFixed(1)}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+              <tr className="border-t-2 bg-muted/50 font-semibold">
+                <td className="p-2 sticky left-0 bg-muted/70 z-10 w-44">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    Total
+                  </div>
+                </td>
+                <td className="p-2 sticky left-44 bg-muted/70 z-10 w-28 text-[10px] font-normal text-muted-foreground"
+                  title="Per week: FTEs on won/ongoing projects + Σ(FTEs on TBD × win-probability)"
+                >
+                  won + tbd × prob
+                </td>
+                {fteBuildUp.totalPerWeek.map((n, i) => (
+                  <td key={i}
+                    className="border-l text-center font-mono text-[11px] p-1 min-w-16"
+                    title={n > 0 ? `${n.toFixed(2)} FTE-equivalents needed week of ${fmtWeek(weeks[i])}` : "no demand"}
+                  >
+                    {n > 0 ? n.toFixed(1) : "—"}
+                  </td>
+                ))}
               </tr>
             </tfoot>
           </table>
