@@ -59,6 +59,8 @@ import BriefStream from "@/pages/BriefStream";
 import BusinessDevelopment from "@/pages/BusinessDevelopment";
 import { LayoutDashboard, Users, Grid3X3, Settings as SettingsIcon, LogOut, CalendarDays, DollarSign, ChevronDown, Briefcase, UserCheck, Timer, FileText, Layers, Pause, Play, Receipt, Shield, BookOpen, Database, Eye, EyeOff, Target, Activity, Image as ImageIcon, LayoutTemplate, Cpu, Palette, Trash2, Network, Map, Building2, Zap, Newspaper, History, Hammer, PackageOpen, Wrench, SlidersHorizontal, BarChart3, Mic, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SaveSafetyProvider } from "@/lib/saveSafety";
+import { SaveSafetyIndicator } from "@/components/SaveSafetyIndicator";
 
 type NavItem =
   | { kind?: "link"; href: string; label: string; icon: React.ElementType }
@@ -474,6 +476,10 @@ function Navigation() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Save-safety: backend reachability + N unsaved counter.
+                Distinct signal from the LLM API activity dot below — this
+                is about whether your DB writes are landing. */}
+            <SaveSafetyIndicator />
             {/* Live API activity indicator + cost */}
             <div className="flex items-center gap-1.5">
               <div className={`w-2.5 h-2.5 rounded-full transition-all ${
@@ -695,7 +701,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <AppContent />
+        {/* SaveSafetyProvider sits inside the auth gate so the 20-second
+            health-check ping only runs once the user is logged in. */}
+        <SaveSafetyProvider>
+          <AppContent />
+        </SaveSafetyProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
