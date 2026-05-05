@@ -2598,7 +2598,7 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
           {/* RIGHT: calculated projections */}
           <div className="space-y-6">
             {/* Project Allocations */}
-            <ProjectAllocations employeeName={form.getValues("name")} employeeId={selectedEmpId} onRefresh={() => {}} />
+            <ProjectAllocations employeeName={form.getValues("name")} employeeId={employee.id} onRefresh={() => {}} />
 
             {/* Promotion Tracks */}
             <Card className="p-4 bg-background">
