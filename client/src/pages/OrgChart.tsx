@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen, FileText } from "lucide-react";
+import { Network, ListTodo, Target, Sparkles, CheckCircle2, Circle, AlertTriangle, Clock, X, MessageSquare, ThumbsUp, ThumbsDown, Check, BookOpen, Plus, Minus, Archive, User, Bot, Mail, UserPlus, ChevronDown, ChevronRight, Briefcase, GraduationCap, Lightbulb, PackageOpen, FileText, Play, XCircle, RefreshCw } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import OrgTree, { type OrgTreeNode } from "@/components/OrgTree";
 
@@ -1180,28 +1180,30 @@ function RoleDetailDialog({
   onArchiveKnowledge: (n: KnowledgeNote) => Promise<void>;
   onTaskToggle: (task: TaskItem, newStatus: TaskItem["status"]) => Promise<void>;
 }) {
-  const { toast } = useToast();
-  const [startingWork, setStartingWork] = useState(false);
-  const [workStarted, setWorkStarted] = useState(false);
+  const [swOpen, setSwOpen] = useState(false);
+  const [swLoading, setSwLoading] = useState(false);
+  const [healthData, setHealthData] = useState<{ok:boolean;score:number;errors:number;warns:number;checked_at:string;checks:{area:string;label:string;status:"ok"|"warn"|"error";value:string;count:number}[]}|null>(null);
+  const [healthError, setHealthError] = useState<string|null>(null);
+  const [swPrompt, setSwPrompt] = useState<string|null>(null);
+  useEffect(()=>{setSwOpen(false);setSwLoading(false);setHealthData(null);setHealthError(null);setSwPrompt(null);},[role?.role_key]);
 
   if (!role) return null;
   const openTasks = role.tasks_10d.filter(t => t.status !== "done");
   const doneTasks = role.tasks_10d.filter(t => t.status === "done");
+  const isCoo = role.role_key === "coo";
 
-  const handleStartWork = async () => {
-    if (!aiosAgent) return;
-    setStartingWork(true);
-    try {
-      const res = await fetch(`/api/agentic/agents/${aiosAgent.id}/run`, { method: "POST" });
-      if (!res.ok) throw new Error(await res.text());
-      setWorkStarted(true);
-      toast({ title: `${aiosAgent.name} started`, description: "Agent routine is running in the background. Deliverables will appear in AIOS." });
-    } catch (err: any) {
-      toast({ title: "Failed to start work", description: err.message, variant: "destructive" });
-    } finally {
-      setStartingWork(false);
+  async function handleStartWork() {
+    if (isCoo) {
+      setSwOpen(true);setSwLoading(true);setHealthData(null);setHealthError(null);
+      try{const r=await fetch("/api/agentic/data-health",{credentials:"include"});if(!r.ok)throw new Error(await r.text());setHealthData(await r.json());}
+      catch(e){setHealthError((e as Error).message);}finally{setSwLoading(false);}
+    } else {
+      const today=new Date().toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+      const agentName=AIOS_NAME_BY_ROLE_KEY[role.role_key]??role.role_name;
+      const prompt=[`=== ${agentName} — Daily Work Brief ===`,`Date: ${today}`,``,`MISSION`,aiosAgent?.mission??"(no mission defined)",``,`GOALS`,role.goals.length>0?role.goals.map((g,i)=>`${i+1}. ${g}`).join("\n"):"(no goals set)",``,`OPEN TASKS (next 10 days)`,openTasks.length>0?openTasks.map(t=>`- [${t.status}] ${t.title} (due ${t.due_date})`).join("\n"):"(no open tasks)",``,`INSTRUCTIONS`,`Review your priority tasks above. For each open task:`,`1. Update status if completed or blocked`,`2. Surface any risks or blockers to the COO`,`3. Propose any new tasks or actions arising from today's context`,``,`Start your response with a brief status summary, then address each task.`].join("\n");
+      setSwPrompt(prompt);setSwOpen(true);
     }
-  };
+  }
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1235,27 +1237,12 @@ function RoleDetailDialog({
                 {role.person_name ?? "(unfilled)"} · last updated {fmtDate(role.updated_at)}
               </DialogDescription>
             </div>
-            {/* Start work button — only for AI agent roles that have an AIOS entry */}
-            {aiosAgent && (
-              <Button
-                size="sm"
-                className={workStarted
-                  ? "shrink-0 bg-emerald-600/20 text-emerald-400 border border-emerald-600/40 hover:bg-emerald-600/30"
-                  : "shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white"}
-                onClick={handleStartWork}
-                disabled={startingWork || workStarted}
-              >
-                {startingWork ? (
-                  <><span className="animate-spin mr-1.5">⚙</span> Starting…</>
-                ) : workStarted ? (
-                  <><Check className="w-3.5 h-3.5 mr-1.5" /> Running</>
-                ) : (
-                  <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Start work</>
-                )}
-              </Button>
-            )}
+            <button onClick={handleStartWork} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+              <Play className="w-3.5 h-3.5" /> Start Work
+            </button>
           </div>
         </DialogHeader>
+        {swOpen&&(<div className="mt-3 border rounded-lg bg-muted/40 p-3"><div className="flex items-center justify-between mb-2"><span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{isCoo?"Data Health Check":"Cowork Prompt"}</span><button onClick={()=>setSwOpen(false)} className="text-muted-foreground hover:text-foreground"><XCircle className="w-4 h-4"/></button></div>{isCoo?(swLoading?(<div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center"><RefreshCw className="w-4 h-4 animate-spin"/>Running health checks…</div>):healthError?(<p className="text-sm text-destructive">{healthError}</p>):healthData?(<div className="space-y-3"><div className="flex items-center gap-3"><span className={`text-3xl font-bold ${healthData.score>=90?"text-green-600":healthData.score>=70?"text-yellow-600":"text-red-600"}`}>{healthData.score}</span><div className="text-xs text-muted-foreground leading-snug"><div>/ 100 health score</div><div>{healthData.errors} errors · {healthData.warns} warnings</div><div>checked {new Date(healthData.checked_at).toLocaleTimeString()}</div></div><button onClick={handleStartWork} className="ml-auto text-muted-foreground hover:text-foreground"><RefreshCw className="w-4 h-4"/></button></div>{(["Employees","Proposals","Org","Agents"] as const).map(area=>{const rows=healthData.checks.filter(c=>c.area===area);if(!rows.length)return null;return(<div key={area}><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">{area}</div><div className="space-y-0.5">{rows.map((c,i)=>(<div key={i} className={`flex items-center justify-between text-xs px-2 py-1 rounded ${c.status==="error"?"bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300":c.status==="warn"?"bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 dark:text-yellow-300":"bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300"}`}><span className="flex items-center gap-1.5">{c.status==="error"?<AlertTriangle className="w-3 h-3 shrink-0"/>:c.status==="warn"?<Clock className="w-3 h-3 shrink-0"/>:<CheckCircle2 className="w-3 h-3 shrink-0"/>}{c.label}</span><span className="font-mono text-[10px] opacity-80">{c.value}</span></div>))}</div></div>);})}</div>):null):swPrompt?(<div className="space-y-2"><Textarea readOnly value={swPrompt} className="font-mono text-xs min-h-[200px] resize-y bg-background"/><button onClick={()=>void navigator.clipboard.writeText(swPrompt)} className="text-xs text-primary hover:underline">Copy to clipboard</button></div>):null}</div>)}
 
         {/* Reports to — dropdown moves the role under a different parent.
             "Dotted line" toggles between SOLID (normal subordinate, indented
@@ -1696,3 +1683,4 @@ function SpecGroup({
 
 // AgentSpecSection removed — spec data now rendered inline inside
 // SectionBlock("Skills & Profile") within RoleDetailDialog.
+// MARKER-TEST
