@@ -448,6 +448,198 @@ function computeChurnScore(emp: any): { score: number; level: "high" | "medium" 
   return { score, level: score >= 50 ? "high" : score >= 25 ? "medium" : "low" };
 }
 
+// ── Project Allocations sub-component ─────────────────────────────────────
+interface Proposal {
+  id: number;
+  project_name: string;
+  outcome: string;
+  manager_name?: string;
+  team_members?: { role: string; name: string }[];
+}
+
+function ProjectAllocations({ employeeName, employeeId }: { employeeName: string; employeeId: string | null; onRefresh: () => void }) {
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [assignKind, setAssignKind] = useState<"manager" | "team">("team");
+  const [submitting, setSubmitting] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    // Load open projects
+    fetch("/api/pricing/proposals", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then(pp => {
+        if (Array.isArray(pp)) {
+          const open = pp.filter((p: any) => p.outcome !== "lost");
+          setProposals(open);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const currentAssignments = useMemo(() => {
+    if (!employeeName) return [];
+    const lower = employeeName.trim().toLowerCase();
+    return proposals.filter(p => {
+      const isManager = p.manager_name && p.manager_name.trim().toLowerCase() === lower;
+      const isTeam = (p.team_members ?? []).some(m => m.name && m.name.trim().toLowerCase() === lower);
+      return isManager || isTeam;
+    });
+  }, [proposals, employeeName]);
+
+  async function assignToProject() {
+    if (!employeeName || !selectedProjectId) {
+      toast({ title: "Select a project first", variant: "destructive" });
+      return;
+    }
+
+    const projectId = Number(selectedProjectId);
+    const project = proposals.find(p => p.id === projectId);
+    if (!project) return;
+
+    setSubmitting(true);
+    try {
+      const patch: any = {};
+      if (assignKind === "manager") {
+        patch.manager_name = employeeName;
+      } else {
+        const existing = project.team_members ?? [];
+        if (!existing.some(m => m.name?.toLowerCase() === employeeName.toLowerCase())) {
+          patch.team_members = [...existing, { role: "Associate", name: employeeName }];
+        }
+      }
+
+      const r = await fetch(`/api/pricing/proposals/${projectId}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+
+      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+      setSelectedProjectId("");
+      toast({ title: `${employeeName} assigned to ${project.project_name}` });
+    } catch (e) {
+      toast({ title: "Failed to assign", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function unassignFromProject(projectId: number) {
+    if (!employeeName) return;
+    setSubmitting(true);
+    try {
+      const project = proposals.find(p => p.id === projectId);
+      if (!project) return;
+
+      const patch: any = {};
+      const lower = employeeName.trim().toLowerCase();
+      if (project.manager_name?.trim().toLowerCase() === lower) {
+        patch.manager_name = null;
+      } else {
+        patch.team_members = (project.team_members ?? []).filter(
+          m => m.name && m.name.trim().toLowerCase() !== lower
+        );
+      }
+
+      const r = await fetch(`/api/pricing/proposals/${projectId}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+
+      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+      toast({ title: `${employeeName} unassigned from ${project.project_name}` });
+    } catch (e) {
+      toast({ title: "Failed to unassign", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card className="p-4 bg-background">
+      <h4 className="font-bold text-sm mb-4">Project Allocations</h4>
+
+      {/* Current assignments */}
+      {currentAssignments.length > 0 && (
+        <div className="mb-4 space-y-2">
+          <p className="text-xs text-muted-foreground font-medium">Assigned to:</p>
+          {currentAssignments.map(p => {
+            const isManager = p.manager_name?.trim().toLowerCase() === employeeName.trim().toLowerCase();
+            return (
+              <div key={p.id} className="flex items-center justify-between gap-2 text-sm bg-muted/50 p-2 rounded">
+                <div>
+                  <div className="font-mono text-xs font-semibold">{p.project_name}</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {isManager ? "Manager" : "Team member"} · {p.outcome}
+                  </div>
+                </div>
+                <button
+                  onClick={() => unassignFromProject(p.id)}
+                  disabled={submitting}
+                  className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                  title="Unassign"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Assignment controls */}
+      <div className="space-y-2">
+        <Label className="text-xs">Assign to project:</Label>
+        <div className="flex gap-2">
+          <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+            <SelectTrigger className="text-xs h-8">
+              <SelectValue placeholder="Choose project..." />
+            </SelectTrigger>
+            <SelectContent>
+              {proposals
+                .filter(p => !currentAssignments.some(c => c.id === p.id))
+                .map(p => (
+                  <SelectItem key={p.id} value={String(p.id)}>
+                    {p.project_name} ({p.outcome})
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex gap-2">
+          <Select value={assignKind} onValueChange={(v) => setAssignKind(v as "manager" | "team")}>
+            <SelectTrigger className="text-xs h-8 w-[120px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="team">Team member</SelectItem>
+              <SelectItem value="manager">Manager</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            disabled={!selectedProjectId || submitting}
+            onClick={assignToProject}
+            className="text-xs h-8"
+          >
+            {submitting ? "..." : "Assign"}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function EmployeeList() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, retireEmployee, unretireEmployee, roleGrid, settings } = useStore();
   const [search, setSearch] = useState("");
@@ -2405,6 +2597,9 @@ function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onB
 
           {/* RIGHT: calculated projections */}
           <div className="space-y-6">
+            {/* Project Allocations */}
+            <ProjectAllocations employeeName={form.getValues("name")} employeeId={selectedEmpId} onRefresh={() => {}} />
+
             {/* Promotion Tracks */}
             <Card className="p-4 bg-background">
               <h4 className="font-bold text-sm mb-4">Promotion Tracks</h4>

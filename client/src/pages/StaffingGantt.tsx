@@ -326,11 +326,11 @@ export default function StaffingGantt() {
     return out;
   }, [people, proposals, weekStart, showPipeline, showWeighted]);
 
-  // FTE demand per week: full count for won/ongoing projects + (count × prob)
-  // for TBD pipeline. Counted from `manager_name` + `team_members`, so a TBD
-  // proposal with no team yet contributes 0 (no signal of headcount needed).
-  // Always weighted by win_probability for pending — independent of the
-  // showWeighted/showPipeline visual toggles, since this is the demand picture.
+  // FTE demand per week: count only TEAM MEMBERS (not managers) on won/ongoing
+  // projects + (count × prob) for TBD pipeline. Always weighted by win_probability
+  // for pending — independent of the showWeighted/showPipeline visual toggles,
+  // since this is the demand picture. Managers are excluded from FTE calculations
+  // to show actual billable resource allocation.
   type BreakdownItem = { projectName: string; outcome: string; manager?: string; teamMembers: string[]; teamCount: number; probability: number; weight: number; contribution: number };
   const { ftesNeededPerWeek, breakdownPerWeek } = useMemo(() => {
     const totals = Array<number>(HORIZON_WEEKS).fill(0);
@@ -345,7 +345,7 @@ export default function StaffingGantt() {
       const teamMembers = (p.team_members ?? [])
         .filter(m => (m.name ?? "").trim().length > 0)
         .map(m => m.name!);
-      const teamCount = (manager ? 1 : 0) + teamMembers.length;
+      const teamCount = teamMembers.length; // Managers excluded from FTE count
 
       if (teamCount === 0) continue;
 
