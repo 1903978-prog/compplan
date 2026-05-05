@@ -769,24 +769,19 @@ export default function PricingTool() {
   // /api/employees endpoint is unreachable (auth/503) — the team picker
   // then shows an empty dropdown with a hint to check the connection.
   const [employees, setEmployees] = useState<Array<{ id: string; name: string; current_role_code?: string }>>(_pricingCache.employees);
-  // External contacts (partners / freelancers) — used by the Manager (EM)
-  // and Team picker dropdowns so the user can assign people who aren't on
-  // the /employees rich roster.
+  // External contacts (partners / freelancers / interns / non-employee
+  // managers) — used by the Manager (EM) and Team picker dropdowns so the
+  // user can assign people who aren't on the /employees rich roster.
   const [externalContacts, setExternalContacts] = useState<Array<{ id: number; name: string; kind: string }>>(_pricingCache.externalContacts);
 
-  // Unified people list for the Manager (EM) dropdown.
-  // Tier 1 = internal EM1/EM2 employees + external partners (alphabetical)
-  // Tier 2 = external freelancers (alphabetical)
-  // Dedup by name — if a person appears in both employees and external_contacts
-  // the employee entry wins.
+  // Unified people list for the Manager / Team pickers.
+  //
+  // Order: 1) employees + partners alphabetical, 2) freelancers + other alphabetical.
+  // Dedup by name: employee entry wins over external_contacts.
   const peopleOptions = useMemo(() => {
     type Person = { name: string; kind: "employee" | "partner" | "freelancer" | "other"; sublabel?: string };
     const byName = new Map<string, Person>();
-    // Only EM1/EM2 and Partner-role employees are eligible to lead a project
     for (const e of employees) {
-      const code = (e.current_role_code ?? "").toUpperCase();
-      const isEligible = code === "EM1" || code === "EM2" || code.includes("PARTNER");
-      if (!isEligible) continue;
       byName.set(e.name, { name: e.name, kind: "employee", sublabel: e.current_role_code });
     }
     for (const c of externalContacts) {
@@ -801,7 +796,7 @@ export default function PricingTool() {
     const all = Array.from(byName.values());
     const tier1 = all.filter(p => p.kind === "employee" || p.kind === "partner")
       .sort((a, b) => a.name.localeCompare(b.name));
-    const tier2 = all.filter(p => p.kind === "freelancer")
+    const tier2 = all.filter(p => p.kind !== "employee" && p.kind !== "partner")
       .sort((a, b) => a.name.localeCompare(b.name));
     return { tier1, tier2 };
   }, [employees, externalContacts]);
@@ -1778,17 +1773,17 @@ export default function PricingTool() {
                     else setHistoryForm(f => ({ ...f, manager_name: v }));
                   }}
                 >
-                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick manager…" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Pick a name…" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— none —</SelectItem>
                     {peopleOptions.tier1.length === 0 && peopleOptions.tier2.length === 0 && (
                       <div className="px-2 py-2 text-[11px] text-muted-foreground italic">
-                        No eligible managers — add EM/Partner employees or freelancers.
+                        No people loaded.
                       </div>
                     )}
                     {peopleOptions.tier1.length > 0 && (
                       <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-                        Managers &amp; Partners
+                        Employees &amp; Partners
                       </div>
                     )}
                     {peopleOptions.tier1.map(p => (
@@ -1798,7 +1793,7 @@ export default function PricingTool() {
                     ))}
                     {peopleOptions.tier2.length > 0 && (
                       <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground border-t border-slate-200 mt-1">
-                        Freelancers
+                        Freelancers &amp; Other
                       </div>
                     )}
                     {peopleOptions.tier2.map(p => (
