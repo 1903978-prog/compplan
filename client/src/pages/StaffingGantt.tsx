@@ -93,6 +93,28 @@ export default function StaffingGantt() {
   // ── FTE breakdown modal state ───────────────────────────────────────────────
   const [breakdownWeekIndex, setBreakdownWeekIndex] = useState<number | null>(null);
 
+  // ── TBD card inline start-date editing ────────────────────────────────────
+  const [editingStartDate, setEditingStartDate] = useState<number | null>(null); // proposal id
+
+  async function saveStartDate(proposalId: number, newDate: string) {
+    const proj = proposals.find(p => p.id === proposalId);
+    if (!proj) return;
+    try {
+      const r = await fetch(`/api/pricing/proposals/${proposalId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...proj, start_date: newDate || null }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+    } catch (e) {
+      toast({ title: "Failed to save start date", variant: "destructive" });
+    } finally {
+      setEditingStartDate(null);
+    }
+  }
+
   // ── Assign-to-project modal state ─────────────────────────────────────────
   // Two entry points:
   //   (A) Person-first  → click UserPlus on a row → assignFor is set, project blank
@@ -655,8 +677,27 @@ export default function StaffingGantt() {
 
                   <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
                     {p.duration_weeks && <span>{p.duration_weeks}w</span>}
-                    {p.start_date && <span>· starts {p.start_date}</span>}
-                    {!p.start_date && <span className="italic">· no start date yet</span>}
+                    {editingStartDate === p.id ? (
+                      <input
+                        autoFocus
+                        type="date"
+                        defaultValue={p.start_date ?? ""}
+                        className="text-[10px] border border-primary rounded px-1 py-0.5 text-foreground bg-background outline-none"
+                        onBlur={e => saveStartDate(p.id, e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                          if (e.key === "Escape") setEditingStartDate(null);
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="cursor-pointer hover:text-primary hover:underline"
+                        title="Click to edit start date"
+                        onClick={() => setEditingStartDate(p.id)}
+                      >
+                        {p.start_date ? `· starts ${p.start_date}` : <span className="italic">· no start date — click to set</span>}
+                      </span>
+                    )}
                   </div>
 
                   {/* Already-reserved team members */}
