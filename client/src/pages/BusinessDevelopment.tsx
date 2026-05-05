@@ -550,6 +550,34 @@ function domainToCompany(email: string): string | null {
   return words.map(w => w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)).join(" ") || null;
 }
 
+// ── Email local-part → surname (pure client) ──────────────────────────────
+// Handles patterns: firstname.lastname@domain  →  Lastname
+//                   lastname@domain            →  Lastname
+//                   first.middle.last@domain   →  Last (last segment)
+const GENERIC_LOCAL = new Set([
+  "info","admin","contact","hello","support","hr","sales","team",
+  "noreply","no-reply","mail","office","billing","accounts",
+  "enquiries","enquiry","careers","jobs","legal","press","media",
+]);
+
+function emailToLastName(email: string): string | null {
+  const at = email.indexOf("@");
+  if (at < 0) return null;
+  const local = email.slice(0, at).toLowerCase();
+  // Strip sub-addressing (user+tag@domain)
+  const base = local.split("+")[0].trim();
+  // Split by separators: dot, underscore, hyphen
+  const parts = base.split(/[._-]/).filter(Boolean);
+  if (!parts.length) return null;
+  // Single generic alias → not a person's name
+  if (parts.length === 1 && GENERIC_LOCAL.has(parts[0])) return null;
+  // Last segment is the last name candidate
+  const raw = parts[parts.length - 1];
+  // Skip purely numeric parts
+  if (/^\d+$/.test(raw)) return null;
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
 // ─── Contacts list tab ───────────────────────────────────────────────────
 function ContactsTab() {
   const { toast } = useToast();
@@ -559,9 +587,14 @@ function ContactsTab() {
   const [lastSync, setLastSync] = useState<{ total: number; inserted: number; updated: number } | null>(null);
   const [search, setSearch]     = useState("");
 
-  // Populate-companies dialog
+  // Populate dialog — companies + surnames
   const [populateOpen, setPopulateOpen] = useState(false);
-  type Suggestion = { contact: any; company: string; skip: boolean };
+  type Suggestion = {
+    contact: any;
+    company: string;    // suggested company (empty string = no suggestion)
+    lastName: string;   // suggested last name (empty string = no suggestion)
+    skip: boolean;
+  };
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -593,11 +626,19 @@ function ContactsTab() {
 
   function openPopulate() {
     const rows: Suggestion[] = contacts
-      .filter(c => !c.company?.trim() && c.email)
-      .map(c => ({ contact: c, company: domainToCompany(c.email) ?? "", skip: false }))
-      .filter(s => s.company);
+      .filter(c => c.email)
+      .flatMap(c => {
+        const needsCompany  = !c.company?.trim();
+        // Treat missing or HubSpot-masked (contains *) last names as fillable
+        const needsLastName = !c.last_name?.trim() || c.last_name.includes("*");
+        const suggestedCo   = needsCompany  ? (domainToCompany(c.email) ?? "")  : "";
+        const suggestedLn   = needsLastName ? (emailToLastName(c.email) ?? "")  : "";
+        if (!suggestedCo && !suggestedLn) return [];
+        return [{ contact: c, company: suggestedCo, lastName: suggestedLn, skip: false }];
+      });
+
     if (!rows.length) {
-      toast({ title: "No suggestions", description: "All contacts with emails already have a company or use a generic provider." });
+      toast({ title: "No suggestions", description: "All contacts already have a company and full name, or use generic email providers." });
       return;
     }
     setSuggestions(rows);
@@ -605,33 +646,48 @@ function ContactsTab() {
   }
 
   async function savePopulate() {
-    const toSave = suggestions.filter(s => !s.skip && s.company.trim());
+    const toSave = suggestions.filter(s => !s.skip && (s.company.trim() || s.lastName.trim()));
     if (!toSave.length) { setPopulateOpen(false); return; }
     setSaving(true);
     let saved = 0, failed = 0;
     for (const s of toSave) {
       try {
+        const body: Record<string, string> = {};
+        if (s.company.trim())  body.company   = s.company.trim();
+        if (s.lastName.trim()) body.last_name = s.lastName.trim();
         const r = await fetch(`/api/hubspot/contacts/${s.contact.id}`, {
           method: "PUT", credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ company: s.company.trim() }),
+          body: JSON.stringify(body),
         });
         if (r.ok) {
           saved++;
-          setContacts(prev => prev.map(c => c.id === s.contact.id ? { ...c, company: s.company.trim() } : c));
+          setContacts(prev => prev.map(c =>
+            c.id === s.contact.id ? { ...c, ...body } : c,
+          ));
         } else { failed++; }
       } catch { failed++; }
     }
     setSaving(false);
     setPopulateOpen(false);
     toast({
-      title: `${saved} compan${saved === 1 ? "y" : "ies"} saved`,
+      title: `${saved} contact${saved !== 1 ? "s" : ""} updated`,
       description: failed ? `${failed} failed` : undefined,
       variant: failed ? "destructive" : "default",
     });
   }
 
-  const noCompanyCount = contacts.filter(c => !c.company?.trim() && c.email && domainToCompany(c.email)).length;
+  // Count contacts that have at least one field we can suggest
+  const populateCount = useMemo(() => contacts.filter(c => {
+    if (!c.email) return false;
+    if (!c.company?.trim() && domainToCompany(c.email)) return true;
+    if ((!c.last_name?.trim() || c.last_name.includes("*")) && emailToLastName(c.email)) return true;
+    return false;
+  }).length, [contacts]);
+
+  // Whether any suggestion in the dialog includes a last-name field
+  const hasLastNameSuggestions = suggestions.some(s => s.lastName);
+  const hasCompanySuggestions  = suggestions.some(s => s.company);
 
   const filtered = contacts.filter(c => {
     const q = search.toLowerCase();
@@ -640,17 +696,17 @@ function ContactsTab() {
 
   return (
     <div className="space-y-3">
-      {/* Populate-companies review dialog */}
+      {/* Populate dialog — companies + surnames */}
       <Dialog open={populateOpen} onOpenChange={v => { if (!v) setPopulateOpen(false); }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+        <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Building2 className="w-4 h-4" />
-              Populate Company Names — {suggestions.filter(s => !s.skip).length} to save
+              <Sparkles className="w-4 h-4 text-amber-500" />
+              Auto-fill Contacts — {suggestions.filter(s => !s.skip).length} to save
             </DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground -mt-1">
-            Names derived from email domains. Edit any row or tick "Skip" to exclude. Only contacts with no existing company are listed.
+            Company from email domain · Last name from email local part. Edit any field or tick Skip. Clears if you blank the field.
           </p>
           <div className="overflow-y-auto flex-1 border rounded-lg">
             <table className="w-full text-xs">
@@ -658,8 +714,9 @@ function ContactsTab() {
                 <tr>
                   <th className="text-left px-3 py-2 font-semibold">Contact</th>
                   <th className="text-left px-3 py-2 font-semibold">Email</th>
-                  <th className="text-left px-3 py-2 font-semibold w-44">Company name</th>
-                  <th className="text-center px-3 py-2 font-semibold w-16">Skip</th>
+                  {hasCompanySuggestions  && <th className="text-left px-3 py-2 font-semibold w-40">Company</th>}
+                  {hasLastNameSuggestions && <th className="text-left px-3 py-2 font-semibold w-36">Last name</th>}
+                  <th className="text-center px-3 py-2 font-semibold w-14">Skip</th>
                 </tr>
               </thead>
               <tbody>
@@ -668,15 +725,29 @@ function ContactsTab() {
                     <td className="px-3 py-1.5 font-medium whitespace-nowrap">
                       {[s.contact.first_name, s.contact.last_name].filter(Boolean).join(" ") || "—"}
                     </td>
-                    <td className="px-3 py-1.5 text-muted-foreground truncate max-w-[200px]">{s.contact.email}</td>
-                    <td className="px-3 py-1">
-                      <input
-                        value={s.company}
-                        disabled={s.skip}
-                        onChange={e => setSuggestions(prev => prev.map((x, j) => j === i ? { ...x, company: e.target.value } : x))}
-                        className="w-full h-7 border rounded px-2 text-xs bg-background disabled:bg-muted/30 disabled:cursor-not-allowed"
-                      />
-                    </td>
+                    <td className="px-3 py-1.5 text-muted-foreground truncate max-w-[180px]" title={s.contact.email}>{s.contact.email}</td>
+                    {hasCompanySuggestions && (
+                      <td className="px-3 py-1">
+                        <input
+                          value={s.company}
+                          disabled={s.skip}
+                          placeholder={s.company ? "" : "—"}
+                          onChange={e => setSuggestions(prev => prev.map((x, j) => j === i ? { ...x, company: e.target.value } : x))}
+                          className="w-full h-7 border rounded px-2 text-xs bg-background disabled:bg-muted/30 disabled:cursor-not-allowed"
+                        />
+                      </td>
+                    )}
+                    {hasLastNameSuggestions && (
+                      <td className="px-3 py-1">
+                        <input
+                          value={s.lastName}
+                          disabled={s.skip}
+                          placeholder={s.lastName ? "" : "—"}
+                          onChange={e => setSuggestions(prev => prev.map((x, j) => j === i ? { ...x, lastName: e.target.value } : x))}
+                          className="w-full h-7 border rounded px-2 text-xs bg-background disabled:bg-muted/30 disabled:cursor-not-allowed"
+                        />
+                      </td>
+                    )}
                     <td className="px-3 py-1.5 text-center">
                       <input
                         type="checkbox"
@@ -696,8 +767,8 @@ function ContactsTab() {
             </span>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => setPopulateOpen(false)} disabled={saving}>Cancel</Button>
-              <Button size="sm" onClick={savePopulate} disabled={saving || !suggestions.filter(s => !s.skip).length}>
-                {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Building2 className="w-3.5 h-3.5 mr-1.5" />}
+              <Button size="sm" onClick={savePopulate} disabled={saving || !suggestions.filter(s => !s.skip && (s.company.trim() || s.lastName.trim())).length}>
+                {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5 text-amber-500" />}
                 {saving ? "Saving…" : `Save ${suggestions.filter(s => !s.skip).length}`}
               </Button>
             </div>
@@ -715,12 +786,14 @@ function ContactsTab() {
             <Button
               size="sm" variant="outline"
               onClick={openPopulate}
-              disabled={loading || noCompanyCount === 0}
+              disabled={loading || populateCount === 0}
               className="h-7 text-xs"
-              title={noCompanyCount === 0 ? "All contacts already have a company or use generic email providers" : `${noCompanyCount} contacts without company can be filled from email domain`}
+              title={populateCount === 0
+                ? "All contacts already have company and full name or use generic email providers"
+                : `${populateCount} contacts can be auto-filled from email`}
             >
               <Sparkles className="w-3.5 h-3.5 mr-1.5 text-amber-500" />
-              Populate companies{noCompanyCount > 0 ? ` (${noCompanyCount})` : ""}
+              Auto-fill{populateCount > 0 ? ` (${populateCount})` : ""}
             </Button>
           )}
           <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>

@@ -4883,6 +4883,41 @@ RULES:
     }
   });
 
+  // Patch locally-managed fields on a hubspot_contact row (company, last_name, first_name).
+  // Never writes back to HubSpot — only updates the local DB copy.
+  app.put("/api/hubspot/contacts/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const { company, last_name, first_name } = (req.body ?? {}) as any;
+      if (company === undefined && last_name === undefined && first_name === undefined) {
+        res.status(400).json({ error: "Nothing to update" });
+        return;
+      }
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const now = new Date().toISOString();
+      // Build update dynamically — only touch provided fields
+      if (company !== undefined && last_name !== undefined && first_name !== undefined) {
+        await db.execute(sql`UPDATE hubspot_contacts SET company=${company}, last_name=${last_name}, first_name=${first_name}, updated_at=${now} WHERE id=${id}`);
+      } else if (company !== undefined && last_name !== undefined) {
+        await db.execute(sql`UPDATE hubspot_contacts SET company=${company}, last_name=${last_name}, updated_at=${now} WHERE id=${id}`);
+      } else if (company !== undefined && first_name !== undefined) {
+        await db.execute(sql`UPDATE hubspot_contacts SET company=${company}, first_name=${first_name}, updated_at=${now} WHERE id=${id}`);
+      } else if (last_name !== undefined && first_name !== undefined) {
+        await db.execute(sql`UPDATE hubspot_contacts SET last_name=${last_name}, first_name=${first_name}, updated_at=${now} WHERE id=${id}`);
+      } else if (company !== undefined) {
+        await db.execute(sql`UPDATE hubspot_contacts SET company=${company}, updated_at=${now} WHERE id=${id}`);
+      } else if (last_name !== undefined) {
+        await db.execute(sql`UPDATE hubspot_contacts SET last_name=${last_name}, updated_at=${now} WHERE id=${id}`);
+      } else {
+        await db.execute(sql`UPDATE hubspot_contacts SET first_name=${first_name}, updated_at=${now} WHERE id=${id}`);
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/hubspot/contacts/sync", requireAuth, async (_req, res) => {
     const token = process.env.HUBSPOT_TOKEN ?? "";
     if (!token) {
