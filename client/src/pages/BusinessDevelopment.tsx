@@ -953,7 +953,6 @@ function ContactsTab() {
               Auto-fill{populateCount > 0 ? ` (${populateCount})` : ""}
             </Button>
           )}
-          <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>
           {lastSync && (
             <span className="text-[11px] text-emerald-700">· {lastSync.inserted} new</span>
           )}
