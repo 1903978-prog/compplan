@@ -1450,6 +1450,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/salary-history", requireAuth, async (req, res) => {
     const entry = await storage.createSalaryHistoryEntry(req.body);
+    // Sync employee current fields if this is the most recent salary entry
+    try {
+      const allHistory = await storage.getSalaryHistory(entry.employee_id);
+      const sorted = allHistory.sort((a, b) => b.effective_date.localeCompare(a.effective_date));
+      const latest = sorted[0];
+      if (latest && latest.id === entry.id) {
+        const patch: Record<string, unknown> = {
+          current_gross_fixed_year: entry.gross_fixed_year,
+        };
+        if (entry.role_code) patch.current_role_code = entry.role_code;
+        if (entry.bonus_pct != null) patch.current_bonus_pct = entry.bonus_pct;
+        await storage.updateEmployee(entry.employee_id, patch as any);
+      }
+    } catch (e) {
+      // Non-fatal — history entry is saved, employee sync failed
+      console.error("salary-history sync to employee failed:", e);
+    }
     res.status(201).json(entry);
   });
 
