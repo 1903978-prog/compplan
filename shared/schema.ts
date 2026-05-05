@@ -160,10 +160,36 @@ export interface EmployeeCalculationResult {
 }
 
 // ─── HR event log (complaints, concerns, absence patterns, praise) ───────────
+export type HrEventType =
+  // ── High-risk signals (weight 4-5) ───────────────────────────────────────
+  | "email_to_all_team"          // mass email / farewell-style blast       +4
+  | "job_interview_signal"       // direct evidence of interviewing         +5
+  | "resignation_risk_mention"   // explicitly mentioned leaving            +5
+  // ── Medium-risk signals (weight 2-3) ────────────────────────────────────
+  | "linkedin_update"            // updated profile / added new role        +3
+  | "salary_inquiry"             // asked about market rates                +3
+  | "many_small_absences"        // ≥3 short absences in 30 days            +3
+  | "hours_reduction_request"    // asked to work fewer hours               +3
+  | "complaint"                  // formal or informal complaint            +2
+  | "absence_concern"            // unexplained absence                     +2
+  | "performance_concern"        // performance below expectations          +2
+  | "reduced_engagement"         // noticeably less active in meetings      +2
+  | "team_conflict"              // conflict with colleagues                +2
+  | "missed_deadline"            // project deadline missed                 +2
+  | "behavior_change"            // sudden attitude or mood shift           +2
+  // ── Protective signals (negative weight) ────────────────────────────────
+  | "praise"                     // received praise / recognition           -2
+  | "promotion_signal"           // promoted or strong promotion signal     -4
+  | "salary_increase_happy"      // raise accepted + positive reaction      -3
+  | "new_role_excitement"        // visibly enthusiastic about new project  -2
+  | "team_recognition"           // public team shout-out                   -1
+  // ── Catch-all ────────────────────────────────────────────────────────────
+  | "other";                     // manual weight via severity only
+
 export interface HrEvent {
   id: string;                 // uuid-like
   date: string;               // YYYY-MM-DD
-  type: "complaint" | "absence_concern" | "performance_concern" | "praise" | "other";
+  type: HrEventType;
   note: string;
   severity: "low" | "medium" | "high";
   logged_by?: string;
