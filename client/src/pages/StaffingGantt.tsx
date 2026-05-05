@@ -871,7 +871,7 @@ export default function StaffingGantt() {
               <Select value={assignKind} onValueChange={(v) => setAssignKind(v as "manager" | "team")}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="manager">Manager (EM) — replaces current manager</SelectItem>
+                  <SelectItem value="manager">Manager — replaces current manager</SelectItem>
                   <SelectItem value="team">Team member — added to team</SelectItem>
                 </SelectContent>
               </Select>
@@ -879,12 +879,28 @@ export default function StaffingGantt() {
 
             {assignKind === "team" && (
               <div className="space-y-1">
-                <Label className="text-xs">Team-member role label</Label>
+                <Label className="text-xs">Role label</Label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {["Associate", "Senior Associate", "Partner", "Manager", "BA"].map(opt => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setAssignRoleLabel(opt)}
+                      className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+                        assignRoleLabel === opt
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border hover:bg-muted"
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
                 <Input
                   value={assignRoleLabel}
                   onChange={(e) => setAssignRoleLabel(e.target.value)}
-                  placeholder="e.g. Partner, Senior, BA"
-                  className="h-9 text-sm"
+                  placeholder="or type custom role…"
+                  className="h-8 text-xs mt-1"
                 />
               </div>
             )}
