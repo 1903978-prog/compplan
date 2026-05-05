@@ -53,7 +53,9 @@ async function main() {
   // retrying after short delays lets it come online before we give up.
   (async () => {
     const { runMigrations } = await import("./migrations");
-    const retryDelays = [0, 5000, 15000, 30000];
+    // Neon free tier can take 50+ seconds to wake from suspension.
+    // Retry window: 0 → 15s → 45s → 105s → 225s (≈ 4 min total).
+    const retryDelays = [0, 15000, 30000, 60000, 120000];
     for (let i = 0; i < retryDelays.length; i++) {
       if (retryDelays[i]) await new Promise<void>(r => setTimeout(r, retryDelays[i]));
       try {
