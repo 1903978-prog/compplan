@@ -48,6 +48,15 @@ async function main() {
     console.error("Seed error:", err);
   }
 
+  // Idempotent startup migrations (CREATE TABLE IF NOT EXISTS, etc.)
+  try {
+    const { runMigrations } = await import("./migrations");
+    await runMigrations();
+    console.log("[startup] Migrations OK");
+  } catch (err) {
+    console.error("[startup] Migration error:", err);
+  }
+
   // Strip retired employees from all proposals (idempotent, runs every boot).
   // Fixes stale assignments from before cascade code was deployed (FIX-1).
   try {
