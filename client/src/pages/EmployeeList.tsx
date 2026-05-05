@@ -1200,10 +1200,12 @@ Thanks,`;
       />
 
       {selectedEmpId && employees.find(e => e.id === selectedEmpId) ? (
-        <EmployeeDetailPage
-          employee={employees.find(e => e.id === selectedEmpId)!}
-          onBack={() => setSelectedEmpId(null)}
-        />
+        <EmpDetailErrorBoundary onBack={() => setSelectedEmpId(null)}>
+          <EmployeeDetailPage
+            employee={employees.find(e => e.id === selectedEmpId)!}
+            onBack={() => setSelectedEmpId(null)}
+          />
+        </EmpDetailErrorBoundary>
       ) : (
       <Card className="border-border">
         <div className="p-3 border-b flex items-center gap-4 flex-wrap">
@@ -2003,6 +2005,26 @@ Thanks,`;
       />
     </div>
   );
+}
+
+class EmpDetailErrorBoundary extends React.Component<
+  { onBack: () => void; children: React.ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: any) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-6 rounded border border-destructive bg-destructive/10 text-destructive space-y-2">
+          <p className="font-semibold">Something went wrong loading this employee.</p>
+          <p className="text-xs font-mono">{this.state.error.message}</p>
+          <button className="text-xs underline" onClick={this.props.onBack}>← Back to list</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function EmployeeDetailPage({ employee, onBack }: { employee: EmployeeInput; onBack: () => void }) {
