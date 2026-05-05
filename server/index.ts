@@ -48,14 +48,28 @@ async function main() {
     console.error("Seed error:", err);
   }
 
-  // Idempotent startup migrations (CREATE TABLE IF NOT EXISTS, etc.)
-  try {
+  // Idempotent startup migrations — fire-and-forget with retries. Neon free
+  // tier returns "password authentication failed" while compute wakes up;
+  // retrying after short delays lets it come online before we give up.
+  (async () => {
     const { runMigrations } = await import("./migrations");
-    await runMigrations();
-    console.log("[startup] Migrations OK");
-  } catch (err) {
-    console.error("[startup] Migration error:", err);
-  }
+    const retryDelays = [0, 5000, 15000, 30000];
+    for (let i = 0; i < retryDelays.length; i++) {
+      if (retryDelays[i]) await new Promise<void>(r => setTimeout(r, retryDelays[i]));
+      try {
+        await runMigrations();
+        console.log("[startup] Migrations OK");
+        return;
+      } catch (err) {
+        const nextDelay = retryDelays[i + 1];
+        if (nextDelay !== undefined) {
+          console.warn(`[startup] Migration attempt ${i + 1} failed, retrying in ${nextDelay / 1000}s: ${(err as Error).message}`);
+        } else {
+          console.error("[startup] Migration error (all retries exhausted):", err);
+        }
+      }
+    }
+  })();
 
   // Strip retired employees from all proposals (idempotent, runs every boot).
   // Fixes stale assignments from before cascade code was deployed (FIX-1).
