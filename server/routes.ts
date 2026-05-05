@@ -2,19 +2,20 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { requireAuth } from "./auth";
 import { storage, trashAndDelete, listTrash, restoreTrash, purgeTrashItem, TrashRestoreConflictError } from "./storage";
-import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, agentKpis, kmSessions, kmOutputs, invoiceSnapshots, bdDeals, employees, pricingCases } from "@shared/schema";
+import { insertEmployeeSchema, insertPricingCaseSchema, orgAgents, agentProposals, agentKnowledge, briefRuns, briefEvents, assetTypes, assets, okrNodeData, agents as agentsTable, objectives as objectivesTable, keyResults as keyResultsTable, ideas as ideasTable, tasks as tasksTable, executiveLog, conflicts as conflictsTable, coworkSkills, presidentRequests, type BenchmarkRow, aiosCycles, aiosExecLogs, aiosDeliverables, bossConsolidations, ceoBriefs, coworkOutputs, coworkLetters, microAiLog, aiResponseCache, pricingRules, agentKpis, kmSessions, kmOutputs, invoiceSnapshots, bdDeals, employees, pricingCases } from "@shared/schema";
 import { createAiosCycle, runDailyAiosCycle, pauseAiosCycle, resumeAiosCycle, generateCoworkPrompt as genCoworkPrompt, storeCoworkOutput, subscribeToCycle, unsubscribeFromCycle, runRound2, runSingleAgent } from "./aiosService";
 import { runKmCycle, getKmSessions, getKmSessionDetail } from "./kmService";
 import { runCeoBrief } from "./ceoBriefRunner";
 import { listTemplates, loadTemplate, loadTemplateRaw, render as renderTemplate, saveTemplate } from "./microAI/templateEngine";
 import { ceoBriefRuns, ceoBriefRunDecisions } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, gte, count, sum } from "drizzle-orm";
 import { renderSlideFromSpec } from "@shared/slideTemplateRenderer";
 import { z } from "zod";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import { MODULE_REGISTRY, pruneExpiredCache, useLocalAiFirst } from "./microAI/index.js";
 
 function safeInt(val: string): number {
   const n = parseInt(val, 10);
@@ -572,9 +573,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const event_type = String(b.event_type ?? "").trim().slice(0, 30);
       const summary = String(b.summary ?? "").trim().slice(0, 500);
       if (!role_key || !event_type || !summary) { res.status(400).json({ message: "role_key + event_type + summary required" }); return; }
+
+      // D17: extract commitments from the event summary (fire-and-forget enrichment).
+      // D18: classify the reply if this is an inbound_reply event.
+      // Both run in parallel, best-effort — never block the insert.
+      const { extractCommitments, classifyReply, useLocalAiFirst } = await import("./microAI/index.js");
+      let enrichedPayload = (b.payload && typeof b.payload === "object") ? { ...b.payload } : {} as Record<string, unknown>;
+      if (useLocalAiFirst()) {
+        const [commitments, replyClass] = await Promise.all([
+          extractCommitments(summary).catch(() => [] as any[]),
+          event_type === "inbound_reply"
+            ? classifyReply(summary).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        if (commitments.length > 0) enrichedPayload.commitments = commitments;
+        if (replyClass)             enrichedPayload.reply_classification = replyClass;
+      }
+
       const inserted = await db.insert(briefEvents).values({
         run_id, role_key, event_type, summary,
-        payload: (b.payload && typeof b.payload === "object") ? b.payload : null,
+        payload: Object.keys(enrichedPayload).length > 0 ? enrichedPayload : null,
         created_at: new Date().toISOString(),
       } as any).returning();
       res.status(201).json(inserted[0]);
@@ -586,8 +604,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // reads these on every run before producing a brief or decision.
   app.get("/api/agent-knowledge", requireAuth, async (req, res) => {
     try {
-      const role = req.query.role_key as string | undefined;
-      const status = (req.query.status as string | undefined) ?? "active";
+      const role   = req.query.role_key as string | undefined;
+      const status = (req.query.status  as string | undefined) ?? "active";
+      const searchQ = (req.query.q as string | undefined)?.trim() ?? "";
+
       let q = db.select().from(agentKnowledge).$dynamic();
       if (role && status === "active") {
         q = q.where(and(eq(agentKnowledge.role_key, role), eq(agentKnowledge.status, "active")));
@@ -597,6 +617,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         q = q.where(eq(agentKnowledge.status, status));
       }
       const rows = await q.orderBy(desc(agentKnowledge.created_at));
+
+      // A1: semantic re-rank when ?q= is provided and USE_LOCAL_AI_FIRST is on.
+      // Embed the query, embed each knowledge row's content (via embedCached),
+      // sort descending by cosine similarity, return top 20.
+      if (searchQ && rows.length > 0) {
+        try {
+          const { embedCached, cosineSimilarity, useLocalAiFirst } = await import("./microAI/index.js");
+          if (useLocalAiFirst()) {
+            const queryVec = await embedCached(searchQ);
+            const scored = await Promise.all(rows.map(async r => {
+              try {
+                const vec = await embedCached((r.content ?? "").slice(0, 500));
+                return { row: r, score: cosineSimilarity(queryVec, vec) };
+              } catch { return { row: r, score: 0 }; }
+            }));
+            scored.sort((a, b) => b.score - a.score);
+            return res.json(scored.slice(0, 20).map(s => ({ ...s.row, _similarity: s.score })));
+          }
+        } catch { /* embedder unavailable — return unsorted rows */ }
+      }
+
       res.json(rows);
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
@@ -609,12 +650,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const role_key = String(b.role_key ?? "").trim();
       const content = String(b.content ?? "").trim().slice(0, 12000);
       if (!role_key || !content) { res.status(400).json({ message: "role_key + content required" }); return; }
+
+      // A3 NER: auto-extract entity tags from content so knowledge is
+      // searchable by people, orgs, dates, and amounts. Best-effort.
+      let autoTags: string[] = Array.isArray(b.tags) ? (b.tags as unknown[]).slice(0, 20).map(String) : [];
+
+      // E22 dedup: embed the incoming content and compare against the last
+      // 50 active entries for this role. Reject (409) if cosine similarity ≥ 0.92.
+      // This prevents the knowledge base from filling up with paraphrased duplicates.
+      try {
+        const { embedCached, cosineSimilarity, extractEntities, useLocalAiFirst } = await import("./microAI/index.js");
+        if (useLocalAiFirst()) {
+          // Run NER + dedup embedding in parallel
+          const [entities, newVec] = await Promise.all([
+            extractEntities(content.slice(0, 2000)).catch(() => ({ people: [], organisations: [], dates: [], amounts: [], places: [] })),
+            embedCached(content.slice(0, 500)),
+          ]);
+
+          // NER tags
+          const nerTags = [
+            ...entities.people.slice(0, 5),
+            ...entities.organisations.slice(0, 5),
+          ].map(t => t.toLowerCase().replace(/\s+/g, "_")).filter(Boolean);
+          autoTags = Array.from(new Set([...autoTags, ...nerTags])).slice(0, 30);
+
+          // Dedup: load recent knowledge for this role and check similarity
+          const existing = await db.select({ id: agentKnowledge.id, content: agentKnowledge.content })
+            .from(agentKnowledge)
+            .where(and(eq(agentKnowledge.role_key, role_key), eq(agentKnowledge.status, "active")))
+            .orderBy(desc(agentKnowledge.created_at))
+            .limit(50);
+
+          for (const ex of existing) {
+            const exVec = await embedCached((ex.content ?? "").slice(0, 500)).catch(() => null);
+            if (!exVec) continue;
+            const sim = cosineSimilarity(newVec, exVec);
+            if (sim >= 0.92) {
+              res.status(409).json({
+                message: "Near-duplicate knowledge entry detected (similarity ≥ 92%). Update the existing entry instead.",
+                duplicate_id: ex.id,
+                similarity: Math.round(sim * 1000) / 1000,
+              });
+              return;
+            }
+          }
+        }
+      } catch (nerErr) {
+        // NER/dedup failure is non-fatal — proceed without enrichment
+        console.warn("[agent-knowledge POST] NER/dedup skipped:", (nerErr as Error).message);
+      }
+
       const row = {
         role_key,
         content,
         title: typeof b.title === "string" ? b.title.slice(0, 200) : null,
         source: ["user", "agent", "web"].includes(String(b.source)) ? String(b.source) : "user",
-        tags: Array.isArray(b.tags) ? (b.tags as unknown[]).slice(0, 20).map(String) : [],
+        tags: autoTags,
         status: "active" as const,
         created_by_role: typeof b.created_by_role === "string" ? b.created_by_role.slice(0, 60) : null,
         created_at: new Date().toISOString(),
@@ -1158,10 +1249,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).end();
   });
 
-  // PATCH /api/employees/:id/retire — mark as former employee (non-destructive)
+  // PATCH /api/employees/:id/retire — mark as former + cascade cleanup in one TX.
+  // Cascade logic lives in storage.retireEmployee (transactional).
   app.patch("/api/employees/:id/retire", requireAuth, async (req, res) => {
     try {
       await storage.retireEmployee(req.params.id);
+      res.status(204).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // PATCH /api/employees/:id/unretire — reinstate a former employee to active.
+  app.patch("/api/employees/:id/unretire", requireAuth, async (req, res) => {
+    try {
+      await storage.unretireEmployee(req.params.id);
       res.status(204).end();
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
@@ -1454,9 +1554,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ): number {
     const rec = caseRow.recommendation;
     if (!rec) return 0;
-    // Stored canonical is the cheap path — use it if present and sensible.
-    const stored = Number(rec.canonical_net_weekly);
-    if (isFinite(stored) && stored > 0) return Math.round(stored);
+    // Always recompute from the saved layer_trace + base_weekly + band +
+    // manual_delta. The stored canonical_net_weekly may lag if the case was
+    // edited in the browser without a Save (auto-save keeps it current, but
+    // recomputing here ensures ensureTbdProposalForFinalCase always reflects
+    // the actual engine output rather than a potentially-stale snapshot).
+    // Stored canonical is the FALLBACK (used only when layer_trace / base are
+    // absent — i.e. very old cases that pre-date the layer_trace migration).
 
     // Live recompute path.
     const trace = Array.isArray(rec.layer_trace) ? rec.layer_trace : [];
@@ -1498,7 +1602,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     running += Number(rec.manual_delta ?? 0);
     const result = Math.round(running);
     if (result > 0) return result;
-    // Last-resort fallback to engine's raw target_weekly.
+    // Fallback 1: stored canonical (present on cases saved after auto-save
+    // landed, or after a manual Save & Finalise).
+    const stored = Number(rec.canonical_net_weekly);
+    if (isFinite(stored) && stored > 0) return Math.round(stored);
+    // Fallback 2: engine's raw target_weekly.
     const tw = Number(rec.target_weekly ?? 0);
     return tw > 0 ? Math.round(tw) : 0;
   }
@@ -2149,10 +2257,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("[read-ai] live transcript fetch failed:", e);
       }
     }
+    const { READ_AI_SEED } = await import("./readAISeed");
+    const meeting = READ_AI_SEED.find((m) => m.id === id);
+    if (meeting?.transcript) {
+      res.json({ source: "seed", transcript: meeting.transcript });
+      return;
+    }
     res.json({
       source: "seed",
       transcript: null,
-      message: "Transcript not cached locally. Ask Claude to refresh the Read.ai seed (pulls full transcript via MCP) or set READ_AI_TOKEN once Read.ai enables static API keys.",
+      message: "Transcript not cached — ask Claude to refresh the Read.ai seed or set READ_AI_TOKEN for live fetch.",
     });
   });
 
@@ -4237,11 +4351,19 @@ RULES:
       const { sql } = await import("drizzle-orm");
 
       const deals: any = await db.execute(sql`SELECT id, client_name, name FROM bd_deals`);
-      const proposals: any = await db.execute(sql`
-        SELECT id, client_name, project_name, revision_letter, weekly_price, total_fee, proposal_date
-        FROM pricing_proposals
-        ORDER BY proposal_date DESC
-      `);
+      let proposals: any;
+      try {
+        proposals = await db.execute(sql`
+          SELECT id, client_name, project_name, revision_letter, weekly_price, total_fee, proposal_date
+          FROM pricing_proposals ORDER BY proposal_date DESC
+        `);
+      } catch {
+        // revision_letter column may not exist yet — fall back without it
+        proposals = await db.execute(sql`
+          SELECT id, client_name, project_name, weekly_price, total_fee, proposal_date
+          FROM pricing_proposals ORDER BY proposal_date DESC
+        `);
+      }
 
       let matched = 0, unmatched = 0;
       const results: { deal: string; proposal: string | null; matched: boolean }[] = [];
@@ -5917,6 +6039,37 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  /**
+   * GET /api/agentic/agents/:id/score?days=7
+   * Returns the B7 6-dimension performance scorecard for one agent.
+   * Pure SQL — zero LLM calls, replaces the CHRO "score this agent" Claude call.
+   */
+  app.get("/api/agentic/agents/:id/score", requireAuth, async (req, res) => {
+    try {
+      const { scoreAgent } = await import("./microAI/index.js");
+      const agentId = safeInt(req.params.id);
+      const days    = Math.min(Number(req.query.days ?? 7), 90);
+      const score   = await scoreAgent(agentId, days);
+      res.json(score);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * GET /api/agentic/agents/scores?days=7
+   * Scorecard for ALL active agents — used by the CHRO overview table.
+   */
+  app.get("/api/agentic/agents/scores", requireAuth, async (req, res) => {
+    try {
+      const { scoreAgent } = await import("./microAI/index.js");
+      const days = Math.min(Number(req.query.days ?? 7), 90);
+      const agents = await db.select({ id: agentsTable.id, name: agentsTable.name, status: agentsTable.status })
+        .from(agentsTable).orderBy(agentsTable.id);
+      const active = agents.filter(a => a.status === "active" || a.status === "working");
+      const scores = await Promise.all(active.map(a => scoreAgent(a.id, days)));
+      res.json(scores.map((s, i) => ({ ...s, name: active[i].name })));
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   app.get("/api/agentic/agents/:id", requireAuth, async (req, res) => {
     try {
       const id = safeInt(req.params.id);
@@ -6256,11 +6409,45 @@ RULES:
     try {
       const b = req.body as Record<string, unknown>;
       if (!b.event_type) { res.status(400).json({ message: "event_type required" }); return; }
+      const eventType = String(b.event_type);
+
+      // D17/D18: enrich inbound_reply events — extract commitments + classify reply.
+      // A2: enrich any event that has a text field with urgency/sentiment classification.
+      // All best-effort, never block the insert.
+      let enrichedPayload: Record<string, unknown> =
+        (b.payload && typeof b.payload === "object") ? { ...(b.payload as object) } : {};
+
+      const { extractCommitments, classifyReply, classify, useLocalAiFirst } = await import("./microAI/index.js");
+      if (useLocalAiFirst()) {
+        const text = typeof enrichedPayload.text === "string" ? enrichedPayload.text
+                   : typeof b.summary   === "string"          ? b.summary
+                   : "";
+        if (text) {
+          const tasks: Promise<void>[] = [];
+          if (eventType === "inbound_reply") {
+            tasks.push(
+              classifyReply(text).then(c => { enrichedPayload.reply_classification = c; }).catch(() => {}),
+              extractCommitments(text).then(cs => { if (cs.length) enrichedPayload.commitments = cs; }).catch(() => {}),
+            );
+          }
+          tasks.push(
+            Promise.all([
+              classify(text, "urgency").catch(() => null),
+              classify(text, "sentiment").catch(() => null),
+            ]).then(([urgency, sentiment]) => {
+              if (urgency)   enrichedPayload.urgency_label   = urgency.label;
+              if (sentiment) enrichedPayload.sentiment_label = sentiment.label;
+            }).catch(() => {}),
+          );
+          await Promise.all(tasks);
+        }
+      }
+
       const row = {
         timestamp: nowIso(),
         agent_id: typeof b.agent_id === "number" ? b.agent_id : null,
-        event_type: String(b.event_type),
-        payload: b.payload ?? null,
+        event_type: eventType,
+        payload: Object.keys(enrichedPayload).length > 0 ? enrichedPayload : (b.payload ?? null),
         created_at: nowIso(),
       };
       const inserted = await db.insert(executiveLog).values(row as any).returning();
@@ -8396,6 +8583,153 @@ RULES:
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 
+  // ── Micro-AI Admin ─────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/admin/micro-ai/stats
+   * Returns per-module telemetry aggregates + overall token savings for the
+   * requested window (default: last 7 days).
+   */
+  app.get("/api/admin/micro-ai/stats", requireAuth, async (req, res) => {
+    try {
+      const days   = Math.min(Number(req.query.days ?? 7), 90);
+      const since  = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+      // Per-module aggregates
+      const rows = await db
+        .select({
+          module_name:           microAiLog.module_name,
+          calls:                 count(microAiLog.id),
+          total_latency_ms:      sum(microAiLog.latency_ms),
+          total_tokens_saved:    sum(microAiLog.saved_tokens_estimate),
+          cache_hits:            sum(microAiLog.hit_cache),
+          claude_fallbacks:      sum(microAiLog.fallback_to_claude),
+        })
+        .from(microAiLog)
+        .where(gte(microAiLog.called_at, since))
+        .groupBy(microAiLog.module_name);
+
+      // Cache table size
+      const [cacheStats] = await db
+        .select({ total_entries: count(aiResponseCache.id) })
+        .from(aiResponseCache);
+
+      // Feature flag state
+      const localAiFirst = useLocalAiFirst();
+
+      // Annotate rows with MODULE_REGISTRY metadata
+      const modules = rows.map(r => {
+        const meta = MODULE_REGISTRY.find(m => m.file.replace(".js", "") === r.module_name);
+        return {
+          ...r,
+          id:          meta?.id,
+          displayName: meta?.name ?? r.module_name,
+          category:    meta?.category,
+          wave:        meta?.wave,
+        };
+      });
+
+      // Overall totals
+      const totalTokensSaved = modules.reduce((s, m) => s + Number(m.total_tokens_saved ?? 0), 0);
+      // Claude Sonnet 4: ~$3/M input tokens
+      const estimatedCostSavedUsd = (totalTokensSaved / 1_000_000) * 3;
+
+      res.json({
+        days,
+        since,
+        localAiFirst,
+        modules,
+        cacheEntries: cacheStats?.total_entries ?? 0,
+        totals: {
+          tokensSaved:          totalTokensSaved,
+          estimatedCostSavedUsd: Math.round(estimatedCostSavedUsd * 100) / 100,
+          totalCalls:           modules.reduce((s, m) => s + Number(m.calls ?? 0), 0),
+          claudeFallbacks:      modules.reduce((s, m) => s + Number(m.claude_fallbacks ?? 0), 0),
+        },
+        registry: MODULE_REGISTRY,
+      });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/admin/micro-ai/cache/prune
+   * Deletes expired rows from ai_response_cache.
+   */
+  app.post("/api/admin/micro-ai/cache/prune", requireAuth, async (req, res) => {
+    try {
+      const deleted = await pruneExpiredCache();
+      res.json({ deleted, message: `Pruned ${deleted} expired cache entries.` });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * GET /api/admin/micro-ai/pricing-rules
+   * Returns all pricing rules (for the admin page table).
+   */
+  app.get("/api/admin/micro-ai/pricing-rules", requireAuth, async (_req, res) => {
+    try {
+      const rules = await db.select().from(pricingRules).orderBy(desc(pricingRules.id));
+      res.json(rules);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * PATCH /api/admin/micro-ai/pricing-rules/:id
+   * Toggle is_active or update fee corridor for a rule.
+   */
+  app.patch("/api/admin/micro-ai/pricing-rules/:id", requireAuth, async (req, res) => {
+    try {
+      const id   = safeInt(req.params.id);
+      const body = req.body as Record<string, unknown>;
+      const allowed: (keyof typeof pricingRules.$inferInsert)[] = [
+        "is_active", "fee_min", "fee_mid", "fee_max", "rationale",
+      ];
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      for (const k of allowed) {
+        if (body[k] !== undefined) patch[k] = body[k];
+      }
+      const updated = await db.update(pricingRules).set(patch as any).where(eq(pricingRules.id, id)).returning();
+      if (updated.length === 0) { res.status(404).json({ message: "Rule not found" }); return; }
+      res.json(updated[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  // ── Micro-AI Utility Endpoints ─────────────────────────────────────────────
+  //
+  //  B8  GET  /api/pricing/fee-suggest    → fee corridor from rules + decision tree
+  //  D17 POST /api/agentic/extract-commitments → who/what/when from free text
+  //  D18 POST /api/agentic/classify-reply       → intent/sentiment/urgency/next-action
+  //  A2  POST /api/agentic/classify-text        → urgency / sentiment / intent labels
+  //
+  //  All are pure local-AI (zero LLM tokens). The client can call them to enrich
+  //  UI state without touching the Anthropic API.
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/pricing/fee-suggest
+   * B8 Pricing Reasoner — returns a fee corridor (min/mid/max EUR/week) driven
+   * by the pricing_rules table and a hardcoded decision tree. Zero LLM tokens.
+   *
+   * Query params (all optional):
+   *   geography   — NL | BE | DE | FR | UK | other  (default NL)
+   *   clientSize  — small | mid | large | enterprise (default mid)
+   *   complexity  — low | medium | high              (default medium)
+   *   peOwned     — "true" | "false"                 (default false)
+   */
+  app.get("/api/pricing/fee-suggest", requireAuth, async (req, res) => {
+    try {
+      const { suggestFee } = await import("./microAI/index.js");
+      const q = req.query as Record<string, string>;
+      const result = await suggestFee({
+        geography:  q.geography  ?? "NL",
+        clientSize: q.clientSize ?? "mid",
+        complexity: q.complexity ?? "medium",
+        peOwned:    q.peOwned === "true",
+      });
+      res.json(result);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── KM Agent Routes ────────────────────────────────────────────────────────
 
   // POST /api/km/query — run a KM query cycle
@@ -8408,6 +8742,60 @@ RULES:
       }
       const result = await runKmCycle(query.trim());
       res.json(result);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/agentic/extract-commitments
+   * D17 Commitment Extractor — parses free text (email, meeting notes, transcript)
+   * and returns structured commitments: { actor, action, deadline, confidence }.
+   * Body: { text: string }
+   */
+  app.post("/api/agentic/extract-commitments", requireAuth, async (req, res) => {
+    try {
+      const { extractCommitments } = await import("./microAI/index.js");
+      const text = String((req.body as Record<string, unknown>).text ?? "").trim();
+      if (!text) { res.status(400).json({ message: "text required" }); return; }
+      const commitments = await extractCommitments(text);
+      res.json({ commitments, count: commitments.length });
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/agentic/classify-reply
+   * D18 Reply Classifier — classifies an inbound email reply: intent, sentiment,
+   * urgency, next_action. Lexicon-based, no LLM.
+   * Body: { text: string }
+   */
+  app.post("/api/agentic/classify-reply", requireAuth, async (req, res) => {
+    try {
+      const { classifyReply } = await import("./microAI/index.js");
+      const text = String((req.body as Record<string, unknown>).text ?? "").trim();
+      if (!text) { res.status(400).json({ message: "text required" }); return; }
+      const classification = await classifyReply(text);
+      res.json(classification);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  /**
+   * POST /api/agentic/classify-text
+   * A2 Classifier — returns urgency, sentiment, intent, and reply_status labels
+   * for any text. Keyword-lexicon based, zero LLM tokens.
+   * Body: { text: string; labels?: string[] }  (labels = zero-shot hint classes)
+   */
+  app.post("/api/agentic/classify-text", requireAuth, async (req, res) => {
+    try {
+      const { classify } = await import("./microAI/index.js");
+      const b = req.body as Record<string, unknown>;
+      const text   = String(b.text ?? "").trim();
+      const labels = Array.isArray(b.labels) ? (b.labels as unknown[]).map(String) : undefined;
+      if (!text) { res.status(400).json({ message: "text required" }); return; }
+      const [urgency, sentiment, intent] = await Promise.all([
+        classify(text, "urgency",   labels),
+        classify(text, "sentiment", labels),
+        classify(text, "intent",    labels),
+      ]);
+      res.json({ urgency, sentiment, intent });
     } catch (e) { res.status(500).json({ message: (e as Error).message }); }
   });
 

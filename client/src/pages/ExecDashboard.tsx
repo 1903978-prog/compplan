@@ -10,8 +10,11 @@ import {
   Users, UserCheck, Receipt, DollarSign, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle2, Clock, Briefcase,
   ArrowUpRight, Target, Layers, ClipboardList, FlaskConical, CreditCard,
-  Pencil, Save, X, Plus, Trash2,
+  Pencil, Save, X, Plus, Trash2, Info,
 } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 // ─── Executive Dashboard ─────────────────────────────────────────────────
 //
@@ -220,6 +223,49 @@ export default function ExecDashboard() {
   const [loading, setLoading] = useState(!cached); // skip spinner if cache is warm
   const [lastFetch, setLastFetch] = useState<Date | null>(cached?.ts ? new Date(cached.ts) : null);
 
+  // ── Payment round detail popup ─────────────────────────────────────────
+  const [roundDetailIdx, setRoundDetailIdx] = useState<number | null>(null);
+
+  // ── Payment round manual overrides ─────────────────────────────────────
+  // Keyed by local YYYY-MM-DD (e.g. "2026-05-05"). Using local date avoids
+  // the UTC-offset problem where midnight in e.g. UTC+2 shifts toISOString()
+  // to the previous day. Auto-calc applies for any date with no stored
+  // override — so future cycles always start clean.
+  type RoundOverrides = Record<string, { eur?: number | null; usd?: number | null }>;
+  const OVERRIDES_KEY = "compplan_payment_round_overrides";
+  const localDateKey = (d: Date) => {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const [paymentRoundOverrides, setPaymentRoundOverrides] = useState<RoundOverrides>(() => {
+    try {
+      const stored = localStorage.getItem(OVERRIDES_KEY);
+      if (stored) return JSON.parse(stored) as RoundOverrides;
+    } catch { /* ignore */ }
+    // Seed from Payment History (May 2026 initial values). Keys use
+    // localDateKey(new Date(2026,4,5/15)) so they match runtime lookups.
+    const seed: RoundOverrides = {
+      [localDateKey(new Date(2026, 4, 5))]:  { eur: 10200, usd: null },
+      [localDateKey(new Date(2026, 4, 15))]: { eur: 25000, usd: 43000 },
+    };
+    try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(seed)); } catch { /* ignore */ }
+    return seed;
+  });
+  const [overrideEdit, setOverrideEdit] = useState<{ roundIdx: number; currency: "eur" | "usd" } | null>(null);
+
+  const saveOverride = (roundDate: Date, currency: "eur" | "usd", rawInput: string) => {
+    const key = localDateKey(roundDate);
+    const clean = rawInput.trim().replace(/[€$\s]/g, "").replace(/\./g, "").replace(",", ".");
+    const num = clean === "" ? null : Number(clean);
+    const value = num === null || isNaN(num) ? null : num;
+    setPaymentRoundOverrides(prev => {
+      const next: RoundOverrides = { ...prev, [key]: { ...(prev[key] ?? {}), [currency]: value } };
+      try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+    setOverrideEdit(null);
+  };
+
   // ── Inline editing for Ongoing Projects table ──────────────────────────
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
   const [editManager, setEditManager] = useState("");
@@ -396,9 +442,8 @@ export default function ExecDashboard() {
   }, [invoices]);
 
   // ─── Payment rounds (5th and 15th of each month) ─────────────────────
-  // SQ1 = EUR entity, LLC = USD entity.
-  // For each round we show the total outstanding due_amount from open/partial
-  // invoices whose due_date falls on or before that round date.
+  // For each round we show EUR and USD totals from open/partial invoices
+  // whose due_date falls on or before that round date.
   const paymentRounds = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     // Find next 2 round dates (5th and 15th, whichever comes first)
@@ -425,14 +470,14 @@ export default function ExecDashboard() {
         const d = new Date(i.due_date);
         return idx === 0 ? d <= roundDate : d > prevDate && d <= roundDate;
       });
-      const sq1 = due
+      const eur_total = due
         .filter(i => (i.currency ?? "EUR").toUpperCase() === "EUR")
         .reduce((s, i) => s + Number(i.due_amount ?? i.amount ?? 0), 0);
-      const llc = due
+      const usd_total = due
         .filter(i => (i.currency ?? "").toUpperCase() === "USD")
         .reduce((s, i) => s + Number(i.due_amount ?? i.amount ?? 0), 0);
       const label = `${roundDate.getDate() === 5 ? "5th" : "15th"} ${roundDate.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}`;
-      return { date: roundDate, label, sq1_eur: sq1, llc_usd: llc, count: due.length };
+      return { date: roundDate, label, eur_total, usd_total, count: due.length, invoices: due };
     });
   }, [invoices]);
 
@@ -453,9 +498,14 @@ export default function ExecDashboard() {
     return m;
   }, [pricingCases]);
 
+  // NET1/wk: case lookup → total_fee/weeks → weekly_price (last resort only).
+  // total_fee always stores NET1 total; weekly_price may be GROSS1 on older rows.
   const propNet1 = (p: PricingProposal): number => {
     const key = (p.project_name ?? "").trim().toLowerCase();
-    return dashNet1Map.get(key) ?? dashNet1Map.get(key.replace(/[a-z]+$/, "")) ?? p.weekly_price;
+    const fromCase = dashNet1Map.get(key) ?? dashNet1Map.get(key.replace(/[a-z]+$/, ""));
+    if (fromCase) return fromCase;
+    if (p.total_fee && (p.duration_weeks ?? 0) > 0) return Math.round(p.total_fee / p.duration_weeks!);
+    return p.weekly_price;
   };
   const propNet1Total = (p: PricingProposal): number => {
     const wk = propNet1(p);
@@ -859,8 +909,8 @@ export default function ExecDashboard() {
         <Kpi label="Headcount"       value={String(hr.headcount)}      sub={`${hr.birthdays} birthday${hr.birthdays === 1 ? "" : "s"} in 30d`} icon={Users}      tone="blue"    href="/" />
         <Kpi label="Monthly payroll" value={eur(hr.monthlyPayroll)}    sub={`avg ${eur(hr.avgSalary)}`}    icon={DollarSign} tone="slate"   href="/employees" />
         <Kpi label="Active candidates" value={String(hiring.active)}   sub={`${hiring.potential} new potential · ${hiring.hired} hired`} icon={UserCheck} tone="violet" href="/hiring" />
-        <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open invoices`} icon={Receipt}   tone="amber"   href="/invoicing" />
-        <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
+        <Kpi label="AR outstanding"  value={eur(ar.outstanding)}       sub={`${ar.openCount} open · USD→EUR at 0.93`} icon={Receipt}   tone="amber"   href="/invoicing" />
+        <Kpi label="AR overdue"      value={eur(ar.overdue)}           sub={`${ar.overdueCount} invoice${ar.overdueCount === 1 ? "" : "s"} · ${eur(ar.overdue60)} > 60d · USD@0.93`} icon={AlertCircle} tone={ar.overdue > 0 ? "red" : "emerald"} href="/invoicing" />
         <Kpi label="Active projects" value={String(ongoing.count)}     sub={eur(ongoing.totalValue)}       icon={Briefcase}  tone="emerald" href="/bd" />
       </div>
 
@@ -878,31 +928,148 @@ export default function ExecDashboard() {
                   {round.count} invoice{round.count !== 1 ? "s" : ""} due
                 </div>
               </div>
-              <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                <CreditCard className="w-5 h-5 text-blue-600" />
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setRoundDetailIdx(idx)}
+                  className="w-7 h-7 rounded-full bg-blue-100 hover:bg-blue-200 flex items-center justify-center transition-colors"
+                  title="Show invoice breakdown"
+                >
+                  <Info className="w-4 h-4 text-blue-600" />
+                </button>
+                <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center">
+                  <CreditCard className="w-5 h-5 text-blue-600" />
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="bg-white/70 rounded border border-blue-100 p-2.5">
-                <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
-                  SQ1 · EUR
-                </div>
-                <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
-                  {round.sq1_eur > 0 ? `€${Math.round(round.sq1_eur).toLocaleString("it-IT")}` : "—"}
-                </div>
-              </div>
-              <div className="bg-white/70 rounded border border-blue-100 p-2.5">
-                <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide mb-0.5">
-                  LLC · USD
-                </div>
-                <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
-                  {round.llc_usd > 0 ? `$${Math.round(round.llc_usd).toLocaleString("it-IT")}` : "—"}
-                </div>
-              </div>
+              {(["eur", "usd"] as const).map(ccy => {
+                const dateKey = localDateKey(round.date);
+                const ovr = paymentRoundOverrides[dateKey];
+                const autoVal = ccy === "eur" ? round.eur_total : round.usd_total;
+                const overridden = ovr?.[ccy] != null;
+                const displayVal = overridden ? (ovr![ccy] as number) : autoVal;
+                const isEditing = overrideEdit?.roundIdx === idx && overrideEdit?.currency === ccy;
+                const symbol = ccy === "eur" ? "€" : "$";
+                return (
+                  <div
+                    key={ccy}
+                    className={`rounded border p-2.5 cursor-text transition-colors ${overridden ? "bg-amber-50/80 border-amber-300 hover:bg-amber-50" : "bg-white/70 border-blue-100 hover:bg-white/90"}`}
+                    onClick={() => { if (!isEditing) setOverrideEdit({ roundIdx: idx, currency: ccy }); }}
+                    title="Click to override"
+                  >
+                    <div className="flex items-center justify-between mb-0.5">
+                      <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">{ccy.toUpperCase()}</div>
+                      {overridden
+                        ? <span className="text-[8px] text-amber-600 font-bold uppercase tracking-wide cursor-pointer hover:text-red-500" title="Clear manual override" onClick={e => { e.stopPropagation(); saveOverride(round.date, ccy, ""); }}>manual ×</span>
+                        : <Pencil className="w-2.5 h-2.5 text-blue-200 group-hover:text-blue-400" />
+                      }
+                    </div>
+                    {isEditing ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        inputMode="numeric"
+                        className="w-full text-xl font-bold tabular-nums text-blue-900 bg-transparent border-b border-blue-400 outline-none"
+                        defaultValue={displayVal > 0 ? String(Math.round(displayVal)) : ""}
+                        placeholder="0"
+                        onBlur={e => saveOverride(round.date, ccy, e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                          if (e.key === "Escape") setOverrideEdit(null);
+                        }}
+                      />
+                    ) : (
+                      <div className="text-xl font-bold tabular-nums text-blue-900" data-privacy="blur">
+                        {displayVal > 0 ? `${symbol}${Math.round(displayVal).toLocaleString("it-IT")}` : "—"}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </Card>
         ))}
       </div>
+
+      {/* ── Payment Round detail popup ────────────────────────────────── */}
+      {roundDetailIdx !== null && paymentRounds[roundDetailIdx] && (() => {
+        const round = paymentRounds[roundDetailIdx];
+        return (
+          <Dialog open onOpenChange={() => setRoundDetailIdx(null)}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>
+                  Payment Round {roundDetailIdx + 1} — {round.label}
+                </DialogTitle>
+              </DialogHeader>
+              <p className="text-[12px] text-muted-foreground -mt-1 mb-3">
+                All open/partial invoices due on or before this payment date.
+                {roundDetailIdx > 0 && " (Excludes invoices already in Round 1.)"}
+              </p>
+              {round.invoices.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No invoices due for this round.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                  {round.invoices.map(inv => {
+                    const amt = Number(inv.due_amount ?? inv.amount ?? 0);
+                    const currency = (inv.currency ?? "EUR").toUpperCase();
+                    const symbol = currency === "USD" ? "$" : "€";
+                    return (
+                      <div key={inv.id} className="flex items-center justify-between gap-3 bg-muted/40 rounded px-3 py-2 text-sm">
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium truncate block">{inv.client?.name ?? "—"}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            #{inv.number}
+                            {inv.due_date ? ` · due ${new Date(inv.due_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}
+                            {" · "}<span className="capitalize">{inv.state}</span>
+                          </span>
+                        </div>
+                        <div className="font-semibold tabular-nums shrink-0" data-privacy="blur">
+                          {symbol}{Math.round(amt).toLocaleString("it-IT")} <span className="text-[10px] font-normal text-muted-foreground">{currency}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {(() => {
+                const dateKey = localDateKey(round.date);
+                const ovr = paymentRoundOverrides[dateKey];
+                const dispEur = ovr?.eur != null ? ovr.eur : round.eur_total;
+                const dispUsd = ovr?.usd != null ? ovr.usd : round.usd_total;
+                const eurOverridden = ovr?.eur != null;
+                const usdOverridden = ovr?.usd != null;
+                return (
+                  <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2 text-sm">
+                    {(dispEur > 0 || eurOverridden) && (
+                      <div className={`rounded p-2 text-center ${eurOverridden ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
+                        <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">
+                          EUR total{eurOverridden && " ✎"}
+                        </div>
+                        <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
+                          €{Math.round(dispEur).toLocaleString("it-IT")}
+                        </div>
+                        {eurOverridden && <div className="text-[9px] text-amber-500 mt-0.5">manual override · auto: €{Math.round(round.eur_total).toLocaleString("it-IT")}</div>}
+                      </div>
+                    )}
+                    {(dispUsd > 0 || usdOverridden) && (
+                      <div className={`rounded p-2 text-center ${usdOverridden ? "bg-amber-50 border border-amber-200" : "bg-blue-50"}`}>
+                        <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide">
+                          USD total{usdOverridden && " ✎"}
+                        </div>
+                        <div className="font-bold text-blue-900 tabular-nums" data-privacy="blur">
+                          ${Math.round(dispUsd).toLocaleString("it-IT")}
+                        </div>
+                        {usdOverridden && <div className="text-[9px] text-amber-500 mt-0.5">manual override · auto: ${Math.round(round.usd_total).toLocaleString("it-IT")}</div>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {/* ── Ongoing Projects (proposals with end_date in the future) ─── */}
       {ongoing.list.length > 0 && (

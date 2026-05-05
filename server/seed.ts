@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { roleGridEntries, appSettings, employees } from "@shared/schema";
+import { roleGridEntries, appSettings, employees, pricingRules } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { SEED_PROPOSALS } from "./seedProposals";
@@ -4017,5 +4017,66 @@ Ensure Eendigo has the right talent available at the right time. Monitor staffin
       console.log(`[seed] Seeded ${rows.length} agent section map entries.`);
     }
   }
+  }
+
+  // ── Pricing Rules seed (B8 — Pricing Reasoner) ─────────────────────────
+  // Eendigo's fee corridors by geography × client size × complexity.
+  // Idempotent: only inserts rules that don't already exist by rule_name.
+  await seedPricingRules();
+}
+
+const PRICING_RULE_SEEDS: Array<{
+  rule_name:   string;
+  geography:   string;
+  client_size: string;
+  complexity:  string;
+  pe_owned:    number;
+  fee_min:     number;
+  fee_mid:     number;
+  fee_max:     number;
+  rationale:   string;
+}> = [
+  // NL baseline
+  { rule_name: "NL_small_low",      geography: "NL", client_size: "small",      complexity: "low",    pe_owned: 0, fee_min: 3_000,  fee_mid: 5_000,  fee_max: 8_000,  rationale: "NL small client, low complexity — baseline" },
+  { rule_name: "NL_small_medium",   geography: "NL", client_size: "small",      complexity: "medium", pe_owned: 0, fee_min: 4_000,  fee_mid: 6_500,  fee_max: 10_000, rationale: "NL small client, medium complexity" },
+  { rule_name: "NL_small_high",     geography: "NL", client_size: "small",      complexity: "high",   pe_owned: 0, fee_min: 5_000,  fee_mid: 8_000,  fee_max: 12_000, rationale: "NL small client, high complexity" },
+  { rule_name: "NL_mid_low",        geography: "NL", client_size: "mid",        complexity: "low",    pe_owned: 0, fee_min: 6_000,  fee_mid: 9_000,  fee_max: 14_000, rationale: "NL mid-market, low complexity" },
+  { rule_name: "NL_mid_medium",     geography: "NL", client_size: "mid",        complexity: "medium", pe_owned: 0, fee_min: 8_000,  fee_mid: 12_000, fee_max: 18_000, rationale: "NL mid-market, medium complexity — core segment" },
+  { rule_name: "NL_mid_high",       geography: "NL", client_size: "mid",        complexity: "high",   pe_owned: 0, fee_min: 10_000, fee_mid: 15_000, fee_max: 22_000, rationale: "NL mid-market, high complexity" },
+  { rule_name: "NL_large_low",      geography: "NL", client_size: "large",      complexity: "low",    pe_owned: 0, fee_min: 10_000, fee_mid: 15_000, fee_max: 22_000, rationale: "NL large client, low complexity" },
+  { rule_name: "NL_large_medium",   geography: "NL", client_size: "large",      complexity: "medium", pe_owned: 0, fee_min: 13_000, fee_mid: 18_000, fee_max: 26_000, rationale: "NL large client, medium complexity" },
+  { rule_name: "NL_large_high",     geography: "NL", client_size: "large",      complexity: "high",   pe_owned: 0, fee_min: 16_000, fee_mid: 22_000, fee_max: 30_000, rationale: "NL large client, high complexity" },
+  { rule_name: "NL_enterprise_low", geography: "NL", client_size: "enterprise", complexity: "low",    pe_owned: 0, fee_min: 15_000, fee_mid: 20_000, fee_max: 28_000, rationale: "NL enterprise, low complexity" },
+  { rule_name: "NL_enterprise_med", geography: "NL", client_size: "enterprise", complexity: "medium", pe_owned: 0, fee_min: 18_000, fee_mid: 25_000, fee_max: 35_000, rationale: "NL enterprise, medium complexity" },
+  { rule_name: "NL_enterprise_high",geography: "NL", client_size: "enterprise", complexity: "high",   pe_owned: 0, fee_min: 22_000, fee_mid: 30_000, fee_max: 40_000, rationale: "NL enterprise, high complexity" },
+  // BE (−5% vs NL)
+  { rule_name: "BE_mid_medium",     geography: "BE", client_size: "mid",        complexity: "medium", pe_owned: 0, fee_min: 7_600,  fee_mid: 11_400, fee_max: 17_100, rationale: "BE mid-market, medium complexity (−5% geo factor)" },
+  { rule_name: "BE_large_medium",   geography: "BE", client_size: "large",      complexity: "medium", pe_owned: 0, fee_min: 12_350, fee_mid: 17_100, fee_max: 24_700, rationale: "BE large client, medium complexity (−5%)" },
+  // UK (+15%)
+  { rule_name: "UK_mid_medium",     geography: "UK", client_size: "mid",        complexity: "medium", pe_owned: 0, fee_min: 9_200,  fee_mid: 13_800, fee_max: 20_700, rationale: "UK mid-market, medium complexity (+15% geo factor)" },
+  { rule_name: "UK_large_medium",   geography: "UK", client_size: "large",      complexity: "medium", pe_owned: 0, fee_min: 14_950, fee_mid: 20_700, fee_max: 29_900, rationale: "UK large client, medium complexity (+15%)" },
+  // DE (+5%)
+  { rule_name: "DE_mid_medium",     geography: "DE", client_size: "mid",        complexity: "medium", pe_owned: 0, fee_min: 8_400,  fee_mid: 12_600, fee_max: 18_900, rationale: "DE mid-market, medium complexity (+5% geo factor)" },
+  // PE-owned premiums (NL, +20%)
+  { rule_name: "NL_mid_med_PE",     geography: "NL", client_size: "mid",        complexity: "medium", pe_owned: 1, fee_min: 9_600,  fee_mid: 14_400, fee_max: 21_600, rationale: "NL mid-market, medium complexity, PE-owned sponsor (+20%)" },
+  { rule_name: "NL_large_high_PE",  geography: "NL", client_size: "large",      complexity: "high",   pe_owned: 1, fee_min: 19_200, fee_mid: 26_400, fee_max: 36_000, rationale: "NL large client, high complexity, PE-owned (+20%)" },
+  { rule_name: "UK_large_high_PE",  geography: "UK", client_size: "large",      complexity: "high",   pe_owned: 1, fee_min: 22_080, fee_mid: 30_360, fee_max: 41_400, rationale: "UK large, high complexity, PE-owned (+15% geo +20% PE)" },
+];
+
+async function seedPricingRules(): Promise<void> {
+  const now = new Date().toISOString();
+  for (const rule of PRICING_RULE_SEEDS) {
+    await db.execute(sql`
+      INSERT INTO pricing_rules
+        (rule_name, geography, client_size, complexity, pe_owned,
+         fee_min, fee_mid, fee_max, rationale, is_active, created_at, updated_at)
+      SELECT
+        ${rule.rule_name}, ${rule.geography}, ${rule.client_size}, ${rule.complexity},
+        ${rule.pe_owned}, ${rule.fee_min}, ${rule.fee_mid}, ${rule.fee_max},
+        ${rule.rationale}, 1, ${now}, ${now}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM pricing_rules WHERE rule_name = ${rule.rule_name}
+      )
+    `);
   }
 }

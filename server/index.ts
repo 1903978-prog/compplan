@@ -7,6 +7,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { setupAuth } from "./auth";
 import { seedDatabase } from "./seed";
+import { cleanupRetiredEmployeeAssignments } from "./storage";
 import path from "path";
 import fs from "fs";
 
@@ -45,6 +46,15 @@ async function main() {
     await seedDatabase();
   } catch (err) {
     console.error("Seed error:", err);
+  }
+
+  // Strip retired employees from all proposals (idempotent, runs every boot).
+  // Fixes stale assignments from before cascade code was deployed (FIX-1).
+  try {
+    await cleanupRetiredEmployeeAssignments();
+    console.log("[startup] Retired employee proposal assignments cleaned up");
+  } catch (err) {
+    console.error("[startup] Retired employee cleanup failed:", err);
   }
 
   const server = await registerRoutes(app);

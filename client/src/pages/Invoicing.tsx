@@ -603,14 +603,14 @@ export default function Invoicing() {
         const d = new Date(i.due_date);
         return idx === 0 ? d <= roundDate : d > prevDate && d <= roundDate;
       });
-      const sq1 = due
+      const eur_total = due
         .filter(i => (i.currency ?? "EUR").toUpperCase() === "EUR")
         .reduce((s, i) => s + Number(i.due_amount ?? 0), 0);
-      const llc = due
+      const usd_total = due
         .filter(i => (i.currency ?? "").toUpperCase() === "USD")
         .reduce((s, i) => s + Number(i.due_amount ?? 0), 0);
       const label = `${roundDate.getDate() === 5 ? "5th" : "15th"} ${roundDate.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}`;
-      return { date: roundDate, label, sq1_eur: sq1, llc_usd: llc, count: due.length };
+      return { date: roundDate, label, eur_total, usd_total, count: due.length };
     });
   }, [invoices]);
 
@@ -1076,15 +1076,15 @@ export default function Invoicing() {
                   <div className="text-base font-bold text-blue-800 mb-3">{round.label}</div>
                   <div className="space-y-2">
                     <div>
-                      <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">SQ1 · EUR</div>
+                      <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">EUR</div>
                       <div className="text-lg font-bold tabular-nums text-blue-900" data-privacy="blur">
-                        {round.sq1_eur > 0 ? `€${Math.round(round.sq1_eur).toLocaleString("it-IT")}` : "—"}
+                        {round.eur_total > 0 ? `€${Math.round(round.eur_total).toLocaleString("it-IT")}` : "—"}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">LLC · USD</div>
+                      <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">USD</div>
                       <div className="text-lg font-bold tabular-nums text-blue-900" data-privacy="blur">
-                        {round.llc_usd > 0 ? `$${Math.round(round.llc_usd).toLocaleString("it-IT")}` : "—"}
+                        {round.usd_total > 0 ? `$${Math.round(round.usd_total).toLocaleString("it-IT")}` : "—"}
                       </div>
                     </div>
                   </div>

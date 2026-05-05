@@ -26,6 +26,7 @@ import ClientLedger from "@/pages/ClientLedger";
 import AppAdmin from "@/pages/AppAdmin";
 import AdminAIModels from "@/pages/AdminAIModels";
 import AdminTheme from "@/pages/AdminTheme";
+import MicroAIAdmin from "@/pages/MicroAIAdmin";
 import CandidateScores from "@/pages/CandidateScores";
 import HiringScoreboard from "@/pages/HiringScoreboard";
 import ReadAiScripts from "@/pages/ReadAiScripts";
@@ -467,6 +468,7 @@ function Navigation() {
                   { href: "/admin/backup", label: "Backup & Restore", icon: Database },
                   { href: "/admin/ai-models", label: "AI Models", icon: Cpu },
                   { href: "/admin/theme", label: "Background Theme", icon: Palette },
+                  { href: "/admin/micro-ai", label: "Micro-AI", icon: Zap },
                 ]}
               />
             </div>
@@ -593,6 +595,7 @@ function Router() {
       <Route path="/admin/assets" component={AdminAssets} />
       <Route path="/admin/ai-models" component={AdminAIModels} />
       <Route path="/admin/theme" component={AdminTheme} />
+      <Route path="/admin/micro-ai" component={MicroAIAdmin} />
       <Route path="/hiring/scores" component={CandidateScores} />
       <Route path="/hiring/scoreboard" component={HiringScoreboard} />
       <Route path="/hiring/scripts" component={ReadAiScripts} />

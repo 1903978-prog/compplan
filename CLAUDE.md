@@ -29,6 +29,7 @@ When proposing a change, ask: does this serve consolidation, analysis, or agency
 - **LLM integration:** `@anthropic-ai/sdk` via `server/aiProviders.ts`. Used by `proposalAI.ts`, `proposalBriefs.ts`, brief runs, agent proposals, agent knowledge.
 - **Auth:** cookie-based (`cookie-parser`) + bearer where appropriate. Public endpoints (e.g. `/api/ceo-brief`) are explicitly marked.
 - **Other server modules:** `hiringSync.ts`, `proposalDeck.ts`, `slideImageExporter.ts`, `readAISeed.ts`, `seedProposals.ts`.
+- **Micro-AI layer:** `server/microAI/` — 12 local modules that handle NLP, scoring, pricing, and caching without LLM calls. See section below.
 
 ## Repo layout
 
@@ -52,11 +53,56 @@ server/
   hiringSync.ts     Hiring candidate sync
   static.ts         Serves built client in prod
   vite.ts           Vite middleware in dev
+  microAI/          Wave 1 Micro-AI modules (see below)
+    index.ts        Registry + re-exports
+    embedder.ts     A1 — local 384-dim embeddings (Xenova/all-MiniLM-L6-v2)
+    classifier.ts   A2 — keyword lexicon + zero-shot intent/sentiment/urgency
+    ner.ts          A3 — NER via compromise.js (people, orgs, dates, money)
+    scoring.ts      B7 — pure SQL 6-dim agent scorecard (zero LLM)
+    pricingReasoner.ts  B8 — decision-tree fee corridors from pricing_rules DB
+    decisionRights.ts   B9 — L0-L3 approval level via regex rules
+    emailComposer.ts    C13 — 20 slot-based email templates
+    commitmentExtractor.ts  D17 — regex + NER commitment extraction
+    replyClassifier.ts      D18 — inbound reply classification
+    cache.ts            E21 — SHA-256 keyed DB response cache
+    contextLoader.ts    E23 — memoised agent context pre-loader
+    logger.ts           Telemetry writer (micro_ai_log table)
 shared/schema.ts    Drizzle tables (very large — read before changing)
 script/build.ts     Vite + esbuild
 scripts/            Standalone scripts (DB ops, migrations, etc.)
 docs/               Internal docs
 ```
+
+## Micro-AI layer (Wave 1)
+
+All 12 modules live in `server/microAI/`. The registry is `MODULE_REGISTRY` in `index.ts`.
+
+**Env vars:**
+| Var | Default | Effect |
+|-----|---------|--------|
+| `USE_LOCAL_AI_FIRST` | `true` | When `true`, all micro-AI modules run before any Claude call. Set `false` to bypass (testing). |
+
+**New DB tables added (Wave 1):**
+- `ai_response_cache` — SHA-256 keyed E21 cache, 30-day TTL default
+- `micro_ai_log` — per-call telemetry (module, latency_ms, saved_tokens, cache_hit)
+- `pricing_rules` — 20 seeded rules for B8 fee corridors, editable via `/admin/micro-ai`
+
+**Admin UI:** `/admin/micro-ai` — token savings, cache stats, module call counts, pricing rule editor.
+
+**Wired callsites:**
+- `proposalAI.ts` — B8 fee suggestion runs in parallel with Claude; E21 caches full analysis (TTL 1d)
+- `proposalBriefs.ts` — E21 caches slide briefs, project approach, single slide (TTL 1d)
+- `aiosService.ts` — B9 post-processes every deliverable; E21 caches boss + CEO consolidations; E23 pre-loads agent context
+- `GET /api/agent-knowledge?q=` — A1 semantic re-rank via cosine similarity
+- `POST /api/agent-knowledge` — A3 auto-tags NER entities; E22 rejects near-duplicates (cosine ≥ 0.92)
+- `POST /api/brief-runs/:id/events` — D17 extracts commitments; D18 classifies `inbound_reply` events
+- `POST /api/agentic/log` — D17 + D18 on `inbound_reply`; A2 urgency/sentiment on all text events
+- `GET /api/agentic/agents/:id/score?days=7` — B7 pure SQL scorecard
+- `GET /api/agentic/agents/scores?days=7` — B7 all-active-agent overview
+- `GET /api/pricing/fee-suggest` — B8 standalone fee corridor query
+- `POST /api/agentic/extract-commitments` — D17 standalone
+- `POST /api/agentic/classify-reply` — D18 standalone
+- `POST /api/agentic/classify-text` — A2 standalone
 
 ## Scripts
 
@@ -79,6 +125,25 @@ Most `/api/*` is gated. **Some endpoints are deliberately public** to serve the 
 - **LLM calls cost money and time.** Prefer caching/reuse. New LLM-driven flows propose, then act with approval.
 - **Validate at boundaries** with Zod. Trust types internally.
 - **The seed/routes/storage split is load-bearing** — respect it. New domain features get their own server module if they're substantial.
+
+## NET1 — single source of truth (pricing fee invariant)
+
+**NET1** = the weekly fee quoted to the client, before admin markup. It is the **only** fee figure that matters across the app.
+
+| Term | Definition | Where it lives |
+|------|-----------|----------------|
+| **NET1/wk** | Weekly NET1 from the pricing engine waterfall | `pricing_cases.recommendation.canonical_net_weekly` |
+| **NET1 Total** | NET1/wk × duration_weeks | `pricing_proposals.total_fee` |
+| **GROSS1** | NET1 × (1 + admin%) | Never stored as weekly_price; only shown in the pricing case view |
+
+**The invariant (never break this):**
+1. The waterfall in the pricing case editor computes NET1 live from the current form state (team + P1–P6 adjustments + band clamp + manual delta).
+2. The cases-list "Target / wk" column recomputes NET1 live from `recommendation.base_weekly + layer_trace` (same formula, saved data).
+3. Every TBD proposal's `weekly_price = NET1/wk` and `total_fee = NET1 × weeks`. `ensureTbdProposalForFinalCase()` enforces this on every PUT.
+4. All displays (Exec Dashboard, Past Projects, Win-Loss) derive from `total_fee / duration_weeks` → `weekly_price`. Never display raw `weekly_price` if `total_fee` is available.
+5. **Auto-save**: PricingTool.tsx fires a debounced background PUT (3 s) whenever `canonicalNetWeekly` changes while the case is open. This keeps the DB in sync with the live waterfall without requiring a manual "Save & Finalise" click. `_lastSavedCanonicalRef` tracks what is committed.
+
+**Never introduce a display that shows GROSS1 where NET1 is expected.** Never divide NET1 by team_size. Never multiply by (1 + admin%) before storing in `weekly_price` or `total_fee`.
 
 ## Standing rules — strict
 

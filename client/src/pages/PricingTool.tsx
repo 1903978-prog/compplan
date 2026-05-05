@@ -695,12 +695,18 @@ export default function PricingTool() {
       });
     return m;
   }, [cases]);
-  // NET1 weekly for a proposal: case lookup → stored weekly_price fallback
+  // NET1/wk for a proposal. Resolution order (all return NET1, never GROSS):
+  //  1. canonical_net_weekly from the linked pricing case (most accurate)
+  //  2. total_fee / duration_weeks  — total_fee is always stored as NET1 total
+  //  3. weekly_price  — last-resort; older rows stored GROSS1 here so avoid if (2) possible
   const proposalNet1 = (p: PricingProposal): number => {
     const key = (p.project_name ?? "").trim().toLowerCase();
-    return caseNet1Map.get(key) ?? caseNet1Map.get(key.replace(/[a-z]+$/, "")) ?? p.weekly_price;
+    const fromCase = caseNet1Map.get(key) ?? caseNet1Map.get(key.replace(/[a-z]+$/, ""));
+    if (fromCase) return fromCase;
+    if (p.total_fee && (p.duration_weeks ?? 0) > 0) return Math.round(p.total_fee / p.duration_weeks!);
+    return p.weekly_price;
   };
-  // NET1 total for a proposal: NET1/wk × weeks → total_fee fallback
+  // NET1 total for a proposal: NET1/wk × weeks; fall back to stored total_fee (already NET1)
   const proposalNet1Total = (p: PricingProposal): number => {
     const wk = proposalNet1(p);
     const weeks = p.duration_weeks ?? 0;
@@ -825,6 +831,11 @@ export default function PricingTool() {
   // value while all discount % stay unchanged.
   const [anchorPanel, setAnchorPanel] = useState<{ field: "net1" | "gross1" | "grossv"; draft: string } | null>(null);
   const anchorCancelledRef = useRef(false);
+  // Auto-save tracking: stores the canonical_net_weekly that was last
+  // committed to the server (set on openCase + successful handleSave).
+  // Used to detect drift so the background auto-save only fires when needed.
+  const _lastSavedCanonicalRef = useRef<number>(0);
+  const _autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Inline custom-duration editor (replaces window.prompt for "Other" in waterfall)
   const [durationPanel, setDurationPanel] = useState<string | null>(null);
   // 3-option commercial-proposal block visibility is now driven by the
@@ -1148,6 +1159,9 @@ export default function PricingTool() {
     // Stored in recommendation.manual_delta at save time; defaults to 0 for
     // older cases that pre-date editable NET1.
     setManualDelta(typeof c.recommendation?.manual_delta === "number" ? c.recommendation.manual_delta : 0);
+    // Seed the last-saved canonical so auto-save doesn't fire immediately on open.
+    _lastSavedCanonicalRef.current = typeof c.recommendation?.canonical_net_weekly === "number"
+      ? c.recommendation.canonical_net_weekly : 0;
     setView("form");
     if (c.case_discounts?.length) {
       // Ensure saved cases that pre-date the commitment discount get the new
@@ -1654,7 +1668,7 @@ export default function PricingTool() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label className="text-xs">Weekly price</Label>
+          <Label className="text-xs">NET1/wk (excl. admin markup)</Label>
           <div className="flex gap-1">
             <span className="flex items-center px-2 text-sm font-semibold bg-muted border rounded-l border-r-0">
               {historyForm.currency === "USD" ? "$" : historyForm.currency === "GBP" ? "£" : "€"}
@@ -1663,7 +1677,7 @@ export default function PricingTool() {
           </div>
         </div>
         <div className="space-y-1">
-          <Label className="text-xs">Tot. Project Net Fees</Label>
+          <Label className="text-xs">NET1 Total (full project)</Label>
           <div className="flex gap-1">
             <span className="flex items-center px-2 text-sm font-semibold bg-muted border rounded-l border-r-0">
               {historyForm.currency === "USD" ? "$" : historyForm.currency === "GBP" ? "£" : "€"}
@@ -1673,10 +1687,9 @@ export default function PricingTool() {
                 const val = e.target.value === "" ? null : +e.target.value;
                 setHistoryForm(f => {
                   const updated = { ...f, total_fee: val };
-                  // Auto-compute weekly_price from total_fee ÷ weeks ÷ team_size
+                  // Auto-compute NET1/wk = total_fee ÷ weeks (total_fee is full-team NET1 total)
                   if (val && val > 0 && f.duration_weeks && f.duration_weeks > 0) {
-                    const team = f.team_size && f.team_size > 0 ? f.team_size : 1;
-                    updated.weekly_price = Math.round(val / f.duration_weeks / team);
+                    updated.weekly_price = Math.round(val / f.duration_weeks);
                   }
                   return updated;
                 });
@@ -1687,7 +1700,7 @@ export default function PricingTool() {
           </div>
           {historyForm.total_fee && historyForm.duration_weeks && historyForm.duration_weeks > 0 && (
             <div className="text-[9px] text-muted-foreground">
-              {fmt(historyForm.total_fee)} ÷ {historyForm.duration_weeks}w ÷ {historyForm.team_size ?? 1} team = {fmt(Math.round(historyForm.total_fee / historyForm.duration_weeks / (historyForm.team_size || 1)))}/wk
+              {fmt(historyForm.total_fee)} ÷ {historyForm.duration_weeks}w = {fmt(Math.round(historyForm.total_fee / historyForm.duration_weeks))}/wk NET1
             </div>
           )}
         </div>
@@ -2387,14 +2400,13 @@ export default function PricingTool() {
     toast({ title: "Excel downloaded", description: `${proposals.length} projects exported.` });
   };
 
-  // Recalculate weekly_price from total_fee / duration_weeks / team_size
-  // and open a review dialog showing the differences.
+  // Recalculate weekly_price (NET1/wk) from total_fee / duration_weeks.
+  // total_fee stores the full-team NET1 total, so no team_size division needed.
   const runWeeklyRecalc = () => {
     const discrepancies: WeeklyRecalcRow[] = [];
     for (const p of proposals) {
       if (!p.id || !p.total_fee || !p.duration_weeks || p.duration_weeks <= 0) continue;
-      const team = p.team_size && p.team_size > 0 ? p.team_size : 1;
-      const computed = Math.round(p.total_fee / p.duration_weeks / team);
+      const computed = Math.round(p.total_fee / p.duration_weeks);
       const current = Math.round(p.weekly_price || 0);
       const delta = computed - current;
       // Flag rows where the discrepancy is ≥ €100 AND ≥ 1% of the current value
@@ -2508,11 +2520,11 @@ export default function PricingTool() {
     if (!recommendation) return;
     setMarkingOutcome(true);
     try {
-      const baseWeekly = nwfClamped + manualDelta;
-      // weekly_price = gross+admin (variable fee is tracked separately as a success fee)
-      const weeklyGrossAdmin = Math.round(baseWeekly * (1 + adminFeePct / 100));
-      // Net = recommended price (what we receive)
-      const netTotal = Math.round(baseWeekly * form.duration_weeks);
+      const baseWeekly = nwfClamped + manualDelta;  // NET1/wk (no admin markup)
+      // Both fields store NET1 — gross is tracked only inside the pricing case.
+      // This matches what ensureTbdProposalForFinalCase writes on the server side.
+      const weeklyNet1 = Math.round(baseWeekly);
+      const netTotal   = Math.round(baseWeekly * form.duration_weeks);
       const payload = {
         proposal_date: new Date().toISOString().slice(0, 10),
         project_name: form.project_name || "CLI01",
@@ -2523,7 +2535,7 @@ export default function PricingTool() {
         revenue_band: form.revenue_band,
         price_sensitivity: form.price_sensitivity,
         duration_weeks: form.duration_weeks,
-        weekly_price: weeklyGrossAdmin,
+        weekly_price: weeklyNet1,
         total_fee: netTotal,
         outcome,
         sector: form.sector || null,
@@ -2720,6 +2732,7 @@ export default function PricingTool() {
       // used to run alongside it and double-insert the proposal row.)
 
       toast({ title: status === "final" ? "Case finalised" : "Saved as draft" });
+      _lastSavedCanonicalRef.current = canonicalNetWeekly;
       setView("list");
       _invalidatePricingCache(); loadAll({ force: true });
     } catch {
@@ -3116,6 +3129,54 @@ export default function PricingTool() {
 
     return Math.round(running);
   }, [recommendation, manualDelta, form.region, benchmarks, disabledBars, caseDiscounts]);
+
+  // ── Auto-save: keep the server's canonical_net_weekly in sync with the ──
+  // ── live waterfall NET1. Fires 3 seconds after the last change that    ──
+  // ── makes canonicalNetWeekly drift from what was last committed.       ──
+  // ── Silent (no toast). Only fires when the case is open (form.id set). ──
+  // ── Server runs ensureTbdProposalForFinalCase, propagating the new     ──
+  // ── NET1 to the linked TBD proposal → Past Projects / Exec Dashboard   ──
+  // ── update immediately without the user clicking "Save & Finalise".    ──
+  useEffect(() => {
+    if (!form.id || !recommendation || canonicalNetWeekly <= 0) return;
+    if (canonicalNetWeekly === _lastSavedCanonicalRef.current) return; // already in sync
+    if (_autoSaveTimerRef.current) clearTimeout(_autoSaveTimerRef.current);
+    _autoSaveTimerRef.current = setTimeout(async () => {
+      if (!form.id || !recommendation) return;
+      if (canonicalNetWeekly === _lastSavedCanonicalRef.current) return;
+      try {
+        const payload = {
+          ...form,
+          pe_owned: form.pe_owned ? 1 : 0,
+          recommendation: {
+            ...recommendation,
+            manual_delta: manualDelta,
+            canonical_net_weekly: canonicalNetWeekly,
+            canonical_gross_weekly: canonicalGrossWeekly,
+            admin_fee_pct: adminFeePct,
+            variable_fee_pct: variableFeePct,
+          },
+          case_discounts: caseDiscounts,
+          case_timelines: caseTimelines,
+        };
+        const res = await fetch(`/api/pricing/cases/${form.id}`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          _lastSavedCanonicalRef.current = canonicalNetWeekly;
+          // Refresh cached data so the cases list Target/wk and Past Projects
+          // both reflect the new NET1 without requiring a manual page reload.
+          loadAll();
+        }
+      } catch {
+        // Silent — manual "Save & Finalise" remains the explicit path
+      }
+    }, 3000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canonicalNetWeekly, form.id]);
 
   // Gross weekly = Net × (1+admin) / ∏(1 - NON-COMMITMENT discounts).
   // Commitment discount is INTENTIONALLY excluded here — it lives as a P7
@@ -3735,13 +3796,13 @@ export default function PricingTool() {
                           <div className="font-bold text-muted-foreground uppercase text-[10px] mb-1">Existing</div>
                           <div><span className="font-semibold">{c.existing.project_name}</span> · {c.existing.client_name}</div>
                           <div className="text-muted-foreground">{c.existing.fund_name} · {c.existing.region} · {c.existing.proposal_date?.slice(0,7)}</div>
-                          <div>{fmt(c.existing.weekly_price)}/wk · {c.existing.duration_weeks}w · <span className={c.existing.outcome === "won" ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>{c.existing.outcome}</span></div>
+                          <div>{fmt(c.existing.total_fee && c.existing.duration_weeks ? Math.round(c.existing.total_fee / c.existing.duration_weeks) : c.existing.weekly_price)}/wk NET1 · {c.existing.duration_weeks}w · <span className={c.existing.outcome === "won" ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>{c.existing.outcome}</span></div>
                         </div>
                         <div className="p-3 bg-amber-50/50 space-y-1">
                           <div className="font-bold text-amber-700 uppercase text-[10px] mb-1">Incoming (new)</div>
                           <div><span className="font-semibold">{c.incoming.project_name}</span> · {c.incoming.client_name}</div>
                           <div className="text-muted-foreground">{c.incoming.fund_name} · {c.incoming.region} · {c.incoming.proposal_date?.slice(0,7)}</div>
-                          <div>{fmt(c.incoming.weekly_price)}/wk · {c.incoming.duration_weeks}w · <span className={c.incoming.outcome === "won" ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>{c.incoming.outcome}</span></div>
+                          <div>{fmt(c.incoming.total_fee && c.incoming.duration_weeks ? Math.round(c.incoming.total_fee / c.incoming.duration_weeks) : c.incoming.weekly_price)}/wk NET1 · {c.incoming.duration_weeks}w · <span className={c.incoming.outcome === "won" ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>{c.incoming.outcome}</span></div>
                         </div>
                       </div>
                       <div className="flex gap-2 px-3 py-2 bg-muted/10 border-t">
@@ -3764,7 +3825,7 @@ export default function PricingTool() {
                         Weekly Price Recalculation — {weeklyRecalcRows.length} discrepanc{weeklyRecalcRows.length === 1 ? "y" : "ies"} found
                       </CardTitle>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Formula: <span className="font-mono bg-white px-1 rounded">weekly = total_fee ÷ weeks ÷ team_size</span>.
+                        Formula: <span className="font-mono bg-white px-1 rounded">NET1/wk = total_fee ÷ weeks</span> (total_fee is always full-team NET1 total).
                         Review the proposed changes and select which rows to update.
                       </p>
                     </div>
@@ -3892,8 +3953,8 @@ export default function PricingTool() {
                         {sortHeader("duration_weeks", "Dur.")}
                         {sortHeader("team_size", "Team")}
                         {sortHeader("currency", "Cur.")}
-                        {sortHeader("weekly_price", "Weekly price")}
-                        {sortHeader("total_fee", "Total fee (k€)")}
+                        {sortHeader("weekly_price", "NET1/wk")}
+                        {sortHeader("total_fee", "NET1 Total (k€)")}
                         {sortHeader("outcome", "Outcome")}
                         {sortHeader("end_date", "End date")}
                         <TableHead className="w-24">Actions</TableHead>

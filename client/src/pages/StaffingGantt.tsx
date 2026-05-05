@@ -90,6 +90,55 @@ export default function StaffingGantt() {
   const [showWeighted, setShowWeighted] = useState(true);
   const [showPipeline, setShowPipeline] = useState(true);
 
+  // ── FTE breakdown modal state ───────────────────────────────────────────────
+  const [breakdownWeekIndex, setBreakdownWeekIndex] = useState<number | null>(null);
+
+  // ── TBD card inline start-date editing ────────────────────────────────────
+  const [editingStartDate, setEditingStartDate] = useState<number | null>(null); // proposal id
+
+  async function saveStartDate(proposalId: number, newDate: string) {
+    const proj = proposals.find(p => p.id === proposalId);
+    if (!proj) return;
+    try {
+      const r = await fetch(`/api/pricing/proposals/${proposalId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...proj, start_date: newDate || null }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+    } catch (e) {
+      toast({ title: "Failed to save start date", variant: "destructive" });
+    } finally {
+      setEditingStartDate(null);
+    }
+  }
+
+  // ── TBD card inline win-probability editing ───────────────────────────────
+  const [editingWinProb, setEditingWinProb] = useState<number | null>(null); // proposal id
+
+  async function saveWinProb(proposalId: number, raw: string) {
+    const proj = proposals.find(p => p.id === proposalId);
+    if (!proj) return;
+    const val = raw === "" ? null : Math.max(0, Math.min(100, Number(raw)));
+    if (raw !== "" && isNaN(val as number)) { setEditingWinProb(null); return; }
+    try {
+      const r = await fetch(`/api/pricing/proposals/${proposalId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...proj, win_probability: val }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const updated = await r.json();
+      setProposals(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+    } catch (e) {
+      toast({ title: "Failed to save win probability", variant: "destructive" });
+    } finally {
+      setEditingWinProb(null);
+    }
+  }
+
   // ── Assign-to-project modal state ─────────────────────────────────────────
   // Two entry points:
   //   (A) Person-first  → click UserPlus on a row → assignFor is set, project blank
@@ -335,6 +384,7 @@ export default function StaffingGantt() {
         m => (m.name ?? "").trim().length > 0,
       ).length;
       if (teamCount === 0) continue;
+
       const isPipeline = p.outcome === "pending";
       const probability = isPipeline
         ? Math.max(0, Math.min(100, Number(p.win_probability ?? 50))) / 100
@@ -629,8 +679,9 @@ export default function StaffingGantt() {
                 {fteBuildUp.totalPerWeek.map((n, i) => (
                   <td
                     key={i}
-                    className="border-l text-center font-mono text-[11px] p-1 min-w-16"
-                    title={n > 0 ? `${n.toFixed(2)} FTE-equivalents needed week of ${fmtWeek(weeks[i])}` : "no demand"}
+                    className="border-l text-center font-mono text-[11px] p-1 min-w-16 cursor-pointer hover:bg-primary/20 transition-colors"
+                    title={n > 0 ? `Click to see breakdown · ${n.toFixed(2)} FTE-equivalents needed week of ${fmtWeek(weeks[i])}` : "no demand"}
+                    onClick={() => n > 0 && setBreakdownWeekIndex(i)}
                   >
                     {n > 0 ? n.toFixed(1) : "—"}
                   </td>
@@ -639,6 +690,57 @@ export default function StaffingGantt() {
             </tfoot>
           </table>
         </Card>
+      )}
+
+      {/* ── FTE Breakdown Modal ────────────────────────────────────────────── */}
+      {breakdownWeekIndex !== null && (
+        <Dialog open={breakdownWeekIndex !== null} onOpenChange={(open) => !open && setBreakdownWeekIndex(null)}>
+          <DialogContent className="max-w-2xl max-h-[70vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>FTE Calculation Breakdown</DialogTitle>
+              <DialogDescription>
+                Week of {fmtWeek(weeks[breakdownWeekIndex])} · Total: <span className="font-mono font-bold text-foreground">{ftesNeededPerWeek[breakdownWeekIndex].toFixed(2)}</span> FTE
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {breakdownPerWeek[breakdownWeekIndex].length === 0 ? (
+                <p className="text-sm text-muted-foreground italic">No projects contributing to this week</p>
+              ) : (
+                breakdownPerWeek[breakdownWeekIndex].map((item, idx) => (
+                  <div key={idx} className="border rounded p-3 space-y-2 text-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-semibold">{item.projectName}</div>
+                        <div className="text-[12px] text-muted-foreground">
+                          Status: <span className={item.outcome === "won" ? "text-emerald-600 font-medium" : "text-amber-600 font-medium"}>{item.outcome}</span>
+                          {item.outcome === "pending" && ` · ${item.probability}% win probability`}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-mono font-bold text-lg">{item.contribution.toFixed(2)} FTE</div>
+                        <div className="text-[11px] text-muted-foreground">= {item.teamCount} × {item.weight.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="text-[12px] text-muted-foreground space-y-1">
+                      {item.manager && <div>Manager: <span className="font-medium">{item.manager}</span></div>}
+                      {item.teamMembers.length > 0 && (
+                        <div>
+                          Team ({item.teamMembers.length}): <span className="font-medium">{item.teamMembers.join(", ")}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+              <div className="border-t pt-3 mt-4">
+                <div className="flex justify-between font-semibold">
+                  <span>Total FTE needed for week of {fmtWeek(weeks[breakdownWeekIndex])}</span>
+                  <span className="font-mono text-lg">{ftesNeededPerWeek[breakdownWeekIndex].toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* ── Legend ─────────────────────────────────────────────────────────── */}
@@ -688,15 +790,58 @@ export default function StaffingGantt() {
                       <div className="font-mono font-bold text-sm truncate">{p.project_name}</div>
                       {p.client_name && <div className="text-[10px] text-muted-foreground truncate">{p.client_name}</div>}
                     </div>
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${probColor}`}>
-                      {p.win_probability != null ? `${p.win_probability}%` : "?%"}
-                    </Badge>
+                    {editingWinProb === p.id ? (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <input
+                          autoFocus
+                          type="number"
+                          min={0} max={100}
+                          defaultValue={p.win_probability ?? ""}
+                          placeholder="0-100"
+                          className="w-14 text-[10px] border border-primary rounded px-1 py-0.5 text-foreground bg-background outline-none"
+                          onBlur={e => saveWinProb(p.id, e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setEditingWinProb(null);
+                          }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">%</span>
+                      </div>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] shrink-0 cursor-pointer ${probColor}`}
+                        title="Click to edit win probability"
+                        onClick={() => setEditingWinProb(p.id)}
+                      >
+                        {p.win_probability != null ? `${p.win_probability}%` : "?%"}
+                      </Badge>
+                    )}
                   </div>
 
                   <div className="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
                     {p.duration_weeks && <span>{p.duration_weeks}w</span>}
-                    {p.start_date && <span>· starts {p.start_date}</span>}
-                    {!p.start_date && <span className="italic">· no start date yet</span>}
+                    {editingStartDate === p.id ? (
+                      <input
+                        autoFocus
+                        type="date"
+                        defaultValue={p.start_date ?? ""}
+                        className="text-[10px] border border-primary rounded px-1 py-0.5 text-foreground bg-background outline-none"
+                        onBlur={e => saveStartDate(p.id, e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                          if (e.key === "Escape") setEditingStartDate(null);
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="cursor-pointer hover:text-primary hover:underline"
+                        title="Click to edit start date"
+                        onClick={() => setEditingStartDate(p.id)}
+                      >
+                        {p.start_date ? `· starts ${p.start_date}` : <span className="italic">· no start date — click to set</span>}
+                      </span>
+                    )}
                   </div>
 
                   {/* Already-reserved team members */}

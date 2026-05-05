@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { cached } from "./microAI/index.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -567,16 +568,30 @@ ${slideList}`;
   const tool = buildBriefTool(input.selected_slides, adminConfigs);
 
   try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 8192,
-      system: systemPrompt,
-      tools: [tool],
-      tool_choice: { type: "tool", name: "submit_slide_briefs" },
-      messages: [{ role: "user", content: contextParts.join("\n\n") }],
-    });
+    // E21: cache by (company + slide selection + key inputs). TTL = 1 day.
+    const cacheKey = {
+      fn:            "generateSlideBriefs",
+      company:       input.company_name,
+      project_type:  input.project_type,
+      objective:     input.objective ?? null,
+      scope:         input.scope_perimeter ?? null,
+      slide_ids:     input.selected_slides.map(s => s.slide_id).sort(),
+    };
+    const response = await cached(
+      "slideBriefs",
+      cacheKey,
+      () => client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 8192,
+        system: systemPrompt,
+        tools: [tool],
+        tool_choice: { type: "tool", name: "submit_slide_briefs" },
+        messages: [{ role: "user", content: contextParts.join("\n\n") }],
+      }),
+      { ttlDays: 1, savedTokensEstimate: 8_000 },
+    );
 
-    const toolUse = response.content.find((block: any) => block.type === "tool_use");
+    const toolUse = (response as any).content.find((block: any) => block.type === "tool_use");
     if (!toolUse || toolUse.type !== "tool_use") {
       console.error("No tool_use block in Claude response");
       return getMockBriefs(input);
@@ -698,14 +713,30 @@ Return ONLY valid JSON matching this exact structure:
   }
 
   try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    });
+    // E21: cache project approach by company + key inputs. TTL = 1 day.
+    const approachCacheKey = {
+      fn:            "generateProjectApproach",
+      company:       input.company_name,
+      objective:     input.objective ?? null,
+      scope:         input.scope_perimeter ?? null,
+      urgency:       input.urgency ?? null,
+      project_type:  input.project_type ?? null,
+      transcript_prefix: (input.transcript ?? "").slice(0, 500),
+      notes_prefix:      (input.notes ?? "").slice(0, 500),
+    };
+    const response = await cached(
+      "projectApproach",
+      approachCacheKey,
+      () => client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+      { ttlDays: 1, savedTokensEstimate: 2_500 },
+    );
 
-    const textBlock = response.content.find(b => b.type === "text");
+    const textBlock = (response as any).content.find((b: any) => b.type === "text");
     let text = textBlock?.text ?? "{}";
     // Extract JSON from markdown code block if present
     const jsonMatch = text.match(/```json?\s*([\s\S]*?)```/);
@@ -898,23 +929,37 @@ ${answerLines ? `USER ANSWERS:\n${answerLines}` : ""}
 
 Write the slide content now. Be specific to ${input.company_name}. Keep it concise and slide-ready.`;
 
+  // E21: cache single-slide brief by (slide_id + company + content_prompt hash).
+  // "Regenerate" clicks on the same slide with unchanged inputs hit cache instead of Claude.
+  const slideCacheKey = {
+    fn:             "generateSingleSlideBrief",
+    slide_id:       input.slide_id,
+    company:        input.company_name,
+    content_prompt: input.content_prompt,
+    visual_prompt:  input.visual_prompt,
+    answers:        input.answers,
+  };
+
   // Let exceptions propagate — the route handler converts them to 500 JSON
   // errors so the client shows the real cause instead of silently saving a
   // "[Generation failed: ...]" string as if it were slide content.
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1500,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
+  const response = await cached(
+    "singleSlideBrief",
+    slideCacheKey,
+    () => client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    }),
+    { ttlDays: 1, savedTokensEstimate: 1_800 },
+  );
 
-  const textBlock = response.content.find(b => b.type === "text");
+  const textBlock = (response as any).content.find((b: any) => b.type === "text");
   const text = textBlock?.text?.trim();
   if (!text) {
     console.error("[generateSingleSlideBrief] Claude returned no text block", {
       slide: input.slide_id,
-      stop_reason: (response as any).stop_reason,
-      content_blocks: response.content.map(b => b.type),
     });
     throw new Error("Claude returned an empty response — try again or adjust the prompt.");
   }

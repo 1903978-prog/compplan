@@ -98,9 +98,9 @@ export function buildCoworkPrompt(input: {
       lines.push(`Won: ${won} · Lost: ${lost} · Open: ${input.recentProposals.length - won - lost}`);
       for (const p of input.recentProposals.slice(0, 8)) {
         const loss = p.loss_reason ? ` · loss: ${p.loss_reason}` : "";
-        // net_total = weekly_price × weeks (set by ensureTbdProposalForFinalCase = NET1 × weeks).
-        // Falls back to total_fee for legacy rows without weekly_price sync.
-        const netVal = p.net_total ?? (p.weekly_price && p.duration_weeks ? p.weekly_price * p.duration_weeks : (p.total_fee ?? null));
+        // Resolution order: net_total (server-synced) → total_fee (always NET1 total)
+        // → weekly_price × weeks (last resort; older rows stored GROSS1 as weekly_price).
+        const netVal = p.net_total ?? p.total_fee ?? (p.weekly_price && p.duration_weeks ? p.weekly_price * p.duration_weeks : null);
         lines.push(`- ${p.project_name} (${p.client_name ?? "?"}) — ${p.outcome ?? "open"} · ${eur(netVal)}${p.win_probability != null ? ` · ${p.win_probability}% prob` : ""}${loss}`);
       }
       lines.push("");
