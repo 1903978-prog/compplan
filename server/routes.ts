@@ -4800,7 +4800,10 @@ RULES:
 
       // Map HubSpot deal → bd_deals row
       const now = new Date().toISOString();
-      let inserted = 0, updated = 0, skipped = 0;
+      let inserted = 0, skipped = 0;
+      type DealProposal = { id: number; hubspot_id: string; display_name: string; changes: { field: string; db: any; hs: any }[] };
+      const proposed: DealProposal[] = [];
+      const DEAL_COMPARE = ["name","stage","amount","probability","close_date","notes","owner"] as const;
 
       for (const deal of allDeals) {
         try {
@@ -4827,19 +4830,23 @@ RULES:
             imported_at:      now,
           };
 
-          // Upsert by hubspot_id
-          const existing: any = await db.execute(sql`SELECT id FROM bd_deals WHERE hubspot_id = ${row.hubspot_id}`);
+          const existing: any = await db.execute(sql`SELECT * FROM bd_deals WHERE hubspot_id = ${row.hubspot_id}`);
           if (existing.rows?.length > 0) {
-            await db.execute(sql`
-              UPDATE bd_deals SET
-                name = ${row.name}, stage = ${row.stage}, amount = ${row.amount},
-                probability = ${row.probability}, close_date = ${row.close_date},
-                source = ${row.source}, owner = ${row.owner}, notes = ${row.notes},
-                last_activity_at = ${row.last_activity_at}, imported_at = ${row.imported_at},
-                updated_at = ${now}
-              WHERE hubspot_id = ${row.hubspot_id}
-            `);
-            updated++;
+            // DB-authoritative — surface differences only
+            const dbRow = existing.rows[0];
+            const changes: { field: string; db: any; hs: any }[] = [];
+            for (const f of DEAL_COMPARE) {
+              const hsVal = row[f as keyof typeof row];
+              const dbVal = dbRow[f] ?? null;
+              if (hsVal !== null && hsVal !== undefined && hsVal !== "" &&
+                  String(hsVal) !== String(dbVal ?? "")) {
+                changes.push({ field: f, db: dbVal, hs: hsVal });
+              }
+            }
+            if (changes.length > 0) {
+              proposed.push({ id: Number(dbRow.id), hubspot_id: row.hubspot_id, display_name: dbRow.name ?? row.name, changes });
+            }
+            skipped++;
           } else {
             await db.execute(sql`
               INSERT INTO bd_deals (
@@ -4861,9 +4868,43 @@ RULES:
         }
       }
 
-      res.json({ ok: true, total: allDeals.length, inserted, updated, skipped });
+      res.json({ ok: true, total: allDeals.length, inserted, skipped, proposed });
     } catch (err: any) {
       console.error("[hubspot/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Apply user-accepted proposed changes from deals sync.
+  app.post("/api/hubspot/deals/apply-proposed", requireAuth, async (req, res) => {
+    try {
+      const { changes } = (req.body ?? {}) as any;
+      if (!Array.isArray(changes)) { res.status(400).json({ error: "changes must be an array" }); return; }
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const ALLOWED_DEAL_FIELDS = new Set(["name","stage","amount","probability","close_date","notes","owner"]);
+      const now = new Date().toISOString();
+      let applied = 0;
+      for (const { id, fields } of changes) {
+        if (!id || !fields) continue;
+        const safe = Object.fromEntries(Object.entries(fields).filter(([k]) => ALLOWED_DEAL_FIELDS.has(k)));
+        if (!Object.keys(safe).length) continue;
+        await db.execute(sql`
+          UPDATE bd_deals SET
+            name        = CASE WHEN ${"name"        in safe ? 1 : 0} = 1 THEN ${safe.name        ?? null} ELSE name        END,
+            stage       = CASE WHEN ${"stage"       in safe ? 1 : 0} = 1 THEN ${safe.stage       ?? null} ELSE stage       END,
+            amount      = CASE WHEN ${"amount"      in safe ? 1 : 0} = 1 THEN ${safe.amount      ?? null} ELSE amount      END,
+            probability = CASE WHEN ${"probability" in safe ? 1 : 0} = 1 THEN ${safe.probability ?? null} ELSE probability END,
+            close_date  = CASE WHEN ${"close_date"  in safe ? 1 : 0} = 1 THEN ${safe.close_date  ?? null} ELSE close_date  END,
+            notes       = CASE WHEN ${"notes"       in safe ? 1 : 0} = 1 THEN ${safe.notes       ?? null} ELSE notes       END,
+            owner       = CASE WHEN ${"owner"       in safe ? 1 : 0} = 1 THEN ${safe.owner       ?? null} ELSE owner       END,
+            updated_at  = ${now}
+          WHERE id = ${id}
+        `);
+        applied++;
+      }
+      res.json({ ok: true, applied });
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -4917,7 +4958,11 @@ RULES:
       }
 
       const now = new Date().toISOString();
-      let inserted = 0, updated = 0, skipped = 0;
+      let inserted = 0, skipped = 0;
+      // Proposed changes for existing contacts (never auto-applied)
+      type ContactProposal = { id: number; hubspot_id: string; display_name: string; email: string | null; changes: { field: string; db: any; hs: any }[] };
+      const proposed: ContactProposal[] = [];
+      const CONTACT_COMPARE = ["first_name","last_name","email","phone","job_title","company","city","country","lifecycle_stage","lead_status"] as const;
 
       for (const contact of allContacts) {
         try {
@@ -4938,19 +4983,32 @@ RULES:
             country:            p.country ?? null,
             last_activity_at:   p.notes_last_activity ? p.notes_last_activity.slice(0, 10) : null,
           };
-          const existing: any = await db.execute(sql`SELECT id FROM hubspot_contacts WHERE hubspot_id = ${row.hubspot_id}`);
+
+          // Fetch full row so we can compare field-by-field
+          const existing: any = await db.execute(sql`SELECT * FROM hubspot_contacts WHERE hubspot_id = ${row.hubspot_id}`);
           if (existing.rows?.length > 0) {
-            await db.execute(sql`
-              UPDATE hubspot_contacts SET
-                first_name = ${row.first_name}, last_name = ${row.last_name},
-                email = ${row.email}, phone = ${row.phone}, job_title = ${row.job_title},
-                company = ${row.company}, company_hubspot_id = ${row.company_hubspot_id},
-                lifecycle_stage = ${row.lifecycle_stage}, lead_status = ${row.lead_status},
-                owner_id = ${row.owner_id}, city = ${row.city}, country = ${row.country},
-                last_activity_at = ${row.last_activity_at}, synced_at = ${now}, updated_at = ${now}
-              WHERE hubspot_id = ${row.hubspot_id}
-            `);
-            updated++;
+            // DB is authoritative — never auto-overwrite. Surface differences as proposals.
+            const dbRow = existing.rows[0];
+            const changes: { field: string; db: any; hs: any }[] = [];
+            for (const f of CONTACT_COMPARE) {
+              const hsVal = row[f as keyof typeof row];
+              const dbVal = dbRow[f] ?? null;
+              // Only propose if HubSpot has a non-empty value that differs from what we have
+              if (hsVal !== null && hsVal !== undefined && hsVal !== "" &&
+                  String(hsVal) !== String(dbVal ?? "")) {
+                changes.push({ field: f, db: dbVal, hs: hsVal });
+              }
+            }
+            if (changes.length > 0) {
+              proposed.push({
+                id: Number(dbRow.id),
+                hubspot_id: row.hubspot_id,
+                display_name: [dbRow.first_name, dbRow.last_name].filter(Boolean).join(" ") || dbRow.email || row.email || "Unknown",
+                email: dbRow.email ?? row.email,
+                changes,
+              });
+            }
+            skipped++;
           } else {
             await db.execute(sql`
               INSERT INTO hubspot_contacts (
@@ -4972,9 +5030,48 @@ RULES:
         }
       }
 
-      res.json({ ok: true, total: allContacts.length, inserted, updated, skipped });
+      res.json({ ok: true, total: allContacts.length, inserted, skipped, proposed });
     } catch (err: any) {
       console.error("[hubspot/contacts/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Apply user-accepted proposed changes from contacts sync.
+  // Patches only the accepted fields, never touches the rest of the row.
+  app.post("/api/hubspot/contacts/apply-proposed", requireAuth, async (req, res) => {
+    try {
+      const { changes } = (req.body ?? {}) as any;
+      if (!Array.isArray(changes)) { res.status(400).json({ error: "changes must be an array" }); return; }
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const ALLOWED_CONTACT_FIELDS = new Set(["first_name","last_name","email","phone","job_title","company","city","country","lifecycle_stage","lead_status","last_activity_at"]);
+      const now = new Date().toISOString();
+      let applied = 0;
+      for (const { id, fields } of changes) {
+        if (!id || !fields) continue;
+        const safe = Object.fromEntries(Object.entries(fields).filter(([k]) => ALLOWED_CONTACT_FIELDS.has(k)));
+        if (!Object.keys(safe).length) continue;
+        // Use CASE/WHEN to only update fields present in `safe` — all values are parameterized
+        await db.execute(sql`
+          UPDATE hubspot_contacts SET
+            first_name      = CASE WHEN ${"first_name"      in safe ? 1 : 0} = 1 THEN ${safe.first_name      ?? null} ELSE first_name      END,
+            last_name       = CASE WHEN ${"last_name"       in safe ? 1 : 0} = 1 THEN ${safe.last_name       ?? null} ELSE last_name       END,
+            email           = CASE WHEN ${"email"           in safe ? 1 : 0} = 1 THEN ${safe.email           ?? null} ELSE email           END,
+            phone           = CASE WHEN ${"phone"           in safe ? 1 : 0} = 1 THEN ${safe.phone           ?? null} ELSE phone           END,
+            job_title       = CASE WHEN ${"job_title"       in safe ? 1 : 0} = 1 THEN ${safe.job_title       ?? null} ELSE job_title       END,
+            company         = CASE WHEN ${"company"         in safe ? 1 : 0} = 1 THEN ${safe.company         ?? null} ELSE company         END,
+            city            = CASE WHEN ${"city"            in safe ? 1 : 0} = 1 THEN ${safe.city            ?? null} ELSE city            END,
+            country         = CASE WHEN ${"country"         in safe ? 1 : 0} = 1 THEN ${safe.country         ?? null} ELSE country         END,
+            lifecycle_stage = CASE WHEN ${"lifecycle_stage" in safe ? 1 : 0} = 1 THEN ${safe.lifecycle_stage ?? null} ELSE lifecycle_stage END,
+            lead_status     = CASE WHEN ${"lead_status"     in safe ? 1 : 0} = 1 THEN ${safe.lead_status     ?? null} ELSE lead_status     END,
+            updated_at      = ${now}
+          WHERE id = ${id}
+        `);
+        applied++;
+      }
+      res.json({ ok: true, applied });
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -5028,7 +5125,10 @@ RULES:
       }
 
       const now = new Date().toISOString();
-      let inserted = 0, updated = 0, skipped = 0;
+      let inserted = 0, skipped = 0;
+      type CompanyProposal = { id: number; hubspot_id: string; display_name: string; changes: { field: string; db: any; hs: any }[] };
+      const proposed: CompanyProposal[] = [];
+      const COMPANY_COMPARE = ["name","domain","industry","num_employees","annual_revenue","country","city","phone","description","lifecycle_stage"] as const;
 
       for (const company of allCompanies) {
         try {
@@ -5049,19 +5149,24 @@ RULES:
             owner_id:         p.hubspot_owner_id ?? null,
             last_activity_at: p.notes_last_activity ? p.notes_last_activity.slice(0, 10) : null,
           };
-          const existing: any = await db.execute(sql`SELECT id FROM hubspot_companies WHERE hubspot_id = ${row.hubspot_id}`);
+
+          const existing: any = await db.execute(sql`SELECT * FROM hubspot_companies WHERE hubspot_id = ${row.hubspot_id}`);
           if (existing.rows?.length > 0) {
-            await db.execute(sql`
-              UPDATE hubspot_companies SET
-                name = ${row.name}, domain = ${row.domain}, industry = ${row.industry},
-                num_employees = ${row.num_employees}, annual_revenue = ${row.annual_revenue},
-                country = ${row.country}, city = ${row.city}, phone = ${row.phone},
-                description = ${row.description}, lifecycle_stage = ${row.lifecycle_stage},
-                owner_id = ${row.owner_id}, last_activity_at = ${row.last_activity_at},
-                synced_at = ${now}, updated_at = ${now}
-              WHERE hubspot_id = ${row.hubspot_id}
-            `);
-            updated++;
+            // DB-authoritative — surface differences, never auto-apply
+            const dbRow = existing.rows[0];
+            const changes: { field: string; db: any; hs: any }[] = [];
+            for (const f of COMPANY_COMPARE) {
+              const hsVal = row[f as keyof typeof row];
+              const dbVal = dbRow[f] ?? null;
+              if (hsVal !== null && hsVal !== undefined && hsVal !== "" &&
+                  String(hsVal) !== String(dbVal ?? "")) {
+                changes.push({ field: f, db: dbVal, hs: hsVal });
+              }
+            }
+            if (changes.length > 0) {
+              proposed.push({ id: Number(dbRow.id), hubspot_id: row.hubspot_id, display_name: dbRow.name ?? row.name ?? row.hubspot_id, changes });
+            }
+            skipped++;
           } else {
             await db.execute(sql`
               INSERT INTO hubspot_companies (
@@ -5083,9 +5188,46 @@ RULES:
         }
       }
 
-      res.json({ ok: true, total: allCompanies.length, inserted, updated, skipped });
+      res.json({ ok: true, total: allCompanies.length, inserted, skipped, proposed });
     } catch (err: any) {
       console.error("[hubspot/companies/sync] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Apply user-accepted proposed changes from companies sync.
+  app.post("/api/hubspot/companies/apply-proposed", requireAuth, async (req, res) => {
+    try {
+      const { changes } = (req.body ?? {}) as any;
+      if (!Array.isArray(changes)) { res.status(400).json({ error: "changes must be an array" }); return; }
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const ALLOWED_COMPANY_FIELDS = new Set(["name","domain","industry","num_employees","annual_revenue","country","city","phone","description","lifecycle_stage"]);
+      const now = new Date().toISOString();
+      let applied = 0;
+      for (const { id, fields } of changes) {
+        if (!id || !fields) continue;
+        const safe = Object.fromEntries(Object.entries(fields).filter(([k]) => ALLOWED_COMPANY_FIELDS.has(k)));
+        if (!Object.keys(safe).length) continue;
+        await db.execute(sql`
+          UPDATE hubspot_companies SET
+            name            = CASE WHEN ${"name"            in safe ? 1 : 0} = 1 THEN ${safe.name            ?? null} ELSE name            END,
+            domain          = CASE WHEN ${"domain"          in safe ? 1 : 0} = 1 THEN ${safe.domain          ?? null} ELSE domain          END,
+            industry        = CASE WHEN ${"industry"        in safe ? 1 : 0} = 1 THEN ${safe.industry        ?? null} ELSE industry        END,
+            num_employees   = CASE WHEN ${"num_employees"   in safe ? 1 : 0} = 1 THEN ${safe.num_employees   ?? null} ELSE num_employees   END,
+            annual_revenue  = CASE WHEN ${"annual_revenue"  in safe ? 1 : 0} = 1 THEN ${safe.annual_revenue  ?? null} ELSE annual_revenue  END,
+            country         = CASE WHEN ${"country"         in safe ? 1 : 0} = 1 THEN ${safe.country         ?? null} ELSE country         END,
+            city            = CASE WHEN ${"city"            in safe ? 1 : 0} = 1 THEN ${safe.city            ?? null} ELSE city            END,
+            phone           = CASE WHEN ${"phone"           in safe ? 1 : 0} = 1 THEN ${safe.phone           ?? null} ELSE phone           END,
+            description     = CASE WHEN ${"description"     in safe ? 1 : 0} = 1 THEN ${safe.description     ?? null} ELSE description     END,
+            lifecycle_stage = CASE WHEN ${"lifecycle_stage" in safe ? 1 : 0} = 1 THEN ${safe.lifecycle_stage ?? null} ELSE lifecycle_stage END,
+            updated_at      = ${now}
+          WHERE id = ${id}
+        `);
+        applied++;
+      }
+      res.json({ ok: true, applied });
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });

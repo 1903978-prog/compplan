@@ -7,10 +7,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Target, Plus, Upload, Trash2, Pencil, Save, X, Loader2,
   CheckCircle2, AlertCircle, ExternalLink, Database, RefreshCw, Wifi, WifiOff,
-  Users, Building2, Mail, Phone, MapPin, ArrowRight,
+  Users, Building2, Mail, Phone, MapPin, ArrowRight, GitMerge,
 } from "lucide-react";
 
 // ─── Business Development CRM ────────────────────────────────────────────
@@ -521,22 +522,166 @@ function DealEditor({
   );
 }
 
+// ── Human-readable field label map for proposed-changes dialogs ────────────
+const FIELD_LABEL: Record<string, string> = {
+  first_name: "First name", last_name: "Last name", email: "Email",
+  phone: "Phone", job_title: "Job title", company: "Company",
+  city: "City", country: "Country", lifecycle_stage: "Stage",
+  lead_status: "Lead status", last_activity_at: "Last activity",
+  name: "Name", domain: "Domain", industry: "Industry",
+  num_employees: "Employees", annual_revenue: "Revenue",
+  description: "Description", stage: "Stage",
+  amount: "Amount", probability: "Probability (%)",
+  close_date: "Close date", notes: "Notes", owner: "Owner ID",
+};
+
+// ─── Proposed-changes review dialog (shared by all three sync tabs) ──────
+type ProposedChange = {
+  id: number;
+  hubspot_id: string;
+  display_name: string;
+  email?: string | null;
+  // Each field change with per-field accept flag
+  changes: { field: string; db: any; hs: any; accepted: boolean }[];
+};
+
+function ProposedDialog({
+  open, onClose, proposals, applyEndpoint, onApplied, objectLabel,
+}: {
+  open: boolean;
+  onClose: () => void;
+  proposals: ProposedChange[];
+  applyEndpoint: string;
+  onApplied: () => void;
+  objectLabel: string;
+}) {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<ProposedChange[]>([]);
+  const [applying, setApplying] = useState(false);
+
+  // Reset when opened with new proposals
+  useEffect(() => {
+    if (open) setRows(proposals.map(p => ({ ...p, changes: p.changes.map(c => ({ ...c, accepted: true })) })));
+  }, [open, proposals]);
+
+  const totalAccepted = rows.reduce((n, p) => n + p.changes.filter(c => c.accepted).length, 0);
+
+  function toggle(pIdx: number, cIdx: number) {
+    setRows(prev => prev.map((p, i) => i !== pIdx ? p : {
+      ...p,
+      changes: p.changes.map((c, j) => j !== cIdx ? c : { ...c, accepted: !c.accepted }),
+    }));
+  }
+  function toggleAll(pIdx: number, val: boolean) {
+    setRows(prev => prev.map((p, i) => i !== pIdx ? p : { ...p, changes: p.changes.map(c => ({ ...c, accepted: val })) }));
+  }
+
+  async function apply() {
+    const changes = rows
+      .map(p => ({ id: p.id, fields: Object.fromEntries(p.changes.filter(c => c.accepted).map(c => [c.field, c.hs])) }))
+      .filter(c => Object.keys(c.fields).length > 0);
+    if (!changes.length) { onClose(); return; }
+    setApplying(true);
+    try {
+      const r = await fetch(applyEndpoint, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ changes }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Apply failed");
+      toast({ title: `${data.applied} ${objectLabel} updated` });
+      onApplied();
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Apply failed", description: e.message, variant: "destructive" });
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v && !applying) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <GitMerge className="w-4 h-4 text-violet-600" />
+            {rows.length} {objectLabel} with HubSpot updates — review before applying
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground -mt-1">
+          Your local DB was not changed. Tick the fields you want to accept from HubSpot, then click Apply.
+        </p>
+        <div className="overflow-y-auto flex-1 border rounded-lg text-xs">
+          {rows.map((p, pIdx) => (
+            <div key={p.id} className="border-b last:border-0">
+              {/* Contact / company header row */}
+              <div className="flex items-center justify-between px-3 py-1.5 bg-muted/30 font-semibold sticky top-0">
+                <span className="flex items-center gap-2">
+                  {p.display_name}
+                  {p.email && <span className="text-muted-foreground font-normal">{p.email}</span>}
+                </span>
+                <div className="flex gap-2 text-[10px] font-normal">
+                  <button onClick={() => toggleAll(pIdx, true)}  className="text-violet-600 hover:underline">all</button>
+                  <button onClick={() => toggleAll(pIdx, false)} className="text-muted-foreground hover:underline">none</button>
+                </div>
+              </div>
+              <table className="w-full">
+                <tbody>
+                  {p.changes.map((c, cIdx) => (
+                    <tr
+                      key={c.field}
+                      className={`border-t border-muted/40 ${c.accepted ? "" : "opacity-40"} hover:bg-muted/10 cursor-pointer`}
+                      onClick={() => toggle(pIdx, cIdx)}
+                    >
+                      <td className="px-3 py-1.5 font-medium w-32 text-muted-foreground">{FIELD_LABEL[c.field] ?? c.field}</td>
+                      <td className="px-3 py-1.5 line-through text-muted-foreground/70 w-48">{c.db ?? "—"}</td>
+                      <td className="px-3 py-1.5 text-xs"><span className="text-[9px] text-muted-foreground mr-1">→</span>{c.hs ?? "—"}</td>
+                      <td className="px-3 py-1.5 text-center w-10">
+                        <input type="checkbox" checked={c.accepted} readOnly className="w-3 h-3" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-between pt-2 border-t">
+          <span className="text-xs text-muted-foreground">{totalAccepted} field{totalAccepted !== 1 ? "s" : ""} accepted across {rows.length} {objectLabel}</span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={onClose} disabled={applying}>Discard all</Button>
+            <Button size="sm" onClick={apply} disabled={applying || totalAccepted === 0}>
+              {applying ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
+              {applying ? "Applying…" : `Apply ${totalAccepted} change${totalAccepted !== 1 ? "s" : ""}`}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Contacts list tab ───────────────────────────────────────────────────
 function ContactsTab() {
   const { toast } = useToast();
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading]   = useState(true);
   const [syncing, setSyncing]   = useState(false);
-  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; updated: number } | null>(null);
+  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; skipped: number; proposed?: ProposedChange[] } | null>(null);
   const [search, setSearch]     = useState("");
+  const [proposed, setProposed] = useState<ProposedChange[]>([]);
+  const [proposedOpen, setProposedOpen] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/hubspot/contacts", { credentials: "include" })
+  function loadContacts() {
+    return fetch("/api/hubspot/contacts", { credentials: "include" })
       .then(r => r.ok ? r.json() : [])
       .then(setContacts)
       .catch(() => toast({ title: "Failed to load contacts", variant: "destructive" }))
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { loadContacts(); }, []);
 
   async function runSync() {
     setSyncing(true);
@@ -545,9 +690,15 @@ function ContactsTab() {
       const data = await parseJsonOrSurface(r);
       if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
-      toast({ title: `Contacts synced — ${data.inserted} new, ${data.updated} updated` });
-      const fresh = await fetch("/api/hubspot/contacts", { credentials: "include" });
-      setContacts(await fresh.json());
+      const msg = `${data.inserted} new contact${data.inserted !== 1 ? "s" : ""} added`;
+      if (data.proposed?.length) {
+        setProposed(data.proposed);
+        setProposedOpen(true);
+        toast({ title: `Sync done — ${msg}`, description: `${data.proposed.length} existing contacts have HubSpot updates to review.` });
+      } else {
+        toast({ title: `Sync done — ${msg}`, description: data.skipped ? `${data.skipped} existing contacts unchanged.` : undefined });
+      }
+      await loadContacts();
     } catch (e: any) {
       toast({ title: "Sync failed", description: e.message, variant: "destructive" });
     } finally {
@@ -562,18 +713,32 @@ function ContactsTab() {
 
   return (
     <div className="space-y-3">
+      <ProposedDialog
+        open={proposedOpen}
+        onClose={() => setProposedOpen(false)}
+        proposals={proposed}
+        applyEndpoint="/api/hubspot/contacts/apply-proposed"
+        onApplied={loadContacts}
+        objectLabel="contacts"
+      />
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={runSync} disabled={syncing} className="h-7 text-xs">
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
             {syncing ? "Syncing…" : "Sync from HubSpot"}
           </Button>
-          <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>
           {lastSync && (
-            <span className="text-[11px] text-emerald-700">
-              · {lastSync.inserted} new, {lastSync.updated} updated
-            </span>
+            <span className="text-[11px] text-emerald-700">· {lastSync.inserted} new</span>
           )}
+          {lastSync?.proposed?.length ? (
+            <button
+              onClick={() => { setProposed(lastSync.proposed!); setProposedOpen(true); }}
+              className="text-[11px] text-amber-700 hover:underline flex items-center gap-0.5"
+            >
+              <AlertCircle className="w-3 h-3" /> {lastSync.proposed.length} to review
+            </button>
+          ) : null}
+          <span className="text-xs text-muted-foreground">{contacts.length} contacts</span>
         </div>
         <input
           value={search}
@@ -659,16 +824,20 @@ function CompaniesTab() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading]    = useState(true);
   const [syncing, setSyncing]    = useState(false);
-  const [lastSync, setLastSync]  = useState<{ total: number; inserted: number; updated: number } | null>(null);
+  const [lastSync, setLastSync]  = useState<{ total: number; inserted: number; skipped: number; proposed?: ProposedChange[] } | null>(null);
   const [search, setSearch]      = useState("");
+  const [proposed, setProposed]  = useState<ProposedChange[]>([]);
+  const [proposedOpen, setProposedOpen] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/hubspot/companies", { credentials: "include" })
+  function loadCompanies() {
+    return fetch("/api/hubspot/companies", { credentials: "include" })
       .then(r => r.ok ? r.json() : [])
       .then(setCompanies)
       .catch(() => toast({ title: "Failed to load companies", variant: "destructive" }))
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { loadCompanies(); }, []);
 
   async function runSync() {
     setSyncing(true);
@@ -677,9 +846,15 @@ function CompaniesTab() {
       const data = await parseJsonOrSurface(r);
       if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
-      toast({ title: `Companies synced — ${data.inserted} new, ${data.updated} updated` });
-      const fresh = await fetch("/api/hubspot/companies", { credentials: "include" });
-      setCompanies(await fresh.json());
+      const msg = `${data.inserted} new compan${data.inserted !== 1 ? "ies" : "y"} added`;
+      if (data.proposed?.length) {
+        setProposed(data.proposed);
+        setProposedOpen(true);
+        toast({ title: `Sync done — ${msg}`, description: `${data.proposed.length} existing companies have HubSpot updates to review.` });
+      } else {
+        toast({ title: `Sync done — ${msg}` });
+      }
+      await loadCompanies();
     } catch (e: any) {
       toast({ title: "Sync failed", description: e.message, variant: "destructive" });
     } finally {
@@ -700,18 +875,32 @@ function CompaniesTab() {
 
   return (
     <div className="space-y-3">
+      <ProposedDialog
+        open={proposedOpen}
+        onClose={() => setProposedOpen(false)}
+        proposals={proposed}
+        applyEndpoint="/api/hubspot/companies/apply-proposed"
+        onApplied={loadCompanies}
+        objectLabel="companies"
+      />
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={runSync} disabled={syncing} className="h-7 text-xs">
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
             {syncing ? "Syncing…" : "Sync from HubSpot"}
           </Button>
-          <span className="text-xs text-muted-foreground">{companies.length} companies</span>
           {lastSync && (
-            <span className="text-[11px] text-emerald-700">
-              · {lastSync.inserted} new, {lastSync.updated} updated
-            </span>
+            <span className="text-[11px] text-emerald-700">· {lastSync.inserted} new</span>
           )}
+          {lastSync?.proposed?.length ? (
+            <button
+              onClick={() => { setProposed(lastSync.proposed!); setProposedOpen(true); }}
+              className="text-[11px] text-amber-700 hover:underline flex items-center gap-0.5"
+            >
+              <AlertCircle className="w-3 h-3" /> {lastSync.proposed.length} to review
+            </button>
+          ) : null}
+          <span className="text-xs text-muted-foreground">{companies.length} companies</span>
         </div>
         <input
           value={search}
@@ -791,7 +980,9 @@ function HubspotApiSync({ onDone }: { onDone: () => void }) {
   const { toast } = useToast();
   const [status, setStatus] = useState<{ configured: boolean; valid?: boolean; total?: number | null; message?: string } | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; updated: number; skipped: number } | null>(null);
+  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; skipped: number; proposed?: ProposedChange[] } | null>(null);
+  const [proposed, setProposed] = useState<ProposedChange[]>([]);
+  const [proposedOpen, setProposedOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/hubspot/status", { credentials: "include" })
@@ -807,7 +998,13 @@ function HubspotApiSync({ onDone }: { onDone: () => void }) {
       const data = await parseJsonOrSurface(r);
       if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
-      toast({ title: `HubSpot sync complete — ${data.inserted} inserted, ${data.updated} updated` });
+      if (data.proposed?.length) {
+        setProposed(data.proposed);
+        setProposedOpen(true);
+        toast({ title: `Deals sync done — ${data.inserted} new`, description: `${data.proposed.length} existing deals have HubSpot updates to review.` });
+      } else {
+        toast({ title: `HubSpot sync complete — ${data.inserted} new deals added` });
+      }
       onDone();
     } catch (e: any) {
       toast({ title: "Sync failed", description: e.message, variant: "destructive" });
@@ -818,6 +1015,14 @@ function HubspotApiSync({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="border rounded-lg p-4 bg-background space-y-3">
+      <ProposedDialog
+        open={proposedOpen}
+        onClose={() => setProposedOpen(false)}
+        proposals={proposed}
+        applyEndpoint="/api/hubspot/deals/apply-proposed"
+        onApplied={onDone}
+        objectLabel="deals"
+      />
       <div className="flex items-center gap-2">
         {status?.valid
           ? <Wifi className="w-4 h-4 text-emerald-600" />
@@ -856,9 +1061,17 @@ function HubspotApiSync({ onDone }: { onDone: () => void }) {
       )}
 
       {lastSync && (
-        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          Last sync: {lastSync.total} deals · {lastSync.inserted} new · {lastSync.updated} updated · {lastSync.skipped} skipped
+        <div className="flex items-center gap-2 text-xs bg-emerald-50 border border-emerald-200 rounded px-3 py-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          <span className="text-emerald-700">Last sync: {lastSync.total} deals · {lastSync.inserted} new</span>
+          {lastSync.proposed?.length ? (
+            <button
+              onClick={() => { setProposed(lastSync.proposed!); setProposedOpen(true); }}
+              className="text-amber-700 hover:underline flex items-center gap-0.5 ml-1"
+            >
+              <AlertCircle className="w-3 h-3" /> {lastSync.proposed.length} to review
+            </button>
+          ) : null}
         </div>
       )}
     </div>
