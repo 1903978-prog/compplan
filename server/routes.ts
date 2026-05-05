@@ -4959,7 +4959,7 @@ RULES:
     }
   });
 
-  app.post("/api/hubspot/contacts/sync", requireAuth, async (_req, res) => {
+  app.post("/api/hubspot/contacts/sync", requireAuth, async (req, res) => {
     const token = process.env.HUBSPOT_TOKEN ?? "";
     if (!token) {
       res.status(400).json({ error: "HUBSPOT_TOKEN not configured." });
@@ -4974,23 +4974,22 @@ RULES:
         "hubspot_owner_id", "city", "country", "notes_last_activity",
       ].join(",");
 
-      let after: string | null = null;
-      const allContacts: any[] = [];
-
-      for (let page = 0; page < 50; page++) {
-        const url = `https://api.hubapi.com/crm/v3/objects/contacts?limit=100&archived=false&properties=${CONTACT_PROPS}${after ? `&after=${after}` : ""}`;
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
-        if (r.status === 403) {
-          const body = await r.json().catch(() => ({}));
-          res.status(403).json({ error: "Missing scope: crm.objects.contacts.read", detail: body });
-          return;
-        }
-        if (!r.ok) throw new Error(`HubSpot API ${r.status}: ${await r.text()}`);
-        const data: any = await r.json();
-        allContacts.push(...(data.results ?? []));
-        if (data.paging?.next?.after) after = data.paging.next.after;
-        else break;
+      // One batch of 100 contacts per call. Client passes `after` cursor from
+      // the previous response to advance through pages. No server-side loop —
+      // avoids Render's 30 s timeout when the contact list is large.
+      const afterCursor: string | null = (req.body as any)?.after ?? null;
+      const url = `https://api.hubapi.com/crm/v3/objects/contacts?limit=100&archived=false&properties=${CONTACT_PROPS}${afterCursor ? `&after=${afterCursor}` : ""}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+      if (r.status === 403) {
+        const body = await r.json().catch(() => ({}));
+        res.status(403).json({ error: "Missing scope: crm.objects.contacts.read", detail: body });
+        return;
       }
+      if (!r.ok) throw new Error(`HubSpot API ${r.status}: ${await r.text()}`);
+      const data: any = await r.json();
+      const contacts: any[] = data.results ?? [];
+      // nextAfter is null when this is the last page
+      const nextAfter: string | null = data.paging?.next?.after ?? null;
 
       const now = new Date().toISOString();
       let inserted = 0, skipped = 0;
@@ -4999,7 +4998,7 @@ RULES:
       const proposed: ContactProposal[] = [];
       const CONTACT_COMPARE = ["first_name","last_name","email","phone","job_title","company","city","country","lifecycle_stage","lead_status"] as const;
 
-      for (const contact of allContacts) {
+      for (const contact of contacts) {
         try {
           const p = contact.properties ?? {};
           const row = {
@@ -5065,7 +5064,8 @@ RULES:
         }
       }
 
-      res.json({ ok: true, total: allContacts.length, inserted, skipped, proposed });
+      // nextAfter === null means this was the last page.
+      res.json({ ok: true, total: contacts.length, inserted, skipped, proposed, nextAfter });
     } catch (err: any) {
       console.error("[hubspot/contacts/sync] failed:", err.message);
       res.status(500).json({ error: err.message });

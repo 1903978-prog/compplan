@@ -724,7 +724,10 @@ function ContactsTab() {
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading]   = useState(true);
   const [syncing, setSyncing]   = useState(false);
-  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; skipped: number; proposed?: ProposedChange[] } | null>(null);
+  // Cursor for HubSpot pagination. null = start from beginning (or last page reached).
+  const [afterCursor, setAfterCursor] = useState<string | null>(null);
+  const [batchCount, setBatchCount]   = useState(0);
+  const [lastSync, setLastSync] = useState<{ total: number; inserted: number; skipped: number; proposed?: ProposedChange[]; nextAfter?: string | null } | null>(null);
   const [search, setSearch]     = useState("");
   const [proposed, setProposed] = useState<ProposedChange[]>([]);
   const [proposedOpen, setProposedOpen] = useState(false);
@@ -753,17 +756,32 @@ function ContactsTab() {
   async function runSync() {
     setSyncing(true);
     try {
-      const r = await fetch("/api/hubspot/contacts/sync", { method: "POST", credentials: "include" });
+      // Send current cursor (null = first page). Server returns nextAfter for
+      // the next batch, or null when all pages are exhausted.
+      const r = await fetch("/api/hubspot/contacts/sync", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ after: afterCursor }),
+      });
       const data = await parseJsonOrSurface(r);
       if (!r.ok) throw new Error(data.error ?? `Sync failed (HTTP ${r.status})`);
       setLastSync(data);
-      const msg = `${data.inserted} new contact${data.inserted !== 1 ? "s" : ""} added`;
-      if (data.proposed?.length) {
-        setProposed(data.proposed);
-        setProposedOpen(true);
-        toast({ title: `Sync done — ${msg}`, description: `${data.proposed.length} existing contacts have HubSpot updates to review.` });
+      const nextBatch = batchCount + 1;
+      setBatchCount(nextBatch);
+      if (data.nextAfter) {
+        setAfterCursor(data.nextAfter);
+        toast({ title: `Batch ${nextBatch} synced — ${data.inserted} new`, description: "More contacts available — click again for next 100." });
       } else {
-        toast({ title: `Sync done — ${msg}`, description: data.skipped ? `${data.skipped} existing contacts unchanged.` : undefined });
+        setAfterCursor(null);
+        const msg = `${data.inserted} new contact${data.inserted !== 1 ? "s" : ""} added`;
+        if (data.proposed?.length) {
+          setProposed(data.proposed);
+          setProposedOpen(true);
+          toast({ title: `Sync done — ${msg}`, description: `${data.proposed.length} existing contacts have HubSpot updates to review.` });
+        } else {
+          toast({ title: `Sync done — ${msg}`, description: data.skipped ? `${data.skipped} existing contacts unchanged.` : undefined });
+        }
       }
       await loadContacts();
     } catch (e: any) {
@@ -773,12 +791,13 @@ function ContactsTab() {
     }
   }
 
+  const hasMore = afterCursor !== null;
+
   function openPopulate() {
     const rows: Suggestion[] = contacts
       .filter(c => c.email)
       .flatMap(c => {
         const needsCompany  = !c.company?.trim();
-        // Treat missing or HubSpot-masked (contains *) last names as fillable
         const needsLastName = !c.last_name?.trim() || c.last_name.includes("*");
         const suggestedCo   = needsCompany  ? (domainToCompany(c.email) ?? "")  : "";
         const suggestedLn   = needsLastName ? (emailToLastName(c.email) ?? "")  : "";
@@ -826,7 +845,6 @@ function ContactsTab() {
     });
   }
 
-  // Count contacts that have at least one field we can suggest
   const populateCount = useMemo(() => contacts.filter(c => {
     if (!c.email) return false;
     if (!c.company?.trim() && domainToCompany(c.email)) return true;
@@ -834,7 +852,6 @@ function ContactsTab() {
     return false;
   }).length, [contacts]);
 
-  // Whether any suggestion in the dialog includes a last-name field
   const hasLastNameSuggestions = suggestions.some(s => s.lastName);
   const hasCompanySuggestions  = suggestions.some(s => s.company);
 
@@ -937,7 +954,7 @@ function ContactsTab() {
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={runSync} disabled={syncing} className="h-7 text-xs">
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Syncing…" : "Sync from HubSpot"}
+            {syncing ? "Syncing…" : hasMore ? "Sync next 100" : "Sync from HubSpot"}
           </Button>
           {contacts.length > 0 && (
             <Button
@@ -952,6 +969,11 @@ function ContactsTab() {
               <Sparkles className="w-3.5 h-3.5 mr-1.5 text-amber-500" />
               Auto-fill{populateCount > 0 ? ` (${populateCount})` : ""}
             </Button>
+          )}
+          {hasMore && (
+            <span className="text-[11px] text-amber-700 font-medium">
+              batch {batchCount} done · more available
+            </span>
           )}
           {lastSync && (
             <span className="text-[11px] text-emerald-700">· {lastSync.inserted} new</span>
