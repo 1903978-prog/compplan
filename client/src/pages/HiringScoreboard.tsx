@@ -271,13 +271,15 @@ export default function HiringScoreboard() {
   const maxFilled = Object.keys(weights).length;
 
   const rows = useMemo(() => {
-    return candidates.map(c => {
-      const row = resolveRow(c);
-      const composite = compositeScore(row, weights);
-      const filled = Object.keys(weights).filter(k => typeof row[k] === "number").length;
-      const tier = computeTier(row, c.stage);
-      return { c, row, composite, filled, tier };
-    });
+    return candidates
+      .filter(c => c.name && c.name.trim() !== "")
+      .map(c => {
+        const row = resolveRow(c);
+        const composite = compositeScore(row, weights);
+        const filled = Object.keys(weights).filter(k => typeof row[k] === "number").length;
+        const tier = computeTier(row, c.stage);
+        return { c, row, composite, filled, tier };
+      });
   }, [candidates, weights]);
 
   const filtered = useMemo(() => {
