@@ -231,6 +231,7 @@ export default function ExecDashboard() {
   const [pricingRoles, setPricingRoles] = useState<{ id: string; default_daily_rate: number }[]>([]);
   const [loading, setLoading] = useState(!cached); // skip spinner if cache is warm
   const [lastFetch, setLastFetch] = useState<Date | null>(cached?.ts ? new Date(cached.ts) : null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // ── Payment round detail popup ─────────────────────────────────────────
   const [roundDetailIdx, setRoundDetailIdx] = useState<number | null>(null);
@@ -320,18 +321,22 @@ export default function ExecDashboard() {
   useEffect(() => {
     let cancelled = false;
     async function fetchAll() {
-      // Only show spinner if there's no cached data — otherwise the page
-      // already has content and we're just silently refreshing.
       if (!cached) setLoading(true);
+      setFetchError(null);
+      const safe = (url: string, fallback: any = []) =>
+        fetch(url, { credentials: "include" }).then(async r => {
+          if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
+          return r.json().catch(() => { throw new Error(`${url} → invalid JSON`); });
+        }).catch((e: Error) => { console.warn("[ExecDashboard]", e.message); return fallback; });
       try {
         const [empRes, cRes, iRes, pRes, wRes, casesRes, settingsRes] = await Promise.all([
-          fetch("/api/employees",          { credentials: "include" }).then(r => r.ok ? r.json() : []),
-          fetch("/api/hiring/candidates",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-          fetch("/api/harvest/invoices",   { credentials: "include" }).then(r => r.ok ? r.json().then(d => d.invoices ?? []) : []),
-          fetch("/api/pricing/proposals",  { credentials: "include" }).then(r => r.ok ? r.json() : []),
-          fetch("/api/won-projects",       { credentials: "include" }).then(r => r.ok ? r.json() : []),
-          fetch("/api/pricing/cases",      { credentials: "include" }).then(r => r.ok ? r.json() : []),
-          fetch("/api/pricing/settings",   { credentials: "include" }).then(r => r.ok ? r.json() : null),
+          safe("/api/employees"),
+          safe("/api/hiring/candidates"),
+          safe("/api/harvest/invoices", { invoices: [] }).then((d: any) => d?.invoices ?? []),
+          safe("/api/pricing/proposals"),
+          safe("/api/won-projects"),
+          safe("/api/pricing/cases"),
+          safe("/api/pricing/settings", null),
         ]);
         if (cancelled) return;
         const emp = Array.isArray(empRes) ? empRes : [];
@@ -349,7 +354,10 @@ export default function ExecDashboard() {
         setPricingRoles(roles.map((r: any) => ({ id: r.id, default_daily_rate: Number(r.default_daily_rate ?? 0) })));
         setLastFetch(new Date());
         writeCache(emp, c, i, p, w);
+        if (emp.length === 0 && p.length === 0 && w.length === 0)
+          setFetchError("All core endpoints returned empty — check server logs or reload the page.");
       } catch (e) {
+        if (!cancelled) setFetchError((e as Error).message);
         console.error("[ExecDashboard] fetch failed", e);
       }
       if (!cancelled) setLoading(false);
@@ -942,6 +950,18 @@ export default function ExecDashboard() {
             : "Loading live data…"
         }
       />
+      {fetchError && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">Data may be incomplete</p>
+            <p className="mt-0.5 text-amber-800 break-all">{fetchError}</p>
+          </div>
+          <Button size="sm" variant="outline" className="shrink-0 h-7 border-amber-300 text-amber-800 hover:bg-amber-100" onClick={() => window.location.reload()}>
+            Reload
+          </Button>
+        </div>
+      )}
 
       {/* ── Row 1: Headline KPIs ──────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">

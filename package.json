@@ -9,7 +9,7 @@
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "test": "vitest run",
-    "db:push": "drizzle-kit push",
+    "db:push": "drizzle-kit push --force",
     "postinstall": "test \"$RENDER\" = \"true\" || playwright install chromium || echo 'playwright browser install skipped (dev only)'"
   },
   "dependencies": {
