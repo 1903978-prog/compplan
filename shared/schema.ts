@@ -890,6 +890,46 @@ export const hiringCandidates = pgTable("hiring_candidates", {
   created_at: text("created_at").notNull(),
 });
 
+// ─── Hiring Offers (Win/Loss tracker) ───────────────────────────────────────
+// One row per offer Eendigo extends to a candidate. Tracks the offer
+// terms (role, comp), candidate profile (age, past tenure, languages),
+// test scores, and the binary outcome (accepted vs declined). Used
+// downstream to calibrate the offer-pricing function — e.g. "for an A1
+// role with 3yrs tenure and 75% test scores, what comp gets accepted
+// 80% of the time?"
+//
+// Distinct from hiring_candidates (pipeline tracking, pre-offer). A
+// candidate may move all the way through the pipeline and end up with
+// one or more rows here.
+export const hiringOffers = pgTable("hiring_offers", {
+  id: serial("id").primaryKey(),
+  candidate_name: text("candidate_name").notNull(),
+  // Role offered — free text so legacy offers + non-grid roles work.
+  // Typically matches a code from the role_grid (A1, A2, EM1, etc.).
+  role_offered: text("role_offered").notNull().default(""),
+  yearly_gross_eur: real("yearly_gross_eur"),    // EUR / year, nullable
+  age: integer("age"),                            // years, nullable
+  past_prof_tenure_years: real("past_prof_tenure_years"), // years of relevant prior experience
+  // Test scores in the same shape as hiring_candidates.scores — keys
+  // like "logic_pct", "verbal_pct", "case_study", etc. Values 0–100 or
+  // null. Stored as JSONB so new test types don't need migrations.
+  test_results: jsonb("test_results").$type<Record<string, number | null>>().default({}),
+  // Languages spoken with self-reported proficiency. Each entry:
+  // { lang: "en", level: "C1" } where level uses CEFR (A1–C2) or
+  // free text like "native". JSONB array.
+  languages: jsonb("languages").$type<Array<{ lang: string; level: string }>>().default([]),
+  // Outcome of the offer. "pending" = sent, no response yet.
+  outcome: text("outcome").notNull().default("pending"), // 'accepted' | 'declined' | 'pending'
+  // Why declined (if applicable) — counter-offer / location / role / etc.
+  decline_reason: text("decline_reason"),
+  decision_date: text("decision_date"),           // ISO YYYY-MM-DD
+  notes: text("notes"),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+export type HiringOffer = typeof hiringOffers.$inferSelect;
+export type InsertHiringOffer = typeof hiringOffers.$inferInsert;
+
 // ── Won Projects (Invoicing Audit) ──────────────────────────────────────────
 // Newly won projects entered manually to audit that all expected invoices are
 // actually issued by the team. Each won project has a client code (e.g. "MET"),

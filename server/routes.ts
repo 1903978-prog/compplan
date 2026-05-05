@@ -2163,6 +2163,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(ok ? 204 : 404).end();
   });
 
+  // ── Hiring Offers (Win/Loss tracker) ──────────────────────────────────────
+  // One row per offer Eendigo extended to a candidate. Stores the offer
+  // terms (role, comp), candidate profile (age, past tenure, languages,
+  // test results), and the binary outcome (accepted vs declined). Feeds
+  // the future offer-pricing function that learns "what comp gets
+  // accepted N% of the time for this role + profile".
+  app.get("/api/hiring/offers", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT id, candidate_name, role_offered, yearly_gross_eur, age,
+               past_prof_tenure_years, test_results, languages, outcome,
+               decline_reason, decision_date, notes, created_at, updated_at
+        FROM hiring_offers
+        ORDER BY created_at DESC
+      `);
+      res.json((rows as any).rows ?? rows);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.post("/api/hiring/offers", requireAuth, async (req, res) => {
+    try {
+      const now = new Date().toISOString();
+      const b = req.body ?? {};
+      if (!b.candidate_name || typeof b.candidate_name !== "string" || !b.candidate_name.trim()) {
+        res.status(400).json({ message: "candidate_name is required" });
+        return;
+      }
+      const result = await db.execute(sql`
+        INSERT INTO hiring_offers (
+          candidate_name, role_offered, yearly_gross_eur, age,
+          past_prof_tenure_years, test_results, languages, outcome,
+          decline_reason, decision_date, notes, created_at, updated_at
+        ) VALUES (
+          ${b.candidate_name.trim()},
+          ${b.role_offered ?? ""},
+          ${b.yearly_gross_eur ?? null},
+          ${b.age ?? null},
+          ${b.past_prof_tenure_years ?? null},
+          ${JSON.stringify(b.test_results ?? {})}::jsonb,
+          ${JSON.stringify(b.languages ?? [])}::jsonb,
+          ${b.outcome ?? "pending"},
+          ${b.decline_reason ?? null},
+          ${b.decision_date ?? null},
+          ${b.notes ?? null},
+          ${now}, ${now}
+        )
+        RETURNING *
+      `);
+      res.status(201).json(((result as any).rows ?? result)[0]);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.put("/api/hiring/offers/:id", requireAuth, async (req, res) => {
+    try {
+      const id = safeInt(req.params.id);
+      const b = req.body ?? {};
+      const now = new Date().toISOString();
+      // Whitelist of updatable columns. Build a dynamic SET clause via
+      // sql.raw for keys that were sent so partial updates work.
+      const allowed: Record<string, any> = {};
+      const fields = ["candidate_name", "role_offered", "yearly_gross_eur", "age",
+                      "past_prof_tenure_years", "outcome", "decline_reason",
+                      "decision_date", "notes"];
+      for (const k of fields) if (k in b) allowed[k] = b[k];
+      // JSONB fields need explicit cast
+      const jsonbFields: Record<string, any> = {};
+      if ("test_results" in b) jsonbFields.test_results = JSON.stringify(b.test_results ?? {});
+      if ("languages"    in b) jsonbFields.languages    = JSON.stringify(b.languages ?? []);
+
+      const setParts: any[] = [];
+      for (const [k, v] of Object.entries(allowed)) {
+        setParts.push(sql`${sql.raw(k)} = ${v}`);
+      }
+      for (const [k, v] of Object.entries(jsonbFields)) {
+        setParts.push(sql`${sql.raw(k)} = ${v}::jsonb`);
+      }
+      setParts.push(sql`updated_at = ${now}`);
+
+      if (setParts.length === 1) {
+        // Only updated_at — caller sent nothing useful. Still return current row.
+        const cur = await db.execute(sql`SELECT * FROM hiring_offers WHERE id = ${id}`);
+        const row = ((cur as any).rows ?? cur)[0];
+        if (!row) return res.status(404).json({ message: "Not found" });
+        return res.json(row);
+      }
+
+      // Join sql parts with commas
+      const setClause = setParts.reduce((acc, p, i) =>
+        i === 0 ? p : sql`${acc}, ${p}`
+      );
+
+      const result = await db.execute(sql`
+        UPDATE hiring_offers SET ${setClause} WHERE id = ${id} RETURNING *
+      `);
+      const row = ((result as any).rows ?? result)[0];
+      if (!row) return res.status(404).json({ message: "Not found" });
+      res.json(row);
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
+  app.delete("/api/hiring/offers/:id", requireAuth, async (req, res) => {
+    try {
+      const ok = await trashAndDelete("hiring_offers", safeInt(req.params.id));
+      res.status(ok ? 204 : 404).end();
+    } catch (e) { res.status(500).json({ message: (e as Error).message }); }
+  });
+
   // ── Employee Tasks (TDL) ──────────────────────────────────────────────────
   app.get("/api/employee-tasks", requireAuth, async (_req, res) => {
     res.json(await storage.getEmployeeTasks());

@@ -228,6 +228,28 @@ export async function seedDatabase() {
       created_at TEXT NOT NULL
     )
   `);
+  // Hiring offers (Win/Loss tracker) — one row per offer extended.
+  // Used downstream to calibrate offer comp by role + profile + tests.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS hiring_offers (
+      id                      SERIAL PRIMARY KEY,
+      candidate_name          TEXT NOT NULL,
+      role_offered            TEXT NOT NULL DEFAULT '',
+      yearly_gross_eur        REAL,
+      age                     INTEGER,
+      past_prof_tenure_years  REAL,
+      test_results            JSONB DEFAULT '{}',
+      languages               JSONB DEFAULT '[]',
+      outcome                 TEXT NOT NULL DEFAULT 'pending',
+      decline_reason          TEXT,
+      decision_date           TEXT,
+      notes                   TEXT,
+      created_at              TEXT NOT NULL,
+      updated_at              TEXT NOT NULL
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_hiring_offers_outcome ON hiring_offers (outcome)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_hiring_offers_role    ON hiring_offers (role_offered)`);
   // Employee tasks table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS employee_tasks (
@@ -1292,6 +1314,7 @@ Run with: node eendigo_template.js',
 
   // Add hr_events column if missing (T12 migration)
   await db.execute(sql`ALTER TABLE employees ADD COLUMN IF NOT EXISTS hr_events jsonb DEFAULT '[]'::jsonb`);
+
 
   // Migration: move Back Office to end of table (sort_order 100, after EM2's 9)
   await db.execute(sql`
